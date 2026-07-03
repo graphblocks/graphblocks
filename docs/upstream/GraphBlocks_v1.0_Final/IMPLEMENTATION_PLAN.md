@@ -564,8 +564,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   submissions without recording them twice, and rejecting conflicting replays that reuse an
   idempotency key with different content while leaving durable journal/resume authority to the
   runtime. Callback submissions that declare a `run_id` must reference a retained run event stream
-  and include an `attempt_id` fence before they are accepted; once an operation has an accepted
-  run-attempt receipt, later callbacks for that operation cannot switch to a different run attempt.
+  and include both `node_id` and `attempt_id` fences before they are accepted; once an operation
+  has an accepted run-node-attempt receipt, later callbacks for that operation cannot switch to a
+  different run, node, or attempt.
   Callback ingress rejects run-scoped receipts when the authoritative run projection is already
   terminal, so late callbacks cannot appear resumable or create new stored resume receipts.
   The server route enforces a configurable inline callback payload limit, defaulting to the

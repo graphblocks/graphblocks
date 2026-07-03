@@ -1559,6 +1559,16 @@ class GraphBlocksServerApp:
                             "error": "async callback attempt_id is required when run_id is declared",
                         },
                     )
+                if submission.run_id is not None and submission.node_id is None:
+                    return ServerResponse.json(
+                        400,
+                        {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "runId": submission.run_id,
+                            "error": "async callback node_id is required when run_id is declared",
+                        },
+                    )
                 if submission.run_id is not None:
                     run_status = self._run_status_payload(
                         submission.run_id,
@@ -1611,6 +1621,22 @@ class GraphBlocksServerApp:
                                 "runId": submission.run_id,
                                 "attemptId": submission.attempt_id,
                                 "error": "async callback operation is already bound to a different run attempt",
+                            },
+                        )
+                    if (
+                        previous.run_id is not None
+                        and submission.run_id is not None
+                        and previous.node_id != submission.node_id
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "attemptId": submission.attempt_id,
+                                "nodeId": submission.node_id,
+                                "error": "async callback operation is already bound to a different run node attempt",
                             },
                         )
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)

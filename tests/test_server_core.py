@@ -1504,6 +1504,51 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
         assert app.callback_submissions(operation_id) == ()
 
 
+def test_server_app_rejects_async_callback_declared_run_without_node_fence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-callback-node-fence-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-callback-node-fence-1"},
+            "metadata": {
+                "runId": "run-callback-node-fence-1",
+                "sequence": 1,
+                "cursor": "run-callback-node-fence-1:1",
+                "releaseId": "release-callback-node-fence-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-node-fence-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-node-fence"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-node-fence",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-callback-node-fence-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-node-fence-1",
+        "runId": "run-callback-node-fence-1",
+        "error": "async callback node_id is required when run_id is declared",
+    }
+    assert app.callback_submissions("op-ci-node-fence-1") == ()
+
+
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     request = ServerRequest(
@@ -1655,6 +1700,75 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
     assert app.callback_submissions("op-ci-1")[0].attempt_id == "attempt-2"
+
+
+def test_server_app_rejects_async_callback_for_different_node_on_existing_run_attempt() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-1"},
+            "metadata": {
+                "runId": "run-1",
+                "sequence": 1,
+                "cursor": "run-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    current = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-current"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-current",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+    wrong_node = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-wrong-node"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-wrong-node",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "otherWait",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    assert current.status_code == 202
+    assert wrong_node.status_code == 409
+    assert json.loads(wrong_node.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-1",
+        "runId": "run-1",
+        "attemptId": "attempt-1",
+        "nodeId": "otherWait",
+        "error": "async callback operation is already bound to a different run node attempt",
+    }
+    assert len(app.callback_submissions("op-ci-1")) == 1
+    assert app.callback_submissions("op-ci-1")[0].node_id == "waitCI"
 
 
 def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
