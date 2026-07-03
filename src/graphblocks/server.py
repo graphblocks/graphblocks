@@ -815,6 +815,22 @@ class ServerAsyncCallbackRejection:
             received_at=submission.received_at,
         )
 
+    @classmethod
+    def idempotency_conflict(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="idempotency_conflict",
+            received_at=submission.received_at,
+        )
+
     def protocol_value(self) -> dict[str, object]:
         value: dict[str, object] = {
             "operationId": self.operation_id,
@@ -1723,6 +1739,11 @@ class GraphBlocksServerApp:
                             or previous.attempt_id != submission.attempt_id
                             or previous.provider_operation_id != submission.provider_operation_id
                         ):
+                            rejection = ServerAsyncCallbackRejection.idempotency_conflict(submission)
+                            self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                                *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                                rejection,
+                            )
                             return ServerResponse.json(
                                 409,
                                 {

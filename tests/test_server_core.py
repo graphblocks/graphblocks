@@ -1666,6 +1666,16 @@ def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> N
         "error": "async callback idempotency key was reused with different content",
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
+    assert app.async_callback_rejections("op-ci-1") == (
+        {
+            "operationId": "op-ci-1",
+            "callbackId": "cb-2",
+            "idempotencyKey": "idem-callback-1",
+            "attemptId": "attempt-1",
+            "reason": "idempotency_conflict",
+            "receivedAt": "2026-07-02T00:00:01Z",
+        },
+    )
 
 
 def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation() -> None:
