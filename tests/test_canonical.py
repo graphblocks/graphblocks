@@ -1300,6 +1300,67 @@ def test_compile_reports_async_poll_operation_node_invalid_string_timeout() -> N
         assert _error_codes(graph) == ["GB6001"]
 
 
+def test_compile_reports_async_poll_operation_node_invalid_interval_durations() -> None:
+    for field, value in (("interval", "0s"), ("maxInterval", "soon")):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"async-poll-operation-invalid-{field}"},
+            "spec": {
+                "nodes": {
+                    "pollCI": {
+                        "block": "async.poll_operation@1",
+                        "config": {
+                            "timeout": "30m",
+                            field: value,
+                            "idempotencyKey": "$input.request_id",
+                            "callback": {"schema": "schemas/PollResult@1"},
+                            "resume": {
+                                "requirePolicyReevaluation": True,
+                                "requireBudgetReservation": True,
+                                "requireReleaseCompatibility": True,
+                                "requireOwnershipFence": True,
+                            },
+                            "attemptFencing": True,
+                        },
+                    }
+                },
+            },
+        }
+
+        assert _error_codes(graph) == ["InvalidAsyncOperation"]
+
+
+def test_compile_reports_async_await_callback_node_invalid_on_timeout_policy() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-await-invalid-on-timeout"},
+        "spec": {
+            "nodes": {
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "30m",
+                        "onTimeout": "continue_anyway",
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["InvalidAsyncOperation"]
+
+
 def test_compile_reports_async_operation_missing_resume_and_fencing_contracts() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

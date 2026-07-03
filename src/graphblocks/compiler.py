@@ -91,6 +91,13 @@ def _has_async_timeout(config: dict[str, Any]) -> bool:
     return infinite_wait is True or _has_non_empty_string(explicit_infinite_wait_policy)
 
 
+def _invalid_optional_duration_field(config: dict[str, Any], *names: str) -> str | None:
+    for name in names:
+        if name in config and _duration_milliseconds(config.get(name)) is None:
+            return name
+    return None
+
+
 def _has_async_idempotency_key(config: dict[str, Any]) -> bool:
     return _has_non_empty_string(config.get("idempotencyKey") or config.get("idempotency_key"))
 
@@ -245,6 +252,27 @@ def _diagnose_async_operation_config(
                 path,
             )
         )
+    on_timeout = config.get("onTimeout", config.get("on_timeout"))
+    if isinstance(on_timeout, str) and on_timeout not in {"fail", "cancel", "expire"}:
+        diagnostics.append(
+            Diagnostic(
+                "InvalidAsyncOperation",
+                "async await onTimeout must be one of fail, cancel, or expire",
+                f"{path}.onTimeout",
+            )
+        )
+    for field, names in (
+        ("interval", ("interval", "intervalMs", "interval_ms")),
+        ("maxInterval", ("maxInterval", "max_interval", "maxIntervalMs", "max_interval_ms")),
+    ):
+        if _invalid_optional_duration_field(config, *names) is not None:
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidAsyncOperation",
+                    f"async operation {field} must be a positive duration",
+                    f"{path}.{field}",
+                )
+            )
     if _callback_schema_required(config) and not _has_async_callback_schema(config):
         diagnostics.append(
             Diagnostic(
