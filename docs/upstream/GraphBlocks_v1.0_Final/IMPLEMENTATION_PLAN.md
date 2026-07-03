@@ -452,7 +452,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   for submitted-before-created, completed-before-submitted, non-positive expiry windows, and
   expiry deadlines that are already elapsed by submission time. `callback_received` records require
   a durable receipt timestamp, and that timestamp is rejected once it falls after the operation
-  expiry boundary, so late callbacks cannot be projected as resumable operation state.
+  expiry boundary, so late callbacks cannot be projected as resumable operation state. Polling
+  completions also reject `completed_at` values after `expires_at`, preventing late provider results
+  from being projected as successful operation completion.
 - The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.
