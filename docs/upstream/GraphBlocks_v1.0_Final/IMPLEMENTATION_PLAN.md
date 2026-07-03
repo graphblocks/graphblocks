@@ -683,7 +683,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   GraphBlocks webhook header checks, duplicate case-insensitive header rejection, envelope identity
   checks, malformed timestamp rejection, and replay-window enforcement for local tools, tests, and
   embedded receivers. Header generation and direct HMAC signing validate custom timestamp overrides
-  as ISO-8601 datetimes before exposing signing material.
+  as ISO-8601 datetimes before exposing signing material, and single-secret verification validates
+  verifier secret configuration before parsing inbound headers.
 - `graphblocks-callbacks` now includes dependency-free retry/dead-letter projection helpers:
   bounded deterministic jittered backoff, immutable delivery projections, dead-letter conversion,
   and redrive records that preserve original delivery identity, idempotency key, and attempt

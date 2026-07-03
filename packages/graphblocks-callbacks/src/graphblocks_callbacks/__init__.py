@@ -1202,6 +1202,8 @@ def verify_webhook_hmac_sha256(
     timestamp: str | None = None,
 ) -> bool:
     _require_non_empty_string("signature", signature)
+    if not isinstance(secret, bytes) or not secret:
+        raise ValueError("secret must be non-empty bytes")
     try:
         expected = sign_webhook_hmac_sha256(envelope, secret, timestamp=timestamp)
     except ValueError:
@@ -1223,6 +1225,8 @@ def verify_webhook_headers_hmac_sha256(
         or replay_window_seconds < 0
     ):
         raise ValueError("replay_window_seconds must be a non-negative integer")
+    if not isinstance(secret, bytes) or not secret:
+        raise ValueError("secret must be non-empty bytes")
 
     try:
         normalized = _string_headers(headers)
