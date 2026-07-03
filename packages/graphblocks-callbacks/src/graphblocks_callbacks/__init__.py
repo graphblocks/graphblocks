@@ -1277,18 +1277,22 @@ def verify_webhook_headers_hmac_sha256_keyring(
         raise ValueError("secrets_by_key_id must be a mapping")
     if not secrets_by_key_id:
         raise ValueError("secrets_by_key_id must contain at least one key")
+    configured: list[tuple[str, bytes]] = []
+    for key_id, secret in secrets_by_key_id.items():
+        _require_non_empty_string("key_id", key_id)
+        if not isinstance(secret, bytes) or not secret:
+            raise ValueError("secret values must be non-empty bytes")
+        configured.append((key_id, secret))
     try:
         normalized = _string_headers(headers)
     except ValueError:
         return None
     requested_key_id = normalized.get("graphblocks-key-id")
-    candidates: list[tuple[str, bytes]] = []
-    for key_id, secret in secrets_by_key_id.items():
-        _require_non_empty_string("key_id", key_id)
-        if not isinstance(secret, bytes) or not secret:
-            raise ValueError("secret values must be non-empty bytes")
-        if requested_key_id is None or requested_key_id == key_id:
-            candidates.append((key_id, secret))
+    candidates = [
+        (key_id, secret)
+        for key_id, secret in configured
+        if requested_key_id is None or requested_key_id == key_id
+    ]
     if not candidates:
         return None
     for key_id, secret in candidates:

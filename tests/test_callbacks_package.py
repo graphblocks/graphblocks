@@ -506,6 +506,33 @@ def test_callback_webhook_hmac_keyring_rejects_empty_keyring() -> None:
     )
 
 
+def test_callback_webhook_hmac_keyring_validates_entries_before_headers() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+
+    _assert_raises_value_error(
+        "secret values must be non-empty bytes",
+        lambda: verify_webhook_headers_hmac_sha256_keyring(
+            envelope,
+            {"GraphBlocks-Delivery-Id": "del_001", "GraphBlocks-Delivery-ID": "duplicate"},
+            {"current": b""},
+            now="2026-07-02T00:00:31Z",
+            replay_window_seconds=60,
+        ),
+    )
+
+
 def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None:
     policy = CallbackRetryPolicy(
         max_attempts=4,
