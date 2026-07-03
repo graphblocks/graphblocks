@@ -671,7 +671,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   deterministic fuzz-style test pins signature stability under key reordering and caller mutation.
 - `graphblocks-callbacks` also exposes receiver-side HMAC-SHA256 header verification with required
   GraphBlocks webhook header checks, duplicate case-insensitive header rejection, envelope identity
-  checks, and replay-window enforcement for local tools, tests, and embedded receivers.
+  checks, malformed timestamp rejection, and replay-window enforcement for local tools, tests, and
+  embedded receivers.
 - `graphblocks-callbacks` now includes dependency-free retry/dead-letter projection helpers:
   bounded deterministic jittered backoff, immutable delivery projections, dead-letter conversion,
   and redrive records that preserve original delivery identity, idempotency key, and attempt

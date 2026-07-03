@@ -1176,8 +1176,11 @@ def verify_webhook_headers_hmac_sha256(
     if normalized["graphblocks-signature-algorithm"] != "hmac-sha256":
         return False
 
-    delivered_at = _parse_utc_timestamp(normalized["graphblocks-timestamp"])
-    reference = _parse_utc_timestamp(_utc_now_iso() if now is None else now)
+    try:
+        delivered_at = _parse_utc_timestamp(normalized["graphblocks-timestamp"])
+        reference = _parse_utc_timestamp(_utc_now_iso() if now is None else now)
+    except ValueError:
+        return False
     if abs((reference - delivered_at).total_seconds()) > replay_window_seconds:
         return False
 
