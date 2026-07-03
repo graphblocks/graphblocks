@@ -2334,7 +2334,11 @@ impl SqliteAsyncOperationStore {
         limits: AsyncCallbackIngestionLimits,
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        let memory = self.load_memory_store()?;
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+        let memory = Self::load_memory_store_from_connection(&connection)?;
         let accepted = memory.accept_callback_with_limits_and_resume_decision(
             submission,
             registry,
@@ -2343,10 +2347,10 @@ impl SqliteAsyncOperationStore {
         );
         match &accepted {
             Ok(accepted) if !accepted.duplicate => {
-                self.replace_with_memory_store(&memory)?;
+                Self::replace_with_memory_store_on_connection(&mut connection, &memory)?;
             }
             Err(_) => {
-                self.replace_with_memory_store(&memory)?;
+                Self::replace_with_memory_store_on_connection(&mut connection, &memory)?;
             }
             _ => {}
         }
@@ -2386,15 +2390,21 @@ impl SqliteAsyncOperationStore {
     }
 
     fn load_memory_store(&self) -> Result<AsyncOperationStore, AsyncOperationError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+        Self::load_memory_store_from_connection(&connection)
+    }
+
+    fn load_memory_store_from_connection(
+        connection: &Connection,
+    ) -> Result<AsyncOperationStore, AsyncOperationError> {
         let store = AsyncOperationStore::new();
         let mut inner = store
             .inner
             .lock()
             .expect("async operation store lock poisoned");
-        let connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
 
         {
             let mut statement = connection
@@ -2502,6 +2512,13 @@ impl SqliteAsyncOperationStore {
             .connection
             .lock()
             .expect("sqlite async operation store lock poisoned");
+        Self::replace_with_memory_store_on_connection(&mut connection, store)
+    }
+
+    fn replace_with_memory_store_on_connection(
+        connection: &mut Connection,
+        store: &AsyncOperationStore,
+    ) -> Result<(), AsyncOperationError> {
         let transaction = connection.transaction().map_err(storage_error)?;
         transaction
             .execute("DELETE FROM async_operation_events", [])

@@ -790,6 +790,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback resume admission has deterministic fuzz coverage over tenant, release, run, node,
   attempt, and operation identity mutations to protect the async callback path from stale-attempt
   and wrong-scope resume regressions.
+- `SqliteAsyncOperationStore` now serializes durable callback admission across load, idempotency
+  evaluation, and persistence, with a concurrency regression test proving duplicate callback
+  deliveries produce one resume winner and duplicate receipts for the remaining workers.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

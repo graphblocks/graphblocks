@@ -1873,6 +1873,63 @@ fn concurrent_duplicate_callbacks_have_one_resume_winner() {
 }
 
 #[test]
+fn sqlite_concurrent_duplicate_callbacks_have_one_resume_winner() -> Result<(), AsyncOperationError>
+{
+    let path = sqlite_async_operation_path("duplicate-callback-race");
+    let store = Arc::new(SqliteAsyncOperationStore::open(&path)?);
+    store.register(waiting_operation())?;
+    let registry = Arc::new(callback_schema_registry());
+    let workers = 32;
+    let barrier = Arc::new(Barrier::new(workers + 1));
+
+    let handles = (0..workers)
+        .map(|index| {
+            let store = Arc::clone(&store);
+            let registry = Arc::clone(&registry);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                store.accept_callback(
+                    valid_submission(&format!("cb-sqlite-{index}"), "idem-cb-sqlite-race"),
+                    &registry,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    barrier.wait();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("callback worker joins"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.as_ref().is_ok_and(|accepted| accepted.should_resume))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.as_ref().is_ok_and(|accepted| accepted.duplicate))
+            .count(),
+        workers - 1
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+
+    Ok(())
+}
+
+#[test]
 fn callback_after_timeout_records_late_callback_without_resume() {
     let store = AsyncOperationStore::new();
     store
