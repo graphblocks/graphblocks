@@ -1052,6 +1052,82 @@ def test_callback_replay_guard_rejects_mutated_idempotency_replay() -> None:
     assert conflict.incoming_digest != accepted.replay_record.envelope_digest
 
 
+def test_callback_replay_guard_rejects_delivery_id_replay_with_changed_idempotency() -> None:
+    first = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042:first",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    replay = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042:second",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    guard = CallbackReplayGuard()
+
+    accepted = guard.record(first)
+    conflict = guard.record(replay)
+
+    assert accepted.status == "accepted"
+    assert conflict.status == "conflict"
+    assert conflict.conflict is True
+    assert conflict.replay_record == accepted.replay_record
+
+
+def test_callback_replay_guard_rejects_event_replay_with_changed_idempotency() -> None:
+    first = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042:first",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    replay = CallbackEnvelope(
+        delivery_id="del_002",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042:second",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    guard = CallbackReplayGuard()
+
+    accepted = guard.record(first)
+    conflict = guard.record(replay)
+
+    assert accepted.status == "accepted"
+    assert conflict.status == "conflict"
+    assert conflict.conflict is True
+    assert conflict.replay_record == accepted.replay_record
+
+
 def test_external_callback_receipt_projects_verified_callback_metadata() -> None:
     envelope = CallbackEnvelope(
         delivery_id="cb_001",

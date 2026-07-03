@@ -692,7 +692,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   rotation while rejecting unknown key IDs.
 - `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
   delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
-  flags mutated idempotency-key reuse as a conflict.
+  flags mutated idempotency-key, delivery-id, or subscription-event replays as conflicts.
 - `graphblocks-callbacks` now projects durable `ExternalCallbackReceived` receipt metadata from a
   verified callback envelope and bounded/artifact-backed payload projection, preserving callback,
   run, operation, node, attempt, idempotency, payload digest, verifier, and policy snapshot identity

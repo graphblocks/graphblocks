@@ -735,6 +735,8 @@ class CallbackReplayDecision:
 
 class CallbackReplayGuard:
     def __init__(self, records: Mapping[str, CallbackReplayRecord] | None = None) -> None:
+        self._records_by_delivery_id: dict[str, CallbackReplayRecord] = {}
+        self._records_by_subscription_event: dict[tuple[str, str], CallbackReplayRecord] = {}
         if records is None:
             self._records: dict[str, CallbackReplayRecord] = {}
             return
@@ -746,12 +748,18 @@ class CallbackReplayGuard:
             if not isinstance(record, CallbackReplayRecord):
                 raise ValueError("records values must be CallbackReplayRecord")
             self._records[key] = record
+            self._records_by_delivery_id[record.delivery_id] = record
+            self._records_by_subscription_event[(record.subscription_id, record.event_id)] = record
 
     def record(self, envelope: CallbackEnvelope) -> CallbackReplayDecision:
         if not isinstance(envelope, CallbackEnvelope):
             raise ValueError("envelope must be a CallbackEnvelope")
         digest = envelope.payload_digest()
-        existing = self._records.get(envelope.idempotency_key)
+        existing = (
+            self._records.get(envelope.idempotency_key)
+            or self._records_by_delivery_id.get(envelope.delivery_id)
+            or self._records_by_subscription_event.get((envelope.subscription_id, envelope.event_id))
+        )
         if existing is None:
             record = CallbackReplayRecord(
                 delivery_id=envelope.delivery_id,
@@ -763,6 +771,8 @@ class CallbackReplayGuard:
                 envelope_digest=digest,
             )
             self._records[envelope.idempotency_key] = record
+            self._records_by_delivery_id[envelope.delivery_id] = record
+            self._records_by_subscription_event[(envelope.subscription_id, envelope.event_id)] = record
             return CallbackReplayDecision(
                 status="accepted",
                 replay_record=record,
@@ -770,7 +780,7 @@ class CallbackReplayGuard:
                 duplicate=False,
                 conflict=False,
             )
-        if existing.envelope_digest == digest:
+        if existing.envelope_digest == digest and existing.idempotency_key == envelope.idempotency_key:
             return CallbackReplayDecision(
                 status="duplicate",
                 replay_record=existing,
