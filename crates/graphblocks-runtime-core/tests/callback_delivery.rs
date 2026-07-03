@@ -208,6 +208,32 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
 }
 
 #[test]
+fn webhook_rate_limit_retry_after_is_capped_by_retry_policy() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 250));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let retry = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::RateLimited {
+            retry_after_ms: Some(10_000),
+        },
+        1_000,
+    );
+
+    assert_eq!(retry.status, CallbackDeliveryStatus::Pending);
+    assert_eq!(retry.attempt, 2);
+    assert_eq!(retry.next_retry_at_unix_ms, Some(1_250));
+    assert_eq!(retry.last_error.as_deref(), Some("rate_limited"));
+}
+
+#[test]
 fn webhook_duplicate_and_success_responses_are_terminal_successes() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

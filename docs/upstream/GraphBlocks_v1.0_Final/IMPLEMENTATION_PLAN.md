@@ -530,7 +530,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
-  reason.
+  reason. Receiver-provided `Retry-After` delays are capped by the configured retry policy maximum
+  so rate-limit responses cannot create unbounded callback retry stalls.
 - Callback delivery targets are now typed as webhook, WebSocket, SSE, push notification, email, or
   local callback variants, and ordered-delivery diagnostics use target capabilities instead of
   string-prefix inference.

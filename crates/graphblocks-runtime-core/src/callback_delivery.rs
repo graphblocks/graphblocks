@@ -2205,7 +2205,8 @@ impl CallbackDeliveryScheduler {
         delivery.attempt += 1;
         delivery.status = CallbackDeliveryStatus::Pending;
         let delay_ms = retry_after_ms
-            .unwrap_or_else(|| self.retry_policy.delay_for_attempt(delivery.attempt - 1));
+            .unwrap_or_else(|| self.retry_policy.delay_for_attempt(delivery.attempt - 1))
+            .min(self.retry_policy.max_delay_ms);
         delivery.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
         delivery.last_error = Some(error);
     }
