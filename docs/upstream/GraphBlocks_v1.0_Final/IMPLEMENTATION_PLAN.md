@@ -430,7 +430,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   ownership lease or fencing protection as `GB6016`, with shared compiler TCK coverage.
 - The normative `graphblocks-compiler` Rust crate now emits the same `GB6001` through `GB6016`
   async/callback diagnostics as the Python authoring facade and passes the shared compiler TCK for
-  these cases.
+  these cases. `async.poll_operation@1` node configs participate in the same `GB6001` timeout
+  diagnostics as callback-backed async waits.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both

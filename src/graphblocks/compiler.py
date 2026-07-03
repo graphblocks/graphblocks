@@ -615,7 +615,11 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         block = node.get("block")
         if not isinstance(block, str) or "@" not in block or block.endswith("@"):
             diagnostics.append(Diagnostic("GB0009", "node.block must use '<type>@<major>'", f"$.spec.nodes.{node_name}.block"))
-        if isinstance(block, str) and block.split("@", 1)[0] in {"async.start_operation", "async.await_callback"}:
+        if isinstance(block, str) and block.split("@", 1)[0] in {
+            "async.start_operation",
+            "async.await_callback",
+            "async.poll_operation",
+        }:
             config = node.get("config", {})
             if config is None:
                 config = {}

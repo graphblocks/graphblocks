@@ -1011,7 +1011,12 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 .and_then(Value::as_str)
                 .and_then(|block| block.split_once('@').map(|(block_type, _)| block_type))
                 .is_some_and(|block_type| {
-                    matches!(block_type, "async.start_operation" | "async.await_callback")
+                    matches!(
+                        block_type,
+                        "async.start_operation"
+                            | "async.await_callback"
+                            | "async.poll_operation"
+                    )
                 })
             {
                 match node.get("config") {
