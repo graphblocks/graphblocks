@@ -277,6 +277,21 @@ impl AsyncOperation {
                 reason: "waiting callback operations require an expiration".to_owned(),
             });
         }
+        if self.completed_at_unix_ms.is_none() {
+            let terminal_state = match self.state {
+                AsyncOperationState::Completed => Some("completed"),
+                AsyncOperationState::Failed => Some("failed"),
+                AsyncOperationState::Cancelled => Some("cancelled"),
+                AsyncOperationState::Expired => Some("expired"),
+                _ => None,
+            };
+            if let Some(terminal_state) = terminal_state {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!("{terminal_state} operations require completed_at"),
+                });
+            }
+        }
 
         if let Some(expires_at_unix_ms) = self.expires_at_unix_ms
             && expires_at_unix_ms <= self.created_at_unix_ms

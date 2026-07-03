@@ -527,6 +527,35 @@ fn async_operation_diagnostics_allow_callback_payload_within_limit() {
 }
 
 #[test]
+fn async_operation_validate_rejects_terminal_state_without_completed_at() {
+    for state in [
+        AsyncOperationState::Completed,
+        AsyncOperationState::Failed,
+        AsyncOperationState::Cancelled,
+        AsyncOperationState::Expired,
+    ] {
+        let mut operation = waiting_operation();
+        operation.state = state;
+        operation.completed_at_unix_ms = None;
+        let state_name = match state {
+            AsyncOperationState::Completed => "completed",
+            AsyncOperationState::Failed => "failed",
+            AsyncOperationState::Cancelled => "cancelled",
+            AsyncOperationState::Expired => "expired",
+            _ => unreachable!("test only iterates terminal states"),
+        };
+
+        assert_eq!(
+            operation.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: format!("{state_name} operations require completed_at"),
+            })
+        );
+    }
+}
+
+#[test]
 fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
     let operation = waiting_operation().without_resume_policy_reevaluation();
 
