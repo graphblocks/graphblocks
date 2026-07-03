@@ -489,6 +489,8 @@ class AsyncOperationResult:
                 field_name,
                 tuple(_freeze_json_value("async operation result", field_name, item) for item in value),
             )
+        if isinstance(self.external_effects, str):
+            raise ValueError("async operation result external_effects must be a sequence")
         object.__setattr__(self, "external_effects", tuple(self.external_effects))
         effect_ids: set[str] = set()
         provider_effect_ids: set[str] = set()
@@ -541,6 +543,8 @@ class AsyncOperationResult:
         self,
         external_effects: Iterable[ExternalEffectRecord],
     ) -> AsyncOperationResult:
+        if isinstance(external_effects, str):
+            raise ValueError("async operation result external_effects must be a sequence")
         return replace(self, external_effects=tuple(external_effects))
 
     def with_projections(

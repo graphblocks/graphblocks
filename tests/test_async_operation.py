@@ -87,6 +87,9 @@ def test_async_operation_result_rejects_invalid_external_effect_records() -> Non
             ]
         )
 
+    with raises_value_error("async operation result external_effects must be a sequence"):
+        graphblocks.AsyncOperationResult.cancelled("op-3").with_external_effects("effect-ticket-1")  # type: ignore[arg-type]
+
 
 def test_async_operation_result_rejects_duplicate_external_effect_ids() -> None:
     with raises_value_error("async operation result external_effects must not contain duplicate effect_id"):
