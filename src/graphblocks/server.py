@@ -751,6 +751,68 @@ class ServerAsyncCallbackSubmission:
 
 
 @dataclass(frozen=True, slots=True)
+class ServerAsyncCallbackRejection:
+    operation_id: str
+    callback_id: str
+    idempotency_key: str
+    reason: str
+    received_at: str
+    run_id: str | None = None
+    status: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("operation_id", "callback_id", "idempotency_key", "reason", "received_at"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string("server async callback rejection", field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "received_at",
+            _validate_iso_datetime("server async callback rejection", "received_at", self.received_at),
+        )
+        for field_name in ("run_id", "status"):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _validate_non_empty_string("server async callback rejection", field_name, value),
+                )
+
+    @classmethod
+    def terminal_run(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+        status: object,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            status=_validate_non_empty_string("server async callback rejection", "status", status),
+            reason="terminal_run",
+            received_at=submission.received_at,
+        )
+
+    def protocol_value(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "operationId": self.operation_id,
+            "callbackId": self.callback_id,
+            "idempotencyKey": self.idempotency_key,
+            "reason": self.reason,
+            "receivedAt": self.received_at,
+        }
+        if self.run_id is not None:
+            value["runId"] = self.run_id
+        if self.status is not None:
+            value["status"] = self.status
+        return value
+
+
+@dataclass(frozen=True, slots=True)
 class ServerEventSubscription:
     subscription_id: str
     run_id: str
@@ -1130,6 +1192,11 @@ class GraphBlocksServerApp:
     require_async_callback_authentication: bool = False
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _async_callback_rejections_by_operation_id: dict[str, tuple[ServerAsyncCallbackRejection, ...]] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -1608,6 +1675,11 @@ class GraphBlocksServerApp:
                     )
                     state = run_status.get("state")
                     if state in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
+                        rejection = ServerAsyncCallbackRejection.terminal_run(submission, state)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
                         return ServerResponse.json(
                             409,
                             {
@@ -1989,6 +2061,13 @@ class GraphBlocksServerApp:
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
         operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
         return self._callbacks_by_operation_id.get(operation_id, ())
+
+    def async_callback_rejections(self, operation_id: str) -> tuple[dict[str, object], ...]:
+        operation_id = _validate_non_empty_string("server async callback rejection", "operation_id", operation_id)
+        return tuple(
+            rejection.protocol_value()
+            for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
+        )
 
     def detachments(self, run_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_non_empty_string("server detach", "run_id", run_id)
@@ -2770,6 +2849,7 @@ __all__ = [
     "ApplicationProtocolCapabilities",
     "GraphBlocksServerApp",
     "ServerAuthDecision",
+    "ServerAsyncCallbackRejection",
     "ServerAsyncCallbackSubmission",
     "ServerAuthHook",
     "ServerAuthRequest",
