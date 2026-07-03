@@ -289,6 +289,14 @@ impl AsyncOperation {
                 reason: "non-created operations require submitted_at".to_owned(),
             });
         }
+        if let Some(submitted_at_unix_ms) = self.submitted_at_unix_ms
+            && submitted_at_unix_ms < self.created_at_unix_ms
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "submitted_at precedes created_at".to_owned(),
+            });
+        }
         if self.completed_at_unix_ms.is_none() {
             let terminal_state = match self.state {
                 AsyncOperationState::Completed => Some("completed"),
@@ -303,6 +311,15 @@ impl AsyncOperation {
                     reason: format!("{terminal_state} operations require completed_at"),
                 });
             }
+        }
+        if let (Some(submitted_at_unix_ms), Some(completed_at_unix_ms)) =
+            (self.submitted_at_unix_ms, self.completed_at_unix_ms)
+            && completed_at_unix_ms < submitted_at_unix_ms
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "completed_at precedes submitted_at".to_owned(),
+            });
         }
 
         if let Some(expires_at_unix_ms) = self.expires_at_unix_ms

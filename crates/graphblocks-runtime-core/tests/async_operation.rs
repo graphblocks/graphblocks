@@ -614,6 +614,41 @@ fn async_operation_validate_rejects_inconsistent_state_timestamps_and_provider_i
 }
 
 #[test]
+fn async_operation_validate_rejects_out_of_order_state_timestamps() {
+    let submitted_before_created = AsyncOperation::new(
+        "op-submitted",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        "sha256:resume-token",
+        "idem-op-submitted",
+        "schemas/CICallback@1",
+        1_000,
+    )
+    .submitted("gha-run-1", 999);
+    let mut completed_before_submitted = waiting_operation();
+    completed_before_submitted.state = AsyncOperationState::Completed;
+    completed_before_submitted.completed_at_unix_ms =
+        completed_before_submitted.submitted_at_unix_ms.map(|submitted_at| submitted_at - 1);
+
+    assert_eq!(
+        submitted_before_created.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-submitted".to_owned(),
+            reason: "submitted_at precedes created_at".to_owned(),
+        })
+    );
+    assert_eq!(
+        completed_before_submitted.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "completed_at precedes submitted_at".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
     let operation = waiting_operation().without_resume_policy_reevaluation();
 
