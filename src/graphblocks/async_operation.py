@@ -237,6 +237,8 @@ class AsyncOperation:
             raise ValueError(f"async operation {self.state} state requires submitted_at")
         if self.state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is None:
             raise ValueError("async operation terminal state requires completed_at")
+        if self.state == "callback_received" and self.completed_at is None:
+            raise ValueError("async operation callback_received state requires completed_at")
         if self.provider_operation_id is not None and self.submitted_at is None:
             raise ValueError("async operation provider_operation_id requires submitted_at")
         created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)
@@ -339,10 +341,9 @@ class AsyncOperation:
         return self._replace_state("waiting_callback")
 
     def mark_callback_received(self, *, completed_at: str | None = None) -> AsyncOperation:
-        changes: dict[str, object] = {}
-        if completed_at is not None:
-            changes["completed_at"] = completed_at
-        return self._replace_state("callback_received", **changes)
+        if completed_at is None:
+            raise ValueError("async operation callback_received state requires completed_at")
+        return self._replace_state("callback_received", completed_at=completed_at)
 
     def start_polling(self) -> AsyncOperation:
         if self.polling_ref is None:
