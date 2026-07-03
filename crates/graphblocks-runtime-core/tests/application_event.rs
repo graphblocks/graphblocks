@@ -1676,6 +1676,17 @@ fn application_protocol_events_reject_empty_required_metadata() {
         ),
         Err(ApplicationProtocolError::EmptyMetadataField { field: "cursor" })
     );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                cursor: None,
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "cursor" })
+    );
 }
 
 #[test]

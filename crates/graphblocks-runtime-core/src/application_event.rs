@@ -1147,6 +1147,9 @@ impl ApplicationProtocolEvent {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });
             }
         }
+        if metadata.cursor.is_none() {
+            return Err(ApplicationProtocolError::EmptyMetadataField { field: "cursor" });
+        }
         if !payload.is_object() {
             return Err(ApplicationProtocolError::InvalidPayload { field: "payload" });
         }
