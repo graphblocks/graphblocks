@@ -319,6 +319,43 @@ def test_callback_webhook_hmac_headers_include_optional_key_id() -> None:
     ) == "current"
 
 
+def test_callback_webhook_verification_rejects_case_duplicate_headers() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    headers = webhook_headers_hmac_sha256(envelope, b"callback-secret")
+    ambiguous_headers = dict(headers)
+    ambiguous_headers["graphblocks-signature"] = headers["GraphBlocks-Signature"]
+
+    assert not verify_webhook_headers_hmac_sha256(
+        envelope,
+        ambiguous_headers,
+        b"callback-secret",
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    )
+    assert (
+        verify_webhook_headers_hmac_sha256_keyring(
+            envelope,
+            ambiguous_headers,
+            {"current": b"callback-secret"},
+            now="2026-07-02T00:00:31Z",
+            replay_window_seconds=60,
+        )
+        is None
+    )
+
+
 def test_callback_webhook_hmac_keyring_accepts_previous_key_during_rotation() -> None:
     envelope = CallbackEnvelope(
         delivery_id="del_001",

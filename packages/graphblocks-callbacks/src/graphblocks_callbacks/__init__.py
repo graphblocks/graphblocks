@@ -105,7 +105,10 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
             raise ValueError("headers keys must be non-empty strings")
         if not isinstance(value, str):
             raise ValueError("headers values must be strings")
-        normalized[key.lower()] = value
+        normalized_key = key.lower()
+        if normalized_key in normalized:
+            raise ValueError("headers must not contain duplicate case-insensitive keys")
+        normalized[normalized_key] = value
     return normalized
 
 
@@ -1150,8 +1153,6 @@ def verify_webhook_headers_hmac_sha256(
     now: str | None = None,
     replay_window_seconds: int = 300,
 ) -> bool:
-    if not isinstance(headers, Mapping):
-        raise ValueError("headers must be a mapping")
     if (
         isinstance(replay_window_seconds, bool)
         or not isinstance(replay_window_seconds, int)
@@ -1159,7 +1160,10 @@ def verify_webhook_headers_hmac_sha256(
     ):
         raise ValueError("replay_window_seconds must be a non-negative integer")
 
-    normalized = {str(key).lower(): value for key, value in headers.items()}
+    try:
+        normalized = _string_headers(headers)
+    except ValueError:
+        return False
     for header in REQUIRED_WEBHOOK_HEADERS:
         value = normalized.get(header.lower())
         if not isinstance(value, str) or not value.strip():
@@ -1195,7 +1199,10 @@ def verify_webhook_headers_hmac_sha256_keyring(
 ) -> str | None:
     if not isinstance(secrets_by_key_id, Mapping):
         raise ValueError("secrets_by_key_id must be a mapping")
-    normalized = _string_headers(headers)
+    try:
+        normalized = _string_headers(headers)
+    except ValueError:
+        return None
     requested_key_id = normalized.get("graphblocks-key-id")
     candidates: list[tuple[str, bytes]] = []
     for key_id, secret in secrets_by_key_id.items():
