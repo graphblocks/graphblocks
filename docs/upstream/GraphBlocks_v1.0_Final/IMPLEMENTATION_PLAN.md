@@ -671,7 +671,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
   and does not rewrite the stored projection. Callback registrations share the same route-level
   ordered delivery, mandatory failure-policy, non-authoritative projection, and creation timestamp
-  validation as run-scoped subscriptions.
+  validation as run-scoped subscriptions; `pause_run_on_failure` and `fail_run_on_failure` are
+  treated as mandatory failure policies and require configured dead-letter or fallback behavior.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,

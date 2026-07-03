@@ -33,6 +33,7 @@ VALID_CALLBACK_FAILURE_POLICIES = frozenset({
     "pause_run_on_failure",
     "fail_run_on_failure",
 })
+MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
 VALID_CALLBACK_DELIVERY_KINDS = frozenset({
     "webhook",
     "websocket",
@@ -156,6 +157,8 @@ def _validate_mandatory_callback_policy(
         raise ValueError(
             f"{owner} mandatory delivery requires retry, dead-letter, pause-run, or fail-run failure policy"
         )
+    if failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES and not _has_callback_dead_letter_config(config, delivery):
+        raise ValueError(f"{owner} mandatory callback failure policy requires dead-letter or fallback behavior")
 
 
 def _validate_callback_not_authoritative(owner: str, config: Mapping[str, object]) -> None:
