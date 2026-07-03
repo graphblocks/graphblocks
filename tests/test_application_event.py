@@ -1795,6 +1795,38 @@ def test_application_event_stream_state_uses_metadata_response_when_payload_resp
     assert state.accept(invalid_payload_response) is None
 
 
+def test_application_event_stream_state_rejects_payload_response_id_mismatch_after_cutoff() -> None:
+    state = ApplicationEventStreamState()
+    cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-1",
+        turn_id="turn-1",
+        last_generated_sequence=3,
+        last_policy_accepted_sequence=1,
+        last_client_delivered_sequence=1,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        policy_decision_id="decision-abort",
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+    cutoff_event, _ = ApplicationEvent.output_cutoff(_metadata(), cutoff)
+    mismatched_payload_response = ApplicationEvent.new(
+        "OutputPolicyEvaluationStarted",
+        _metadata(),
+        payload={
+            "stream_id": "stream-1",
+            "response_id": "response-2",
+            "chunk_sequence": 2,
+            "text": "blocked",
+            "input_digest": "sha256:late",
+        },
+    )
+
+    assert state.accept(cutoff_event) == cutoff_event
+    assert state.accept(mismatched_payload_response) is None
+
+
 def test_tool_result_events_map_to_standard_tool_application_events() -> None:
     completed = ToolResult.completed(
         "call-1",

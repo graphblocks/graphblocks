@@ -165,7 +165,8 @@ Message
 - policy-aborted response는 assistant message나 tool result를 durable commit하지 않는다. safe replacement는 새 `response_id`를 사용한다.
 - `ApplicationEventStream` cutoff enforcement treats event metadata `response_id` as authoritative
   and rejects events whose payload `response_id` disagrees, preventing malformed late deltas from
-  bypassing an `OutputCutoff` by claiming a replacement response in the payload.
+  bypassing an `OutputCutoff` by claiming a replacement response in the payload. The Python facade
+  mirrors this state-machine behavior.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building
