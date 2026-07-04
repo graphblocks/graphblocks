@@ -1967,6 +1967,32 @@ fn callback_submission_whitespace_identity_fields_are_rejected_before_journal() 
 }
 
 #[test]
+fn callback_submission_zero_received_time_is_rejected_before_journal() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-zero-time", "idem-zero-time");
+    submission.received_at_unix_ms = 0;
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "callback received_at_unix_ms must be non-zero".to_owned(),
+        })
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn async_operation_whitespace_identity_fields_are_rejected_before_registration() {
     for field in [
         "operation_id",

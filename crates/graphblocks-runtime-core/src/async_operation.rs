@@ -3019,6 +3019,12 @@ fn validate_callback_submission_identity(
             field: "provider_operation_id".to_owned(),
         });
     }
+    if submission.received_at_unix_ms == 0 {
+        return Err(AsyncOperationError::InvalidOperation {
+            operation_id: submission.operation_id.clone(),
+            reason: "callback received_at_unix_ms must be non-zero".to_owned(),
+        });
+    }
     Ok(())
 }
 

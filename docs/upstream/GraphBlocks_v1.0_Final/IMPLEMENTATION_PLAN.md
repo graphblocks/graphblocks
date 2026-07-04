@@ -871,6 +871,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async operation results now reject committed external-effect records that omit an idempotency
   key, preserving retry/cancellation audit semantics for effects that have already escaped the
   runtime boundary.
+- Callback submission validation now rejects zero `received_at_unix_ms` values before any
+  `ExternalCallbackReceived` receipt can be journaled.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
