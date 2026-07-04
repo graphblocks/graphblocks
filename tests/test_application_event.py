@@ -594,6 +594,8 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
     assert log.replay_after("1", limit=10) == (second,)
     assert ApplicationProtocolLog([first, second]).replay_after(None, limit=1) == (first,)
 
+    with pytest.raises(ApplicationProtocolError, match="application protocol replay cursor was not found"):
+        log.replay_after("cursor-missing", limit=10)
     with pytest.raises(ApplicationProtocolError, match="must be greater than previous sequence"):
         log.append(protocol_event("event-0", 1, "cursor-0"))
     with pytest.raises(ApplicationProtocolError, match="limit must be non-negative"):

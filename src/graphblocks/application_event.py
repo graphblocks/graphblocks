@@ -539,10 +539,14 @@ class ApplicationProtocolLog:
             raise ApplicationProtocolError("application protocol replay limit must be non-negative")
         start_index = 0
         if cursor is not None:
+            found_cursor = False
             for index, event in enumerate(self.events):
                 if event.metadata.cursor == cursor or str(event.metadata.sequence) == cursor:
                     start_index = index + 1
+                    found_cursor = True
                     break
+            if not found_cursor:
+                raise ApplicationProtocolError("application protocol replay cursor was not found")
         return tuple(self.events[start_index : start_index + limit])
 
     def __len__(self) -> int:
