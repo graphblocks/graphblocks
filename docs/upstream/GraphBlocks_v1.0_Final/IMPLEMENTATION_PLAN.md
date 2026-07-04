@@ -580,7 +580,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback event filters now include visibility, node ID, operation ID, and minimum severity
   predicates in addition to event type and terminal-event inclusion. Runtime filters now treat
   `include_terminal_events: false` as an explicit terminal-event exclusion even for otherwise broad
-  subscriptions.
+  subscriptions, and the framework-neutral server replay facade applies the same rule for
+  `includeTerminalEvents`.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
   redrive them while preserving original delivery identity, idempotency key, attempt history, and
   audit-visible redrive count. Repeated redrives append each redriven attempt to the durable

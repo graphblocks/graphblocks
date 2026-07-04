@@ -2842,8 +2842,8 @@ class GraphBlocksServerApp:
         )
         if not isinstance(include_terminal_events, bool):
             raise ValueError("server event subscription event_filter.include_terminal_events must be a boolean")
-        if include_terminal_events and isinstance(event_kind, str) and event_kind in SERVER_TERMINAL_EVENT_KINDS:
-            return True
+        if isinstance(event_kind, str) and event_kind in SERVER_TERMINAL_EVENT_KINDS:
+            return include_terminal_events
         types = event_filter.get("types")
         if types is None:
             return True

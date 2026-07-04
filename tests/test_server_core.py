@@ -1688,8 +1688,6 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
             {
                 "callback_id": "cb-1",
                 "attempt_id": "attempt-1",
-                "run_id": "run-1",
-                "node_id": "waitCI",
                 "payload": {"status": "completed"},
             }
         ).encode("utf-8"),
@@ -2418,11 +2416,17 @@ def test_server_app_deduplicates_async_callback_sequence_deterministically() -> 
         )
         statuses.append(response.status_code)
 
-    assert statuses == [202, 202, 200, 202, 200, 200]
+    assert statuses == [202, 409, 200, 409, 409, 409]
     assert [submission.idempotency_key for submission in app.callback_submissions("op-ci-1")] == [
         "idem-callback-1",
-        "idem-callback-2",
-        "idem-callback-3",
+    ]
+    assert [
+        rejection["reason"] for rejection in app.async_callback_rejections("op-ci-1")
+    ] == [
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
     ]
 
 
@@ -2507,11 +2511,17 @@ def test_server_app_deduplicates_nested_callback_payload_sequence_deterministica
         )
         statuses.append(response.status_code)
 
-    assert statuses == [202, 202, 200, 202, 200, 200]
+    assert statuses == [202, 409, 200, 409, 409, 409]
     assert [submission.idempotency_key for submission in app.callback_submissions("op-ci-1")] == [
         "idem-callback-1",
-        "idem-callback-2",
-        "idem-callback-3",
+    ]
+    assert [
+        rejection["reason"] for rejection in app.async_callback_rejections("op-ci-1")
+    ] == [
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
+        "duplicate_operation_receipt",
     ]
 
 
@@ -3930,6 +3940,43 @@ def test_server_app_subscription_replay_includes_terminal_events_by_default() ->
     assert [event["metadata"]["eventId"] for event in opt_out_payload["events"]] == [
         "event-progress"
     ]
+
+
+def test_server_app_subscription_replay_excludes_terminal_events_from_broad_filter_when_disabled() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-terminal-broad-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-progress", "sequence": 1},
+            "payload": {"visibility": "client"},
+        },
+        {
+            "kind": "RunSucceeded",
+            "metadata": {"eventId": "event-terminal", "sequence": 2},
+            "payload": {"visibility": "client", "status": "succeeded"},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-terminal-broad-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-terminal-broad-opt-out",
+                    "eventFilter": {"includeTerminalEvents": False},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-progress"]
 
 
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
