@@ -72,6 +72,7 @@ pub struct AsyncOperation {
     pub created_at_unix_ms: u64,
     pub submitted_at_unix_ms: Option<u64>,
     pub expires_at_unix_ms: Option<u64>,
+    pub infinite_wait_policy: Option<String>,
     pub completed_at_unix_ms: Option<u64>,
     pub expected_callback_payload_bytes: Option<usize>,
     pub resume_policy_reevaluation: bool,
@@ -97,6 +98,7 @@ impl AsyncOperationConfigurationDiagnostic {
     ) -> Vec<Self> {
         let mut diagnostics = Vec::new();
         if operation.expires_at_unix_ms.is_none()
+            && operation.infinite_wait_policy.is_none()
             && matches!(
                 operation.state,
                 AsyncOperationState::WaitingCallback | AsyncOperationState::Polling
@@ -214,6 +216,7 @@ impl AsyncOperation {
             created_at_unix_ms,
             submitted_at_unix_ms: None,
             expires_at_unix_ms: None,
+            infinite_wait_policy: None,
             completed_at_unix_ms: None,
             expected_callback_payload_bytes: None,
             resume_policy_reevaluation: true,
@@ -244,6 +247,16 @@ impl AsyncOperation {
         expected_callback_payload_bytes: usize,
     ) -> Self {
         self.expected_callback_payload_bytes = Some(expected_callback_payload_bytes);
+        self
+    }
+
+    pub fn with_infinite_wait_policy(mut self, infinite_wait_policy: impl Into<String>) -> Self {
+        self.infinite_wait_policy = Some(infinite_wait_policy.into());
+        self
+    }
+
+    pub fn without_expiration(mut self) -> Self {
+        self.expires_at_unix_ms = None;
         self
     }
 
@@ -294,11 +307,24 @@ impl AsyncOperation {
                 field: "provider_operation_id".to_owned(),
             });
         }
+        if self
+            .infinite_wait_policy
+            .as_ref()
+            .is_some_and(|infinite_wait_policy| infinite_wait_policy.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "infinite_wait_policy".to_owned(),
+            });
+        }
 
-        if self.state == AsyncOperationState::WaitingCallback && self.expires_at_unix_ms.is_none() {
+        if self.state == AsyncOperationState::WaitingCallback
+            && self.expires_at_unix_ms.is_none()
+            && self.infinite_wait_policy.is_none()
+        {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
-                reason: "waiting callback operations require an expiration".to_owned(),
+                reason: "waiting callback operations require an expiration or infinite_wait_policy"
+                    .to_owned(),
             });
         }
         if self.state == AsyncOperationState::CallbackReceived
@@ -309,10 +335,14 @@ impl AsyncOperation {
                 reason: "callback_received operations require an expiration".to_owned(),
             });
         }
-        if self.state == AsyncOperationState::Polling && self.expires_at_unix_ms.is_none() {
+        if self.state == AsyncOperationState::Polling
+            && self.expires_at_unix_ms.is_none()
+            && self.infinite_wait_policy.is_none()
+        {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
-                reason: "polling operations require an expiration".to_owned(),
+                reason: "polling operations require an expiration or infinite_wait_policy"
+                    .to_owned(),
             });
         }
         if self.state == AsyncOperationState::Created && self.provider_operation_id.is_some() {
@@ -3156,6 +3186,7 @@ fn operation_to_value(operation: &AsyncOperation) -> Value {
         "created_at_unix_ms": operation.created_at_unix_ms,
         "submitted_at_unix_ms": operation.submitted_at_unix_ms,
         "expires_at_unix_ms": operation.expires_at_unix_ms,
+        "infinite_wait_policy": operation.infinite_wait_policy,
         "completed_at_unix_ms": operation.completed_at_unix_ms,
         "expected_callback_payload_bytes": operation.expected_callback_payload_bytes,
         "resume_policy_reevaluation": operation.resume_policy_reevaluation,
@@ -3179,6 +3210,7 @@ fn operation_from_value(value: Value) -> Result<AsyncOperation, AsyncOperationEr
         created_at_unix_ms: required_u64(&value, "created_at_unix_ms")?,
         submitted_at_unix_ms: optional_u64(&value, "submitted_at_unix_ms")?,
         expires_at_unix_ms: optional_u64(&value, "expires_at_unix_ms")?,
+        infinite_wait_policy: optional_string(&value, "infinite_wait_policy")?,
         completed_at_unix_ms: optional_u64(&value, "completed_at_unix_ms")?,
         expected_callback_payload_bytes: optional_usize(&value, "expected_callback_payload_bytes")?,
         resume_policy_reevaluation: optional_bool(&value, "resume_policy_reevaluation")?

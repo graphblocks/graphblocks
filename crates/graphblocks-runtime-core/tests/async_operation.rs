@@ -613,6 +613,18 @@ fn async_operation_diagnostics_do_not_report_valid_waiting_operation() {
 }
 
 #[test]
+fn async_operation_diagnostics_allow_explicit_infinite_wait_policy() {
+    let operation = waiting_operation()
+        .with_infinite_wait_policy("operator_review_required")
+        .without_expiration();
+
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation(&operation),
+        Vec::new()
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_callback_payload_larger_than_limit() {
     let operation = waiting_operation().with_expected_callback_payload_bytes(4_096);
 
@@ -896,7 +908,7 @@ fn async_operation_validate_rejects_polling_without_expiration() {
         operation.validate(),
         Err(AsyncOperationError::InvalidOperation {
             operation_id: "op-1".to_owned(),
-            reason: "polling operations require an expiration".to_owned(),
+            reason: "polling operations require an expiration or infinite_wait_policy".to_owned(),
         })
     );
 }
@@ -2080,6 +2092,7 @@ fn async_operation_whitespace_identity_fields_are_rejected_before_registration()
         "node_id",
         "attempt_id",
         "provider_operation_id",
+        "infinite_wait_policy",
         "resume_token_hash",
         "idempotency_key",
         "expected_schema",
@@ -2092,6 +2105,7 @@ fn async_operation_whitespace_identity_fields_are_rejected_before_registration()
             "node_id" => operation.node_id = " \t".to_owned(),
             "attempt_id" => operation.attempt_id = " \t".to_owned(),
             "provider_operation_id" => operation.provider_operation_id = Some(" \t".to_owned()),
+            "infinite_wait_policy" => operation.infinite_wait_policy = Some(" \t".to_owned()),
             "resume_token_hash" => operation.resume_token_hash = " \t".to_owned(),
             "idempotency_key" => operation.idempotency_key = " \t".to_owned(),
             "expected_schema" => operation.expected_schema = " \t".to_owned(),
