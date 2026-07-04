@@ -999,9 +999,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   double-counted by multiple reconciled records for the same provisional measurement.
 - Rust usage ledgers now reject records with an empty `amounts` list, so late usage reconciliation
   and billing/quota projections cannot persist a meaningless no-op usage record as authoritative.
-- Rust usage reconciliation now rejects `occurred_at` timestamps that precede the source usage
-  record, preserving the amendment's late-final-usage ordering for both in-memory and SQLite
-  ledgers.
+- Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source
+  usage record, preserving the amendment's late-final-usage ordering for in-memory and SQLite
+  ledgers in both implementations.
 - `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
   reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
   bypass the ledger-issued authority shape required for fenced background execution.

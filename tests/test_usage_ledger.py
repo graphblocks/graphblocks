@@ -345,6 +345,31 @@ def test_usage_ledger_rejects_multiple_reconciliations_for_same_source_record() 
     assert ledger.totals_for_run("run-1") == [_tokens("21")]
 
 
+def test_usage_ledger_rejects_reconciliation_before_source_record() -> None:
+    ledger = InMemoryUsageLedger()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:05:00Z",
+            run_id="run-1",
+        )
+    )
+
+    with pytest.raises(ValueError, match="reconciled usage occurred_at must not precede source usage"):
+        ledger.reconcile(
+            provisional.record_id,
+            amounts=[_tokens("21")],
+            occurred_at="2026-06-22T00:04:59Z",
+            record_id="usage-reconciled",
+        )
+
+    assert ledger.records_for_run("run-1") == [provisional]
+    assert ledger.totals_for_run("run-1") == [_tokens("18")]
+
+
 def test_sqlite_usage_ledger_persists_records_across_reopen(tmp_path) -> None:
     path = tmp_path / "usage.sqlite3"
     record = UsageRecord(
@@ -476,6 +501,32 @@ def test_sqlite_usage_ledger_rejects_multiple_reconciliations_for_same_source_re
 
     assert ledger.records_for_run("run-1") == [provisional, first]
     assert ledger.totals_for_run("run-1") == [_tokens("21")]
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_rejects_reconciliation_before_source_record() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:05:00Z",
+            run_id="run-1",
+        )
+    )
+
+    with pytest.raises(ValueError, match="reconciled usage occurred_at must not precede source usage"):
+        ledger.reconcile(
+            provisional.record_id,
+            amounts=[_tokens("21")],
+            occurred_at="2026-06-22T00:04:59Z",
+            record_id="usage-reconciled",
+        )
+
+    assert ledger.records_for_run("run-1") == [provisional]
+    assert ledger.totals_for_run("run-1") == [_tokens("18")]
     ledger.close()
 
 

@@ -62,6 +62,15 @@ def _parse_datetime(owner: str, field_name: str, value: object) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _validate_reconciliation_order(source: UsageRecord, occurred_at: str) -> None:
+    if _parse_datetime("usage", "occurred_at", occurred_at) < _parse_datetime(
+        "usage",
+        "occurred_at",
+        source.occurred_at,
+    ):
+        raise ValueError("reconciled usage occurred_at must not precede source usage")
+
+
 @dataclass(frozen=True, slots=True)
 class UsageRecord:
     record_id: str
@@ -202,6 +211,7 @@ class InMemoryUsageLedger:
         record_id: str | None = None,
     ) -> UsageRecord:
         original = self.get(source_record_id)
+        _validate_reconciliation_order(original, occurred_at)
         reconciled = UsageRecord(
             record_id=record_id or f"{source_record_id}:reconciled",
             source="reconciled",
@@ -400,6 +410,7 @@ class SQLiteUsageLedger:
         record_id: str | None = None,
     ) -> UsageRecord:
         original = self.get(source_record_id)
+        _validate_reconciliation_order(original, occurred_at)
         reconciled = UsageRecord(
             record_id=record_id or f"{source_record_id}:reconciled",
             source="reconciled",
