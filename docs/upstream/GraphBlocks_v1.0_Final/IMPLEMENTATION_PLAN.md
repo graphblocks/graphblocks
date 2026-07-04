@@ -997,6 +997,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - Rust usage reconciliation now rejects `occurred_at` timestamps that precede the source usage
   record, preserving the amendment's late-final-usage ordering for both in-memory and SQLite
   ledgers.
+- `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
+  reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
+  bypass the ledger-issued authority shape required for fenced background execution.
 - `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
   cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
   provider work, finalization, optional tasks, and trials remain denied. Explicit continuation

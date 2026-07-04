@@ -568,7 +568,28 @@ impl ExhaustionController {
     }
 
     fn valid_permit(&self, permit: &BudgetPermit) -> bool {
-        permit.atomic_unit == self.atomic_unit_id
+        let unique_reservations = permit
+            .reservation_refs
+            .iter()
+            .collect::<BTreeSet<&String>>()
+            .len()
+            == permit.reservation_refs.len();
+
+        !permit.permit_id.trim().is_empty()
+            && !permit.owner.trim().is_empty()
+            && !permit.reservation_refs.is_empty()
+            && unique_reservations
+            && permit
+                .reservation_refs
+                .iter()
+                .all(|reservation_ref| !reservation_ref.trim().is_empty())
+            && !permit.policy_snapshot_digest.trim().is_empty()
+            && !permit.fencing_tokens.is_empty()
+            && permit
+                .fencing_tokens
+                .iter()
+                .all(|(budget_id, token)| !budget_id.trim().is_empty() && *token > 0)
+            && permit.atomic_unit == self.atomic_unit_id
             && self
                 .policy
                 .preset

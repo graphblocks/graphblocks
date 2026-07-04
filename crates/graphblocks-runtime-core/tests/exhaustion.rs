@@ -283,6 +283,28 @@ fn continuation_permit_expiration_uses_datetime_comparison() {
 }
 
 #[test]
+fn continuation_permit_must_carry_fencing_authority() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::FinishCurrentTurn,
+        ExhaustionUnit::Turn,
+        Some(
+            ContinuationEnvelope::new()
+                .with_max_additional_usage([tokens(100)])
+                .with_max_additional_steps(1),
+        ),
+    );
+    let mut unfenced_permit = permit();
+    unfenced_permit.fencing_tokens.clear();
+    let mut controller =
+        ExhaustionController::new(policy, "turn:1", 7).with_continuation_permit(unfenced_permit);
+
+    let denied = controller.admit(WorkKind::DeclaredFinalization, 8, None);
+
+    assert!(!denied.allowed);
+    assert_eq!(denied.reason, "invalid_permit");
+}
+
+#[test]
 fn continuation_usage_must_fit_permit_authorized_amounts() {
     let policy = ExhaustionPolicy::from_preset(
         ExhaustionPreset::FinishCurrentTurn,
