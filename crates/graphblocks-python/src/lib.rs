@@ -5694,6 +5694,14 @@ fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) ->
             "previous": previous,
             "next": next,
         }),
+        ApplicationProtocolError::RunMismatch {
+            expected_run_id,
+            actual_run_id,
+        } => json!({
+            "code": "run_mismatch",
+            "expectedRunId": expected_run_id,
+            "actualRunId": actual_run_id,
+        }),
         ApplicationProtocolError::InvalidToolResultEvent { source } => json!({
             "code": "invalid_tool_result_event",
             "source": format!("{source:?}"),
@@ -11715,6 +11723,55 @@ mod tests {
         assert_eq!(
             output.pointer("/updates/1/error/code"),
             Some(&json!("non_monotonic_sequence"))
+        );
+        assert_eq!(output.pointer("/state/length"), Some(&json!(1)));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_protocol_log_json_reports_run_mismatch() -> Result<(), String> {
+        let event = |event_id: &str, sequence: u64, run_id: &str| {
+            json!({
+                "kind": "JobProgress",
+                "metadata": {
+                    "eventId": event_id,
+                    "protocolVersion": "graphblocks.app.v1",
+                    "runId": run_id,
+                    "turnId": "turn-1",
+                    "sequence": sequence,
+                    "cursor": format!("cursor-{sequence}"),
+                    "occurredAtUnixMs": 1_000 + sequence
+                },
+                "payload": {"done": sequence, "total": 2}
+            })
+        };
+        let operations = json!([
+            {"kind": "append", "event": event("event-run-1", 1, "run-1")},
+            {"kind": "append", "event": event("event-run-2", 2, "run-2")}
+        ]);
+
+        let output_json = evaluate_application_protocol_log_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(false)));
+        assert_eq!(output.pointer("/updates/0/kind"), Some(&json!("appended")));
+        assert_eq!(output.pointer("/updates/1/kind"), Some(&json!("error")));
+        assert_eq!(
+            output.pointer("/updates/1/error/code"),
+            Some(&json!("run_mismatch"))
+        );
+        assert_eq!(
+            output.pointer("/updates/1/error/expectedRunId"),
+            Some(&json!("run-1"))
+        );
+        assert_eq!(
+            output.pointer("/updates/1/error/actualRunId"),
+            Some(&json!("run-2"))
         );
         assert_eq!(output.pointer("/state/length"), Some(&json!(1)));
         Ok(())

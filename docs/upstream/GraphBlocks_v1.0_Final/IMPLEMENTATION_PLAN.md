@@ -616,6 +616,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   by the first appended event and reject later events from another run, preserving per-run sequence
   and replay authority for background attach/cursor semantics. The shared application-protocol TCK
   now exercises this mixed-run rejection path and records the expected `run_mismatch` append error.
+  The PyO3 binding maps this runtime error to structured `run_mismatch` JSON with expected and
+  actual run identifiers, keeping native and Python adapter diagnostics aligned.
 - `AttachToRun` replay now has a typed runtime result that either returns retained missed events
   and the live-stream cursor, or reports expired-cursor recovery metadata.
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,
