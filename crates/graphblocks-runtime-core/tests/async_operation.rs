@@ -215,6 +215,27 @@ fn callback_endpoint_rejects_partial_operation_binding() {
 }
 
 #[test]
+fn callback_endpoint_rejects_zero_expiration() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+    )
+    .expect("endpoint is valid")
+    .with_expiration(0);
+
+    assert_eq!(
+        endpoint.validate(),
+        Err(AsyncOperationError::InvalidExpiration {
+            operation_id: "callback-endpoint-1".to_owned(),
+            created_at_unix_ms: 0,
+            expires_at_unix_ms: 0,
+        })
+    );
+}
+
+#[test]
 fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
     let auth = CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
         .expect("hmac auth is valid");

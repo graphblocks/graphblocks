@@ -873,6 +873,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   runtime boundary.
 - Callback submission validation now rejects zero `received_at_unix_ms` values before any
   `ExternalCallbackReceived` receipt can be journaled.
+- Runtime callback endpoint validation now rejects zero expiration timestamps, so mutated endpoint
+  references cannot silently create invalid callback admission windows.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

@@ -601,6 +601,13 @@ impl CallbackEndpointRef {
                 reason: "callback endpoint binding must include operation_id, run_id, node_id, attempt_id, and release_id together".to_owned(),
             });
         }
+        if self.expires_at_unix_ms == Some(0) {
+            return Err(AsyncOperationError::InvalidExpiration {
+                operation_id: self.endpoint_id.clone(),
+                created_at_unix_ms: 0,
+                expires_at_unix_ms: 0,
+            });
+        }
         self.auth.validate()
     }
 
