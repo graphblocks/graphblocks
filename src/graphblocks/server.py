@@ -808,6 +808,8 @@ class ServerAsyncCallbackRejection:
             callback_id=submission.callback_id,
             idempotency_key=submission.idempotency_key,
             run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
             status=_validate_non_empty_string("server async callback rejection", "status", status),
             reason="terminal_run",
             received_at=submission.received_at,

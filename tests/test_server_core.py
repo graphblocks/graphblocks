@@ -2408,6 +2408,8 @@ def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
             "callbackId": "cb-terminal",
             "idempotencyKey": "idem-callback-terminal",
             "runId": "run-terminal-1",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
             "status": "cancelled",
             "reason": "terminal_run",
             "receivedAt": "2026-07-03T00:00:02Z",
