@@ -2303,6 +2303,7 @@ fn incomplete_async_operation_result_preserves_committed_external_effect_after_l
             "workflow_dispatch",
             ToolEffectOutcome::Committed,
         )
+        .with_idempotency_key("idem-ci-1")
         .with_provider_effect_id("gha-run-1"),
     ]);
 
@@ -2347,6 +2348,28 @@ fn async_operation_result_rejects_invalid_external_effect_records() {
 }
 
 #[test]
+fn async_operation_result_rejects_committed_external_effect_without_idempotency_key() {
+    let missing_idempotency = AsyncOperationResult::cancelled("op-1").with_external_effects([
+        ExternalEffectRecord::new(
+            "effect-ticket-1",
+            "ticket-system",
+            "ticket.create",
+            ToolEffectOutcome::Committed,
+        )
+        .with_provider_effect_id("ticket-123"),
+    ]);
+
+    assert_eq!(
+        missing_idempotency.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "committed external effect effect-ticket-1 requires an idempotency key"
+                .to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_result_rejects_duplicate_external_effect_identities() {
     let duplicate_effect_id = AsyncOperationResult::completed("op-1").with_external_effects([
         ExternalEffectRecord::new(
@@ -2354,13 +2377,15 @@ fn async_operation_result_rejects_duplicate_external_effect_identities() {
             "ticket-system",
             "ticket.create",
             ToolEffectOutcome::Committed,
-        ),
+        )
+        .with_idempotency_key("idem-ticket-1"),
         ExternalEffectRecord::new(
             "effect-ticket-1",
             "ticket-system",
             "ticket.update",
             ToolEffectOutcome::Committed,
-        ),
+        )
+        .with_idempotency_key("idem-ticket-2"),
     ]);
     let duplicate_provider_effect_id =
         AsyncOperationResult::completed("op-2").with_external_effects([
@@ -2370,6 +2395,7 @@ fn async_operation_result_rejects_duplicate_external_effect_identities() {
                 "ticket.create",
                 ToolEffectOutcome::Committed,
             )
+            .with_idempotency_key("idem-ticket-1")
             .with_provider_effect_id("ticket-123"),
             ExternalEffectRecord::new(
                 "effect-ticket-2",
@@ -2377,6 +2403,7 @@ fn async_operation_result_rejects_duplicate_external_effect_identities() {
                 "ticket.update",
                 ToolEffectOutcome::Committed,
             )
+            .with_idempotency_key("idem-ticket-2")
             .with_provider_effect_id("ticket-123"),
         ]);
 

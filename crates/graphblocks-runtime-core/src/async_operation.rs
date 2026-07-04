@@ -1439,6 +1439,16 @@ impl AsyncOperationResult {
                     reason: format!("duplicate provider effect id {provider_effect_id}"),
                 });
             }
+            if effect.outcome == ToolEffectOutcome::Committed && effect.idempotency_key.is_none()
+            {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!(
+                        "committed external effect {} requires an idempotency key",
+                        effect.effect_id
+                    ),
+                });
+            }
             if effect.provider_effect_id.is_some()
                 && effect.outcome != ToolEffectOutcome::Committed
             {

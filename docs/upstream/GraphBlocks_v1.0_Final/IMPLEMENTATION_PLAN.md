@@ -868,6 +868,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-runtime-core` now keeps the callback wait expiration boundary through
   `CallbackReceived`, rejecting callback receipts that have no expiration even before scheduler
   resume is attempted.
+- Async operation results now reject committed external-effect records that omit an idempotency
+  key, preserving retry/cancellation audit semantics for effects that have already escaped the
+  runtime boundary.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
