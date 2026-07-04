@@ -551,9 +551,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timeout duration such as `30m`, deriving the durable callback deadline from `createdAtUnixMs`.
   It also accepts an explicit `infiniteWaitPolicy`, producing a `waiting_callback` operation with no
   expiration only when that unbounded wait policy is declared.
-  `async.await_callback@1` carries parsed timeout duration config into the wait projection so the
-  scheduler can enforce the same bound it compiled, and validates `onTimeout` as one of `fail`,
-  `cancel`, or `expire` rather than accepting arbitrary continuation policies.
+  `async.await_callback@1` carries parsed timeout duration config or an explicit
+  `infiniteWaitPolicy` into the wait projection so the scheduler can enforce the same boundary it
+  compiled, and validates `onTimeout` as one of `fail`, `cancel`, or `expire` rather than accepting
+  arbitrary continuation policies.
 - The stdlib runtime also exposes `async.poll_operation@1`, `async.complete_operation@1`,
   `async.cancel_operation@1`, and `async.expire_operation@1` projections for polling and terminal
   async operation results. `async.poll_operation@1` requires a timeout in its block config so

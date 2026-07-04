@@ -710,15 +710,33 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
         })
         .transpose()?
         .flatten();
+    let infinite_wait_policy = config
+        .as_object()
+        .map(|config| {
+            optional_infinite_wait_policy(
+                config,
+                "async.await_callback.invalid_config",
+                "async.await_callback@1",
+            )
+        })
+        .transpose()?
+        .flatten();
+
+    let mut wait = json!({
+        "state": "waiting_callback",
+        "operation": operation,
+        "checkpoint": checkpoint,
+        "onTimeout": on_timeout,
+    });
+    if let Some(timeout_ms) = timeout_ms {
+        wait["timeoutMs"] = json!(timeout_ms);
+    }
+    if let Some(infinite_wait_policy) = infinite_wait_policy {
+        wait["infiniteWaitPolicy"] = json!(infinite_wait_policy);
+    }
 
     Ok(json!({
-        "wait": {
-            "state": "waiting_callback",
-            "operation": operation,
-            "checkpoint": checkpoint,
-            "onTimeout": on_timeout,
-            "timeoutMs": timeout_ms,
-        }
+        "wait": wait
     }))
 }
 
