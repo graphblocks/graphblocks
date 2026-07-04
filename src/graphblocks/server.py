@@ -2317,6 +2317,7 @@ class GraphBlocksServerApp:
         state = "running"
         terminal_states = {
             "RunSucceeded": "succeeded",
+            "RunCompleted": "completed",
             "RunFailed": "failed",
             "RunCancelled": "cancelled",
             "RunPolicyStopped": "policy_stopped",
@@ -2434,6 +2435,29 @@ class GraphBlocksServerApp:
             "expired",
             "policy_stopped",
         }
+        event_terminal_state = None
+        for event in events:
+            event_kind = event.get("kind")
+            if event_kind == "RunSucceeded":
+                event_terminal_state = "succeeded"
+            elif event_kind == "RunCompleted":
+                event_terminal_state = "completed"
+            elif event_kind == "RunFailed":
+                event_terminal_state = "failed"
+            elif event_kind == "RunCancelled":
+                event_terminal_state = "cancelled"
+            elif event_kind == "RunPolicyStopped":
+                event_terminal_state = "policy_stopped"
+        if event_terminal_state is not None:
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "state": event_terminal_state,
+                    "error": f"run {run_id} is terminal with state {event_terminal_state}",
+                },
+            )
         status = control_states[operation]
         if operation == "pause_run":
             pause_kind = payload.get("pauseKind", "operator")

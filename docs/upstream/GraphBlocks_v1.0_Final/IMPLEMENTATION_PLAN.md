@@ -871,6 +871,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now treats non-retryable `failed` callback deliveries as terminal
   delivery projections, preventing late webhook responses from mutating a delivery after the
   runtime has already produced the mandatory pause/fail/no-op failure action.
+- `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
+  when the authoritative event stream has already reached a terminal `RunSucceeded`,
+  `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control
+  projections from reopening completed application or protocol streams.
 - `graphblocksd` now includes a server-side webhook HTTP client adapter that consumes the
   `graphblocks-runtime-core` signed webhook request, sends the exact canonical JSON body used for
   signing, maps response status and `Retry-After` back into the runtime delivery response model,

@@ -739,6 +739,62 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
     assert status_payload["completedAt"] == "2026-06-24T00:00:03Z"
 
 
+def test_server_app_rejects_run_control_after_terminal_event_stream() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    for suffix, terminal_kind, terminal_state in (
+        ("succeeded", "RunSucceeded", "succeeded"),
+        ("completed", "RunCompleted", "completed"),
+        ("failed", "RunFailed", "failed"),
+        ("cancelled", "RunCancelled", "cancelled"),
+        ("policy-stopped", "RunPolicyStopped", "policy_stopped"),
+    ):
+        run_id = f"run-terminal-control-{suffix}"
+        app._events_by_run_id[run_id] = (
+            {
+                "kind": "RunStarted",
+                "payload": {"runId": run_id},
+                "metadata": {
+                    "runId": run_id,
+                    "sequence": 1,
+                    "cursor": f"{run_id}:1",
+                    "releaseId": "release-terminal-control-1",
+                    "occurredAt": "2026-06-24T00:00:01Z",
+                },
+            },
+            {
+                "kind": terminal_kind,
+                "payload": {"status": terminal_state, "outputs": {}},
+                "metadata": {
+                    "runId": run_id,
+                    "sequence": 2,
+                    "cursor": f"{run_id}:2",
+                    "releaseId": "release-terminal-control-1",
+                    "occurredAt": "2026-06-24T00:00:02Z",
+                },
+            },
+        )
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/{run_id}/resume",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                requested_at="2026-06-24T00:00:03Z",
+            )
+        )
+
+        assert response.status_code == 409
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "runId": run_id,
+            "state": terminal_state,
+            "error": f"run {run_id} is terminal with state {terminal_state}",
+        }
+        assert app.run_controls(run_id) == ()
+
+
 def test_server_app_records_run_control_projection_without_mutating_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -778,6 +834,7 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
         )
     )
     assert run.status_code == 200
+    app._events_by_run_id["run-control-1"] = app._events_by_run_id["run-control-1"][:1]
 
     pause = app.handle(
         ServerRequest(
@@ -848,7 +905,7 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
         "runId": "run-control-1",
         "status": "paused_operator",
         "reason": "operator_hold",
-        "lastCursor": "run-control-1:2",
+        "lastCursor": "run-control-1:1",
     }
     paused_payload = json.loads(paused_status.body.decode("utf-8"))
     assert paused_payload["state"] == "paused_operator"
@@ -859,34 +916,34 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
         "runId": "run-control-1",
         "status": "expired",
         "reason": "retention_deadline",
-        "lastCursor": "run-control-1:2",
+        "lastCursor": "run-control-1:1",
     }
     expired_payload = json.loads(expired_status.body.decode("utf-8"))
     assert expired_payload["state"] == "expired"
     assert expired_payload["completedAt"] == "2026-06-24T00:01:04Z"
     event_payload = json.loads(events.body.decode("utf-8"))
-    assert [event["kind"] for event in event_payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert [event["kind"] for event in event_payload["events"]] == ["RunStarted"]
     assert app.run_controls("run-control-1") == (
         {
             "operation": "pause_run",
             "status": "paused_operator",
             "reason": "operator_hold",
             "occurredAt": "2026-06-24T00:01:01Z",
-            "lastCursor": "run-control-1:2",
+            "lastCursor": "run-control-1:1",
         },
         {
             "operation": "resume_run",
             "status": "resuming",
             "reason": None,
             "occurredAt": "2026-06-24T00:01:03Z",
-            "lastCursor": "run-control-1:2",
+            "lastCursor": "run-control-1:1",
         },
         {
             "operation": "expire_run",
             "status": "expired",
             "reason": "retention_deadline",
             "occurredAt": "2026-06-24T00:01:04Z",
-            "lastCursor": "run-control-1:2",
+            "lastCursor": "run-control-1:1",
         },
     )
     with pytest.raises(TypeError):
