@@ -312,6 +312,18 @@ impl AsyncOperation {
                 reason: "created operations cannot have provider_operation_id".to_owned(),
             });
         }
+        if self.state == AsyncOperationState::Created && self.submitted_at_unix_ms.is_some() {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "created operations cannot have submitted_at".to_owned(),
+            });
+        }
+        if self.state == AsyncOperationState::Created && self.completed_at_unix_ms.is_some() {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "created operations cannot have completed_at".to_owned(),
+            });
+        }
         if self.state != AsyncOperationState::Created && self.submitted_at_unix_ms.is_none() {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
