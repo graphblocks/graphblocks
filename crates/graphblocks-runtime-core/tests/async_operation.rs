@@ -721,6 +721,18 @@ fn async_operation_validate_rejects_inconsistent_state_timestamps_and_provider_i
         })
     );
 
+    let mut created_with_expires_at = created_with_provider.clone();
+    created_with_expires_at.provider_operation_id = None;
+    created_with_expires_at.expires_at_unix_ms = Some(2_000);
+
+    assert_eq!(
+        created_with_expires_at.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-created".to_owned(),
+            reason: "created operations cannot have expires_at".to_owned(),
+        })
+    );
+
     for state in [
         AsyncOperationState::Submitted,
         AsyncOperationState::WaitingCallback,
