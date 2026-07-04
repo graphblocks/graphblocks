@@ -530,6 +530,31 @@ fn retry_then_dead_letter_failure_does_not_force_run_terminal_action() {
 }
 
 #[test]
+fn dead_letter_rejects_zero_dead_lettered_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+
+    let error = CallbackDeadLetter::from_delivery(dead_lettered, 0)
+        .expect_err("dead-letter timestamp must be positive");
+
+    assert_eq!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+            field: "dead_lettered_at_unix_ms".to_owned(),
+        }
+    );
+}
+
+#[test]
 fn ordered_delivery_blocks_later_events_until_prior_delivery_is_terminal() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

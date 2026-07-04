@@ -895,6 +895,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-runtime-core` now validates callback delivery records before SQLite persistence and
   after replay, rejecting acknowledged or otherwise terminal deliveries that still carry retry
   timestamps.
+- Callback dead-letter construction now rejects zero `dead_lettered_at_unix_ms` values, keeping
+  durable redrive/audit projections tied to a real recorded timestamp.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control
