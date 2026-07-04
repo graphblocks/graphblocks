@@ -172,6 +172,12 @@ def _validate_mandatory_callback_policy(
         raise ValueError(
             f"{owner} mandatory delivery requires retry, dead-letter, pause-run, or fail-run failure policy"
         )
+    explicitly_retrying = (
+        failure_policy == "retry_then_dead_letter"
+        and ("failurePolicy" in config or "failure_policy" in config)
+    )
+    if explicitly_retrying and not _has_callback_dead_letter_config(config, delivery):
+        raise ValueError(f"{owner} retrying callback failure policy requires dead-letter or fallback behavior")
     if failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES and not _has_callback_dead_letter_config(config, delivery):
         raise ValueError(f"{owner} mandatory callback failure policy requires dead-letter or fallback behavior")
 

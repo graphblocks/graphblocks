@@ -767,8 +767,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projections validate the spec failure policy literals before storage, and ordered delivery
   requests are rejected unless the target kind can preserve run ordering. Mandatory delivery
   projections cannot use best-effort failure handling unless an explicit dead-letter configuration
-  is supplied. Route validation rejects callback delivery projections that mark themselves as a
-  source of truth. Subscription creation timestamps
+  is supplied, and projections that explicitly select `retry_then_dead_letter` must declare a
+  dead-letter or fallback behavior before storage. Route validation rejects callback delivery
+  projections that mark themselves as a source of truth. Subscription creation timestamps
   are validated as ISO datetimes before storage.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
