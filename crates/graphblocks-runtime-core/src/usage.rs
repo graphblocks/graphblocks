@@ -689,6 +689,11 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
             });
         }
     }
+    if record.amounts.is_empty() {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage amounts must not be empty".to_string(),
+        });
+    }
     for amount in &record.amounts {
         if amount.amount < 0 {
             return Err(UsageLedgerError::InvalidRecord {

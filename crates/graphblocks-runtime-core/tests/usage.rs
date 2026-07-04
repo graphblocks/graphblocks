@@ -56,6 +56,13 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         [tokens(12)],
         0,
     );
+    let empty_amounts = UsageRecord::new(
+        "usage-empty-amounts",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [],
+        1_000,
+    );
     let negative_amount = UsageRecord::new(
         "usage-negative",
         UsageSource::RuntimeMeasured,
@@ -144,6 +151,18 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         sqlite.append(zero_occurred_at),
         Err(UsageLedgerError::InvalidRecord {
             message: "usage occurred_at_unix_ms must be positive".to_string()
+        })
+    );
+    assert_eq!(
+        memory.append(empty_amounts.clone()),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amounts must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(empty_amounts),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amounts must not be empty".to_string()
         })
     );
     assert_eq!(
