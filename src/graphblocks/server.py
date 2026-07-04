@@ -2344,7 +2344,8 @@ class GraphBlocksServerApp:
                 completed_at = updated_at
 
         controls = self._run_controls_by_run_id.get(run_id, ())
-        if controls:
+        terminal_statuses = {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}
+        if controls and state not in terminal_statuses:
             latest_control = controls[-1]
             control_status = latest_control.get("status")
             if isinstance(control_status, str) and control_status:

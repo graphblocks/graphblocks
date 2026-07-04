@@ -875,6 +875,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control
   projections from reopening completed application or protocol streams.
+- Server run-status projection now keeps terminal application/protocol events authoritative over
+  stale pause/resume control projections, so a completed event stream cannot continue to appear
+  paused or resumable in `GetRunStatus`/`ListRuns`.
 - `graphblocksd` now includes a server-side webhook HTTP client adapter that consumes the
   `graphblocks-runtime-core` signed webhook request, sends the exact canonical JSON body used for
   signing, maps response status and `Retry-After` back into the runtime delivery response model,

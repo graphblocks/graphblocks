@@ -2829,6 +2829,59 @@ def test_server_app_reports_run_status_from_authoritative_events() -> None:
     }
 
 
+def test_server_app_terminal_run_status_overrides_stale_control_projection() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-status-terminal-control-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-status-terminal-control-1"},
+            "metadata": {
+                "runId": "run-status-terminal-control-1",
+                "sequence": 1,
+                "cursor": "run-status-terminal-control-1:1",
+                "releaseId": "release-status-terminal-control-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+        {
+            "kind": "RunCompleted",
+            "payload": {"status": "completed", "outputs": {}},
+            "metadata": {
+                "runId": "run-status-terminal-control-1",
+                "sequence": 2,
+                "cursor": "run-status-terminal-control-1:2",
+                "releaseId": "release-status-terminal-control-1",
+                "occurredAt": "2026-07-02T00:00:02Z",
+            },
+        },
+    )
+    app._run_controls_by_run_id["run-status-terminal-control-1"] = (
+        {
+            "operation": "pause_run",
+            "status": "paused_operator",
+            "reason": "operator_hold",
+            "occurredAt": "2026-07-02T00:00:01Z",
+            "lastCursor": "run-status-terminal-control-1:1",
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-status-terminal-control-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["state"] == "completed"
+    assert payload["completedAt"] == "2026-07-02T00:00:02Z"
+    assert payload["waitingOn"] == []
+
+
 def test_server_app_lists_run_statuses_from_authoritative_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
