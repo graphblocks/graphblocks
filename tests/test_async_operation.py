@@ -500,7 +500,7 @@ def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
             submitted_at="2026-07-02T00:00:01Z",
         )
 
-    with raises_value_error("async operation created state must not have submitted_at or completed_at"):
+    with raises_value_error("async operation created state must not have submitted_at, completed_at, or expires_at"):
         graphblocks.AsyncOperation(
             operation_id="op-ci-1",
             run_id="run-1",
@@ -513,6 +513,21 @@ def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             completed_at="2026-07-02T00:10:05Z",
+        )
+
+    with raises_value_error("async operation created state must not have submitted_at, completed_at, or expires_at"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="created",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            expires_at="2026-07-02T00:30:00Z",
         )
 
 

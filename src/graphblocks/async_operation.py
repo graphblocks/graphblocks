@@ -239,8 +239,10 @@ class AsyncOperation:
                     field_name,
                     _validate_non_empty_string("async operation", field_name, value),
                 )
-        if self.state == "created" and (self.submitted_at is not None or self.completed_at is not None):
-            raise ValueError("async operation created state must not have submitted_at or completed_at")
+        if self.state == "created" and (
+            self.submitted_at is not None or self.completed_at is not None or self.expires_at is not None
+        ):
+            raise ValueError("async operation created state must not have submitted_at, completed_at, or expires_at")
         if self.callback_ref is not None and self.polling_ref is not None:
             raise ValueError("async operation must not define both callback_ref and polling_ref")
         if self.state in {

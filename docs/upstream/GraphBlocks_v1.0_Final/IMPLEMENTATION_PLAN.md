@@ -493,7 +493,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback/polling wait states that omit their required callback or polling reference.
 - The Python `AsyncOperation` facade now validates state/timestamp consistency: non-created states
   require `submitted_at`, terminal states require `completed_at`, and `created` records cannot
-  already carry submitted or completed timestamps.
+  already carry submitted, completed, or expiration timestamps.
 - The Python `AsyncOperation` facade now validates ISO datetime syntax and ordering for
   `created_at`, `submitted_at`, `completed_at`, and `expires_at`, including offset-aware comparisons
   for submitted-before-created, completed-before-submitted, non-positive expiry windows, and
