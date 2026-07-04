@@ -349,8 +349,8 @@ class BudgetPermit:
         for reference, token in fencing_tokens.items():
             if not isinstance(reference, str) or not reference.strip():
                 raise ValueError("budget permit fencing token references must be non-empty strings")
-            if not isinstance(token, int) or isinstance(token, bool) or token < 0:
-                raise ValueError("budget permit fencing token values must be non-negative integers")
+            if not isinstance(token, int) or isinstance(token, bool) or token <= 0:
+                raise ValueError("budget permit fencing token values must be positive integers")
         object.__setattr__(self, "fencing_tokens", MappingProxyType(fencing_tokens))
 
     def allows(self, amounts: list[UsageAmount]) -> bool:

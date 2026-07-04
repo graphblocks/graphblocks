@@ -65,9 +65,11 @@ def test_budget_permit_rejects_invalid_fencing_tokens() -> None:
         BudgetPermit(**base, fencing_tokens=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="budget permit fencing token references must be non-empty strings"):
         BudgetPermit(**base, fencing_tokens={" ": 1})
-    with pytest.raises(ValueError, match="budget permit fencing token values must be non-negative integers"):
+    with pytest.raises(ValueError, match="budget permit fencing token values must be positive integers"):
         BudgetPermit(**base, fencing_tokens={"budget-1": True})  # type: ignore[dict-item]
-    with pytest.raises(ValueError, match="budget permit fencing token values must be non-negative integers"):
+    with pytest.raises(ValueError, match="budget permit fencing token values must be positive integers"):
+        BudgetPermit(**base, fencing_tokens={"budget-1": 0})
+    with pytest.raises(ValueError, match="budget permit fencing token values must be positive integers"):
         BudgetPermit(**base, fencing_tokens={"budget-1": -1})
     with pytest.raises(ValueError, match="budget permit fencing_tokens must not be empty"):
         BudgetPermit(**base, fencing_tokens={})

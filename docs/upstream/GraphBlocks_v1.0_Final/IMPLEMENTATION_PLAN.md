@@ -1005,6 +1005,8 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
   reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
   bypass the ledger-issued authority shape required for fenced background execution.
+- Python `BudgetPermit` validation now requires positive fencing token values, aligning the
+  authoring/schema facade with the Rust runtime admission guard for fenced budget continuation.
 - `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
   cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
   provider work, finalization, optional tasks, and trials remain denied. Explicit continuation
