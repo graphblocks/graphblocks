@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import permutations
 import json
 
 import graphblocks
@@ -1953,6 +1954,122 @@ def test_server_app_rejects_second_async_callback_for_same_operation_attempt() -
             "receivedAt": "2026-07-03T00:00:02Z",
         },
     )
+
+
+def test_server_app_deterministic_callback_race_permutations_keep_first_receipt_authoritative() -> None:
+    trailing_callbacks = (
+        {
+            "label": "exact_replay",
+            "callback_id": "cb-1",
+            "idempotency_key": "idem-callback-1",
+            "attempt_id": "attempt-1",
+            "node_id": "waitCI",
+            "payload": {"status": "completed", "sequence": 1},
+            "expected_status": 200,
+            "expected_reason": None,
+        },
+        {
+            "label": "duplicate_operation",
+            "callback_id": "cb-2",
+            "idempotency_key": "idem-callback-2",
+            "attempt_id": "attempt-1",
+            "node_id": "waitCI",
+            "payload": {"status": "completed", "sequence": 2},
+            "expected_status": 409,
+            "expected_reason": "duplicate_operation_receipt",
+        },
+        {
+            "label": "stale_attempt",
+            "callback_id": "cb-stale",
+            "idempotency_key": "idem-callback-stale",
+            "attempt_id": "attempt-0",
+            "node_id": "waitCI",
+            "payload": {"status": "completed", "sequence": 0},
+            "expected_status": 409,
+            "expected_reason": "stale_attempt",
+        },
+        {
+            "label": "wrong_node",
+            "callback_id": "cb-wrong-node",
+            "idempotency_key": "idem-callback-wrong-node",
+            "attempt_id": "attempt-1",
+            "node_id": "otherWait",
+            "payload": {"status": "completed", "sequence": 3},
+            "expected_status": 409,
+            "expected_reason": "node_mismatch",
+        },
+    )
+
+    for permutation_index, callback_order in enumerate(permutations(trailing_callbacks), start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+        app._events_by_run_id["run-1"] = (
+            {
+                "kind": "RunStarted",
+                "payload": {"runId": "run-1"},
+                "metadata": {
+                    "runId": "run-1",
+                    "sequence": 1,
+                    "cursor": "run-1:1",
+                    "releaseId": "release-1",
+                    "occurredAt": "2026-07-03T00:00:00Z",
+                },
+            },
+        )
+
+        first = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": "cb-1",
+                        "attempt_id": "attempt-1",
+                        "run_id": "run-1",
+                        "node_id": "waitCI",
+                        "payload": {"status": "completed", "sequence": 1},
+                    }
+                ).encode("utf-8"),
+                requested_at="2026-07-03T00:00:01Z",
+            )
+        )
+        assert first.status_code == 202, f"permutation {permutation_index}"
+
+        expected_reasons: list[str] = []
+        for callback_index, callback in enumerate(callback_order, start=2):
+            response = app.handle(
+                ServerRequest(
+                    method="POST",
+                    path="/callbacks/op-ci-1",
+                    headers={
+                        "Authorization": "Bearer token-1",
+                        "GraphBlocks-Idempotency-Key": callback["idempotency_key"],
+                    },
+                    query={},
+                    cookies={},
+                    body=json.dumps(
+                        {
+                            "callback_id": callback["callback_id"],
+                            "attempt_id": callback["attempt_id"],
+                            "run_id": "run-1",
+                            "node_id": callback["node_id"],
+                            "payload": callback["payload"],
+                        }
+                    ).encode("utf-8"),
+                    requested_at=f"2026-07-03T00:00:0{callback_index}Z",
+                )
+            )
+            assert response.status_code == callback["expected_status"], callback["label"]
+            if callback["expected_reason"] is not None:
+                expected_reasons.append(callback["expected_reason"])
+
+        assert len(app.callback_submissions("op-ci-1")) == 1, f"permutation {permutation_index}"
+        assert app.callback_submissions("op-ci-1")[0].callback_id == "cb-1"
+        assert [
+            rejection["reason"] for rejection in app.async_callback_rejections("op-ci-1")
+        ] == expected_reasons
 
 
 def test_server_app_rejects_async_callback_scope_change_for_existing_operation() -> None:
