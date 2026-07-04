@@ -241,6 +241,8 @@ class AsyncOperation:
                 )
         if self.state == "created" and (self.submitted_at is not None or self.completed_at is not None):
             raise ValueError("async operation created state must not have submitted_at or completed_at")
+        if self.callback_ref is not None and self.polling_ref is not None:
+            raise ValueError("async operation must not define both callback_ref and polling_ref")
         if self.state in {
             "submitted",
             "waiting_callback",

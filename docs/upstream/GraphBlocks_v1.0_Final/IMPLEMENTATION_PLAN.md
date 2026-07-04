@@ -859,6 +859,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `SqliteAsyncOperationStore` now serializes durable callback admission across load, idempotency
   evaluation, and persistence, with a concurrency regression test proving duplicate callback
   deliveries produce one resume winner and duplicate receipts for the remaining workers.
+- Python `AsyncOperation` records now reject ambiguous waits that define both `callback_ref` and
+  `polling_ref`, so each external operation has one authoritative completion path before the
+  scheduler can enter `WAITING_CALLBACK` or `POLLING`.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

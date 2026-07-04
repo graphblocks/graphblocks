@@ -617,6 +617,24 @@ def test_async_operation_rejects_provider_identity_before_submission() -> None:
         )
 
 
+def test_async_operation_rejects_ambiguous_callback_and_polling_refs() -> None:
+    with raises_value_error("async operation must not define both callback_ref and polling_ref"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ambiguous-wait-1",
+            run_id="run-1",
+            node_id="waitExternal",
+            attempt_id="attempt-1",
+            kind="external_provider_job",
+            expected_schema="schemas/ExternalResult@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ambiguous-wait-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ambiguous-1",
+            polling_ref="poll-ambiguous-1",
+            expires_at="2026-07-02T00:30:00Z",
+        )
+
+
 def test_async_operation_rejects_unbounded_callback_and_polling_waits() -> None:
     with raises_value_error("async operation callback wait requires expires_at or explicit infinite_wait_policy"):
         graphblocks.AsyncOperation.created(
@@ -1009,6 +1027,7 @@ def run_direct() -> None:
         test_async_operation_rejects_direct_wait_states_without_required_refs,
         test_async_operation_rejects_direct_unbounded_wait_states,
         test_async_operation_rejects_provider_identity_before_submission,
+        test_async_operation_rejects_ambiguous_callback_and_polling_refs,
         test_async_operation_rejects_unbounded_callback_and_polling_waits,
         test_async_operation_accepts_explicit_infinite_wait_policy,
         test_async_operation_wait_boundary_deterministic_fuzz,
