@@ -878,6 +878,36 @@ fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_acknowledged_retry_timestamp_conflict() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut acknowledged = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        2_000,
+    );
+    acknowledged.next_retry_at_unix_ms = Some(2_500);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    let error = queue
+        .upsert_delivery(acknowledged)
+        .expect_err("acknowledged delivery cannot retain a retry timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("acknowledged delivery has retry timestamp")
+    ));
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_restart() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

@@ -892,6 +892,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` callback delivery projections now reject status/timestamp conflicts
   such as pending deliveries that already have a delivered timestamp or terminal deliveries that
   still carry a future retry timestamp, keeping retry metadata scoped to live retry attempts.
+- `graphblocks-runtime-core` now validates callback delivery records before SQLite persistence and
+  after replay, rejecting acknowledged or otherwise terminal deliveries that still carry retry
+  timestamps.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control

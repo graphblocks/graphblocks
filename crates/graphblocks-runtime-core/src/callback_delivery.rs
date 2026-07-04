@@ -756,6 +756,7 @@ impl SqliteCallbackDeliveryQueue {
     }
 
     pub fn upsert_delivery(&self, delivery: CallbackDelivery) -> Result<(), CallbackDeliveryError> {
+        validate_callback_delivery(&delivery)?;
         let connection = self
             .connection
             .lock()
@@ -1974,7 +1975,7 @@ fn delivery_to_value(delivery: &CallbackDelivery) -> Value {
 }
 
 fn delivery_from_value(value: Value) -> Result<CallbackDelivery, CallbackDeliveryError> {
-    Ok(CallbackDelivery {
+    let delivery = CallbackDelivery {
         delivery_id: callback_required_string(&value, "delivery_id")?,
         subscription_id: callback_required_string(&value, "subscription_id")?,
         event_id: callback_required_string(&value, "event_id")?,
@@ -1995,7 +1996,52 @@ fn delivery_from_value(value: Value) -> Result<CallbackDelivery, CallbackDeliver
         redrive_count: callback_required_u32(&value, "redrive_count")?,
         last_redrive_operator: callback_optional_string(&value, "last_redrive_operator")?,
         last_redrive_reason: callback_optional_string(&value, "last_redrive_reason")?,
-    })
+    };
+    validate_callback_delivery(&delivery)?;
+    Ok(delivery)
+}
+
+fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), CallbackDeliveryError> {
+    if delivery.attempt == 0 {
+        return Err(CallbackDeliveryError::Storage {
+            message: "callback delivery attempt must be positive".to_owned(),
+        });
+    }
+    if callback_delivery_status_is_terminal(delivery.status)
+        && delivery.next_retry_at_unix_ms.is_some()
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: format!(
+                "{} delivery has retry timestamp",
+                callback_delivery_status_as_str(delivery.status)
+            ),
+        });
+    }
+    if matches!(
+        delivery.status,
+        CallbackDeliveryStatus::Pending | CallbackDeliveryStatus::Delivering
+    ) && delivery.delivered_at_unix_ms.is_some()
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: format!(
+                "{} delivery has delivered timestamp",
+                callback_delivery_status_as_str(delivery.status)
+            ),
+        });
+    }
+    if matches!(
+        delivery.status,
+        CallbackDeliveryStatus::Pending | CallbackDeliveryStatus::Delivering
+    ) && delivery.acknowledged_at_unix_ms.is_some()
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: format!(
+                "{} delivery has acknowledged timestamp",
+                callback_delivery_status_as_str(delivery.status)
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDeliveryError> {
