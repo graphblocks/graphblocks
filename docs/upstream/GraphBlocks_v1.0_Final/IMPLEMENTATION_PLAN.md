@@ -492,6 +492,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   expiry boundary, so late callbacks cannot be projected as resumable operation state. Polling
   and callback-backed terminal completions or failures also reject `completed_at` values after
   `expires_at`, preventing late provider results from being projected as current operation outcomes.
+- Callback-backed terminal transitions now reject `completed_at` values that precede the durable
+  callback receipt timestamp, with deterministic transition fuzz coverage across completed, failed,
+  cancelled, and expired outcomes.
 - The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.

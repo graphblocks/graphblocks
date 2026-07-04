@@ -380,6 +380,12 @@ class AsyncOperation:
             raise ValueError("async operation terminal state cannot transition")
         if state not in ASYNC_OPERATION_ALLOWED_TRANSITIONS.get(self.state, frozenset()):
             raise ValueError(f"async operation cannot transition from {self.state} to {state}")
+        completed_at = changes.get("completed_at")
+        if state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is not None and isinstance(completed_at, str):
+            receipt_at = _parse_iso_datetime("async operation", "completed_at", self.completed_at)
+            terminal_at = _parse_iso_datetime("async operation", "completed_at", completed_at)
+            if terminal_at < receipt_at:
+                raise ValueError("async operation terminal completed_at must not be before callback receipt")
         return replace(self, state=state, **changes)
 
     def _has_wait_boundary(self) -> bool:

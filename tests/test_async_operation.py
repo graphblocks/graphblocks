@@ -813,6 +813,65 @@ def test_async_operation_rejects_callback_completion_after_expiry() -> None:
         ).mark_resuming().complete(completed_at="2026-07-02T00:30:01Z")
 
 
+def test_async_operation_rejects_terminal_transition_before_callback_receipt() -> None:
+    with raises_value_error("async operation terminal completed_at must not be before callback receipt"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+            expires_at="2026-07-02T00:30:00Z",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+            completed_at="2026-07-02T00:10:00Z"
+        ).mark_resuming().complete(completed_at="2026-07-02T00:09:59Z")
+
+
+def test_async_operation_callback_terminal_ordering_deterministic_fuzz() -> None:
+    rng = random.Random(6017)
+    terminals: tuple[tuple[str, Callable[[graphblocks.AsyncOperation, str], graphblocks.AsyncOperation]], ...] = (
+        ("completed", lambda operation, completed_at: operation.complete(completed_at=completed_at)),
+        ("failed", lambda operation, completed_at: operation.fail(completed_at=completed_at)),
+        ("cancelled", lambda operation, completed_at: operation.cancel(completed_at=completed_at)),
+        ("expired", lambda operation, completed_at: operation.expire(completed_at=completed_at)),
+    )
+
+    for case in range(64):
+        terminal_name, transition = terminals[rng.randrange(len(terminals))]
+        receipt_second = 5 + rng.randrange(20)
+        terminal_delta = rng.randrange(-4, 5)
+        terminal_second = receipt_second + terminal_delta
+        received = graphblocks.AsyncOperation.created(
+            operation_id=f"op-ci-{case}",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key=f"idem-ci-{case}",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref=f"cbep-ci-{case}",
+            expires_at="2026-07-02T00:30:00Z",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+            completed_at=f"2026-07-02T00:00:{receipt_second:02d}Z"
+        ).mark_resuming()
+        terminal_at = f"2026-07-02T00:00:{terminal_second:02d}Z"
+
+        if terminal_delta < 0:
+            with raises_value_error("async operation terminal completed_at must not be before callback receipt"):
+                transition(received, terminal_at)
+        else:
+            terminal = transition(received, terminal_at)
+            assert terminal.state == terminal_name
+            assert terminal.completed_at == terminal_at
+
+
 def test_async_operation_rejects_terminal_failure_after_expiry() -> None:
     with raises_value_error("async operation polling failure must not be after expires_at"):
         graphblocks.AsyncOperation.created(
@@ -901,6 +960,8 @@ def run_direct() -> None:
         test_async_operation_rejects_callback_receipt_after_expiry,
         test_async_operation_rejects_polling_completion_after_expiry,
         test_async_operation_rejects_callback_completion_after_expiry,
+        test_async_operation_rejects_terminal_transition_before_callback_receipt,
+        test_async_operation_callback_terminal_ordering_deterministic_fuzz,
         test_async_operation_rejects_terminal_failure_after_expiry,
         test_async_operation_requires_callback_receipt_timestamp,
         test_async_operation_result_exports_are_available,
