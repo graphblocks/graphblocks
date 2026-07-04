@@ -1399,6 +1399,37 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     assert status_payload["activeOperations"] == ["op-ci-1"]
 
 
+def test_server_app_rejects_async_callback_operation_id_mismatch() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-path",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-mismatch"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "operationId": "op-ci-body",
+                    "callback_id": "cb-mismatch",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server async callback operation_id must match callback endpoint operation_id",
+    }
+    assert app.callback_submissions("op-ci-path") == ()
+    assert app.callback_submissions("op-ci-body") == ()
+
+
 def test_server_app_rejects_async_callback_when_required_authentication_is_unconfigured() -> None:
     app = GraphBlocksServerApp(require_async_callback_authentication=True)
 

@@ -695,6 +695,20 @@ class ServerAsyncCallbackSubmission:
         body = json.loads(request.body.decode("utf-8") or "{}")
         if not isinstance(body, Mapping):
             raise ValueError("server async callback body must be a JSON object")
+        declared_operation_id = body.get("operation_id", body.get("operationId"))
+        if declared_operation_id is not None:
+            declared_operation_id = _validate_non_empty_string(
+                "server async callback",
+                "operation_id",
+                declared_operation_id,
+            )
+            endpoint_operation_id = _validate_non_empty_string(
+                "server async callback",
+                "operation_id",
+                operation_id,
+            )
+            if declared_operation_id != endpoint_operation_id:
+                raise ValueError("server async callback operation_id must match callback endpoint operation_id")
         headers = request.headers
         idempotency_key = body.get(
             "idempotency_key",
