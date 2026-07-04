@@ -791,6 +791,22 @@ fn async_operation_validate_rejects_callback_received_without_valid_receipt_time
 }
 
 #[test]
+fn async_operation_validate_rejects_callback_received_without_expiration() {
+    let mut operation = waiting_operation();
+    operation.state = AsyncOperationState::CallbackReceived;
+    operation.expires_at_unix_ms = None;
+    operation.completed_at_unix_ms = Some(1_500);
+
+    assert_eq!(
+        operation.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "callback_received operations require an expiration".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_validate_rejects_polling_without_expiration() {
     let mut operation = waiting_operation();
     operation.state = AsyncOperationState::Polling;

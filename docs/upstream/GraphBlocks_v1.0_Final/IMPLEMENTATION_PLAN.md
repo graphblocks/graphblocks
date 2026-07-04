@@ -865,6 +865,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python and Rust compilers now reject graph-authored async operation configs that define both
   callback and polling completion refs as `InvalidAsyncOperation`, catching ambiguous external
   completion authority before deployment.
+- `graphblocks-runtime-core` now keeps the callback wait expiration boundary through
+  `CallbackReceived`, rejecting callback receipts that have no expiration even before scheduler
+  resume is attempted.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
