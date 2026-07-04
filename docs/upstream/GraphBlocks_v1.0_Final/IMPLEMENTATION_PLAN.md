@@ -455,6 +455,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback receipt duplicate detection now rejects idempotency-key conflicts when a replay mutates
   callback identity or payload digest; in-memory, SQLite-reopen, and deterministic fuzz tests verify
   that the original receipt remains authoritative and no second resume is produced.
+- Server callback ingress now treats the first accepted receipt for an operation/run/node/attempt
+  as the authoritative resume signal. Exact idempotent replays return `duplicate`; later callbacks
+  for the same bound operation attempt but with a new idempotency key are rejected as
+  `duplicate_operation_receipt` and are not appended as accepted submissions.
 - Async callback ingestion now supports durable pre-operation quarantine for the race where an
   external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate

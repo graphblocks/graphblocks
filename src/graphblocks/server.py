@@ -925,6 +925,22 @@ class ServerAsyncCallbackRejection:
             received_at=submission.received_at,
         )
 
+    @classmethod
+    def duplicate_operation_receipt(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="duplicate_operation_receipt",
+            received_at=submission.received_at,
+        )
+
     def protocol_value(self) -> dict[str, object]:
         value: dict[str, object] = {
             "operationId": self.operation_id,
@@ -1936,6 +1952,23 @@ class GraphBlocksServerApp:
                                 "error": "async callback operation is already bound to a different run node attempt",
                             },
                         )
+                    rejection = ServerAsyncCallbackRejection.duplicate_operation_receipt(submission)
+                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                        rejection,
+                    )
+                    payload = {
+                        "ok": False,
+                        "operationId": submission.operation_id,
+                        "error": "async callback operation already has a recorded receipt",
+                    }
+                    if submission.run_id is not None:
+                        payload["runId"] = submission.run_id
+                    if submission.attempt_id is not None:
+                        payload["attemptId"] = submission.attempt_id
+                    if submission.node_id is not None:
+                        payload["nodeId"] = submission.node_id
+                    return ServerResponse.json(409, payload)
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
