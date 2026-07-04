@@ -260,6 +260,27 @@ fn inactive_or_expired_subscription_does_not_schedule_delivery() {
 }
 
 #[test]
+fn callback_subscription_rejects_expiration_not_after_creation() {
+    for expires_at_unix_ms in [899, 900] {
+        let mut subscription = subscription(
+            EventFilter::new(),
+            CallbackFailurePolicy::RetryThenDeadLetter,
+        );
+        subscription.expires_at_unix_ms = Some(expires_at_unix_ms);
+
+        assert_eq!(
+            subscription.validate(),
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                    field: "expires_at_unix_ms".to_owned(),
+                }
+            ),
+            "expiration {expires_at_unix_ms} should be after creation",
+        );
+    }
+}
+
+#[test]
 fn run_scoped_subscription_does_not_receive_other_run_events() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = CallbackSubscription::new(

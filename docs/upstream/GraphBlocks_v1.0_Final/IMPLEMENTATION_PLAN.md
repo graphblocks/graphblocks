@@ -875,6 +875,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `ExternalCallbackReceived` receipt can be journaled.
 - Runtime callback endpoint validation now rejects zero expiration timestamps, so mutated endpoint
   references cannot silently create invalid callback admission windows.
+- Runtime callback subscription validation now rejects expiration timestamps that are not after
+  subscription creation, preserving durable replay/subscription lifetime ordering.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

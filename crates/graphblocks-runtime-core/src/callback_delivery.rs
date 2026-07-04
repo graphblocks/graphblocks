@@ -411,6 +411,14 @@ impl CallbackSubscription {
                 field: "replay_from_cursor".to_owned(),
             });
         }
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at| expires_at <= self.created_at_unix_ms)
+        {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "expires_at_unix_ms".to_owned(),
+            });
+        }
         if self.event_filter.visibility.as_ref().is_some_and(|values| {
             values.iter().any(|value| {
                 !matches!(
