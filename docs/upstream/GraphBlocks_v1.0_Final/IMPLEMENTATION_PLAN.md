@@ -512,7 +512,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   identities from entering the durable operation store.
 - Rust `AsyncOperation` records now carry optional `infinite_wait_policy` values through validation
   and JSON store projection; `GB6001` timeout diagnostics are suppressed only when a wait has either
-  `expires_at_unix_ms` or an explicit infinite-wait policy.
+  `expires_at_unix_ms` or an explicit infinite-wait policy, and callback receipt records can use the
+  same explicit infinite-wait boundary without requiring an expiration timestamp.
 - Callback-backed terminal transitions now reject `completed_at` values that precede the durable
   callback receipt timestamp, with deterministic transition fuzz coverage across completed, failed,
   cancelled, and expired outcomes.

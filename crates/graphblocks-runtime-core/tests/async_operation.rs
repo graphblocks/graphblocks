@@ -893,9 +893,21 @@ fn async_operation_validate_rejects_callback_received_without_expiration() {
         operation.validate(),
         Err(AsyncOperationError::InvalidOperation {
             operation_id: "op-1".to_owned(),
-            reason: "callback_received operations require an expiration".to_owned(),
+            reason: "callback_received operations require an expiration or infinite_wait_policy"
+                .to_owned(),
         })
     );
+}
+
+#[test]
+fn async_operation_validate_accepts_callback_received_with_infinite_wait_policy() {
+    let mut operation = waiting_operation()
+        .with_infinite_wait_policy("operator_review_required")
+        .without_expiration();
+    operation.state = AsyncOperationState::CallbackReceived;
+    operation.completed_at_unix_ms = Some(1_500);
+
+    assert_eq!(operation.validate(), Ok(()));
 }
 
 #[test]

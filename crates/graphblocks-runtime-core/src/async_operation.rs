@@ -329,10 +329,13 @@ impl AsyncOperation {
         }
         if self.state == AsyncOperationState::CallbackReceived
             && self.expires_at_unix_ms.is_none()
+            && self.infinite_wait_policy.is_none()
         {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
-                reason: "callback_received operations require an expiration".to_owned(),
+                reason:
+                    "callback_received operations require an expiration or infinite_wait_policy"
+                        .to_owned(),
             });
         }
         if self.state == AsyncOperationState::Polling
