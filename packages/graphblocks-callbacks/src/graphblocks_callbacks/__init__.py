@@ -1231,14 +1231,24 @@ def evaluate_callback_resume(
 
     endpoint_binding_key = endpoint.binding_key()
     receipt_binding_key = receipt.binding_key()
-    if endpoint.expires_at is not None and _parse_utc_timestamp(now) > _parse_utc_timestamp(endpoint.expires_at):
-        return CallbackResumeDecision(
-            status="expired",
-            can_resume=False,
-            reason="callback_endpoint_expired",
-            endpoint_binding_key=endpoint_binding_key,
-            receipt_binding_key=receipt_binding_key,
-        )
+    if endpoint.expires_at is not None:
+        endpoint_expires_at = _parse_utc_timestamp(endpoint.expires_at)
+        if _parse_utc_timestamp(now) > endpoint_expires_at:
+            return CallbackResumeDecision(
+                status="expired",
+                can_resume=False,
+                reason="callback_endpoint_expired",
+                endpoint_binding_key=endpoint_binding_key,
+                receipt_binding_key=receipt_binding_key,
+            )
+        if _parse_utc_timestamp(receipt.received_at) > endpoint_expires_at:
+            return CallbackResumeDecision(
+                status="expired",
+                can_resume=False,
+                reason="callback_received_after_endpoint_expiration",
+                endpoint_binding_key=endpoint_binding_key,
+                receipt_binding_key=receipt_binding_key,
+            )
     if endpoint_binding_key != receipt_binding_key:
         return CallbackResumeDecision(
             status="stale",

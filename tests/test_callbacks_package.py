@@ -2022,6 +2022,53 @@ def test_callback_resume_admission_rejects_expired_endpoint() -> None:
     assert decision.reason == "callback_endpoint_expired"
 
 
+def test_callback_resume_admission_rejects_receipt_after_endpoint_expiration() -> None:
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_ci_001",
+        url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+        accepted_schema="schemas/CICallback@1",
+        auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+    )
+    receipt = record_external_callback_receipt(
+        envelope,
+        project_callback_payload(envelope.payload, max_inline_bytes=256),
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:30:01Z",
+    )
+
+    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:29:59Z")
+
+    assert decision.status == "expired"
+    assert decision.can_resume is False
+    assert decision.reason == "callback_received_after_endpoint_expiration"
+
+
 def test_callback_resume_admission_rejects_stale_attempt_receipt() -> None:
     endpoint = CallbackEndpointRef(
         endpoint_id="cbep_ci_001",
