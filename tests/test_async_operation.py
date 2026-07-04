@@ -120,6 +120,11 @@ def test_async_operation_result_rejects_invalid_external_effect_records() -> Non
         graphblocks.AsyncOperationResult.cancelled("op-4").with_external_effects(object())  # type: ignore[arg-type]
 
     with raises_value_error("async operation result external_effects must be a sequence"):
+        graphblocks.AsyncOperationResult.cancelled("op-4").with_external_effects(  # type: ignore[arg-type]
+            {"effect_id": "effect-ticket-1"}
+        )
+
+    with raises_value_error("async operation result external_effects must be a sequence"):
         graphblocks.AsyncOperationResult(
             operation_id="op-5",
             status="cancelled",
@@ -211,6 +216,11 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
 
     with raises_value_error("async operation result artifacts must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
+
+    with raises_value_error("async operation result diagnostics must be a sequence"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(
+            diagnostics={"code": "callback.schema_mismatch"}  # type: ignore[arg-type]
+        )
 
     with raises_value_error("async operation result metrics must be a sequence"):
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(metrics=object())  # type: ignore[arg-type]

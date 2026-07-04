@@ -852,6 +852,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback resume admission has deterministic fuzz coverage over tenant, release, run, node,
   attempt, and operation identity mutations to protect the async callback path from stale-attempt
   and wrong-scope resume regressions.
+- Python async operation result projections now reject mappings for `artifacts`, `diagnostics`,
+  `metrics`, `checks`, `usage`, and `external_effects` sequence fields instead of silently
+  iterating object keys, preserving the callback-result contract that untrusted projection
+  payloads are bounded arrays of JSON values or typed external effect records.
 - `SqliteAsyncOperationStore` now serializes durable callback admission across load, idempotency
   evaluation, and persistence, with a concurrency regression test proving duplicate callback
   deliveries produce one resume winner and duplicate receipts for the remaining workers.

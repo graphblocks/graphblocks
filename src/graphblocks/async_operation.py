@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -168,7 +168,7 @@ def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
 
 
 def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
-    if isinstance(value, str):
+    if isinstance(value, str) or isinstance(value, Mapping):
         raise ValueError(f"async operation result {field_name} must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
@@ -177,7 +177,7 @@ def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
 
 
 def _external_effect_sequence(value: object) -> tuple[object, ...]:
-    if isinstance(value, str):
+    if isinstance(value, str) or isinstance(value, Mapping):
         raise ValueError("async operation result external_effects must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
