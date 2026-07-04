@@ -1385,6 +1385,40 @@ def test_compile_reports_async_operation_missing_resume_and_fencing_contracts() 
     assert _error_codes(graph) == ["GB6008", "GB6015", "GB6016"]
 
 
+def test_compile_rejects_async_operation_with_callback_and_polling_refs() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-operation-ambiguous-completion"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "external": {
+                    "kind": "external_provider_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/ExternalCallback@1",
+                    },
+                    "polling": {
+                        "endpoint": "providers/batch/status",
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                    "attemptFencing": True,
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["InvalidAsyncOperation"]
+
+
 def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

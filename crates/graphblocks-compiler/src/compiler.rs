@@ -367,6 +367,24 @@ fn has_async_callback_schema(config: &Map<String, Value>) -> bool {
     )
 }
 
+fn has_async_callback_completion_ref(config: &Map<String, Value>) -> bool {
+    callback_config(config).is_some()
+        || has_non_empty_string(
+            config
+                .get("callbackRef")
+                .or_else(|| config.get("callback_ref")),
+        )
+}
+
+fn has_async_polling_completion_ref(config: &Map<String, Value>) -> bool {
+    config.get("polling").and_then(Value::as_object).is_some()
+        || has_non_empty_string(
+            config
+                .get("pollingRef")
+                .or_else(|| config.get("polling_ref")),
+        )
+}
+
 fn configured_positive_integer(config: &Map<String, Value>, names: &[&str]) -> Option<u64> {
     names
         .iter()
@@ -477,6 +495,13 @@ fn diagnose_async_operation_config(
     config: &Map<String, Value>,
     path: &str,
 ) {
+    if has_async_callback_completion_ref(config) && has_async_polling_completion_ref(config) {
+        diagnostics.push(Diagnostic::error(
+            "InvalidAsyncOperation",
+            "async operation must not define both callback and polling completion refs",
+            path,
+        ));
+    }
     if !has_async_timeout(config) {
         diagnostics.push(Diagnostic::error(
             "GB6001",
@@ -503,7 +528,13 @@ fn diagnose_async_operation_config(
         ),
         (
             "maxInterval",
-            ["maxInterval", "max_interval", "maxIntervalMs", "max_interval_ms"].as_slice(),
+            [
+                "maxInterval",
+                "max_interval",
+                "maxIntervalMs",
+                "max_interval_ms",
+            ]
+            .as_slice(),
         ),
     ] {
         if invalid_optional_duration_field(config, names).is_some() {
@@ -1063,9 +1094,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 .is_some_and(|block_type| {
                     matches!(
                         block_type,
-                        "async.start_operation"
-                            | "async.await_callback"
-                            | "async.poll_operation"
+                        "async.start_operation" | "async.await_callback" | "async.poll_operation"
                     )
                 })
             {

@@ -862,6 +862,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python `AsyncOperation` records now reject ambiguous waits that define both `callback_ref` and
   `polling_ref`, so each external operation has one authoritative completion path before the
   scheduler can enter `WAITING_CALLBACK` or `POLLING`.
+- Python and Rust compilers now reject graph-authored async operation configs that define both
+  callback and polling completion refs as `InvalidAsyncOperation`, catching ambiguous external
+  completion authority before deployment.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

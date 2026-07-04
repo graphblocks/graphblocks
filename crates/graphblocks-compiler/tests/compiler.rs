@@ -583,6 +583,50 @@ fn compile_graph_reports_async_poll_operation_with_invalid_interval_durations() 
 }
 
 #[test]
+fn compile_graph_rejects_async_operation_with_callback_and_polling_refs() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "async-operation-ambiguous-completion"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "external": {
+                    "kind": "external_provider_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "callback": {
+                        "required": true,
+                        "schema": "schemas/ExternalCallback@1"
+                    },
+                    "polling": {
+                        "endpoint": "providers/batch/status"
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": true,
+                        "requireBudgetReservation": true,
+                        "requireReleaseCompatibility": true,
+                        "requireOwnershipFence": true
+                    },
+                    "attemptFencing": true
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidAsyncOperation"]
+    );
+}
+
+#[test]
 fn compile_graph_reports_async_await_callback_with_unknown_on_timeout_policy() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

@@ -116,6 +116,22 @@ def _has_async_callback_schema(config: dict[str, Any]) -> bool:
     return _has_non_empty_string(config.get("callbackSchema") or config.get("callback_schema"))
 
 
+def _has_async_callback_completion_ref(config: dict[str, Any]) -> bool:
+    callback = config.get("callback")
+    return (
+        isinstance(callback, dict)
+        or _has_non_empty_string(config.get("callbackRef") or config.get("callback_ref"))
+    )
+
+
+def _has_async_polling_completion_ref(config: dict[str, Any]) -> bool:
+    polling = config.get("polling")
+    return (
+        isinstance(polling, dict)
+        or _has_non_empty_string(config.get("pollingRef") or config.get("polling_ref"))
+    )
+
+
 def _configured_positive_integer(config: dict[str, Any], *names: str) -> int | None:
     for name in names:
         value = config.get(name)
@@ -236,6 +252,14 @@ def _diagnose_async_operation_config(
 ) -> None:
     callback = config.get("callback")
     callback_config = callback if isinstance(callback, dict) else {}
+    if _has_async_callback_completion_ref(config) and _has_async_polling_completion_ref(config):
+        diagnostics.append(
+            Diagnostic(
+                "InvalidAsyncOperation",
+                "async operation must not define both callback and polling completion refs",
+                path,
+            )
+        )
     if not _has_async_timeout(config):
         diagnostics.append(
             Diagnostic(
