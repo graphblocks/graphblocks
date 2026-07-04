@@ -251,13 +251,24 @@ class ExhaustionController:
         if work_epoch > self.admission_epoch and work_kind not in {"declared_finalization", "checkpoint", "cleanup"}:
             return AdmissionDecision(False, "new_work_denied")
         if work_epoch > self.admission_epoch:
+            permits_checkpoint_pause_safety_work = self.policy.preset == "checkpoint_and_pause" and work_kind in {
+                "checkpoint",
+                "cleanup",
+            }
+            permits_degraded_finalization = self.policy.preset == "degrade_then_finalize" and work_kind in {
+                "declared_finalization",
+                "cleanup",
+            }
             effective_permit = permit or self.continuation_permit
-            if effective_permit is None:
+            if effective_permit is None and not permits_checkpoint_pause_safety_work and not permits_degraded_finalization:
                 return AdmissionDecision(False, "missing_continuation_permit")
-            if not self._valid_permit(effective_permit):
+            if effective_permit is not None and not self._valid_permit(effective_permit):
                 return AdmissionDecision(False, "invalid_permit")
-            if requested_usage_list and not effective_permit.allows(requested_usage_list):
-                return AdmissionDecision(False, "usage_exceeds_permit")
+            if requested_usage_list:
+                if effective_permit is None:
+                    return AdmissionDecision(False, "missing_continuation_permit")
+                if not effective_permit.allows(requested_usage_list):
+                    return AdmissionDecision(False, "usage_exceeds_permit")
             if requested_usage_list and envelope.max_additional_usage:
                 allowed_usage: dict[tuple[str, str, tuple[tuple[str, str], ...]], Decimal] = {}
                 for amount in envelope.max_additional_usage:

@@ -96,6 +96,40 @@ def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:
     assert cutoff.accepts_sequence(6) is False
 
 
+def test_checkpoint_and_pause_allows_safety_work_without_topup_permit() -> None:
+    policy = ExhaustionPolicy.from_preset("checkpoint_and_pause", unit="run")
+    controller = ExhaustionController(policy, atomic_unit_id="run:1", admission_epoch=4)
+
+    checkpoint = controller.admit("checkpoint", work_epoch=5)
+    cleanup = controller.admit("cleanup", work_epoch=6)
+    finalization = controller.admit("declared_finalization", work_epoch=7)
+    provider = controller.admit("unreserved_provider_call", work_epoch=7)
+
+    assert checkpoint.allowed is True
+    assert cleanup.allowed is True
+    assert finalization.allowed is False
+    assert finalization.reason == "new_work_denied"
+    assert provider.allowed is False
+    assert provider.reason == "new_work_denied"
+
+
+def test_degrade_then_finalize_allows_best_effort_finalization_without_topup_permit() -> None:
+    policy = ExhaustionPolicy.from_preset("degrade_then_finalize", unit="run")
+    controller = ExhaustionController(policy, atomic_unit_id="run:1", admission_epoch=4)
+
+    finalization = controller.admit("declared_finalization", work_epoch=5)
+    cleanup = controller.admit("cleanup", work_epoch=6)
+    optional_task = controller.admit("optional_task", work_epoch=7)
+    provider = controller.admit("unreserved_provider_call", work_epoch=7)
+
+    assert finalization.allowed is True
+    assert cleanup.allowed is True
+    assert optional_task.allowed is False
+    assert optional_task.reason == "forbidden_work"
+    assert provider.allowed is False
+    assert provider.reason == "new_work_denied"
+
+
 def test_exhaustion_output_cutoff_uses_canonical_output_policy_contract() -> None:
     assert OutputCutoff is CanonicalOutputCutoff
 

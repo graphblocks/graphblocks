@@ -1015,6 +1015,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   without requiring a top-up permit. Optional tasks, state-changing effects, unreserved provider
   calls, and other new work remain denied; explicit continuation bounds still apply and are covered
   by the shared exhaustion TCK.
+- Python `ExhaustionController` now mirrors the Rust admission behavior for `checkpoint_and_pause`
+  and `degrade_then_finalize`, allowing only the safe checkpoint/cleanup or best-effort
+  finalization paths without a continuation top-up permit.
 
 ## 7. Phase 4 — Packaging, Integrations, Observability
 
