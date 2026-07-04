@@ -892,6 +892,42 @@ def test_callback_delivery_projection_validates_timestamp_fields() -> None:
     )
 
 
+def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> None:
+    _assert_raises_value_error(
+        "pending callback delivery must not already have delivered_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_pending_delivered",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=2,
+            idempotency_key="sub_001:evt_1042:pending-delivered",
+            status="pending",
+            next_retry_at="2026-07-02T00:00:10Z",
+            delivered_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "terminal callback delivery must not have next_retry_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_failed_retry",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=2,
+            idempotency_key="sub_001:evt_1042:failed-retry",
+            status="failed",
+            next_retry_at="2026-07-02T00:00:10Z",
+            delivered_at="2026-07-02T00:00:00Z",
+            last_error="receiver_error",
+        ),
+    )
+
+
 def test_webhook_target_safety_allows_public_https_targets() -> None:
     safety = validate_webhook_target_url("https://callbacks.example.com/graphblocks/events")
 
