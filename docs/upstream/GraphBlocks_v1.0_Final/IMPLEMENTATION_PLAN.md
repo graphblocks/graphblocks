@@ -507,6 +507,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust `AsyncOperation` validation now rejects `created` records that already carry submitted,
   completed, or expiration timestamps, preserving the operation lifecycle boundary before external
   submission or waiting.
+- Rust `AsyncOperation` validation now rejects whitespace-only `provider_operation_id` values before
+  registration, matching callback submission identity checks and preventing unusable provider
+  identities from entering the durable operation store.
 - Callback-backed terminal transitions now reject `completed_at` values that precede the durable
   callback receipt timestamp, with deterministic transition fuzz coverage across completed, failed,
   cancelled, and expired outcomes.

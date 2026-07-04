@@ -285,6 +285,15 @@ impl AsyncOperation {
                 reason: "created_at must be positive".to_owned(),
             });
         }
+        if self
+            .provider_operation_id
+            .as_ref()
+            .is_some_and(|provider_operation_id| provider_operation_id.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "provider_operation_id".to_owned(),
+            });
+        }
 
         if self.state == AsyncOperationState::WaitingCallback && self.expires_at_unix_ms.is_none() {
             return Err(AsyncOperationError::InvalidOperation {
