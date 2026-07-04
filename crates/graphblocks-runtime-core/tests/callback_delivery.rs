@@ -111,6 +111,28 @@ fn subscription_filter_schedules_matching_and_terminal_events() {
 }
 
 #[test]
+fn subscription_filter_excludes_terminal_events_when_disabled() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new().with_terminal_events(false),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let started = protocol_event("event-start", ApplicationProtocolEventKind::RunStarted, 1);
+    let completed = protocol_event("event-done", ApplicationProtocolEventKind::RunCompleted, 2);
+    let failed = protocol_event("event-failed", ApplicationProtocolEventKind::RunFailed, 3);
+    let cancelled = protocol_event(
+        "event-cancelled",
+        ApplicationProtocolEventKind::RunCancelled,
+        4,
+    );
+
+    assert!(scheduler.schedule_event(&subscription, &started).is_some());
+    assert!(scheduler.schedule_event(&subscription, &completed).is_none());
+    assert!(scheduler.schedule_event(&subscription, &failed).is_none());
+    assert!(scheduler.schedule_event(&subscription, &cancelled).is_none());
+}
+
+#[test]
 fn subscription_filter_matches_visibility_node_operation_and_severity() {
     let mut matching = protocol_event(
         "event-ci-failed",

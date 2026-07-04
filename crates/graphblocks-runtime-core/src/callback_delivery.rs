@@ -110,15 +110,14 @@ impl EventFilter {
             }
         }
 
-        if self.include_terminal_events
-            && matches!(
-                event.kind,
-                ApplicationProtocolEventKind::RunCompleted
-                    | ApplicationProtocolEventKind::RunFailed
-                    | ApplicationProtocolEventKind::RunCancelled
-            )
-        {
-            return true;
+        let is_terminal_event = matches!(
+            event.kind,
+            ApplicationProtocolEventKind::RunCompleted
+                | ApplicationProtocolEventKind::RunFailed
+                | ApplicationProtocolEventKind::RunCancelled
+        );
+        if is_terminal_event {
+            return self.include_terminal_events;
         }
 
         self.types
