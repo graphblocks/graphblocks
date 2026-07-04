@@ -101,6 +101,16 @@ def test_output_policy_decision_rejects_invalid_redaction_instructions() -> None
             input_digest="sha256:redact",
         )
 
+    with pytest.raises(ValueError, match="redaction replacement must be a string"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=(
+                {"path": "/chunks/1/text", "start": 0, "end": 6, "replacement": object()},
+            ),
+            input_digest="sha256:redact",
+        )
+
 
 def test_output_policy_decision_metadata_builders_are_chainable() -> None:
     decision = (

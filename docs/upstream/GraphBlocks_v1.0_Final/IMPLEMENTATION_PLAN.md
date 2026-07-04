@@ -159,6 +159,9 @@ Message
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
 - `PolicyRequest.enforcement_point`에 `on_generation_chunk`, `before_client_delivery`, `before_output_commit`, `before_tool_or_effect`를 추가한다.
 - `OutputPolicyDecision`, `OutputDeliveryPolicy`, `OutputCutoff` schema와 terminal semantics를 canonical contract로 추가한다.
+- `OutputPolicyDecision` redaction instructions validate replacement values at construction time,
+  so malformed redaction payloads cannot enter the delivery gate and fail after partial state
+  inspection.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `abort_response`는 local delivery cutoff를 즉시 수행하고 provider/worker cancellation은 cooperative request로 처리한다. local cutoff가 authoritative하다.

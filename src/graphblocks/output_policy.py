@@ -357,6 +357,9 @@ class OutputPolicyDecision:
                     raise ValueError("redaction range must be non-negative")
                 if start > end:
                     raise ValueError("redaction range must not be reversed")
+            replacement = redaction_copy.get("replacement")
+            if replacement is not None and not isinstance(replacement, str):
+                raise ValueError("redaction replacement must be a string")
             redactions.append(MappingProxyType(redaction_copy))
         try:
             reason_codes = tuple(self.reason_codes)
