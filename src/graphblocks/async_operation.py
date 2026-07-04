@@ -591,6 +591,34 @@ class AsyncOperationResult:
             raise ValueError("async operation result requires a terminal operation")
         return cls(operation_id=operation.operation_id, status=operation.state, output=output)
 
+    @classmethod
+    def from_late_callback(
+        cls,
+        operation: AsyncOperation,
+        *,
+        output: object | None = None,
+        artifacts: Iterable[object] | None = None,
+        diagnostics: Iterable[object] | None = None,
+        metrics: Iterable[object] | None = None,
+        checks: Iterable[object] | None = None,
+        usage: Iterable[object] | None = None,
+        external_effects: Iterable[ExternalEffectRecord] | None = None,
+    ) -> AsyncOperationResult:
+        if not isinstance(operation, AsyncOperation):
+            raise ValueError("async operation result operation must be an AsyncOperation")
+        if operation.state not in TERMINAL_ASYNC_OPERATION_STATES:
+            raise ValueError("late callback result requires a terminal operation")
+        result = cls.incomplete(operation.operation_id, output=output).with_projections(
+            artifacts=() if artifacts is None else artifacts,
+            diagnostics=() if diagnostics is None else diagnostics,
+            metrics=() if metrics is None else metrics,
+            checks=() if checks is None else checks,
+            usage=() if usage is None else usage,
+        )
+        if external_effects is not None:
+            result = result.with_external_effects(external_effects)
+        return result
+
     def with_external_effects(
         self,
         external_effects: Iterable[ExternalEffectRecord],

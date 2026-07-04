@@ -260,6 +260,48 @@ def test_async_operation_result_projects_from_terminal_operation_state() -> None
     assert cancelled_result.status == graphblocks.AsyncOperationResultStatus.CANCELLED
 
 
+def test_async_operation_result_projects_late_callback_as_incomplete_diagnostic() -> None:
+    cancelled_operation = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-late-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-ci-late-1",
+        created_at="2026-07-02T00:00:00Z",
+        callback_ref="cbep-ci-late-1",
+        expires_at="2026-07-02T00:30:00Z",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().cancel(
+        completed_at="2026-07-02T00:05:00Z"
+    )
+    committed_effect = graphblocks.ExternalEffectRecord(
+        effect_id="effect-ci-1",
+        target="github-actions",
+        operation="workflow_dispatch",
+        outcome="committed",
+        idempotency_key="idem-ci-late-1",
+        provider_effect_id="gha-run-1",
+    )
+
+    late_result = graphblocks.AsyncOperationResult.from_late_callback(
+        cancelled_operation,
+        output={"status": "completed", "late": True},
+        diagnostics=[{"code": "late_callback", "message": "callback arrived after cancellation"}],
+        external_effects=[committed_effect],
+    )
+
+    assert late_result.operation_id == "op-ci-late-1"
+    assert late_result.status == graphblocks.AsyncOperationResultStatus.INCOMPLETE
+    assert late_result.output == {"status": "completed", "late": True}
+    assert late_result.diagnostics == (
+        {"code": "late_callback", "message": "callback arrived after cancellation"},
+    )
+    assert late_result.external_effect_was_committed() is True
+    assert late_result.to_json()["external_effects"][0]["provider_effect_id"] == "gha-run-1"
+
+
 def test_async_operation_result_rejects_projection_from_non_terminal_operation() -> None:
     waiting = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
@@ -277,6 +319,9 @@ def test_async_operation_result_rejects_projection_from_non_terminal_operation()
 
     with raises_value_error("async operation result requires a terminal operation"):
         graphblocks.AsyncOperationResult.from_operation(waiting)
+
+    with raises_value_error("late callback result requires a terminal operation"):
+        graphblocks.AsyncOperationResult.from_late_callback(waiting)
 
 
 def test_async_operation_records_callback_wait_metadata_and_state_transitions() -> None:
@@ -945,6 +990,7 @@ def run_direct() -> None:
         test_async_operation_result_deep_copies_json_output_and_projection_sequences,
         test_async_operation_result_rejects_non_json_output_and_projection_values,
         test_async_operation_result_projects_from_terminal_operation_state,
+        test_async_operation_result_projects_late_callback_as_incomplete_diagnostic,
         test_async_operation_result_rejects_projection_from_non_terminal_operation,
         test_async_operation_records_callback_wait_metadata_and_state_transitions,
         test_async_operation_records_polling_metadata_and_terminal_failure,

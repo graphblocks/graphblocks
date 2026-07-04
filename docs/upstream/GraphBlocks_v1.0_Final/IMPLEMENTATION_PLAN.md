@@ -480,6 +480,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Late callbacks against terminal async operations (`completed`, `failed`, `cancelled`, or
   `expired`) are recorded as `LateExternalCallbackReceived` diagnostics and never produce a resume
   signal or state rewrite.
+- Python `AsyncOperationResult.from_late_callback(...)` now projects late callback payloads for
+  terminal operations as `incomplete` diagnostic results while preserving committed external effect
+  metadata, so facade consumers cannot accidentally treat a late callback as a resumable operation.
 - Python `graphblocks-core` now exposes an immutable `AsyncOperation` schema facade with the
   amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
   `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,
