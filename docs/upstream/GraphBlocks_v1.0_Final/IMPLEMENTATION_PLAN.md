@@ -593,7 +593,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   ISO-8601 datetimes and reject acknowledgement timestamps that precede delivery timestamps.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
-  projection.
+  projection. Replay scheduling now resolves the requested cursor against retained run events and
+  schedules no webhook deliveries when the cursor is unknown or expired, avoiding accidental
+  replay-from-beginning behavior.
 - `ApplicationProtocolLog` now exposes retained-window replay with explicit `CursorExpired`
   semantics, including the requested cursor, nearest retained cursor, last cursor, and last
   sequence for reconnect/attach callers.

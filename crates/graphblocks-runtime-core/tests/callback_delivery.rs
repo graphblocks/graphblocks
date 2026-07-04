@@ -1535,6 +1535,37 @@ fn subscription_replay_schedules_matching_events_after_cursor() {
 }
 
 #[test]
+fn subscription_replay_with_unknown_cursor_schedules_no_deliveries() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new().with_types([ApplicationProtocolEventKind::ReviewRequested]),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_replay_from_cursor("cursor-missing")
+    .expect("replay cursor is valid");
+    let mut log = ApplicationProtocolLog::new();
+    log.append(protocol_event(
+        "event-1",
+        ApplicationProtocolEventKind::ReviewRequested,
+        1,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-2",
+        ApplicationProtocolEventKind::ReviewRequested,
+        2,
+    ))
+    .expect("event appends");
+
+    let deliveries = scheduler.schedule_replay(&subscription, &log, 10);
+
+    assert!(
+        deliveries.is_empty(),
+        "callback replay must not treat an unknown cursor as replay-from-beginning"
+    );
+}
+
+#[test]
 fn ordered_subscription_replay_schedules_only_first_unblocked_event() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

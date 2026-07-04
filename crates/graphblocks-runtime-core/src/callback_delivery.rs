@@ -2266,7 +2266,14 @@ impl CallbackDeliveryScheduler {
             return Vec::new();
         }
 
-        let replayed = log.replay_after(subscription.replay_from_cursor.as_deref(), limit);
+        let replayed = match log.replay_after_retained(
+            subscription.replay_from_cursor.as_deref(),
+            limit,
+            log.len(),
+        ) {
+            Ok(replayed) => replayed,
+            Err(_) => return Vec::new(),
+        };
         if !subscription.ordered_delivery {
             return replayed
                 .iter()
