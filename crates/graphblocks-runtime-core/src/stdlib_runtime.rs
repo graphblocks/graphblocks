@@ -740,26 +740,50 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
         &["timeoutMs", "timeout_ms", "timeout"],
         "async.poll_operation.missing_timeout",
         "async.poll_operation@1 timeoutMs must be a positive duration",
-    )?
-        .ok_or_else(|| {
+    )?;
+    let infinite_wait_policy = config
+        .get("infiniteWaitPolicy")
+        .or_else(|| config.get("infinite_wait_policy"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_str().filter(|text| !text.trim().is_empty()).ok_or_else(|| {
+                BlockError::new(
+                    "async.poll_operation.invalid_config",
+                    ErrorCategory::Configuration,
+                    "async.poll_operation@1 infiniteWaitPolicy must be a non-empty string",
+                    false,
+                )
+            })
+        })
+        .transpose()?;
+    if timeout_ms.is_none() && infinite_wait_policy.is_none() {
+        return Err(
             BlockError::new(
                 "async.poll_operation.missing_timeout",
                 ErrorCategory::Configuration,
                 "async.poll_operation@1 requires timeoutMs",
                 false,
             )
-        })?;
+        );
+    }
     let mut polling_operation = operation.clone();
     polling_operation["state"] = json!("polling");
 
+    let mut poll = json!({
+        "state": "polling",
+        "operation": polling_operation,
+        "intervalMs": interval_ms,
+        "maxIntervalMs": max_interval_ms,
+    });
+    if let Some(timeout_ms) = timeout_ms {
+        poll["timeoutMs"] = json!(timeout_ms);
+    }
+    if let Some(infinite_wait_policy) = infinite_wait_policy {
+        poll["infiniteWaitPolicy"] = json!(infinite_wait_policy);
+    }
+
     Ok(json!({
-        "poll": {
-            "state": "polling",
-            "operation": polling_operation,
-            "intervalMs": interval_ms,
-            "maxIntervalMs": max_interval_ms,
-            "timeoutMs": timeout_ms,
-        }
+        "poll": poll
     }))
 }
 
@@ -2123,6 +2147,7 @@ fn async_operation_json(operation: &AsyncOperation, subject: Option<Value>) -> V
         "created_at_unix_ms": operation.created_at_unix_ms,
         "submitted_at_unix_ms": operation.submitted_at_unix_ms,
         "expires_at_unix_ms": operation.expires_at_unix_ms,
+        "infinite_wait_policy": operation.infinite_wait_policy,
         "completed_at_unix_ms": operation.completed_at_unix_ms,
         "subject": subject,
     })

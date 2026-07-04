@@ -556,7 +556,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `async.cancel_operation@1`, and `async.expire_operation@1` projections for polling and terminal
   async operation results. `async.poll_operation@1` requires a timeout in its block config so
   graph-authored polling waits cannot silently become unbounded, and accepts positive duration
-  strings such as `30s`, `5m`, or `2h` for interval and timeout settings.
+  strings such as `30s`, `5m`, or `2h` for interval and timeout settings. Runtime poll projections
+  now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that unbounded
+  wait policy is declared.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

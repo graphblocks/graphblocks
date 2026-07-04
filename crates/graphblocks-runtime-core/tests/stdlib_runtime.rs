@@ -902,6 +902,58 @@ fn rust_stdlib_async_poll_operation_requires_timeout() -> Result<(), String> {
 }
 
 #[test]
+fn rust_stdlib_async_poll_operation_accepts_explicit_infinite_wait_policy() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-poll-infinite-wait"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "30s",
+                        "maxInterval": "5m",
+                        "infiniteWaitPolicy": "provider_has_no_timeout",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["outputs"]["poll"]["state"], "polling");
+    assert_eq!(
+        result["outputs"]["poll"]["infiniteWaitPolicy"],
+        "provider_has_no_timeout"
+    );
+    assert!(result["outputs"]["poll"].get("timeoutMs").is_none());
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
