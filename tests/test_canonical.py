@@ -1616,6 +1616,35 @@ def test_compile_allows_mandatory_callback_failure_policy_with_fallback_behavior
     assert "GB6014" not in _error_codes(graph)
 
 
+def test_compile_reports_retrying_callback_subscription_without_dead_letter_behavior() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "retrying-callback-without-dead-letter"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-retry-without-dead-letter",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "retry_then_dead_letter",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6014"]
+
+
 def test_compile_reports_background_run_replay_and_retention_diagnostics() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

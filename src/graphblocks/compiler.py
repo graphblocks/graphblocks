@@ -490,9 +490,6 @@ def _callback_url_is_unsafe(url: object) -> bool:
 
 
 def _has_callback_dead_letter_behavior(config: dict[str, Any], delivery: dict[str, Any]) -> bool:
-    failure_policy = config.get("failurePolicy") or config.get("failure_policy")
-    if failure_policy == "retry_then_dead_letter":
-        return True
     dead_letter = (
         config.get("deadLetterPolicy")
         or config.get("dead_letter_policy")
@@ -586,7 +583,7 @@ def _diagnose_callback_subscription_config(
         )
 
     if (
-        failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES
+        failure_policy in {*MANDATORY_CALLBACK_FAILURE_POLICIES, "retry_then_dead_letter"}
         and not _has_callback_dead_letter_behavior(config, delivery)
     ):
         diagnostics.append(

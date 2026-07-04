@@ -656,9 +656,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback subscription diagnostics now report mandatory callback delivery without retry,
   dead-letter, or fallback policy as `GB6006`, with shared compiler TCK coverage.
 - Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
-  mandatory callback failure policies without dead-letter or fallback behavior (`GB6014`), with
-  shared compiler TCK coverage. The Rust and Python compilers both recognize fallback policies or
-  fallback refs as valid mandatory-callback recovery behavior.
+  retrying or mandatory callback failure policies without explicit dead-letter or fallback behavior
+  (`GB6014`), with shared compiler TCK coverage. The Rust and Python compilers both recognize
+  fallback policies or fallback refs as valid callback recovery behavior.
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
