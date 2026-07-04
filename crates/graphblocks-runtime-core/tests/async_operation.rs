@@ -1028,6 +1028,44 @@ fn external_callback_is_journaled_before_operation_can_resume() {
 }
 
 #[test]
+fn callback_received_after_operation_expiration_is_rejected_without_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-after-expiration", "idem-after-expiration");
+    submission.received_at_unix_ms = 2_001;
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "callback received after operation expiration".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    let events = store.events_for_operation("op-1");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-after-expiration" && reason == "callback_after_expiration"
+    )));
+}
+
+#[test]
 fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
     let store = AsyncOperationStore::new();
     store

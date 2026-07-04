@@ -2147,6 +2147,30 @@ impl AsyncOperationStore {
             });
         }
 
+        if operation_state == AsyncOperationState::WaitingCallback
+            && operation
+                .expires_at_unix_ms
+                .is_some_and(|expires_at_unix_ms| {
+                    submission.received_at_unix_ms > expires_at_unix_ms
+                })
+        {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "callback_after_expiration".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id,
+                reason: "callback received after operation expiration".to_owned(),
+            });
+        }
+
         let receipt = ExternalCallbackReceived {
             callback_id: submission.callback_id,
             operation_id: submission.operation_id.clone(),

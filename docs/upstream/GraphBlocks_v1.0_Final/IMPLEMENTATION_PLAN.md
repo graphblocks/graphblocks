@@ -422,9 +422,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   invalid callback endpoint deadlines are rejected before resume admission.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, unknown operations, run/node identity mismatches, schema mismatches, payload-limit
-  failures, and callbacks that target operations not currently waiting for a callback, without
-  journaling rejected payload bodies; SQLite persistence covers these rejection events across
-  reopen.
+  failures, callbacks that arrive after an operation's callback deadline, and callbacks that target
+  operations not currently waiting for a callback, without journaling rejected payload bodies;
+  SQLite persistence covers these rejection events across reopen.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order for
   top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with
