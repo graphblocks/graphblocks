@@ -441,6 +441,49 @@ fn usage_ledger_rejects_multiple_reconciliations_for_same_source_record()
 }
 
 #[test]
+fn usage_ledgers_reject_reconciliation_before_source_usage() -> Result<(), UsageLedgerError> {
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    let provisional = UsageRecord::new(
+        "usage-provisional",
+        UsageSource::TokenizerEstimated,
+        UsageConfidence::Estimated,
+        [tokens(18)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+
+    memory.append(provisional.clone())?;
+    sqlite.append(provisional)?;
+
+    assert_eq!(
+        memory.reconcile(
+            "usage-provisional",
+            [tokens(21)],
+            999,
+            Some("usage-reconciled-memory".to_owned()),
+        ),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation occurred_at must not precede source usage".to_owned(),
+        })
+    );
+    assert_eq!(
+        sqlite.reconcile(
+            "usage-provisional",
+            [tokens(21)],
+            999,
+            Some("usage-reconciled-sqlite".to_owned()),
+        ),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation occurred_at must not precede source usage".to_owned(),
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
     let path = sqlite_usage_path("usage-persist");
     let record = UsageRecord::new(

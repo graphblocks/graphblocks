@@ -272,6 +272,12 @@ impl InMemoryUsageLedger {
     ) -> Result<UsageRecord, UsageLedgerError> {
         let source_record_id = source_record_id.as_ref();
         let original = self.get(source_record_id)?;
+        if occurred_at_unix_ms < original.occurred_at_unix_ms {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage reconciliation occurred_at must not precede source usage"
+                    .to_string(),
+            });
+        }
         let reconciled = UsageRecord {
             record_id: record_id.unwrap_or_else(|| format!("{source_record_id}:reconciled")),
             source: UsageSource::Reconciled,
@@ -567,6 +573,12 @@ impl SqliteUsageLedger {
     ) -> Result<UsageRecord, UsageLedgerError> {
         let source_record_id = source_record_id.as_ref();
         let original = self.get(source_record_id)?;
+        if occurred_at_unix_ms < original.occurred_at_unix_ms {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage reconciliation occurred_at must not precede source usage"
+                    .to_string(),
+            });
+        }
         let reconciled = UsageRecord {
             record_id: record_id.unwrap_or_else(|| format!("{source_record_id}:reconciled")),
             source: UsageSource::Reconciled,

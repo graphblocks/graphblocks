@@ -994,6 +994,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   double-counted by multiple reconciled records for the same provisional measurement.
 - Rust usage ledgers now reject records with an empty `amounts` list, so late usage reconciliation
   and billing/quota projections cannot persist a meaningless no-op usage record as authoritative.
+- Rust usage reconciliation now rejects `occurred_at` timestamps that precede the source usage
+  record, preserving the amendment's late-final-usage ordering for both in-memory and SQLite
+  ledgers.
 - `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
   cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
   provider work, finalization, optional tasks, and trials remain denied. Explicit continuation
