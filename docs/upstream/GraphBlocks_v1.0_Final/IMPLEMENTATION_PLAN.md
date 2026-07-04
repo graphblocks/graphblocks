@@ -612,9 +612,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `ApplicationProtocolLog` now exposes retained-window replay with explicit `CursorExpired`
   semantics, including the requested cursor, nearest retained cursor, last cursor, and last
   sequence for reconnect/attach callers.
-- Runtime `ApplicationProtocolLog` instances are scoped to the run id established by the first
-  appended event and reject later events from another run, preserving per-run sequence and replay
-  authority for background attach/cursor semantics.
+- Runtime and Python facade `ApplicationProtocolLog` instances are scoped to the run id established
+  by the first appended event and reject later events from another run, preserving per-run sequence
+  and replay authority for background attach/cursor semantics. The shared application-protocol TCK
+  now exercises this mixed-run rejection path and records the expected `run_mismatch` append error.
 - `AttachToRun` replay now has a typed runtime result that either returns retained missed events
   and the live-stream cursor, or reports expired-cursor recovery metadata.
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,

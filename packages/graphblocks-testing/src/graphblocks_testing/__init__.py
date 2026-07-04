@@ -3695,6 +3695,7 @@ class TckRunner:
                     raise ValueError("application-protocol protocol_log operations must be a list")
                 log = ApplicationProtocolLog()
                 append_results: list[bool] = []
+                append_errors: list[str] = []
                 for operation_index, raw_operation in enumerate(raw_operations):
                     if not isinstance(raw_operation, Mapping):
                         raise ValueError("application-protocol protocol_log operation must be a mapping")
@@ -3731,9 +3732,17 @@ class TckRunner:
                         ),
                         payload=dict(raw_payload),
                     )
-                    appended = log.append(event)
+                    expected_error = raw_operation.get("expectError", raw_operation.get("expect_error"))
+                    try:
+                        appended = log.append(event)
+                    except Exception as error:
+                        if expected_error == "run_mismatch" and "run_id must match first event" in str(error):
+                            appended = False
+                            append_errors.append("run_mismatch")
+                        else:
+                            raise
                     append_results.append(appended)
-                    if appended is not bool(raw_operation.get("expectAppended", True)):
+                    if expected_error is None and appended is not bool(raw_operation.get("expectAppended", True)):
                         diagnostics.append(
                             {
                                 "code": "ApplicationProtocolAppendMismatch",
@@ -3750,6 +3759,7 @@ class TckRunner:
                 observed = {
                     "eventIds": [event.metadata.event_id for event in log.events],
                     "appendResults": append_results,
+                    "appendErrors": append_errors,
                     "replayEventIds": [event.metadata.event_id for event in replay],
                     "length": len(log),
                 }

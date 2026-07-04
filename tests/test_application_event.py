@@ -566,13 +566,19 @@ def test_application_protocol_envelopes_reject_invalid_metadata_payloads_and_log
 
 
 def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor() -> None:
-    def protocol_event(event_id: str, sequence: int, cursor: str) -> ApplicationProtocolEvent:
+    def protocol_event(
+        event_id: str,
+        sequence: int,
+        cursor: str,
+        *,
+        run_id: str = "run-1",
+    ) -> ApplicationProtocolEvent:
         return ApplicationProtocolEvent.new(
             "JobProgress",
             ApplicationProtocolEventMetadata(
                 event_id=event_id,
                 protocol_version="graphblocks.app.v1",
-                run_id="run-1",
+                run_id=run_id,
                 turn_id="turn-1",
                 sequence=sequence,
                 cursor=cursor,
@@ -598,6 +604,8 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.replay_after("cursor-missing", limit=10)
     with pytest.raises(ApplicationProtocolError, match="must be greater than previous sequence"):
         log.append(protocol_event("event-0", 1, "cursor-0"))
+    with pytest.raises(ApplicationProtocolError, match="application protocol log event run_id must match first event"):
+        log.append(protocol_event("event-other-run", 3, "cursor-3", run_id="run-2"))
     with pytest.raises(ApplicationProtocolError, match="limit must be non-negative"):
         log.replay_after(limit=-1)
 

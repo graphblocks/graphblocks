@@ -504,6 +504,7 @@ class ApplicationProtocolLog:
     events: list[ApplicationProtocolEvent] = field(default_factory=list)
     _event_ids: set[str] = field(default_factory=set, init=False, repr=False)
     _last_sequence: int | None = field(default=None, init=False, repr=False)
+    _run_id: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         initial_events = tuple(self.events)
@@ -516,11 +517,15 @@ class ApplicationProtocolLog:
             raise ApplicationProtocolError("application protocol log event must be ApplicationProtocolEvent")
         if event.metadata.event_id in self._event_ids:
             return False
+        if self._run_id is not None and event.metadata.run_id != self._run_id:
+            raise ApplicationProtocolError("application protocol log event run_id must match first event")
         if self._last_sequence is not None and event.metadata.sequence <= self._last_sequence:
             raise ApplicationProtocolError(
                 "application event sequence "
                 f"{event.metadata.sequence} must be greater than previous sequence {self._last_sequence}"
             )
+        if self._run_id is None:
+            self._run_id = event.metadata.run_id
         self._last_sequence = event.metadata.sequence
         self._event_ids.add(event.metadata.event_id)
         self.events.append(event)

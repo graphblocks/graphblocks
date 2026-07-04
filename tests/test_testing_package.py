@@ -314,7 +314,7 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-protocol"] * 9
+    assert [case.kind for case in cases] == ["application-protocol"] * 10
     assert report.ok
     assert {case.case_id for case in cases} == {
         "application_protocol_kind_sets_match_contract",
@@ -325,6 +325,7 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
         "capability_negotiation_intersects_commands_and_events",
         "capability_negotiation_rejects_blank_protocol_version",
         "protocol_log_suppresses_duplicates_and_replays_after_cursor",
+        "protocol_log_rejects_events_from_another_run",
         "protocol_stream_cutoff_discards_late_output",
     }
     assert any("OutputCutoff" in result.observed.get("events", []) for result in report.results)
@@ -825,6 +826,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "capability_negotiation_intersects_commands_and_events",
         "capability_negotiation_rejects_blank_protocol_version",
         "protocol_log_suppresses_duplicates_and_replays_after_cursor",
+        "protocol_log_rejects_events_from_another_run",
         "protocol_stream_cutoff_discards_late_output",
     )
     assert by_suite["approval-review"].case_ids == (
