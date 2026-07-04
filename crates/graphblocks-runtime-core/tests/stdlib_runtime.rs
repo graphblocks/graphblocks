@@ -684,6 +684,57 @@ fn rust_stdlib_async_start_operation_accepts_relative_timeout_duration() -> Resu
 }
 
 #[test]
+fn rust_stdlib_async_start_operation_accepts_explicit_infinite_wait_policy() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-start-infinite-wait"},
+        "spec": {
+            "interface": {
+                "outputs": {"operation": "graphblocks.ai/AsyncOperation@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "infiniteWaitPolicy": "provider_has_no_timeout",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "outputs": {"operation": "$output.operation"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["outputs"]["operation"]["state"], "waiting_callback");
+    assert_eq!(
+        result["outputs"]["operation"]["infinite_wait_policy"],
+        "provider_has_no_timeout"
+    );
+    assert!(result["outputs"]["operation"]["expires_at_unix_ms"].is_null());
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

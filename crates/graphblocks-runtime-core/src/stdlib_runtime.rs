@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::async_operation::{
     AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
+    AsyncOperationState,
     ExternalEffectRecord,
 };
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
@@ -617,8 +618,18 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
             })
             .transpose()?
         };
+    let infinite_wait_policy = optional_infinite_wait_policy(
+        config,
+        "async.start_operation.invalid_config",
+        "async.start_operation@1",
+    )?;
+    if let Some(infinite_wait_policy) = infinite_wait_policy {
+        operation = operation.with_infinite_wait_policy(infinite_wait_policy);
+    }
     if let Some(expires_at_unix_ms) = expires_at_unix_ms {
         operation = operation.waiting_callback(expires_at_unix_ms);
+    } else if operation.infinite_wait_policy.is_some() {
+        operation.state = AsyncOperationState::WaitingCallback;
     }
     operation.validate().map_err(|error| {
         BlockError::new(
@@ -741,21 +752,11 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
         "async.poll_operation.missing_timeout",
         "async.poll_operation@1 timeoutMs must be a positive duration",
     )?;
-    let infinite_wait_policy = config
-        .get("infiniteWaitPolicy")
-        .or_else(|| config.get("infinite_wait_policy"))
-        .filter(|value| !value.is_null())
-        .map(|value| {
-            value.as_str().filter(|text| !text.trim().is_empty()).ok_or_else(|| {
-                BlockError::new(
-                    "async.poll_operation.invalid_config",
-                    ErrorCategory::Configuration,
-                    "async.poll_operation@1 infiniteWaitPolicy must be a non-empty string",
-                    false,
-                )
-            })
-        })
-        .transpose()?;
+    let infinite_wait_policy = optional_infinite_wait_policy(
+        config,
+        "async.poll_operation.invalid_config",
+        "async.poll_operation@1",
+    )?;
     if timeout_ms.is_none() && infinite_wait_policy.is_none() {
         return Err(
             BlockError::new(
@@ -1885,6 +1886,28 @@ fn optional_alias_duration_ms(
     ))
 }
 
+fn optional_infinite_wait_policy<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    code: &'static str,
+    block_label: &'static str,
+) -> Result<Option<&'a str>, BlockError> {
+    object
+        .get("infiniteWaitPolicy")
+        .or_else(|| object.get("infinite_wait_policy"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_str().filter(|text| !text.trim().is_empty()).ok_or_else(|| {
+                BlockError::new(
+                    code,
+                    ErrorCategory::Configuration,
+                    format!("{block_label} infiniteWaitPolicy must be a non-empty string"),
+                    false,
+                )
+            })
+        })
+        .transpose()
+}
+
 fn parse_string_map(
     value: Option<&Value>,
     label: &str,
@@ -2133,6 +2156,18 @@ fn async_operation_kind_as_str(kind: &AsyncOperationKind) -> &'static str {
 }
 
 fn async_operation_json(operation: &AsyncOperation, subject: Option<Value>) -> Value {
+    let state = match operation.state {
+        AsyncOperationState::Created => "created",
+        AsyncOperationState::Submitted => "submitted",
+        AsyncOperationState::WaitingCallback => "waiting_callback",
+        AsyncOperationState::CallbackReceived => "callback_received",
+        AsyncOperationState::Polling => "polling",
+        AsyncOperationState::Resuming => "resuming",
+        AsyncOperationState::Completed => "completed",
+        AsyncOperationState::Failed => "failed",
+        AsyncOperationState::Cancelled => "cancelled",
+        AsyncOperationState::Expired => "expired",
+    };
     json!({
         "operation_id": operation.operation_id,
         "run_id": operation.run_id,
@@ -2140,7 +2175,7 @@ fn async_operation_json(operation: &AsyncOperation, subject: Option<Value>) -> V
         "attempt_id": operation.attempt_id,
         "kind": async_operation_kind_as_str(&operation.kind),
         "provider_operation_id": operation.provider_operation_id,
-        "state": "waiting_callback",
+        "state": state,
         "resume_token_hash": operation.resume_token_hash,
         "idempotency_key": operation.idempotency_key,
         "expected_schema": operation.expected_schema,
