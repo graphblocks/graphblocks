@@ -83,6 +83,8 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
     with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
         UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={" ": "support"})
     with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
+        UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": " "})
+    with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
         UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": object()})  # type: ignore[dict-item]
 
 

@@ -1002,6 +1002,8 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source
   usage record, preserving the amendment's late-final-usage ordering for in-memory and SQLite
   ledgers in both implementations.
+- Python `UsageAmount` now rejects blank dimension values, matching the Rust runtime's usage record
+  validation for non-empty dimension keys and values before budget or usage ledger admission.
 - `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
   reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
   bypass the ledger-issued authority shape required for fenced background execution.

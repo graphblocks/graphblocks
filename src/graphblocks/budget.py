@@ -180,6 +180,7 @@ class UsageAmount:
             not isinstance(key, str)
             or not key.strip()
             or not isinstance(value, str)
+            or not value.strip()
             for key, value in dimensions.items()
         ):
             raise ValueError("usage amount dimensions must be string keys and values")
