@@ -380,6 +380,45 @@ fn compile_graph_reports_async_callback_amendment_diagnostics() {
 }
 
 #[test]
+fn compile_graph_allows_mandatory_callback_fallback_policy() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "fallback-callback-subscription"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-fallback",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "fail_run_on_failure",
+                    "fallbackPolicy": "operator_review",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    let plan = compile_graph(&graph);
+    let error_codes = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(!error_codes.contains(&"GB6014"), "{error_codes:?}");
+}
+
+#[test]
 fn compile_graph_reports_async_poll_operation_without_timeout() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

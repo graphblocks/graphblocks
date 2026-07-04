@@ -778,6 +778,23 @@ fn has_callback_dead_letter_behavior(
             .or_else(|| delivery.get("deadLetterPolicy"))
             .or_else(|| delivery.get("dead_letter_policy"))
             .is_some_and(Value::is_object)
+        || has_non_empty_string(
+            config
+                .get("fallbackPolicy")
+                .or_else(|| config.get("fallback_policy"))
+                .or_else(|| config.get("fallbackRef"))
+                .or_else(|| config.get("fallback_ref"))
+                .or_else(|| delivery.get("fallbackPolicy"))
+                .or_else(|| delivery.get("fallback_policy"))
+                .or_else(|| delivery.get("fallbackRef"))
+                .or_else(|| delivery.get("fallback_ref")),
+        )
+        || config
+            .get("fallbackPolicy")
+            .or_else(|| config.get("fallback_policy"))
+            .or_else(|| delivery.get("fallbackPolicy"))
+            .or_else(|| delivery.get("fallback_policy"))
+            .is_some_and(Value::is_object)
 }
 
 fn diagnose_callback_subscription_config(
