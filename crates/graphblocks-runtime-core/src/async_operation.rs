@@ -279,6 +279,13 @@ impl AsyncOperation {
             }
         }
 
+        if self.created_at_unix_ms == 0 {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "created_at must be positive".to_owned(),
+            });
+        }
+
         if self.state == AsyncOperationState::WaitingCallback && self.expires_at_unix_ms.is_none() {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),

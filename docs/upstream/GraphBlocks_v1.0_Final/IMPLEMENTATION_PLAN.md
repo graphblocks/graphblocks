@@ -502,6 +502,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   expiry boundary, so late callbacks cannot be projected as resumable operation state. Polling
   and callback-backed terminal completions or failures also reject `completed_at` values after
   `expires_at`, preventing late provider results from being projected as current operation outcomes.
+- Rust `AsyncOperation` validation now rejects zero `created_at_unix_ms` values so durable
+  operation records cannot start from a sentinel timestamp.
 - Callback-backed terminal transitions now reject `completed_at` values that precede the durable
   callback receipt timestamp, with deterministic transition fuzz coverage across completed, failed,
   cancelled, and expired outcomes.

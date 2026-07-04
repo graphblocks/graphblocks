@@ -733,6 +733,29 @@ fn async_operation_validate_rejects_inconsistent_state_timestamps_and_provider_i
 }
 
 #[test]
+fn async_operation_validate_rejects_zero_creation_timestamp() {
+    let operation = AsyncOperation::new(
+        "op-zero-created",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        "sha256:resume-token",
+        "idem-op-zero-created",
+        "schemas/CICallback@1",
+        0,
+    );
+
+    assert_eq!(
+        operation.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-zero-created".to_owned(),
+            reason: "created_at must be positive".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_validate_rejects_out_of_order_state_timestamps() {
     let submitted_before_created = AsyncOperation::new(
         "op-submitted",
