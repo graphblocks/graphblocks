@@ -36,6 +36,7 @@ VALID_DELIVERY_STATUSES = frozenset({
 TERMINAL_DELIVERY_STATUSES = frozenset({
     "delivered",
     "acknowledged",
+    "failed",
     "dead_lettered",
     "cancelled",
     "expired",

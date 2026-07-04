@@ -868,6 +868,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   inspection callers cannot mutate redrive or dead-letter history after recording. Repeated
   dead-letter moves for the same delivery are idempotent and return the first terminal move;
   redrive requests remain repeatable operator actions.
+- `graphblocks-callbacks` now treats non-retryable `failed` callback deliveries as terminal
+  delivery projections, preventing late webhook responses from mutating a delivery after the
+  runtime has already produced the mandatory pause/fail/no-op failure action.
 - `graphblocksd` now includes a server-side webhook HTTP client adapter that consumes the
   `graphblocks-runtime-core` signed webhook request, sends the exact canonical JSON body used for
   signing, maps response status and `Retry-After` back into the runtime delivery response model,

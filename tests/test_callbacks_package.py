@@ -1331,7 +1331,7 @@ def test_callback_delivery_projection_stops_retry_after_max_attempts() -> None:
 
 
 def test_callback_delivery_projection_rejects_webhook_response_after_terminal_state() -> None:
-    terminal_statuses = ("delivered", "acknowledged", "dead_lettered", "cancelled", "expired")
+    terminal_statuses = ("delivered", "acknowledged", "failed", "dead_lettered", "cancelled", "expired")
 
     for status in terminal_statuses:
         delivery = CallbackDeliveryProjection(
