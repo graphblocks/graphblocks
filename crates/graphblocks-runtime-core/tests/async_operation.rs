@@ -3549,6 +3549,91 @@ fn sqlite_async_operation_store_persists_artifact_backed_callback_receipt_across
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_duplicate_callback_receipt_artifacts_on_reopen() {
+    let path = sqlite_async_operation_path("callback-receipt-duplicate-artifacts");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        let mut submission = valid_submission("cb-artifact", "idem-artifact");
+        submission.payload = json!({
+            "status": "completed",
+            "workflow_run_id": "gha-run-1",
+            "log": "x".repeat(512),
+        });
+        store
+            .accept_callback_with_artifact_on_payload_limit(
+                submission,
+                &callback_schema_registry(),
+                AsyncCallbackIngestionLimits {
+                    max_payload_bytes: 128,
+                },
+                CallbackArtifactRef::new(
+                    "artifact-ci-log",
+                    "blob://callbacks/op-1/cb-artifact.json",
+                ),
+            )
+            .expect("artifact-backed callback is accepted");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let receipt_json: String = connection
+            .query_row(
+                "SELECT receipt_json FROM async_callback_receipts WHERE operation_id = ?1 AND idempotency_key = ?2",
+                params!["op-1", "idem-artifact"],
+                |row| row.get(0),
+            )
+            .expect("receipt row exists");
+        let mut receipt: serde_json::Value =
+            serde_json::from_str(&receipt_json).expect("receipt json parses");
+        let duplicate_artifact = receipt["artifacts"][0].clone();
+        receipt["artifacts"]
+            .as_array_mut()
+            .expect("receipt artifacts are an array")
+            .push(duplicate_artifact);
+        connection
+            .execute(
+                "UPDATE async_callback_receipts SET receipt_json = ?1 WHERE operation_id = ?2 AND idempotency_key = ?3",
+                params![
+                    serde_json::to_string(&receipt).expect("receipt serializes"),
+                    "op-1",
+                    "idem-artifact"
+                ],
+            )
+            .expect("receipt row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let mut duplicate_submission = valid_submission("cb-duplicate", "idem-artifact");
+    duplicate_submission.payload = json!({
+        "status": "completed",
+        "workflow_run_id": "gha-run-1",
+        "log": "x".repeat(512),
+    });
+    let error = store
+        .accept_callback_with_artifact_on_payload_limit(
+            duplicate_submission,
+            &callback_schema_registry(),
+            AsyncCallbackIngestionLimits {
+                max_payload_bytes: 128,
+            },
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json"),
+        )
+        .expect_err("duplicate callback receipt artifact ids must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::InvalidOperation { ref reason, .. }
+                if reason.contains("duplicate callback artifact id artifact-ci-log")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_quarantined_callback_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-quarantine-reopen");

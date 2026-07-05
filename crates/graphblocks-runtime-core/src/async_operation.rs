@@ -3451,6 +3451,15 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
             reason: "callback receipt received_at_unix_ms must be non-zero".to_owned(),
         });
     }
+    let mut artifact_ids = BTreeSet::new();
+    for artifact in &receipt.artifacts {
+        if !artifact_ids.insert(artifact.artifact_id.as_str()) {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: receipt.operation_id.clone(),
+                reason: format!("duplicate callback artifact id {}", artifact.artifact_id),
+            });
+        }
+    }
     Ok(receipt)
 }
 

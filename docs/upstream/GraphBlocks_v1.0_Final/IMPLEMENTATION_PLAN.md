@@ -689,6 +689,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   detection to a different operation during recovery.
 - SQLite async callback receipt replay now cross-checks receipt run, node, attempt, and provider
   operation metadata against the registered operation before duplicate handling can use it.
+- SQLite async callback receipt replay now rejects duplicate artifact ids in artifact-backed
+  callback receipts before duplicate handling can treat a corrupted row as an idempotent replay.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - SQLite callback delivery queue replay validates that each stored delivery JSON identity matches
