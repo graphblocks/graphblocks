@@ -166,3 +166,30 @@ fn record_store_delete_honors_expected_revision_and_allow_missing() -> Result<()
     )?;
     Ok(())
 }
+
+#[test]
+fn record_store_rejects_blank_collection_and_key() {
+    let mut store = InMemoryRecordStore::new();
+
+    assert_eq!(
+        store.put("   ", Record::new("ticket-1", json!({})), WriteOptions::new()),
+        Err(RecordStoreError::InvalidCollection)
+    );
+    assert_eq!(
+        store.put("tickets", Record::new("   ", json!({})), WriteOptions::new()),
+        Err(RecordStoreError::InvalidKey)
+    );
+    assert_eq!(
+        store.get("   ", "ticket-1"),
+        Err(RecordStoreError::InvalidCollection)
+    );
+    assert_eq!(store.get("tickets", "   "), Err(RecordStoreError::InvalidKey));
+    assert_eq!(
+        store.query(RecordQuery::new("   ")),
+        Err(RecordStoreError::InvalidCollection)
+    );
+    assert_eq!(
+        store.delete("tickets", "   ", DeleteOptions::new()),
+        Err(RecordStoreError::InvalidKey)
+    );
+}

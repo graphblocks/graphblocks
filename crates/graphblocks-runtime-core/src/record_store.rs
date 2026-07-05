@@ -225,10 +225,10 @@ impl InMemoryRecordStore {
     }
 
     pub fn get(&self, collection: &str, key: &str) -> Result<Option<Record>, RecordStoreError> {
-        if collection.is_empty() {
+        if collection.trim().is_empty() {
             return Err(RecordStoreError::InvalidCollection);
         }
-        if key.is_empty() {
+        if key.trim().is_empty() {
             return Err(RecordStoreError::InvalidKey);
         }
         Ok(self
@@ -243,10 +243,10 @@ impl InMemoryRecordStore {
         record: Record,
         options: WriteOptions,
     ) -> Result<Record, RecordStoreError> {
-        if collection.is_empty() {
+        if collection.trim().is_empty() {
             return Err(RecordStoreError::InvalidCollection);
         }
-        if record.key.is_empty() {
+        if record.key.trim().is_empty() {
             return Err(RecordStoreError::InvalidKey);
         }
         let storage_key = (collection.to_owned(), record.key.clone());
@@ -288,7 +288,7 @@ impl InMemoryRecordStore {
     }
 
     pub fn query(&self, request: RecordQuery) -> Result<RecordPage, RecordStoreError> {
-        if request.collection.is_empty() {
+        if request.collection.trim().is_empty() {
             return Err(RecordStoreError::InvalidCollection);
         }
         if request.limit == 0 {
@@ -349,10 +349,10 @@ impl InMemoryRecordStore {
         key: &str,
         options: DeleteOptions,
     ) -> Result<(), RecordStoreError> {
-        if collection.is_empty() {
+        if collection.trim().is_empty() {
             return Err(RecordStoreError::InvalidCollection);
         }
-        if key.is_empty() {
+        if key.trim().is_empty() {
             return Err(RecordStoreError::InvalidKey);
         }
         let storage_key = (collection.to_owned(), key.to_owned());

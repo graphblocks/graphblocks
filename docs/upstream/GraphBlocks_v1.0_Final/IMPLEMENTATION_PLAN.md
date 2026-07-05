@@ -692,6 +692,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery persistence also rejects terminal failure records without a nonblank
   `last_error`, so failed, dead-lettered, cancelled, or expired delivery records keep the reason
   needed for mandatory pause/fail actions, operator redrive, and audit review.
+- Runtime record-store operations now reject whitespace-only collection names and record keys
+  before writes, reads, queries, or deletes. This keeps durable record identities usable as stable
+  row keys, cursors, compare-and-swap targets, and audit references rather than admitting visually
+  blank state entries.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.
