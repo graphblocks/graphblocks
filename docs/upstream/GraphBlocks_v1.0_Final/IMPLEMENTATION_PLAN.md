@@ -1045,6 +1045,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   sequence numbers.
 - The same application-event fixture validation now covers generation chunk sequences before
   `GenerationChunk` construction, keeping boolean JSON flags out of output-policy stream ordering.
+- Output-policy decision fixtures in the application-event TCK now validate `acceptedThrough` as an
+  integer-only optional sequence, preventing boolean acceptance windows from being normalized to
+  sequence `1`.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

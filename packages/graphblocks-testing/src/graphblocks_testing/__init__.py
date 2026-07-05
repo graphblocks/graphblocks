@@ -3129,7 +3129,18 @@ class TckRunner:
                     )
             elif operation.get("op") == "output_policy_decision":
                 accepted_through = operation.get("acceptedThrough", operation.get("acceptedThroughSequence"))
-                accepted_sequence = int(accepted_through) if accepted_through is not None else None
+                if accepted_through is not None and (
+                    isinstance(accepted_through, bool) or not isinstance(accepted_through, int)
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventPolicyAcceptedThroughInvalid",
+                            "message": "output policy acceptedThrough must be an integer when present",
+                            "path": f"$.operations[{sequence - 1}].acceptedThrough",
+                        }
+                    )
+                    continue
+                accepted_sequence = accepted_through
                 disposition = str(operation.get("disposition", "allow"))
                 decision_id = str(operation.get("decisionId", ""))
                 input_digest = str(operation.get("inputDigest", ""))
