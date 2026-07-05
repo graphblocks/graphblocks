@@ -2266,6 +2266,15 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             message: "acknowledged delivery has zero acknowledged timestamp".to_owned(),
         });
     }
+    if let (Some(delivered_at_unix_ms), Some(acknowledged_at_unix_ms)) = (
+        delivery.delivered_at_unix_ms,
+        delivery.acknowledged_at_unix_ms,
+    ) && acknowledged_at_unix_ms < delivered_at_unix_ms
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "acknowledged delivery precedes delivered timestamp".to_owned(),
+        });
+    }
     if matches!(
         delivery.status,
         CallbackDeliveryStatus::Failed

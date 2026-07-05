@@ -1616,6 +1616,36 @@ fn sqlite_callback_delivery_queue_rejects_acknowledged_with_zero_ack_timestamp()
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_acknowledged_before_delivery_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut acknowledged = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        2_000,
+    );
+    acknowledged.delivered_at_unix_ms = Some(2_500);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    let error = queue
+        .upsert_delivery(acknowledged)
+        .expect_err("acknowledgement cannot precede delivery timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("acknowledged delivery precedes delivered timestamp")
+    ));
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_rejects_terminal_failure_without_error_reason() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(

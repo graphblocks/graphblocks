@@ -700,6 +700,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - SQLite callback delivery persistence now rejects `delivered` and `acknowledged` records whose
   delivery or acknowledgement timestamp is zero, preventing invalid audit times from entering the
   durable delivery queue.
+- SQLite callback delivery persistence now rejects acknowledged records whose acknowledgement time
+  precedes a recorded delivery time, preserving monotonic delivery audit timestamps across replay.
 - SQLite callback delivery persistence also rejects retry-scheduled records whose
   `next_retry_at_unix_ms` is zero, keeping due-time indexes from treating malformed retries as
   immediately deliverable after worker recovery or replay.
