@@ -1779,6 +1779,9 @@ impl OutputDeliveryGate {
                     policy_decision_id: Some(decision.decision_id),
                     occurred_at_unix_ms,
                 };
+                cutoff
+                    .validate()
+                    .map_err(|source| OutputGateError::InvalidCutoff { source })?;
                 self.pending.clear();
                 self.stopped = Some(cutoff.clone());
                 Ok(OutputGateUpdate {

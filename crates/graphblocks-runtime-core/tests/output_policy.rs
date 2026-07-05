@@ -1299,6 +1299,42 @@ fn immediate_draft_delivers_before_policy_and_retracts_on_abort() -> Result<(), 
 }
 
 #[test]
+fn terminal_decision_rejects_invalid_output_cutoff_semantics() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::immediate_draft(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        ),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "provisional draft",
+    ))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked")
+                .with_draft_disposition(DraftDisposition::Keep),
+            1_050,
+        ),
+        Err(OutputGateError::InvalidCutoff {
+            source: OutputCutoffError::DeliveredDraftBeyondPolicyAcceptanceKept {
+                last_policy_accepted_sequence: 0,
+                last_client_delivered_sequence: 1,
+            }
+        })
+    );
+    assert_eq!(gate.cutoff(), None);
+    assert_eq!(gate.last_generated_sequence(), 1);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+    Ok(())
+}
+
+#[test]
 fn output_cutoff_accepts_only_already_delivered_output_for_its_response() {
     let cutoff = OutputCutoff {
         stream_id: "stream-1".to_owned(),

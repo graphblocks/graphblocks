@@ -166,6 +166,9 @@ Message
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `abort_response`는 local delivery cutoff를 즉시 수행하고 provider/worker cancellation은 cooperative request로 처리한다. local cutoff가 authoritative하다.
 - policy-aborted response는 assistant message나 tool result를 durable commit하지 않는다. safe replacement는 새 `response_id`를 사용한다.
+- Terminal output-gate decisions validate the constructed canonical `OutputCutoff` before clearing
+  pending output or marking the gate stopped, so invalid draft/disposition semantics cannot become
+  durable cutoff state.
 - `ApplicationEventStream` cutoff enforcement treats event metadata `response_id` as authoritative
   for both normal events and `OutputCutoff` events, and rejects events whose payload `response_id`
   disagrees, preventing malformed late deltas from bypassing an `OutputCutoff` by claiming a
