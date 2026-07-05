@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::journal::{
     ExecutionJournal, JournalError, JournalMetadata, SqliteExecutionJournal,
 };
+use rusqlite::params;
 use serde_json::json;
 
 #[test]
@@ -137,6 +138,48 @@ fn sqlite_journal_persists_records_across_reopen() -> Result<(), String> {
     assert_eq!(
         journal.records().map_err(|error| format!("{error:?}"))?,
         vec![first, terminal],
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_rejects_invalid_record_metadata_on_replay() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-journal-{}-invalid-metadata.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut journal = SqliteExecutionJournal::open(&path, "run-000001")
+            .map_err(|error| format!("{error:?}"))?;
+        journal
+            .append("node_started", json!({"node": "model"}))
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        connection
+            .execute(
+                "UPDATE journal_records SET kind = ?1 WHERE record_id = ?2",
+                params![" \t", "run-000001:1"],
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let journal =
+        SqliteExecutionJournal::open(&path, "run-000001").map_err(|error| format!("{error:?}"))?;
+    let records = journal.records();
+
+    assert_eq!(
+        records,
+        Err(JournalError::Storage {
+            message: "stored journal record kind must not be empty".to_owned(),
+        })
     );
 
     let _ = std::fs::remove_file(&path);

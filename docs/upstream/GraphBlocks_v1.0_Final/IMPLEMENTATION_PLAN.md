@@ -120,6 +120,8 @@ graphblocks-cli
 - timeout, retry, idempotency boundary
 - local semaphore/rate limit/lease
 - RunStore와 ExecutionJournal의 in-memory/SQLite reference backend
+  - SQLite `ExecutionJournal` replay rejects blank record identity, kind, and metadata fields before
+    records can re-enter scheduler recovery.
 - state patch와 CAS
 - finite sequence map/batch/task group
 - Python binding과 Python in-process/worker adapter

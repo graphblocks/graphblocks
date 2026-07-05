@@ -393,6 +393,28 @@ struct StoredJournalRecord {
 }
 
 fn record_from_storage(stored: StoredJournalRecord) -> Result<JournalRecord, JournalError> {
+    for (field, value) in [
+        ("record_id", stored.record_id.as_str()),
+        ("run_id", stored.run_id.as_str()),
+        ("kind", stored.kind.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(JournalError::Storage {
+                message: format!("stored journal record {field} must not be empty"),
+            });
+        }
+    }
+    for (field, value) in [
+        ("causation_id", stored.causation_id.as_deref()),
+        ("node_id", stored.node_id.as_deref()),
+        ("attempt_id", stored.attempt_id.as_deref()),
+    ] {
+        if value.is_some_and(|value| value.trim().is_empty()) {
+            return Err(JournalError::Storage {
+                message: format!("stored journal record {field} must not be empty"),
+            });
+        }
+    }
     Ok(JournalRecord {
         record_id: stored.record_id,
         run_id: stored.run_id,
