@@ -602,6 +602,35 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
     assert "load_retry_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_retry_tck_ignores_boolean_cancel_attempt(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.retry(
+        case_id="retry/boolean-cancel-attempt",
+        fixture={
+            "kind": "node_retry",
+            "maxAttempts": 2,
+            "failuresBeforeSuccess": 0,
+            "cancelOnAttempt": True,
+            "idempotencyKey": "ticket-create:boolean-cancel",
+            "expected": {
+                "status": "succeeded",
+                "terminalKind": "run_succeeded",
+                "attempts": 1,
+                "retryCount": 0,
+                "contextIdempotencyKeys": ["ticket-create:boolean-cancel"],
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["status"] == "succeeded"
+    assert "node_cancelled" not in report.results[0].observed["journalKinds"]
+
+
 def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

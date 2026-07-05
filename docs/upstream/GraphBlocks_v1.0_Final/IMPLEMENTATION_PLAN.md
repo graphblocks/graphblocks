@@ -1032,6 +1032,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async operation results now reject committed external-effect records that omit an idempotency
   key, preserving retry/cancellation audit semantics for effects that have already escaped the
   runtime boundary.
+- The Python retry TCK runner now treats `cancelOnAttempt` as an integer-only fixture control and
+  ignores booleans, so boolean JSON flags cannot accidentally cancel the first effect attempt.
 - Callback submission validation now rejects zero `received_at_unix_ms` values before any
   `ExternalCallbackReceived` receipt can be journaled.
 - Runtime callback endpoint validation now rejects zero expiration timestamps, so mutated endpoint

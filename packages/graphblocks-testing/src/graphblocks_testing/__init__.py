@@ -7419,7 +7419,11 @@ class TckRunner:
             seen_idempotency_keys.append(
                 str(context.get("idempotency_key")) if context.get("idempotency_key") is not None else None
             )
-            if isinstance(cancel_on_attempt, int) and attempts["count"] == cancel_on_attempt:
+            if (
+                isinstance(cancel_on_attempt, int)
+                and not isinstance(cancel_on_attempt, bool)
+                and attempts["count"] == cancel_on_attempt
+            ):
                 token = context.get("cancellation_token")
                 if isinstance(token, CancellationToken):
                     token.cancel(cancel_reason)
