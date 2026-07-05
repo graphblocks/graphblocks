@@ -1140,6 +1140,7 @@ class ExternalCallbackReceipt:
             "release_id",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
+        _require_sha256_digest("external callback receipt payload_digest", self.payload_digest)
         if self.tenant_id is not None:
             _require_non_empty_string("tenant_id", self.tenant_id)
         if self.provider_operation_id is not None:

@@ -1842,6 +1842,23 @@ def test_external_callback_receipt_validates_received_timestamp() -> None:
         ),
     )
     _assert_raises_value_error(
+        "external callback receipt payload_digest must be a sha256 digest",
+        lambda: ExternalCallbackReceipt(
+            callback_id="cb_001",
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            provider_operation_id=None,
+            idempotency_key="op_ci_001:attempt_001:provider_001",
+            payload_projection=projection,
+            payload_digest="md5:payload",
+            received_at="2026-07-02T00:00:02Z",
+            verified_by="hmac-sha256:key-current",
+            policy_snapshot_id="policy_001",
+        ),
+    )
+    _assert_raises_value_error(
         "received_at must not be before envelope delivered_at",
         lambda: record_external_callback_receipt(
             envelope,

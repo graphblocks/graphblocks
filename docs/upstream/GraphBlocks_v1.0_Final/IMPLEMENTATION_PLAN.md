@@ -981,9 +981,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now projects durable `ExternalCallbackReceived` receipt metadata from a
   verified callback envelope and bounded/artifact-backed payload projection, preserving callback,
   run, operation, node, attempt, idempotency, payload digest, verifier, and policy snapshot identity
-  for journal-before-resume flows without making callback delivery the source of truth. The receipt
-  factory can also bind the envelope to the runtime's expected run, release, and tenant identity and
-  rejects mismatches before a durable receipt projection is produced.
+  for journal-before-resume flows without making callback delivery the source of truth. Receipt
+  projections validate `sha256:` payload digest shape before matching the payload projection. The
+  receipt factory can also bind the envelope to the runtime's expected run, release, and tenant
+  identity and rejects mismatches before a durable receipt projection is produced.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, and tenant identity into a stable fencing key so stale callbacks cannot be
