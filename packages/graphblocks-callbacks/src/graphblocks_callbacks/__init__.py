@@ -987,6 +987,9 @@ class CallbackEndpointRef:
             "tenant_id",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
+        parsed_url = urlparse(self.url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValueError("url must be an absolute http(s) URL")
         if not isinstance(self.auth, CallbackEndpointAuth):
             raise ValueError("auth must be a CallbackEndpointAuth")
         if self.expires_at is not None:

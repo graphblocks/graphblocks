@@ -1906,6 +1906,21 @@ def test_callback_endpoint_ref_requires_complete_resume_identity() -> None:
             expires_at="later",
         ),
     )
+    _assert_raises_value_error(
+        "url must be an absolute http(s) URL",
+        lambda: CallbackEndpointRef(
+            endpoint_id="cbep_ci_001",
+            url="not-a-url",
+            accepted_schema="schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            release_id="rel_001",
+            tenant_id="tenant_001",
+        ),
+    )
 
 
 def test_callback_resume_admission_accepts_current_endpoint_receipt() -> None:

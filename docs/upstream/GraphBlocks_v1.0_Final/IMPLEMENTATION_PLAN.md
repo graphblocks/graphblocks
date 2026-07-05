@@ -983,7 +983,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, and tenant identity into a stable fencing key so stale callbacks cannot be
-  confused with the current resumable operation.
+  confused with the current resumable operation. Endpoint refs also validate their callback ingress
+  URL as an absolute HTTP(S) URL before they can be used for resume admission.
 - Bearer callback endpoint auth now rejects whitespace-only tokens at validation time, so callback
   ingress cannot be configured with visually present but empty credentials.
 - `graphblocks-callbacks` now evaluates callback resume admission by comparing a durable
