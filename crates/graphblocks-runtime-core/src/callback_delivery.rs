@@ -318,6 +318,7 @@ pub struct CallbackSubscription {
     pub ordered_delivery: bool,
     pub authoritative_uses: BTreeSet<CallbackAuthoritativeUse>,
     pub mandatory_delivery: bool,
+    pub dead_letter_behavior: bool,
 }
 
 impl CallbackSubscription {
@@ -368,6 +369,7 @@ impl CallbackSubscription {
             ordered_delivery: false,
             authoritative_uses: BTreeSet::new(),
             mandatory_delivery: false,
+            dead_letter_behavior: false,
         };
         subscription.validate()?;
         Ok(subscription)
@@ -454,6 +456,11 @@ impl CallbackSubscription {
 
     pub fn with_mandatory_delivery(mut self) -> Self {
         self.mandatory_delivery = true;
+        self
+    }
+
+    pub fn with_dead_letter_behavior(mut self) -> Self {
+        self.dead_letter_behavior = true;
         self
     }
 
@@ -1296,13 +1303,16 @@ impl CallbackConfigurationDiagnostic {
         }
         if matches!(
             subscription.failure_policy,
-            CallbackFailurePolicy::PauseRunOnFailure | CallbackFailurePolicy::FailRunOnFailure
-        ) {
+            CallbackFailurePolicy::RetryThenDeadLetter
+                | CallbackFailurePolicy::PauseRunOnFailure
+                | CallbackFailurePolicy::FailRunOnFailure
+        ) && !subscription.dead_letter_behavior
+        {
             diagnostics.push(Self {
                 code: "GB6014",
                 field: "failure_policy",
                 message: format!(
-                    "callback subscription {} uses mandatory failure policy without dead-letter behavior",
+                    "callback subscription {} uses retrying or mandatory failure policy without dead-letter behavior",
                     subscription.subscription_id
                 ),
             });

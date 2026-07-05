@@ -1896,6 +1896,7 @@ fn callback_subscription_accepts_typed_delivery_target() {
         1_000,
     )
     .expect("subscription is valid")
+    .with_dead_letter_behavior()
     .with_ordered_delivery();
 
     assert_eq!(subscription.delivery_target.kind(), "websocket");
@@ -1971,6 +1972,7 @@ fn callback_diagnostics_report_impossible_ordering_for_unordered_targets() {
         900,
     )
     .expect("subscription is valid")
+    .with_dead_letter_behavior()
     .with_ordered_delivery();
 
     let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
@@ -1982,7 +1984,10 @@ fn callback_diagnostics_report_impossible_ordering_for_unordered_targets() {
 
 #[test]
 fn callback_diagnostics_report_missing_dead_letter_policy_for_retrying_callbacks() {
-    let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::PauseRunOnFailure);
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
 
     let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
 
@@ -2010,6 +2015,7 @@ fn callback_diagnostics_allow_mandatory_retry_then_dead_letter() {
         EventFilter::new(),
         CallbackFailurePolicy::RetryThenDeadLetter,
     )
+    .with_dead_letter_behavior()
     .with_mandatory_delivery();
 
     assert_eq!(
@@ -2024,6 +2030,7 @@ fn callback_diagnostics_report_callback_as_source_of_truth() {
         EventFilter::new(),
         CallbackFailurePolicy::RetryThenDeadLetter,
     )
+    .with_dead_letter_behavior()
     .with_authoritative_use(CallbackAuthoritativeUse::Billing)
     .with_authoritative_use(CallbackAuthoritativeUse::EffectCommit);
 
@@ -2047,7 +2054,8 @@ fn callback_diagnostics_allow_projection_only_subscriptions() {
     let subscription = subscription(
         EventFilter::new(),
         CallbackFailurePolicy::RetryThenDeadLetter,
-    );
+    )
+    .with_dead_letter_behavior();
 
     let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
 
