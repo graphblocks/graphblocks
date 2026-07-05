@@ -53,6 +53,29 @@ def test_kafka_consumer_cursor_round_trips_durable_cursor(monkeypatch) -> None:
         graphblocks_kafka.KafkaConsumerCursor("orders-consumer", "orders", 2, -1)
 
 
+def test_kafka_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
+    graphblocks_kafka = _import_kafka(monkeypatch)
+
+    cases = (
+        lambda: graphblocks_kafka.KafkaRecord("orders", True, 41, {"orderId": "ord-41"}),  # type: ignore[arg-type]
+        lambda: graphblocks_kafka.KafkaRecord("orders", 2, True, {"orderId": "ord-41"}),  # type: ignore[arg-type]
+        lambda: graphblocks_kafka.KafkaRecord(
+            "orders",
+            2,
+            41,
+            {"orderId": "ord-41"},
+            timestamp_unix_ms=True,  # type: ignore[arg-type]
+        ),
+        lambda: graphblocks_kafka.KafkaConsumerCursor("orders-consumer", "orders", True, 42),  # type: ignore[arg-type]
+        lambda: graphblocks_kafka.KafkaConsumerCursor("orders-consumer", "orders", 2, True),  # type: ignore[arg-type]
+        lambda: graphblocks_kafka.KafkaSinkRecord("orders-out", {"orderId": "ord-1"}, partition=True),  # type: ignore[arg-type]
+    )
+
+    for factory in cases:
+        with pytest.raises(graphblocks_kafka.KafkaAdapterError):
+            factory()
+
+
 def test_kafka_sink_record_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_kafka = _import_kafka(monkeypatch)
     request = graphblocks_kafka.SinkCommitRequest(

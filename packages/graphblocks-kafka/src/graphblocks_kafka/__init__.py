@@ -14,6 +14,20 @@ def _validate_topic(topic: str) -> None:
         raise KafkaAdapterError("topic must not be empty")
 
 
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise KafkaAdapterError(f"{field_name} must be an integer")
+    if value < 0:
+        raise KafkaAdapterError(f"{field_name} must be non-negative")
+    return value
+
+
+def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(field_name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class KafkaRecord:
     topic: str
@@ -26,12 +40,13 @@ class KafkaRecord:
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
-        if self.partition < 0:
-            raise KafkaAdapterError("partition must be non-negative")
-        if self.offset < 0:
-            raise KafkaAdapterError("offset must be non-negative")
-        if self.timestamp_unix_ms is not None and self.timestamp_unix_ms < 0:
-            raise KafkaAdapterError("timestamp_unix_ms must be non-negative")
+        object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
+        object.__setattr__(self, "offset", _non_negative_int("offset", self.offset))
+        object.__setattr__(
+            self,
+            "timestamp_unix_ms",
+            _optional_non_negative_int("timestamp_unix_ms", self.timestamp_unix_ms),
+        )
         object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
 
     def to_source_event(self) -> SourceEvent:
@@ -53,10 +68,8 @@ class KafkaConsumerCursor:
         if not self.group_id.strip():
             raise KafkaAdapterError("group_id must not be empty")
         _validate_topic(self.topic)
-        if self.partition < 0:
-            raise KafkaAdapterError("partition must be non-negative")
-        if self.next_offset < 0:
-            raise KafkaAdapterError("next_offset must be non-negative")
+        object.__setattr__(self, "partition", _non_negative_int("partition", self.partition))
+        object.__setattr__(self, "next_offset", _non_negative_int("next_offset", self.next_offset))
 
     @classmethod
     def from_source_cursor(cls, group_id: str, cursor: SourceCursor) -> KafkaConsumerCursor:
@@ -78,8 +91,7 @@ class KafkaSinkRecord:
 
     def __post_init__(self) -> None:
         _validate_topic(self.topic)
-        if self.partition is not None and self.partition < 0:
-            raise KafkaAdapterError("partition must be non-negative")
+        object.__setattr__(self, "partition", _optional_non_negative_int("partition", self.partition))
         object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
 
     @classmethod
