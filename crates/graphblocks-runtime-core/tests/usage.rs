@@ -285,7 +285,11 @@ fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), 
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
-    .with_provider_response_id("resp-1");
+    .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
     let duplicate = UsageRecord::new(
         "usage-duplicate",
         UsageSource::ProviderReported,
@@ -295,10 +299,57 @@ fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), 
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
-    .with_provider_response_id("resp-1");
+    .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
 
     assert_eq!(ledger.append(first.clone())?, first);
     assert_eq!(ledger.append(duplicate)?, first);
+    assert_eq!(ledger.records_for_run("run-1"), vec![first]);
+    Ok(())
+}
+
+#[test]
+fn usage_ledger_rejects_conflicting_provider_response_replay() -> Result<(), UsageLedgerError> {
+    let mut ledger = InMemoryUsageLedger::new();
+    let first = UsageRecord::new(
+        "usage-1",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
+    let conflicting_replay = UsageRecord::new(
+        "usage-conflict",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(21)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
+
+    assert_eq!(ledger.append(first.clone())?, first);
+    assert_eq!(
+        ledger.append(conflicting_replay),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "resp-1".to_string()
+        })
+    );
     assert_eq!(ledger.records_for_run("run-1"), vec![first]);
     Ok(())
 }
@@ -707,7 +758,11 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
-    .with_provider_response_id("resp-1");
+    .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
 
     assert_eq!(ledger.append(first.clone())?, first);
     assert_eq!(ledger.append(duplicate)?, first);
@@ -738,6 +793,42 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
         Some("ticket.create")
     );
     assert_eq!(ledger.records_for_run("run-1")?, vec![first, reconciled]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_rejects_conflicting_provider_response_replay() -> Result<(), UsageLedgerError>
+{
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    let first = UsageRecord::new(
+        "usage-1",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let conflicting_replay = UsageRecord::new(
+        "usage-conflict",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(21)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+
+    assert_eq!(ledger.append(first.clone())?, first);
+    assert_eq!(
+        ledger.append(conflicting_replay),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "resp-1".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1")?, vec![first]);
     Ok(())
 }
 

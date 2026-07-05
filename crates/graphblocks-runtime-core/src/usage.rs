@@ -216,11 +216,16 @@ impl InMemoryUsageLedger {
         {
             let dedupe_key = (provider_response_id.clone(), record.attempt_id.clone());
             if let Some(existing_id) = self.provider_dedupe.get(&dedupe_key) {
-                return Ok(self
+                let existing = self
                     .records
                     .get(existing_id)
-                    .expect("provider dedupe index points to an existing usage record")
-                    .clone());
+                    .expect("provider dedupe index points to an existing usage record");
+                if usage_provider_duplicate_conflict(existing, &record) {
+                    return Err(UsageLedgerError::RecordConflict {
+                        record_id: provider_response_id.clone(),
+                    });
+                }
+                return Ok(existing.clone());
             }
         }
 
@@ -429,6 +434,11 @@ impl SqliteUsageLedger {
             && let Some(existing) =
                 self.provider_duplicate(provider_response_id, record.attempt_id.as_deref())?
         {
+            if usage_provider_duplicate_conflict(&existing, &record) {
+                return Err(UsageLedgerError::RecordConflict {
+                    record_id: provider_response_id.clone(),
+                });
+            }
             return Ok(existing);
         }
 
@@ -748,6 +758,20 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
         }
     }
     Ok(())
+}
+
+fn usage_provider_duplicate_conflict(existing: &UsageRecord, incoming: &UsageRecord) -> bool {
+    existing.source != incoming.source
+        || existing.confidence != incoming.confidence
+        || existing.amounts != incoming.amounts
+        || existing.run_id != incoming.run_id
+        || existing.attempt_id != incoming.attempt_id
+        || existing.provider_response_id != incoming.provider_response_id
+        || existing.pricing_ref != incoming.pricing_ref
+        || existing.quota_window_id != incoming.quota_window_id
+        || existing.execution_scope != incoming.execution_scope
+        || existing.reconciliation_of != incoming.reconciliation_of
+        || existing.metadata != incoming.metadata
 }
 
 fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
