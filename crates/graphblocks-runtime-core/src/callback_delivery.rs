@@ -256,9 +256,8 @@ impl CallbackDeliveryTarget {
             "push" | "push_notification" => Self::push_notification(value),
             "email" => Self::email(value),
             "local_callback" => Self::local_callback(value, true),
-            _ => Ok(Self::LocalCallback {
-                callback_name: non_empty_target_field(address, "delivery_target")?,
-                process_bound: true,
+            _ => Err(CallbackDeliveryError::EmptyField {
+                field: "delivery_target".to_owned(),
             }),
         }
     }

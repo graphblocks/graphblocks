@@ -264,6 +264,29 @@ fn callback_subscription_rejects_empty_typed_webhook_target_url() {
 }
 
 #[test]
+fn callback_subscription_rejects_unknown_delivery_target_kind() {
+    let result = CallbackSubscription::new(
+        "sub-unknown-target",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        "ftp:https://relay.example/events",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    );
+
+    assert_eq!(
+        result,
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: "delivery_target".to_owned(),
+            }
+        )
+    );
+}
+
+#[test]
 fn callback_subscription_rejects_zero_creation_timestamp() {
     let result = CallbackSubscription::new(
         "sub-created",

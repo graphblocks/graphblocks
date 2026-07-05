@@ -641,7 +641,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   so rate-limit responses cannot create unbounded callback retry stalls.
 - Callback delivery targets are now typed as webhook, WebSocket, SSE, push notification, email, or
   local callback variants, and ordered-delivery diagnostics use target capabilities instead of
-  string-prefix inference.
+  string-prefix inference. The Rust parser now rejects unknown delivery target prefixes instead of
+  silently downgrading them to local callbacks, so typoed or unsupported target schemes cannot
+  bypass intended callback delivery routing.
 - `graphblocks-server` now enforces callback delivery target safety at registration and subscription
   admission: webhook delivery requires HMAC-SHA256 or Ed25519 signing metadata and rejects obvious
   forbidden egress targets such as localhost, private/link-local IPs, `file://`, Unix socket URLs,
