@@ -1,3 +1,4 @@
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
@@ -2810,7 +2811,7 @@ impl SqliteAsyncOperationStore {
             let mut statement = connection
                 .prepare(
                     "
-                    SELECT operation_id, event_json
+                    SELECT operation_id, event_index, event_json
                     FROM async_operation_events
                     ORDER BY operation_id, event_index
                     ",
@@ -2818,11 +2819,30 @@ impl SqliteAsyncOperationStore {
                 .map_err(storage_error)?;
             let events = statement
                 .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 })
                 .map_err(storage_error)?;
+            let mut expected_event_indexes: BTreeMap<String, i64> = BTreeMap::new();
             for event in events {
-                let (operation_id, event_json) = event.map_err(storage_error)?;
+                let (operation_id, event_index, event_json) = event.map_err(storage_error)?;
+                match expected_event_indexes.entry(operation_id.clone()) {
+                    Entry::Vacant(entry) if event_index == 0 => {
+                        entry.insert(1);
+                    }
+                    Entry::Occupied(mut entry) if event_index == *entry.get() => {
+                        *entry.get_mut() += 1;
+                    }
+                    _ => {
+                        return Err(AsyncOperationError::Storage {
+                            message:
+                                "stored async operation event index is not contiguous".to_owned(),
+                        });
+                    }
+                }
                 let event = event_from_value(parse_json(&event_json)?)?;
                 if event_operation_id(&event) != operation_id {
                     return Err(AsyncOperationError::Storage {

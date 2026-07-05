@@ -2894,6 +2894,41 @@ fn sqlite_async_operation_store_rejects_event_row_identity_mismatch_on_reopen() 
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_event_index_gap_on_reopen() {
+    let path = sqlite_async_operation_path("event-index-gap");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        connection
+            .execute(
+                "UPDATE async_operation_events SET event_index = ?1 WHERE operation_id = ?2 AND event_index = ?3",
+                params![2_i64, "op-1", 1_i64],
+            )
+            .expect("event index is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("event index gap must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::Storage { ref message }
+                if message.contains("stored async operation event index is not contiguous")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-reopen");
