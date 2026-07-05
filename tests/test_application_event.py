@@ -640,6 +640,62 @@ def test_application_protocol_log_rejects_event_id_reuse_with_changed_content() 
         log.append(changed_cursor)
 
 
+def test_application_protocol_log_rejects_cursor_reuse_by_different_event() -> None:
+    first = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            cursor="cursor-1",
+            occurred_at_unix_ms=1_765_843_200_001,
+        ),
+        payload={"done": 1, "total": 2},
+    )
+    reused_cursor = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-2",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            cursor="cursor-1",
+            occurred_at_unix_ms=1_765_843_200_002,
+        ),
+        payload={"done": 2, "total": 2},
+    )
+    no_cursor = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-3",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=3,
+            occurred_at_unix_ms=1_765_843_200_003,
+        ),
+        payload={"done": 3, "total": 3},
+    )
+    no_cursor_again = ApplicationProtocolEvent.new(
+        "JobProgress",
+        ApplicationProtocolEventMetadata(
+            event_id="event-4",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=4,
+            occurred_at_unix_ms=1_765_843_200_004,
+        ),
+        payload={"done": 4, "total": 4},
+    )
+    log = ApplicationProtocolLog()
+
+    assert log.append(first) is True
+    with pytest.raises(ApplicationProtocolError, match="application protocol log cursor conflict"):
+        log.append(reused_cursor)
+    assert log.append(no_cursor) is True
+    assert log.append(no_cursor_again) is True
+
+
 def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> None:
     state = ApplicationProtocolStreamState()
     first_delta = ApplicationProtocolEvent.new(

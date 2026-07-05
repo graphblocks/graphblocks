@@ -504,6 +504,7 @@ class ApplicationProtocolLog:
     events: list[ApplicationProtocolEvent] = field(default_factory=list)
     _event_ids: set[str] = field(default_factory=set, init=False, repr=False)
     _events_by_id: dict[str, ApplicationProtocolEvent] = field(default_factory=dict, init=False, repr=False)
+    _events_by_cursor: dict[str, ApplicationProtocolEvent] = field(default_factory=dict, init=False, repr=False)
     _last_sequence: int | None = field(default=None, init=False, repr=False)
     _run_id: str | None = field(default=None, init=False, repr=False)
 
@@ -520,6 +521,10 @@ class ApplicationProtocolLog:
             if self._events_by_id[event.metadata.event_id] != event:
                 raise ApplicationProtocolError("application protocol log event_id conflict")
             return False
+        if event.metadata.cursor is not None:
+            existing_cursor_event = self._events_by_cursor.get(event.metadata.cursor)
+            if existing_cursor_event is not None and existing_cursor_event != event:
+                raise ApplicationProtocolError("application protocol log cursor conflict")
         if self._run_id is not None and event.metadata.run_id != self._run_id:
             raise ApplicationProtocolError("application protocol log event run_id must match first event")
         if self._last_sequence is not None and event.metadata.sequence <= self._last_sequence:
@@ -532,6 +537,8 @@ class ApplicationProtocolLog:
         self._last_sequence = event.metadata.sequence
         self._event_ids.add(event.metadata.event_id)
         self._events_by_id[event.metadata.event_id] = event
+        if event.metadata.cursor is not None:
+            self._events_by_cursor[event.metadata.cursor] = event
         self.events.append(event)
         return True
 
