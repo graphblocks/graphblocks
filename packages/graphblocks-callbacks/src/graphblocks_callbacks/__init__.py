@@ -990,6 +990,8 @@ class CallbackEndpointRef:
         parsed_url = urlparse(self.url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             raise ValueError("url must be an absolute http(s) URL")
+        if parsed_url.username is not None or parsed_url.password is not None:
+            raise ValueError("url must not contain embedded userinfo")
         if not isinstance(self.auth, CallbackEndpointAuth):
             raise ValueError("auth must be a CallbackEndpointAuth")
         if self.expires_at is not None:
