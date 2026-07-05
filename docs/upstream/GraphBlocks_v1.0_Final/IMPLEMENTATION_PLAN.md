@@ -1172,6 +1172,8 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - `UsageLedger` reconciliation now enforces one final reconciliation per source usage record in
   both Python and Rust in-memory/SQLite ledgers, preventing late provider usage from being
   double-counted by multiple reconciled records for the same provisional measurement.
+- Rust usage ledgers now reject directly appended reconciliation records whose `reconciliation_of`
+  source record is missing, so callers cannot bypass the `reconcile(...)` source-existence guard.
 - Rust usage ledgers now reject conflicting provider-response replays for the same
   `(provider_response_id, attempt_id)`, while exact logical replays with different local record ids
   and ingestion timestamps remain idempotent.

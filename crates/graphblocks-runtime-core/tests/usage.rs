@@ -535,6 +535,37 @@ fn usage_ledgers_reject_reconciliation_before_source_usage() -> Result<(), Usage
 }
 
 #[test]
+fn usage_ledgers_reject_reconciliation_record_without_source() -> Result<(), UsageLedgerError> {
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    let mut orphaned_reconciliation = UsageRecord::new(
+        "usage-reconciled",
+        UsageSource::Reconciled,
+        UsageConfidence::Exact,
+        [tokens(21)],
+        1_500,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    orphaned_reconciliation.reconciliation_of = Some("usage-missing".to_owned());
+
+    assert_eq!(
+        memory.append(orphaned_reconciliation.clone()),
+        Err(UsageLedgerError::RecordNotFound {
+            record_id: "usage-missing".to_owned()
+        })
+    );
+    assert_eq!(
+        sqlite.append(orphaned_reconciliation),
+        Err(UsageLedgerError::RecordNotFound {
+            record_id: "usage-missing".to_owned()
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
     let path = sqlite_usage_path("usage-persist");
     let record = UsageRecord::new(

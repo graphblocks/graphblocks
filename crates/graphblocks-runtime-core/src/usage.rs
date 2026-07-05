@@ -203,12 +203,17 @@ impl InMemoryUsageLedger {
             });
         }
 
-        if let Some(reconciliation_of) = &record.reconciliation_of
-            && self.reconciliation_for(reconciliation_of).is_some()
-        {
-            return Err(UsageLedgerError::RecordConflict {
-                record_id: reconciliation_of.clone(),
-            });
+        if let Some(reconciliation_of) = &record.reconciliation_of {
+            if !self.records.contains_key(reconciliation_of) {
+                return Err(UsageLedgerError::RecordNotFound {
+                    record_id: reconciliation_of.clone(),
+                });
+            }
+            if self.reconciliation_for(reconciliation_of).is_some() {
+                return Err(UsageLedgerError::RecordConflict {
+                    record_id: reconciliation_of.clone(),
+                });
+            }
         }
 
         if record.reconciliation_of.is_none()
@@ -421,12 +426,13 @@ impl SqliteUsageLedger {
             Err(error) => return Err(error),
         }
 
-        if let Some(reconciliation_of) = &record.reconciliation_of
-            && self.reconciliation_for(reconciliation_of)?.is_some()
-        {
-            return Err(UsageLedgerError::RecordConflict {
-                record_id: reconciliation_of.clone(),
-            });
+        if let Some(reconciliation_of) = &record.reconciliation_of {
+            self.get(reconciliation_of)?;
+            if self.reconciliation_for(reconciliation_of)?.is_some() {
+                return Err(UsageLedgerError::RecordConflict {
+                    record_id: reconciliation_of.clone(),
+                });
+            }
         }
 
         if record.reconciliation_of.is_none()
