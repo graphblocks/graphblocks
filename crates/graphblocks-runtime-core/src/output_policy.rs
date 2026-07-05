@@ -305,6 +305,9 @@ impl OutputDeliveryPolicy {
                 Ok(())
             }
             DeliveryMode::ImmediateDraft => {
+                if !self.flush_boundaries.is_empty() {
+                    return Err(OutputDeliveryPolicyError::FlushBoundaryWithoutStreaming);
+                }
                 if self.delivered_draft_disposition == DraftDisposition::Keep {
                     return Err(OutputDeliveryPolicyError::ImmediateDraftWithoutRetractionSupport);
                 }

@@ -1331,6 +1331,19 @@ fn immediate_draft_requires_incomplete_or_retraction_semantics() {
 }
 
 #[test]
+fn immediate_draft_policy_rejects_flush_boundaries() {
+    assert_eq!(
+        OutputDeliveryPolicy::immediate_draft(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        )
+        .flush_on([FlushBoundary::Sentence])
+        .validate(),
+        Err(OutputDeliveryPolicyError::FlushBoundaryWithoutStreaming),
+    );
+}
+
+#[test]
 fn immediate_draft_delivers_before_policy_and_retracts_on_abort() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
         OutputDeliveryPolicy::immediate_draft(

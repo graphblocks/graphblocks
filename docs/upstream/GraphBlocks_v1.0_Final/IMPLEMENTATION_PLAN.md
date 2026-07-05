@@ -172,9 +172,9 @@ Message
   delivery gate can ignore contradictory policy content.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
-- `buffer_until_commit` delivery policy now rejects flush boundaries, keeping sentence/paragraph or
-  token-driven release configuration scoped to streaming modes that can actually deliver before
-  commit.
+- `buffer_until_commit` and `immediate_draft` delivery policies now reject flush boundaries, keeping
+  sentence/paragraph or token-driven release configuration scoped to holdback modes that actually
+  flush retained content before commit.
 - Output delivery policy validation now rejects holdback limits on `buffer_until_commit` and
   `immediate_draft`, and the Rust compiler reports `HoldbackLimitWithoutHoldback` for the same
   shape before deployment. Holdback size/time semantics remain scoped to `bounded_holdback`.
