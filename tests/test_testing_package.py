@@ -730,6 +730,50 @@ def test_testing_package_exhaustion_controller_rejects_boolean_work_epoch(monkey
         raise AssertionError("boolean work_epoch was accepted")
 
 
+def test_testing_package_exhaustion_tck_rejects_boolean_admission_permit_epoch(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.exhaustion(
+        case_id="exhaustion/boolean-admission-permit-epoch",
+        fixture={
+            "kind": "checkpoint_and_pause",
+            "policy": {
+                "preset": "checkpoint_and_pause",
+                "unit": "turn",
+                "continuation": {
+                    "allowedWork": ["checkpoint"],
+                    "maxAdditionalSteps": 1,
+                    "deadline": "2026-06-22T01:00:00Z",
+                },
+            },
+            "admissionEpoch": 7,
+            "admissions": [
+                {
+                    "workKind": "checkpoint",
+                    "workEpoch": 8,
+                    "permit": {
+                        "admissionEpoch": True,
+                        "authorizedUsage": [
+                            {"kind": "model_output_tokens", "amount": 1, "unit": "tokens"}
+                        ],
+                    },
+                    "allowed": False,
+                    "reason": "invalid_permit",
+                }
+            ],
+            "expected": {
+                "error": "budget permit admission_epoch must be an integer",
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["error"] == "budget permit admission_epoch must be an integer"
+
+
 def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

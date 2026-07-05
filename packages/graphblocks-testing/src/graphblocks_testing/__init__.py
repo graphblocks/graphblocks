@@ -4443,49 +4443,56 @@ class TckRunner:
                         }
                     )
                     continue
-                permit = None
-                permit_value = operation.get("permit")
-                if isinstance(permit_value, Mapping):
-                    authorized_usage = []
-                    raw_authorized_usage = permit_value.get(
-                        "authorizedUsage",
-                        [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
-                    )
-                    if isinstance(raw_authorized_usage, list):
-                        for amount in raw_authorized_usage:
-                            if isinstance(amount, Mapping):
-                                authorized_usage.append(
-                                    UsageAmount(
-                                        kind=str(amount.get("kind", "")),
-                                        amount=amount.get("amount", 0),
-                                        unit=str(amount.get("unit", "")),
+                try:
+                    permit = None
+                    permit_value = operation.get("permit")
+                    if isinstance(permit_value, Mapping):
+                        authorized_usage = []
+                        raw_authorized_usage = permit_value.get(
+                            "authorizedUsage",
+                            [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
+                        )
+                        if isinstance(raw_authorized_usage, list):
+                            for amount in raw_authorized_usage:
+                                if isinstance(amount, Mapping):
+                                    authorized_usage.append(
+                                        UsageAmount(
+                                            kind=str(amount.get("kind", "")),
+                                            amount=amount.get("amount", 0),
+                                            unit=str(amount.get("unit", "")),
+                                        )
                                     )
-                                )
-                    permit = BudgetPermit(
-                        permit_id=str(permit_value.get("permitId", "permit-1")),
-                        reservation_refs=("reservation-1",),
-                        owner=PolicyResourceRef(str(permit_value.get("owner", "worker:1"))),
-                        atomic_unit=PolicyResourceRef(
-                            str(permit_value.get("atomicUnit", atomic_unit)),
-                            resource_kind="turn",
-                        ),
-                        admission_epoch=int(permit_value.get("admissionEpoch", admission_epoch)),
-                        authorized_amounts=authorized_usage,
-                        continuation_profile=str(permit_value.get("continuationProfile", profile)),
-                        policy_snapshot_digest="sha256:policy",
-                        expires_at=str(permit_value.get("expiresAt", "2026-06-22T01:00:00Z")),
-                        fencing_tokens={"budget-1": 1},
-                    )
-                elif permit_value == "stored":
-                    permit = stored_permit
-                elif permit_value not in (None, "none"):
-                    diagnostics.append(
-                        {
-                            "code": "ExhaustionPermitReferenceUnknown",
-                            "message": "exhaustion admission references an unknown permit",
-                            "path": f"$.admissions[{operation_index}].permit",
-                        }
-                    )
+                        permit = BudgetPermit(
+                            permit_id=str(permit_value.get("permitId", "permit-1")),
+                            reservation_refs=("reservation-1",),
+                            owner=PolicyResourceRef(str(permit_value.get("owner", "worker:1"))),
+                            atomic_unit=PolicyResourceRef(
+                                str(permit_value.get("atomicUnit", atomic_unit)),
+                                resource_kind="turn",
+                            ),
+                            admission_epoch=permit_value.get(  # type: ignore[arg-type]
+                                "admissionEpoch",
+                                admission_epoch,
+                            ),
+                            authorized_amounts=authorized_usage,
+                            continuation_profile=str(permit_value.get("continuationProfile", profile)),
+                            policy_snapshot_digest="sha256:policy",
+                            expires_at=str(permit_value.get("expiresAt", "2026-06-22T01:00:00Z")),
+                            fencing_tokens={"budget-1": 1},
+                        )
+                    elif permit_value == "stored":
+                        permit = stored_permit
+                    elif permit_value not in (None, "none"):
+                        diagnostics.append(
+                            {
+                                "code": "ExhaustionPermitReferenceUnknown",
+                                "message": "exhaustion admission references an unknown permit",
+                                "path": f"$.admissions[{operation_index}].permit",
+                            }
+                        )
+                except ValueError as error:
+                    observed["error"] = str(error)
+                    continue
 
                 requested_usage = []
                 raw_requested_usage = operation.get("usage", [])
