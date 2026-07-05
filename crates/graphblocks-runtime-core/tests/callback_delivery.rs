@@ -322,6 +322,73 @@ fn run_scoped_subscription_does_not_receive_other_run_events() {
 }
 
 #[test]
+fn callback_delivery_identity_components_are_collision_resistant() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let first_subscription = CallbackSubscription::new(
+        "sub_a",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    )
+    .expect("subscription is valid");
+    let second_subscription = CallbackSubscription::new(
+        "sub",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    )
+    .expect("subscription is valid");
+    let first = scheduler
+        .schedule_event(
+            &first_subscription,
+            &protocol_event("b", ApplicationProtocolEventKind::ReviewRequested, 1),
+        )
+        .expect("first delivery schedules");
+    let second = scheduler
+        .schedule_event(
+            &second_subscription,
+            &protocol_event("a_b", ApplicationProtocolEventKind::ReviewRequested, 2),
+        )
+        .expect("second delivery schedules");
+
+    assert_ne!(first.delivery_id, second.delivery_id);
+
+    let colon_subscription = CallbackSubscription::new(
+        "sub:a",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    )
+    .expect("subscription is valid");
+    let colon_first = scheduler
+        .schedule_event(
+            &colon_subscription,
+            &protocol_event("b", ApplicationProtocolEventKind::ReviewRequested, 3),
+        )
+        .expect("colon delivery schedules");
+    let colon_second = scheduler
+        .schedule_event(
+            &second_subscription,
+            &protocol_event("a:b", ApplicationProtocolEventKind::ReviewRequested, 4),
+        )
+        .expect("colon delivery schedules");
+
+    assert_ne!(colon_first.idempotency_key, colon_second.idempotency_key);
+}
+
+#[test]
 fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 250));
     let subscription = subscription(

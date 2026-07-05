@@ -606,6 +606,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery persistence also rejects terminal failure records without `last_error`, so
   failed, dead-lettered, cancelled, or expired delivery records keep the reason needed for
   mandatory pause/fail actions, operator redrive, and audit review.
+- Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
+  identity components before joining them. This preserves the existing readable form for simple
+  IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

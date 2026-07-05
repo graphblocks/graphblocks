@@ -2294,12 +2294,22 @@ impl CallbackDeliveryScheduler {
         if !subscription.can_receive(event) {
             return None;
         }
+        let encode_identity_component = |value: &str| {
+            let mut encoded = String::with_capacity(value.len());
+            for byte in value.bytes() {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.') {
+                    encoded.push(char::from(byte));
+                } else {
+                    encoded.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            encoded
+        };
+        let subscription_identity = encode_identity_component(&subscription.subscription_id);
+        let event_identity = encode_identity_component(&event.metadata.event_id);
 
         Some(CallbackDelivery {
-            delivery_id: format!(
-                "del_{}_{}",
-                subscription.subscription_id, event.metadata.event_id
-            ),
+            delivery_id: format!("del_{subscription_identity}_{event_identity}"),
             subscription_id: subscription.subscription_id.clone(),
             event_id: event.metadata.event_id.clone(),
             run_id: event.metadata.run_id.clone(),
@@ -2310,10 +2320,7 @@ impl CallbackDeliveryScheduler {
                 .clone()
                 .unwrap_or_else(|| event.metadata.sequence.to_string()),
             attempt: 1,
-            idempotency_key: format!(
-                "{}:{}",
-                subscription.subscription_id, event.metadata.event_id
-            ),
+            idempotency_key: format!("{subscription_identity}:{event_identity}"),
             failure_policy: subscription.failure_policy,
             status: CallbackDeliveryStatus::Pending,
             next_retry_at_unix_ms: None,
