@@ -423,6 +423,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Event-envelope metadata now follows the same TCK path: sequence and occurrence timestamps are
   validated by `ApplicationProtocolEventMetadata`, so boolean event stream metadata cannot be
   normalized into cursor/replay ordering fields.
+- Protocol-log TCK operations now use the same event metadata validation path before append/replay,
+  and expected construction errors are recorded as append errors instead of being masked by integer
+  coercion.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,

@@ -3741,35 +3741,36 @@ class TckRunner:
                     raw_payload = raw_operation.get("payload", {})
                     if not isinstance(raw_payload, Mapping):
                         raise ValueError("application-protocol protocol_log operation payload must be a mapping")
-                    event = ApplicationProtocolEvent.new(
-                        str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
-                        ApplicationProtocolEventMetadata(
-                            event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
-                            protocol_version=str(
-                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
-                            ),
-                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
-                            turn_id=(
-                                str(raw_metadata["turnId"])
-                                if raw_metadata.get("turnId") is not None
-                                else (
-                                    str(raw_metadata["turn_id"])
-                                    if raw_metadata.get("turn_id") is not None
-                                    else None
-                                )
-                            ),
-                            sequence=int(raw_metadata.get("sequence", 0)),
-                            cursor=(
-                                str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
-                            ),
-                            occurred_at_unix_ms=int(
-                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
-                            ),
-                        ),
-                        payload=dict(raw_payload),
-                    )
                     expected_error = raw_operation.get("expectError", raw_operation.get("expect_error"))
                     try:
+                        event = ApplicationProtocolEvent.new(
+                            str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
+                            ApplicationProtocolEventMetadata(
+                                event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                                protocol_version=str(
+                                    raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                                ),
+                                run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                                turn_id=(
+                                    str(raw_metadata["turnId"])
+                                    if raw_metadata.get("turnId") is not None
+                                    else (
+                                        str(raw_metadata["turn_id"])
+                                        if raw_metadata.get("turn_id") is not None
+                                        else None
+                                    )
+                                ),
+                                sequence=raw_metadata.get("sequence", 0),  # type: ignore[arg-type]
+                                cursor=(
+                                    str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                                ),
+                                occurred_at_unix_ms=raw_metadata.get(
+                                    "occurredAtUnixMs",
+                                    raw_metadata.get("occurred_at_unix_ms", 0),
+                                ),  # type: ignore[arg-type]
+                            ),
+                            payload=dict(raw_payload),
+                        )
                         appended = log.append(event)
                     except Exception as error:
                         if expected_error == "run_mismatch" and "run_id must match first event" in str(error):
@@ -3781,6 +3782,9 @@ class TckRunner:
                         ):
                             appended = False
                             append_errors.append("duplicate_event_id_conflict")
+                        elif expected_error is not None and str(error) == str(expected_error):
+                            appended = False
+                            append_errors.append(str(expected_error))
                         else:
                             raise
                     append_results.append(appended)
