@@ -140,3 +140,18 @@ fn sink_commit_log_is_idempotent_and_rejects_mutated_replay() {
         "sha256:44f3d946c8929c37202f95f3b38faec719b3bee986ec7d8f403c385a60cb2c7f"
     );
 }
+
+#[test]
+fn sink_commit_record_rejects_non_object_metadata() {
+    assert_eq!(
+        SinkCommitRecord::new(
+            "commit-1",
+            "warehouse",
+            "orders:partition-0:12",
+            json!("committed"),
+        ),
+        Err(SinkCommitError::InvalidMetadata {
+            field: "metadata",
+        })
+    );
+}

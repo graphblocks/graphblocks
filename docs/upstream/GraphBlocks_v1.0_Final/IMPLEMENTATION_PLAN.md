@@ -702,6 +702,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Application protocol replay now treats whitespace-only cursors as invalid replay positions and
   returns no unretained replay instead of widening the request to the beginning of the authoritative
   event stream.
+- Durable sink commit records now require structured JSON object metadata, so idempotent external
+  effect commits cannot be represented by opaque scalar payloads that lose audit, reconciliation,
+  or compensation fields.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

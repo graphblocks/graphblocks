@@ -338,6 +338,9 @@ impl SinkCommitRecord {
                 field: "idempotency_key",
             });
         }
+        if !self.metadata.is_object() {
+            return Err(SinkCommitError::InvalidMetadata { field: "metadata" });
+        }
         if self.metadata_digest != canonical_hash(&self.metadata) {
             return Err(SinkCommitError::MetadataDigestMismatch {
                 sink_id: self.sink_id.clone(),
@@ -376,6 +379,9 @@ pub enum SinkCommitError {
         sink_id: String,
         idempotency_key: String,
     },
+    InvalidMetadata {
+        field: &'static str,
+    },
     MetadataDigestMismatch {
         sink_id: String,
         idempotency_key: String,
@@ -396,6 +402,9 @@ impl fmt::Display for SinkCommitError {
                 formatter,
                 "sink {sink_id:?} idempotency key {idempotency_key:?} has conflicting metadata"
             ),
+            Self::InvalidMetadata { field } => {
+                write!(formatter, "{field} must be a JSON object")
+            }
             Self::MetadataDigestMismatch {
                 sink_id,
                 idempotency_key,
