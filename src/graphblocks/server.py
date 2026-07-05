@@ -2107,7 +2107,7 @@ class GraphBlocksServerApp:
                 metadata = event.get("metadata")
                 if isinstance(metadata, Mapping):
                     sequence = metadata.get("sequence", 0)
-                    if isinstance(sequence, int) and sequence > last_sequence:
+                    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
                         last_sequence = sequence
             return ServerResponse.json(
                 200,

@@ -855,7 +855,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   cursor-based replay and duplicate-tolerant attach semantics for the authoritative event stream.
   The Python `ApplicationProtocolLog` facade also rejects unresolved replay cursors instead of
   replaying from the beginning, keeping client/server re-exports aligned with the retained replay
-  contract.
+  contract. Websocket stream snapshots ignore boolean event metadata sequences when deriving the
+  current cursor, so malformed retained events cannot advance stream replay state as sequence `1`.
 - `graphblocks-server` now exposes the framework-neutral `GET /runs` `ListRuns` route using the
   same event-derived run status projection, keeping `POST /runs` reserved for `InvokeGraph`.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`

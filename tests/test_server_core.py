@@ -6303,3 +6303,32 @@ def test_server_app_serves_application_stream_snapshot_for_existing_run() -> Non
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
     assert all(event["metadata"]["occurredAt"] for event in payload["events"])
     assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Stream ok"}
+
+
+def test_server_app_ignores_boolean_event_sequence_for_stream_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-stream-bool-sequence-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-bool", "sequence": True},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-stream-bool-sequence-1/stream",
+            headers={
+                "Authorization": "Bearer token-1",
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["stream"]["cursor"] == "run-stream-bool-sequence-1:0"
