@@ -566,6 +566,72 @@ fn usage_ledgers_reject_reconciliation_record_without_source() -> Result<(), Usa
 }
 
 #[test]
+fn usage_ledgers_require_reconciled_lineage_only_for_reconciliations()
+-> Result<(), UsageLedgerError> {
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    let provisional = UsageRecord::new(
+        "usage-provisional",
+        UsageSource::TokenizerEstimated,
+        UsageConfidence::Estimated,
+        [tokens(18)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let reconciled_without_lineage = UsageRecord::new(
+        "usage-reconciled-without-lineage",
+        UsageSource::Reconciled,
+        UsageConfidence::Exact,
+        [tokens(21)],
+        1_500,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let mut non_reconciled_with_lineage = UsageRecord::new(
+        "usage-runtime-with-lineage",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(1)],
+        1_510,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+    non_reconciled_with_lineage.reconciliation_of = Some("usage-provisional".to_owned());
+
+    memory.append(provisional.clone())?;
+    sqlite.append(provisional)?;
+
+    assert_eq!(
+        memory.append(reconciled_without_lineage.clone()),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "reconciled usage records must identify reconciliation_of".to_owned(),
+        })
+    );
+    assert_eq!(
+        sqlite.append(reconciled_without_lineage),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "reconciled usage records must identify reconciliation_of".to_owned(),
+        })
+    );
+    assert_eq!(
+        memory.append(non_reconciled_with_lineage.clone()),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation_of requires reconciled source".to_owned(),
+        })
+    );
+    assert_eq!(
+        sqlite.append(non_reconciled_with_lineage),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation_of requires reconciled source".to_owned(),
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
     let path = sqlite_usage_path("usage-persist");
     let record = UsageRecord::new(

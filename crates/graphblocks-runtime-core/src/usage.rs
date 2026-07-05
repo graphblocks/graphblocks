@@ -717,6 +717,16 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
             });
         }
     }
+    if record.source == UsageSource::Reconciled && record.reconciliation_of.is_none() {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "reconciled usage records must identify reconciliation_of".to_string(),
+        });
+    }
+    if record.source != UsageSource::Reconciled && record.reconciliation_of.is_some() {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage reconciliation_of requires reconciled source".to_string(),
+        });
+    }
     if record.amounts.is_empty() {
         return Err(UsageLedgerError::InvalidRecord {
             message: "usage amounts must not be empty".to_string(),
