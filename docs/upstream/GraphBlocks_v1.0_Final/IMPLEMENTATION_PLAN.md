@@ -1032,6 +1032,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   durable redrive/audit projections tied to a real recorded timestamp.
 - Callback dead-letter redrive now rejects zero `redriven_at_unix_ms` values and timestamps earlier
   than the dead-letter record, preventing operator redrive audit time regressions.
+- Redriven callback delivery records now require non-empty operator and reason audit fields when
+  `redrive_count` is positive, and non-redriven records cannot carry stray redrive audit metadata.
 - Async callback ingestion now treats `provider_operation_id` as fenced operation metadata and
   rejects callbacks that omit or contradict the registered provider operation before journaling
   receipt or resuming the run.

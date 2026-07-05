@@ -1687,6 +1687,49 @@ fn sqlite_callback_delivery_queue_rejects_terminal_failure_without_error_reason(
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_redrive_without_audit_fields() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead letter is created");
+    let redriven = scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", "receiver recovered", 2_000)
+        .expect("redrive creates a delivery");
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    for field in ["last_redrive_operator", "last_redrive_reason"] {
+        let mut malformed = redriven.clone();
+        match field {
+            "last_redrive_operator" => malformed.last_redrive_operator = None,
+            "last_redrive_reason" => malformed.last_redrive_reason = Some(" ".to_owned()),
+            _ => unreachable!("test field list is exhaustive"),
+        }
+
+        let error = queue
+            .upsert_delivery(malformed)
+            .expect_err("redriven deliveries must preserve operator audit fields");
+
+        assert!(
+            matches!(
+                error,
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+                    if message.contains("redriven callback delivery has invalid audit fields")
+            ),
+            "{field} should be required for redrive audit"
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_restart() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

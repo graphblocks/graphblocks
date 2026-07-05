@@ -2275,6 +2275,26 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             message: "acknowledged delivery precedes delivered timestamp".to_owned(),
         });
     }
+    let redrive_audit_missing = delivery
+        .last_redrive_operator
+        .as_ref()
+        .is_none_or(|operator| operator.trim().is_empty())
+        || delivery
+            .last_redrive_reason
+            .as_ref()
+            .is_none_or(|reason| reason.trim().is_empty());
+    if delivery.redrive_count > 0 && redrive_audit_missing {
+        return Err(CallbackDeliveryError::Storage {
+            message: "redriven callback delivery has invalid audit fields".to_owned(),
+        });
+    }
+    if delivery.redrive_count == 0
+        && (delivery.last_redrive_operator.is_some() || delivery.last_redrive_reason.is_some())
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "non-redriven callback delivery has redrive audit fields".to_owned(),
+        });
+    }
     if matches!(
         delivery.status,
         CallbackDeliveryStatus::Failed
