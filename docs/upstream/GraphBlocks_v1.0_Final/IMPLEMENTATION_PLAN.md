@@ -746,9 +746,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   now exercises this mixed-run rejection path and records the expected `run_mismatch` append error.
   The PyO3 binding maps this runtime error to structured `run_mismatch` JSON with expected and
   actual run identifiers, keeping native and Python adapter diagnostics aligned.
-- Runtime `ApplicationProtocolLog` now treats duplicate event IDs as idempotent only when the full
-  event matches the committed record; mutated replays are rejected as conflicts so a globally
-  unique `event_id` cannot hide divergent payload, cursor, sequence, or metadata.
+- Runtime and Python facade `ApplicationProtocolLog` now treat duplicate event IDs as idempotent
+  only when the full event matches the committed record; mutated replays are rejected as conflicts
+  so a globally unique `event_id` cannot hide divergent payload, cursor, sequence, or metadata.
 - `AttachToRun` replay now has a typed runtime result that either returns retained missed events
   and the live-stream cursor, or reports expired-cursor recovery metadata.
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,

@@ -610,6 +610,36 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.replay_after(limit=-1)
 
 
+def test_application_protocol_log_rejects_event_id_reuse_with_changed_content() -> None:
+    def protocol_event(event_id: str, sequence: int, cursor: str, payload: dict[str, object]) -> ApplicationProtocolEvent:
+        return ApplicationProtocolEvent.new(
+            "JobProgress",
+            ApplicationProtocolEventMetadata(
+                event_id=event_id,
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                cursor=cursor,
+                occurred_at_unix_ms=1_765_843_200_000 + sequence,
+            ),
+            payload=payload,
+        )
+
+    log = ApplicationProtocolLog()
+    first = protocol_event("event-1", 1, "cursor-1", {"done": 1, "total": 2})
+    exact_duplicate = protocol_event("event-1", 1, "cursor-1", {"done": 1, "total": 2})
+    changed_payload = protocol_event("event-1", 1, "cursor-1", {"done": 2, "total": 2})
+    changed_cursor = protocol_event("event-1", 1, "cursor-other", {"done": 1, "total": 2})
+
+    assert log.append(first) is True
+    assert log.append(exact_duplicate) is False
+
+    with pytest.raises(ApplicationProtocolError, match="application protocol log event_id conflict"):
+        log.append(changed_payload)
+    with pytest.raises(ApplicationProtocolError, match="application protocol log event_id conflict"):
+        log.append(changed_cursor)
+
+
 def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> None:
     state = ApplicationProtocolStreamState()
     first_delta = ApplicationProtocolEvent.new(
