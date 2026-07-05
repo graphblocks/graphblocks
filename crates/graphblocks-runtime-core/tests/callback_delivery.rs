@@ -1012,6 +1012,47 @@ fn sqlite_callback_delivery_queue_rejects_acknowledged_without_ack_timestamp() {
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_terminal_failure_without_error_reason() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let terminal =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 2_000);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    for status in [
+        CallbackDeliveryStatus::Failed,
+        CallbackDeliveryStatus::DeadLettered,
+        CallbackDeliveryStatus::Cancelled,
+        CallbackDeliveryStatus::Expired,
+    ] {
+        let mut malformed = terminal.clone();
+        malformed.status = status;
+        malformed.next_retry_at_unix_ms = None;
+        malformed.last_error = None;
+
+        let error = queue
+            .upsert_delivery(malformed)
+            .expect_err("terminal failure record must retain an error reason");
+
+        assert!(
+            matches!(
+                error,
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+                    if message.contains("terminal callback delivery has no error reason")
+            ),
+            "{status:?} should require last_error"
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_restart() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

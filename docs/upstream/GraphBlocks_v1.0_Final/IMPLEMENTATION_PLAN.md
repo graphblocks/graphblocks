@@ -603,6 +603,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timestamps: `delivered` requires `delivered_at_unix_ms`, and `acknowledged` requires
   `acknowledged_at_unix_ms`. Queue validation covers malformed replay records before they can
   re-enter the worker or ordered-delivery state machines.
+- Callback delivery persistence also rejects terminal failure records without `last_error`, so
+  failed, dead-lettered, cancelled, or expired delivery records keep the reason needed for
+  mandatory pause/fail actions, operator redrive, and audit review.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

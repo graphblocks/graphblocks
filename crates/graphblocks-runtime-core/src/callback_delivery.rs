@@ -2069,6 +2069,18 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             message: "acknowledged delivery has no acknowledged timestamp".to_owned(),
         });
     }
+    if matches!(
+        delivery.status,
+        CallbackDeliveryStatus::Failed
+            | CallbackDeliveryStatus::DeadLettered
+            | CallbackDeliveryStatus::Cancelled
+            | CallbackDeliveryStatus::Expired
+    ) && delivery.last_error.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "terminal callback delivery has no error reason".to_owned(),
+        });
+    }
     Ok(())
 }
 
