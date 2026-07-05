@@ -22,6 +22,28 @@ def _require_non_empty(field_name: str, value: str) -> None:
         raise VoiceContractError(f"{field_name} must not be empty")
 
 
+def _positive_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise VoiceContractError(f"{field_name} must be an integer")
+    if value <= 0:
+        raise VoiceContractError(f"{field_name} must be positive")
+    return value
+
+
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise VoiceContractError(f"{field_name} must be an integer")
+    if value < 0:
+        raise VoiceContractError(f"{field_name} must be non-negative")
+    return value
+
+
+def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(field_name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceTransport:
     kind: VoiceTransportKind
@@ -36,10 +58,8 @@ class VoiceTransport:
         if self.uri is not None:
             _require_non_empty("transport uri", self.uri)
         _require_non_empty("transport codec", self.codec)
-        if self.sample_rate_hz <= 0:
-            raise VoiceContractError("sample_rate_hz must be positive")
-        if self.channels <= 0:
-            raise VoiceContractError("channels must be positive")
+        object.__setattr__(self, "sample_rate_hz", _positive_int("sample_rate_hz", self.sample_rate_hz))
+        object.__setattr__(self, "channels", _positive_int("channels", self.channels))
 
     @classmethod
     def websocket(
@@ -78,8 +98,8 @@ class DuplexSession:
         _require_non_empty("session_id", self.session_id)
         if self.state not in {"open", "interrupted", "closed"}:
             raise VoiceContractError(f"unsupported voice session state {self.state!r}")
-        if self.started_at_ms < 0:
-            raise VoiceContractError("started_at_ms must be non-negative")
+        object.__setattr__(self, "started_at_ms", _non_negative_int("started_at_ms", self.started_at_ms))
+        object.__setattr__(self, "closed_at_ms", _optional_non_negative_int("closed_at_ms", self.closed_at_ms))
         if self.closed_at_ms is not None and self.closed_at_ms < self.started_at_ms:
             raise VoiceContractError("closed_at_ms must be greater than or equal to started_at_ms")
         object.__setattr__(
@@ -93,12 +113,14 @@ class DuplexSession:
         return replace(self, current_turn_id=turn_id, state="open")
 
     def interrupt(self, *, occurred_at_ms: int, reason: str) -> DuplexSession:
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         if occurred_at_ms < self.started_at_ms:
             raise VoiceContractError("interruption occurred before session start")
         _require_non_empty("interruption reason", reason)
         return replace(self, state="interrupted", closed_at_ms=None, interruption_reason=reason)
 
     def close(self, *, occurred_at_ms: int) -> DuplexSession:
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         if occurred_at_ms < self.started_at_ms:
             raise VoiceContractError("close occurred before session start")
         return replace(self, state="closed", closed_at_ms=occurred_at_ms)
@@ -126,12 +148,9 @@ class AudioFrame:
 
     def __post_init__(self) -> None:
         _require_non_empty("stream_id", self.stream_id)
-        if self.sequence < 0:
-            raise VoiceContractError("sequence must be non-negative")
-        if self.start_ms < 0:
-            raise VoiceContractError("start_ms must be non-negative")
-        if self.duration_ms <= 0:
-            raise VoiceContractError("duration_ms must be positive")
+        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
+        object.__setattr__(self, "start_ms", _non_negative_int("start_ms", self.start_ms))
+        object.__setattr__(self, "duration_ms", _positive_int("duration_ms", self.duration_ms))
         if not 0 <= self.speech_probability <= 1:
             raise VoiceContractError("speech_probability must be between 0 and 1")
 
@@ -181,8 +200,9 @@ class PlaybackEntry:
 
     def __post_init__(self) -> None:
         _require_non_empty("playback_id", self.playback_id)
-        if self.sequence < 0:
-            raise VoiceContractError("playback sequence must be non-negative")
+        object.__setattr__(self, "sequence", _non_negative_int("playback sequence", self.sequence))
+        object.__setattr__(self, "started_at_ms", _optional_non_negative_int("started_at_ms", self.started_at_ms))
+        object.__setattr__(self, "completed_at_ms", _optional_non_negative_int("completed_at_ms", self.completed_at_ms))
         if self.status not in {"queued", "started", "completed", "interrupted"}:
             raise VoiceContractError(f"unsupported playback status {self.status!r}")
 
@@ -212,8 +232,7 @@ class PlaybackLedger:
         return tuple(entry.playback_id for entry in self.entries if entry.status == "started")
 
     def interrupt_active(self, *, occurred_at_ms: int, reason: str) -> PlaybackLedger:
-        if occurred_at_ms < 0:
-            raise VoiceContractError("occurred_at_ms must be non-negative")
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         _require_non_empty("interruption reason", reason)
         return replace(
             self,
@@ -238,6 +257,16 @@ class InterruptionDecision:
     interrupted_playback_ids: tuple[str, ...] = field(default_factory=tuple)
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        _require_non_empty("classifier_id", self.classifier_id)
+        _require_non_empty("session_id", self.session_id)
+        if self.kind not in {"continue", "interrupt"}:
+            raise VoiceContractError(f"unsupported interruption kind {self.kind!r}")
+        object.__setattr__(self, "occurred_at_ms", _non_negative_int("occurred_at_ms", self.occurred_at_ms))
+        object.__setattr__(self, "interrupted_playback_ids", tuple(str(item) for item in self.interrupted_playback_ids))
+        if self.reason is not None:
+            _require_non_empty("interruption reason", self.reason)
+
 
 @dataclass(frozen=True, slots=True)
 class InterruptionClassifier:
@@ -255,6 +284,7 @@ class InterruptionClassifier:
         occurred_at_ms: int,
     ) -> InterruptionDecision:
         _require_non_empty("session_id", session_id)
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         active_ids = playback.active_playback_ids()
         if active_ids and vad_decision.kind in {"speech_start", "speech"}:
             return InterruptionDecision(

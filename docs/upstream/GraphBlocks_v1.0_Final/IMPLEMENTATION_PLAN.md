@@ -1440,7 +1440,8 @@ DuplexSession, transport, VAD authority, interruption classifier, playback ledge
   metadata, VAD authority, interruption classifier, playback ledger, realtime session request, and
   a pure `RealtimeProviderAdapter` projection that binds provider id, endpoint, auth secret ref,
   defaults, options, and stable provider-session digests without adding a network client to
-  runtime-core.
+  runtime-core. Python voice contract objects reject boolean and non-integer timing/sequence fields
+  before stream ordering, playback interruption, or provider realtime requests can persist them.
 
 ### Durable unbounded stream (`GB-X3-DURABLE-STREAM`)
 

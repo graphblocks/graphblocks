@@ -87,6 +87,36 @@ def test_voice_playback_ledger_marks_active_items_interrupted(monkeypatch) -> No
     assert interrupted.content_digest().startswith("sha256:")
 
 
+def test_voice_contracts_reject_boolean_timing_and_sequence_fields(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    transport = graphblocks_voice.VoiceTransport.websocket("wss://voice.example.com/session")
+
+    cases = (
+        lambda: graphblocks_voice.VoiceTransport("websocket", "wss://voice.example.com/session", sample_rate_hz=True),
+        lambda: graphblocks_voice.VoiceTransport("websocket", "wss://voice.example.com/session", channels=True),
+        lambda: graphblocks_voice.DuplexSession("session-1", transport, started_at_ms=True),
+        lambda: graphblocks_voice.AudioFrame("mic", sequence=True, start_ms=0, duration_ms=20, speech_probability=0.2),
+        lambda: graphblocks_voice.AudioFrame("mic", sequence=1, start_ms=True, duration_ms=20, speech_probability=0.2),
+        lambda: graphblocks_voice.AudioFrame("mic", sequence=1, start_ms=0, duration_ms=True, speech_probability=0.2),
+        lambda: graphblocks_voice.PlaybackEntry("audio-1", sequence=True, status="started"),
+        lambda: graphblocks_voice.PlaybackLedger().interrupt_active(occurred_at_ms=True, reason="barge_in"),
+        lambda: graphblocks_voice.InterruptionDecision("classifier-1", "session-1", "continue", True),
+        lambda: graphblocks_voice.InterruptionClassifier("barge-in").classify(
+            session_id="session-1",
+            vad_decision=graphblocks_voice.VadDecision("vad-local", "mic", 1, "speech", 0.9),
+            playback=graphblocks_voice.PlaybackLedger(),
+            occurred_at_ms=True,
+        ),
+    )
+
+    for factory in cases:
+        try:
+            factory()
+        except graphblocks_voice.VoiceContractError:
+            continue
+        raise AssertionError("expected VoiceContractError")
+
+
 def test_voice_package_is_cataloged_as_optional_extension(monkeypatch) -> None:
     _import_voice(monkeypatch)
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
