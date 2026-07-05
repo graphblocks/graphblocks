@@ -534,6 +534,7 @@ fn gate_error_name(error: &OutputGateError) -> &'static str {
         OutputGateError::InvalidDeliveryPolicy { .. } => "invalid_delivery_policy",
         OutputGateError::MissingDecisionId => "missing_decision_id",
         OutputGateError::MissingInputDigest { .. } => "missing_input_digest",
+        OutputGateError::InvalidDispositionContent { .. } => "invalid_disposition_content",
         OutputGateError::ReplacementContentMissing { .. } => "replacement_content_missing",
         OutputGateError::InvalidRedactionInstruction { .. } => "invalid_redaction_instruction",
         OutputGateError::InvalidReasonCode { .. } => "invalid_reason_code",

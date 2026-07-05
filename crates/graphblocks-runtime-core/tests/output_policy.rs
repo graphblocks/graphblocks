@@ -746,6 +746,63 @@ fn output_policy_decision_rejects_invalid_metadata_values() {
 }
 
 #[test]
+fn output_policy_decision_rejects_content_incompatible_with_disposition() {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "draft"))
+        .expect("chunk records");
+    let mut allow_with_replacement =
+        OutputPolicyDecision::allow("decision-allow", Some(1), "sha256:allow");
+    allow_with_replacement.replacement_chunks = vec![GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "replacement",
+    )];
+    assert_eq!(
+        allow_with_replacement.validate(),
+        Err(OutputPolicyDecisionError::InvalidDispositionContent {
+            decision_id: "decision-allow".to_owned(),
+            disposition: OutputDisposition::Allow,
+            field: "replacement_chunks",
+        }),
+    );
+    assert_eq!(
+        gate.apply_decision(allow_with_replacement, 1_000),
+        Err(OutputGateError::InvalidDispositionContent {
+            decision_id: "decision-allow".to_owned(),
+            disposition: OutputDisposition::Allow,
+            field: "replacement_chunks",
+        }),
+    );
+
+    let mut replace_with_redaction = OutputPolicyDecision::replace(
+        "decision-replace",
+        Some(1),
+        [GenerationChunk::text(
+            "stream-1",
+            "response-1",
+            1,
+            "replacement",
+        )],
+        "sha256:replace",
+    );
+    replace_with_redaction.redactions = vec![RedactionInstruction::text_range(
+        "/chunks/1/text",
+        0,
+        3,
+        "[redacted]",
+    )];
+    assert_eq!(
+        replace_with_redaction.validate(),
+        Err(OutputPolicyDecisionError::InvalidDispositionContent {
+            decision_id: "decision-replace".to_owned(),
+            disposition: OutputDisposition::Replace,
+            field: "redactions",
+        }),
+    );
+}
+
+#[test]
 fn replace_decision_requires_policy_approved_replacement_content() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     let decision = OutputPolicyDecision::replace(

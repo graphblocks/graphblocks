@@ -165,6 +165,9 @@ Message
 - `OutputPolicyDecision` redaction instructions validate replacement values at construction time,
   so malformed redaction payloads cannot enter the delivery gate and fail after partial state
   inspection.
+- `OutputPolicyDecision` validation now rejects disposition/content mismatches, such as replacement
+  chunks on `allow` decisions or typed redaction instructions on `replace` decisions, before the
+  delivery gate can ignore contradictory policy content.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `buffer_until_commit` delivery policy now rejects flush boundaries, keeping sentence/paragraph or

@@ -360,6 +360,11 @@ pub enum OutputPolicyDecisionError {
     MissingInputDigest { decision_id: String },
     InvalidAcceptedThroughSequence { accepted_through_sequence: u64 },
     InvalidEvaluatedAtUnixMs { evaluated_at_unix_ms: u64 },
+    InvalidDispositionContent {
+        decision_id: String,
+        disposition: OutputDisposition,
+        field: &'static str,
+    },
     ReplacementContentMissing { decision_id: String },
     InvalidReplacementChunk { source: GenerationChunkError },
     InvalidRedactionInstruction { path: String },
@@ -385,6 +390,24 @@ impl OutputPolicyDecision {
         if let Some(0) = self.evaluated_at_unix_ms {
             return Err(OutputPolicyDecisionError::InvalidEvaluatedAtUnixMs {
                 evaluated_at_unix_ms: 0,
+            });
+        }
+        if !matches!(
+            self.disposition,
+            OutputDisposition::Redact | OutputDisposition::Replace
+        ) && !self.replacement_chunks.is_empty()
+        {
+            return Err(OutputPolicyDecisionError::InvalidDispositionContent {
+                decision_id: self.decision_id.clone(),
+                disposition: self.disposition,
+                field: "replacement_chunks",
+            });
+        }
+        if self.disposition != OutputDisposition::Redact && !self.redactions.is_empty() {
+            return Err(OutputPolicyDecisionError::InvalidDispositionContent {
+                decision_id: self.decision_id.clone(),
+                disposition: self.disposition,
+                field: "redactions",
             });
         }
         if self.disposition == OutputDisposition::Replace && self.replacement_chunks.is_empty() {
@@ -1119,6 +1142,11 @@ pub enum OutputGateError {
     ReplacementContentMissing {
         decision_id: String,
     },
+    InvalidDispositionContent {
+        decision_id: String,
+        disposition: OutputDisposition,
+        field: &'static str,
+    },
     InvalidReasonCode {
         reason_code: String,
     },
@@ -1492,6 +1520,15 @@ impl OutputDeliveryGate {
                     evaluated_at_unix_ms,
                 } => Err(OutputGateError::InvalidEvaluatedAtUnixMs {
                     evaluated_at_unix_ms,
+                }),
+                OutputPolicyDecisionError::InvalidDispositionContent {
+                    decision_id,
+                    disposition,
+                    field,
+                } => Err(OutputGateError::InvalidDispositionContent {
+                    decision_id,
+                    disposition,
+                    field,
                 }),
                 OutputPolicyDecisionError::ReplacementContentMissing { decision_id } => {
                     Err(OutputGateError::ReplacementContentMissing { decision_id })
