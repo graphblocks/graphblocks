@@ -396,6 +396,11 @@ impl CallbackSubscription {
                 field: "scope".to_owned(),
             });
         }
+        if self.created_at_unix_ms == 0 {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "created_at_unix_ms".to_owned(),
+            });
+        }
         if let CallbackDeliveryTarget::Webhook { url } = &self.delivery_target {
             if url.trim().is_empty() {
                 return Err(CallbackDeliveryError::EmptyField {

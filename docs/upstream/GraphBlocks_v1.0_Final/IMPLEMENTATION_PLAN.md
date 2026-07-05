@@ -699,6 +699,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - SQLite callback delivery persistence also rejects retry-scheduled records whose
   `next_retry_at_unix_ms` is zero, keeping due-time indexes from treating malformed retries as
   immediately deliverable after worker recovery or replay.
+- `CallbackSubscription` validation now rejects zero creation timestamps, so subscription
+  registrations and public-field validation cannot produce replay or audit records without a real
+  creation instant.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
   envelopes, an injected transport boundary, and persisted success/retry outcomes. If the signed
   envelope exceeds the target payload limit, the worker records a terminal delivery failure with a
