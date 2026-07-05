@@ -1180,6 +1180,9 @@ resume, and resume without ownership fencing.
   abstention, fusion, and rerank projections.
 - Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
   turn lifecycle, draft/retract semantics, and deterministic conflict handling.
+- `ContentPart` JSON data and metadata now recursively validate strict JSON values at construction
+  time, rejecting arbitrary Python objects, tuples, and non-finite numbers before conversation
+  state, tool output, callback output, or policy-reviewed content can persist them.
 
 ## 6. Phase 3 — Policy, Usage, Budget, Evaluation (`GB-C3-GOVERNED-RUNTIME`)
 

@@ -2341,10 +2341,16 @@ def test_artifact_ref_rejects_empty_optional_fields_when_present() -> None:
 
 
 def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
+    part = object.__new__(ContentPart)
+    object.__setattr__(part, "kind", "json")
+    object.__setattr__(part, "text", None)
+    object.__setattr__(part, "data", {"score": nan})
+    object.__setattr__(part, "metadata", {})
+
     with pytest.raises(ToolResultValidationError) as error:
         ToolResult.completed(
             "call-1",
-            (ContentPart(kind="json", data={"score": nan}),),
+            (part,),
             started_at="2026-06-23T00:00:00Z",
             completed_at="2026-06-23T00:00:01Z",
         )

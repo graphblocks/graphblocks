@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from collections.abc import Mapping
+import math
 from typing import Literal
 
 from .documents import ArtifactRef
@@ -76,8 +76,24 @@ def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, objec
     copied: dict[str, object] = {}
     for key, item in value.items():
         key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
-        copied[key_text] = deepcopy(item)
+        copied[key_text] = _copy_json_value(owner, f"{field_name}.{key_text}", item)
     return copied
+
+
+def _copy_json_value(owner: str, path: str, value: object) -> object:
+    if value is None or isinstance(value, str) or isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{owner} {path} must not contain non-finite numbers")
+        return value
+    if isinstance(value, list):
+        return [_copy_json_value(owner, path, item) for item in value]
+    if isinstance(value, Mapping):
+        return _copy_mapping(owner, path, value)
+    raise ValueError(f"{owner} {path} must contain only JSON values")
 
 
 def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:

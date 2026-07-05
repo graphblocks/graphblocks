@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from graphblocks.documents import ArtifactRef
@@ -82,6 +84,14 @@ def test_conversation_records_validate_identity_literals_and_nested_types() -> N
         ContentPart(kind="text", text="hello", metadata=None)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="json content part data must be a mapping"):
         ContentPart(kind="json", data=[])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="json content part data.score must not contain non-finite numbers"):
+        ContentPart(kind="json", data={"score": math.nan})
+    with pytest.raises(ValueError, match="json content part data.payload must contain only JSON values"):
+        ContentPart(kind="json", data={"payload": object()})
+    with pytest.raises(ValueError, match="json content part data.items must contain only JSON values"):
+        ContentPart(kind="json", data={"items": (1, 2)})
+    with pytest.raises(ValueError, match="content part metadata.payload must contain only JSON values"):
+        ContentPart(kind="text", text="hello", metadata={"payload": object()})
 
     with pytest.raises(ValueError, match="file attachment asset must be ArtifactRef"):
         FileAttachment("att-1", object(), "message", "retrieval", message_id="msg-1")  # type: ignore[arg-type]
