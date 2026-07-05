@@ -753,7 +753,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback configuration diagnostics now map unsigned webhook subscriptions to `GB6002` and unsafe
   webhook endpoint failures to `GB6011` for compiler/deployment reporting. Userinfo-bearing
   webhook URLs are rejected as a typed unsafe endpoint case so diagnostics can identify the
-  unsupported userinfo component instead of collapsing it into a generic malformed URL.
+  unsupported userinfo component instead of collapsing it into a generic malformed URL. Compiler
+  diagnostics now also flag decimal and hex numeric IPv4 callback hosts that resolve to forbidden
+  internal addresses, matching runtime webhook egress validation.
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`, with shared compiler TCK coverage.

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 
 use graphblocks_schema::SchemaId;
 use serde_json::{Map, Value};
@@ -763,7 +763,22 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         return true;
     }
     let Ok(address) = host.parse::<IpAddr>() else {
-        return false;
+        let numeric_ipv4 = if let Some(hex) = host.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16).ok()
+        } else if host.bytes().all(|byte| byte.is_ascii_digit()) {
+            host.parse::<u32>().ok()
+        } else {
+            None
+        };
+        return numeric_ipv4
+            .map(Ipv4Addr::from)
+            .is_some_and(|address| {
+                address.is_loopback()
+                    || address.is_private()
+                    || address.is_link_local()
+                    || address.is_multicast()
+                    || address.is_unspecified()
+            });
     };
     match address {
         IpAddr::V4(address) => {

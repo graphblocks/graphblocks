@@ -380,6 +380,44 @@ fn compile_graph_reports_async_callback_amendment_diagnostics() {
 }
 
 #[test]
+fn compile_graph_rejects_alternate_numeric_callback_webhook_loopback_host() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "numeric-loopback-callback"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-loopback",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://2130706433/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB6011"]
+    );
+}
+
+#[test]
 fn compile_graph_allows_mandatory_callback_fallback_policy() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
