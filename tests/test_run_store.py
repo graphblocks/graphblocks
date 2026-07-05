@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 import graphblocks
@@ -79,6 +81,10 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
         RunRecord("run-1", "sha256:test", {}, state_revision=-1)
     with pytest.raises(ValueError, match="run record model_visible_tools must be ModelVisibleToolRef"):
         RunRecord("run-1", "sha256:test", {}, model_visible_tools=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run record inputs.payload must contain only JSON values"):
+        RunRecord("run-1", "sha256:test", {"payload": object()})
+    with pytest.raises(ValueError, match="run record state.value must not contain non-finite numbers"):
+        RunRecord("run-1", "sha256:test", {}, state={"value": math.nan})
 
 
 def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
@@ -93,10 +99,14 @@ def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
         store.create_run(" ", {})
     with pytest.raises(ValueError, match="run store inputs must be an object"):
         store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store inputs.payload must contain only JSON values"):
+        store.create_run("sha256:test", {"payload": object()})
     with pytest.raises(ValueError, match="invalid run invocation mode"):
         store.create_run("sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store patch must be an object"):
         store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store patch.value must not contain non-finite numbers"):
+        store.patch_state(record.run_id, {"value": math.inf}, expected_revision=0)
     with pytest.raises(ValueError, match="run store expected_revision must be non-negative"):
         store.patch_state(record.run_id, {}, expected_revision=-1)
     with pytest.raises(ValueError, match="invalid mutable run status"):

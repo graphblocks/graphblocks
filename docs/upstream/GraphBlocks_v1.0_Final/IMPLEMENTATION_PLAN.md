@@ -384,6 +384,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `RunRecord`; the Python run-store facade validates and persists the mode through SQLite migration,
   and the server builds accepted/background run handles with event stream, websocket, cancel route,
   and initial cursor fields.
+- Python run-store records now recursively validate inputs, state, and patches as JSON values,
+  rejecting arbitrary objects and non-finite numbers before durable replay or SQLite persistence.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
   event streams as `GB6005`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now report accepted/background routes tied to
