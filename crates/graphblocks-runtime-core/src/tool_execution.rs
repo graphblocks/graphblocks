@@ -355,6 +355,11 @@ impl ToolExecutionPlan {
                             tool_call_id: right_id.clone(),
                         });
                     }
+                    if left_call.effect_key == right_call.effect_key {
+                        return Err(ToolExecutionPlanError::UnsafeParallelEffects {
+                            tool_call_id: right_id.clone(),
+                        });
+                    }
                 }
             }
         }

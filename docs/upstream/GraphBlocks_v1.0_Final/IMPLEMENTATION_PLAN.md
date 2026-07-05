@@ -157,6 +157,9 @@ Message
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
+- Rust `ToolExecutionPlan` validation now reports `UnsafeParallelEffects` when independent
+  state-changing calls share an effect serialization key, so conflicting writes are rejected before
+  scheduling unless an explicit dependency serializes them.
 - `PolicyRequest.enforcement_point`에 `on_generation_chunk`, `before_client_delivery`, `before_output_commit`, `before_tool_or_effect`를 추가한다.
 - `OutputPolicyDecision`, `OutputDeliveryPolicy`, `OutputCutoff` schema와 terminal semantics를 canonical contract로 추가한다.
 - `OutputPolicyDecision` redaction instructions validate replacement values at construction time,
