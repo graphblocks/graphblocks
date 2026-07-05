@@ -780,6 +780,7 @@ fn usage_provider_duplicate_conflict(existing: &UsageRecord, incoming: &UsageRec
     existing.source != incoming.source
         || existing.confidence != incoming.confidence
         || existing.amounts != incoming.amounts
+        || existing.occurred_at_unix_ms != incoming.occurred_at_unix_ms
         || existing.run_id != incoming.run_id
         || existing.attempt_id != incoming.attempt_id
         || existing.provider_response_id != incoming.provider_response_id

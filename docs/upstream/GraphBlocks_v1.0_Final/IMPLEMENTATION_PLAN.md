@@ -1192,8 +1192,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   `reconciliation_of` source and reject `reconciliation_of` on non-reconciled records, preserving
   clear late-final-usage lineage for direct appends and generated reconciliations.
 - Rust usage ledgers now reject conflicting provider-response replays for the same
-  `(provider_response_id, attempt_id)`, while exact logical replays with different local record ids
-  and ingestion timestamps remain idempotent.
+  `(provider_response_id, attempt_id)`, including replays that drift the recorded
+  `occurred_at_unix_ms`; only exact logical replays with different local record ids remain
+  idempotent.
 - Rust usage ledgers now reject records with an empty `amounts` list, so late usage reconciliation
   and billing/quota projections cannot persist a meaningless no-op usage record as authoritative.
 - Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source

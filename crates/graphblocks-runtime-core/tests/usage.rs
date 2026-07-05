@@ -295,7 +295,7 @@ fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), 
         UsageSource::ProviderReported,
         UsageConfidence::ProviderExact,
         [tokens(20)],
-        1_010,
+        1_000,
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
@@ -307,6 +307,42 @@ fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), 
 
     assert_eq!(ledger.append(first.clone())?, first);
     assert_eq!(ledger.append(duplicate)?, first);
+    assert_eq!(ledger.records_for_run("run-1"), vec![first]);
+    Ok(())
+}
+
+#[test]
+fn usage_ledger_rejects_provider_response_replay_with_conflicting_timestamp()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = InMemoryUsageLedger::new();
+    let first = UsageRecord::new(
+        "usage-1",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let conflicting_timestamp = UsageRecord::new(
+        "usage-conflict",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+
+    assert_eq!(ledger.append(first.clone())?, first);
+    assert_eq!(
+        ledger.append(conflicting_timestamp),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "resp-1".to_string()
+        })
+    );
     assert_eq!(ledger.records_for_run("run-1"), vec![first]);
     Ok(())
 }
@@ -851,7 +887,7 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
         UsageSource::ProviderReported,
         UsageConfidence::ProviderExact,
         [tokens(20)],
-        1_010,
+        1_000,
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
@@ -890,6 +926,42 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
         Some("ticket.create")
     );
     assert_eq!(ledger.records_for_run("run-1")?, vec![first, reconciled]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_rejects_provider_response_replay_with_conflicting_timestamp()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    let first = UsageRecord::new(
+        "usage-1",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let conflicting_timestamp = UsageRecord::new(
+        "usage-conflict",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+
+    assert_eq!(ledger.append(first.clone())?, first);
+    assert_eq!(
+        ledger.append(conflicting_timestamp),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "resp-1".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1")?, vec![first]);
     Ok(())
 }
 
