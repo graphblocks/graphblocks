@@ -682,9 +682,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timestamps: `delivered` requires `delivered_at_unix_ms`, and `acknowledged` requires
   `acknowledged_at_unix_ms`. Queue validation covers malformed replay records before they can
   re-enter the worker or ordered-delivery state machines.
-- Callback delivery persistence also rejects terminal failure records without `last_error`, so
-  failed, dead-lettered, cancelled, or expired delivery records keep the reason needed for
-  mandatory pause/fail actions, operator redrive, and audit review.
+- Callback delivery persistence also rejects terminal failure records without a nonblank
+  `last_error`, so failed, dead-lettered, cancelled, or expired delivery records keep the reason
+  needed for mandatory pause/fail actions, operator redrive, and audit review.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.
@@ -698,8 +698,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   durable row key before a record can be returned or redriven.
 - Dead-letter attempt history must now be consecutive from attempt `1`, so redrive after restart
   cannot reuse attempt `0`, skip an attempt, or create duplicate attempt numbers in audit history.
-- Dead-letter persistence now also requires `last_error`, keeping every dead-lettered delivery tied
-  to the terminal failure reason that operators review and redrive.
+- Dead-letter persistence now also requires a nonblank `last_error`, keeping every dead-lettered
+  delivery tied to the terminal failure reason that operators review and redrive.
 - SQLite callback dead-letter updates now reject immutable original delivery metadata conflicts and
   redrive-history regressions, so a later write cannot overwrite the delivery identity or erase
   preserved redrive attempt history.

@@ -1015,6 +1015,32 @@ fn sqlite_callback_dead_letter_store_rejects_missing_error_reason() {
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_rejects_blank_error_reason() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let mut dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    dead_letter.last_error = Some(" \t".to_owned());
+    let store = SqliteCallbackDeadLetterStore::open_in_memory().expect("store opens");
+
+    assert_eq!(
+        store.insert_dead_letter(dead_letter),
+        Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
+            message: "callback dead letter has no error reason".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_rejects_immutable_metadata_overwrite() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(
@@ -1705,6 +1731,47 @@ fn sqlite_callback_delivery_queue_rejects_terminal_failure_without_error_reason(
                     if message.contains("terminal callback delivery has no error reason")
             ),
             "{status:?} should require last_error"
+        );
+    }
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_rejects_terminal_failure_with_blank_error_reason() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let terminal =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 2_000);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    for status in [
+        CallbackDeliveryStatus::Failed,
+        CallbackDeliveryStatus::DeadLettered,
+        CallbackDeliveryStatus::Cancelled,
+        CallbackDeliveryStatus::Expired,
+    ] {
+        let mut malformed = terminal.clone();
+        malformed.status = status;
+        malformed.next_retry_at_unix_ms = None;
+        malformed.last_error = Some(" \t".to_owned());
+
+        let error = queue
+            .upsert_delivery(malformed)
+            .expect_err("terminal failure record must retain a nonblank error reason");
+
+        assert!(
+            matches!(
+                error,
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+                    if message.contains("terminal callback delivery has no error reason")
+            ),
+            "{status:?} should require nonblank last_error"
         );
     }
 }

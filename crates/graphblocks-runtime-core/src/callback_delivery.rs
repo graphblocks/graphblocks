@@ -2300,7 +2300,10 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             | CallbackDeliveryStatus::DeadLettered
             | CallbackDeliveryStatus::Cancelled
             | CallbackDeliveryStatus::Expired
-    ) && delivery.last_error.as_deref().is_none_or(str::is_empty)
+    ) && delivery
+        .last_error
+        .as_deref()
+        .is_none_or(|last_error| last_error.trim().is_empty())
     {
         return Err(CallbackDeliveryError::Storage {
             message: "terminal callback delivery has no error reason".to_owned(),
@@ -2425,7 +2428,11 @@ fn validate_callback_dead_letter(
             message: "callback dead letter attempt history must be consecutive from 1".to_owned(),
         });
     }
-    if dead_letter.last_error.as_deref().is_none_or(str::is_empty) {
+    if dead_letter
+        .last_error
+        .as_deref()
+        .is_none_or(|last_error| last_error.trim().is_empty())
+    {
         return Err(CallbackDeliveryError::Storage {
             message: "callback dead letter has no error reason".to_owned(),
         });
