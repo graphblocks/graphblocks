@@ -387,7 +387,7 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-protocol"] * 10
+    assert [case.kind for case in cases] == ["application-protocol"] * 11
     assert report.ok
     assert {case.case_id for case in cases} == {
         "application_protocol_kind_sets_match_contract",
@@ -399,6 +399,7 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
         "capability_negotiation_rejects_blank_protocol_version",
         "protocol_log_suppresses_duplicates_and_replays_after_cursor",
         "protocol_log_rejects_events_from_another_run",
+        "protocol_log_rejects_mutated_duplicate_event_ids",
         "protocol_stream_cutoff_discards_late_output",
     }
     assert any("OutputCutoff" in result.observed.get("events", []) for result in report.results)
@@ -407,6 +408,33 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
         "empty_protocol_version",
     }
     assert "load_application_protocol_tck_cases" in graphblocks_testing.__all__
+
+
+def test_testing_package_application_protocol_tck_rejects_boolean_command_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_protocol(
+        case_id="application-protocol/boolean-command-sequence",
+        fixture={
+            "kind": "command_envelope_error",
+            "commandKind": "ApproveEffect",
+            "metadata": {
+                "commandId": "command-bool-sequence",
+                "protocolVersion": "graphblocks.app.v1",
+                "runId": "run-1",
+                "sequence": True,
+                "issuedAtUnixMs": 1765843200000,
+            },
+            "payload": {"tool_call_id": "tool-call-1"},
+            "expected": {"error": "application command sequence must be an integer"},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["error"] == "application command sequence must be an integer"
 
 
 def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> None:

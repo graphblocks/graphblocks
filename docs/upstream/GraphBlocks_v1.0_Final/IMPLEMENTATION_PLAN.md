@@ -416,6 +416,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   the amended command set. Python also exports TCK command-kind and event-kind views that are
   checked against the shared `tck/application-protocol/cases.json` fixture so facade drift is caught
   by the same contract file as the Rust harness.
+- The application-protocol TCK runner now passes command metadata sequence/timestamp values through
+  the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
+  surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids
+  to `duplicate_event_id_conflict` instead of treating the expected rejection as runner failure.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,

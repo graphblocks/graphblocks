@@ -3634,7 +3634,7 @@ class TckRunner:
                                     else None
                                 )
                             ),
-                            sequence=int(raw_metadata.get("sequence", 0)),
+                            sequence=raw_metadata.get("sequence", 0),  # type: ignore[arg-type]
                             idempotency_key=(
                                 str(raw_metadata["idempotencyKey"])
                                 if raw_metadata.get("idempotencyKey") is not None
@@ -3644,9 +3644,10 @@ class TckRunner:
                                     else None
                                 )
                             ),
-                            issued_at_unix_ms=int(
-                                raw_metadata.get("issuedAtUnixMs", raw_metadata.get("issued_at_unix_ms", 0))
-                            ),
+                            issued_at_unix_ms=raw_metadata.get(
+                                "issuedAtUnixMs",
+                                raw_metadata.get("issued_at_unix_ms", 0),
+                            ),  # type: ignore[arg-type]
                         ),
                         payload=dict(raw_payload) if isinstance(raw_payload, Mapping) else raw_payload,  # type: ignore[arg-type]
                     )
@@ -3773,6 +3774,12 @@ class TckRunner:
                         if expected_error == "run_mismatch" and "run_id must match first event" in str(error):
                             appended = False
                             append_errors.append("run_mismatch")
+                        elif (
+                            expected_error == "duplicate_event_id_conflict"
+                            and "event_id conflict" in str(error)
+                        ):
+                            appended = False
+                            append_errors.append("duplicate_event_id_conflict")
                         else:
                             raise
                     append_results.append(appended)
