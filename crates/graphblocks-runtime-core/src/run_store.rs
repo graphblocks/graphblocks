@@ -663,6 +663,22 @@ impl RunStatusSnapshot {
                 reason: "terminal run cannot expose wait reasons or active operations",
             });
         }
+        if matches!(
+            run.status,
+            RunStatus::Created
+                | RunStatus::Validating
+                | RunStatus::AdmissionPending
+                | RunStatus::Admitted
+                | RunStatus::Queued
+                | RunStatus::Running
+                | RunStatus::Resuming
+        ) && !waiting_on.is_empty()
+        {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "active run cannot expose wait reasons",
+            });
+        }
         if run.status == RunStatus::WaitingCallback {
             let callback_operation_ids: Vec<&str> = waiting_on
                 .iter()

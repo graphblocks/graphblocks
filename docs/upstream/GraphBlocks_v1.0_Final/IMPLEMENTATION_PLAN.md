@@ -375,6 +375,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Non-callback wait and pause states also require matching typed wait reasons for input, approval,
   review, budget, policy, or operator intervention. The Rust runtime core provides a canonical
   protocol JSON projection with camelCase fields and typed `waitingOn` entries for server adapters.
+- Run status snapshots now reject wait reasons on active non-waiting states such as `running` and
+  `resuming`, while still allowing active operation ids, so callback/user-facing wait metadata only
+  appears when the run is actually waiting or paused.
 - `RunOwnershipLease` now provides run-scoped coordinator ownership fencing in both in-memory and
   SQLite run stores, including active-lease rejection, stale epoch rejection, and failover after
   expiry.

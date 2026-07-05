@@ -161,6 +161,30 @@ fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunSt
 }
 
 #[test]
+fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let running = store.set_status(&record.run_id, RunStatus::Running)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &running,
+            "evt_000045",
+            1_000,
+            1_600,
+            None,
+            vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+            vec!["op-ci-1".to_owned()],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: running.run_id,
+            reason: "active run cannot expose wait reasons",
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_states()
     -> Result<(), RunStoreError>
 {
