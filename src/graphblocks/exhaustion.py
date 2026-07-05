@@ -62,6 +62,14 @@ class MissingExhaustionBoundaryError(ExhaustionPolicyError):
     pass
 
 
+def _validate_non_negative_integer(owner: str, field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuationEnvelope:
     allowed_work: set[ContinuationWork] = field(default_factory=set)
@@ -226,6 +234,9 @@ class ExhaustionController:
     used_additional_steps: int = 0
     used_additional_usage: list[UsageAmount] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        _validate_non_negative_integer("exhaustion", "admission_epoch", self.admission_epoch)
+
     def admit(
         self,
         work_kind: WorkKind,
@@ -234,6 +245,7 @@ class ExhaustionController:
         permit: BudgetPermit | None = None,
         requested_usage: list[UsageAmount] | None = None,
     ) -> AdmissionDecision:
+        work_epoch = _validate_non_negative_integer("exhaustion", "work_epoch", work_epoch)
         envelope = self.policy.continuation
         requested_usage_list = list(requested_usage or [])
         if envelope is None:

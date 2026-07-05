@@ -704,6 +704,32 @@ def test_testing_package_exhaustion_tck_rejects_boolean_continuation_permit_epoc
     assert report.results[0].observed["error"] == "budget permit admission_epoch must be an integer"
 
 
+def test_testing_package_exhaustion_controller_rejects_boolean_work_epoch(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    policy = graphblocks_testing.ExhaustionPolicy.from_preset(
+        "checkpoint_and_pause",
+        unit="turn",
+        continuation=graphblocks_testing.ContinuationEnvelope(
+            allowed_work={"checkpoint"},
+            max_additional_steps=1,
+        ),
+    )
+    controller = graphblocks_testing.ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+    )
+
+    try:
+        controller.admit("checkpoint", work_epoch=True)
+    except ValueError as error:
+        assert str(error) == "exhaustion work_epoch must be an integer"
+    else:
+        raise AssertionError("boolean work_epoch was accepted")
+
+
 def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

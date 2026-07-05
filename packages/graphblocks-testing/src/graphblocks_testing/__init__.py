@@ -4501,7 +4501,7 @@ class TckRunner:
                             )
                 decision = controller.admit(
                     str(operation.get("workKind", "")),
-                    work_epoch=int(operation.get("workEpoch", 0)),
+                    work_epoch=operation.get("workEpoch", 0),  # type: ignore[arg-type]
                     permit=permit,
                     requested_usage=requested_usage or None,
                 )
