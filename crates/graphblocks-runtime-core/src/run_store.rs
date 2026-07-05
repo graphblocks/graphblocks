@@ -611,6 +611,18 @@ impl RunStatusSnapshot {
                 field: "last_cursor",
             });
         }
+        if started_at_unix_ms == 0 {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "started_at must be positive",
+            });
+        }
+        if updated_at_unix_ms == 0 {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "updated_at must be positive",
+            });
+        }
         if updated_at_unix_ms < started_at_unix_ms {
             return Err(RunStoreError::InvalidRunStatusSnapshot {
                 run_id: run.run_id.clone(),

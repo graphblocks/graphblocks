@@ -901,6 +901,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projection records are immutable snapshots with ISO-validated timestamps, and `PauseRun` accepts
   `pauseKind` values `operator`, `budget`, `policy`, and `callback_delivery` to project the
   corresponding wait reason.
+  Runtime run status snapshots reject zero `started_at` or `updated_at` timestamps before exposing
+  status to attach/replay and `GetRunStatus` callers.
   Non-terminal controls cannot reopen terminal runs. Repeating the latest control state, including
   non-terminal pause/resume projections, is idempotent and does not append another projection.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by

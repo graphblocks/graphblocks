@@ -112,6 +112,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
         ApplicationProtocolError::DuplicateEventIdConflict { .. } => {
             "duplicate_event_id_conflict"
         }
+        ApplicationProtocolError::DuplicateCursorConflict { .. } => "duplicate_cursor_conflict",
         ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         ApplicationProtocolError::RunMismatch { .. } => "run_mismatch",
     };

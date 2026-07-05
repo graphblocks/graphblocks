@@ -330,6 +330,30 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
 }
 
 #[test]
+fn run_status_snapshot_rejects_zero_status_timestamps() {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({}));
+    let running = store
+        .set_status(&record.run_id, RunStatus::Running)
+        .expect("run can start");
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(&running, "evt_1", 0, 1_200, None, vec![], vec![]),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: running.run_id.clone(),
+            reason: "started_at must be positive",
+        })
+    );
+    assert_eq!(
+        RunStatusSnapshot::from_run(&running, "evt_2", 1_000, 0, None, vec![], vec![]),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: running.run_id,
+            reason: "updated_at must be positive",
+        })
+    );
+}
+
+#[test]
 fn terminal_run_status_snapshot_rejects_wait_reasons_and_active_operations()
 -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
