@@ -305,6 +305,30 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_application_event_tck_rejects_boolean_tool_result_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_events(
+        case_id="application-events/boolean-tool-result-sequence",
+        operations=(
+            {
+                "op": "tool_result_delta",
+                "toolCallId": "call-1",
+                "toolResultSequence": True,
+                "output": [{"kind": "text", "text": "draft"}],
+            },
+        ),
+        expected_accepted_kinds=(),
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[0]["code"] == "ApplicationEventToolResultSequenceInvalid"
+    assert report.results[0].observed["accepted_kinds"] == []
+
+
 def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

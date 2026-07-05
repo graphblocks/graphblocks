@@ -1040,6 +1040,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   references cannot silently create invalid callback admission windows.
 - Runtime callback subscription validation now rejects expiration timestamps that are not after
   subscription creation, preserving durable replay/subscription lifetime ordering.
+- The application-event TCK runner now validates streamed tool-result event sequence fixtures before
+  event construction and rejects boolean/non-integer values instead of coercing them into protocol
+  sequence numbers.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

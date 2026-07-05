@@ -3292,9 +3292,20 @@ class TckRunner:
                 "tool_result_incomplete",
             }:
                 tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
-                tool_result_sequence = int(
-                    operation.get("toolResultSequence", operation.get("tool_result_sequence", sequence))
+                raw_tool_result_sequence = operation.get(
+                    "toolResultSequence",
+                    operation.get("tool_result_sequence", sequence),
                 )
+                if isinstance(raw_tool_result_sequence, bool) or not isinstance(raw_tool_result_sequence, int):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventToolResultSequenceInvalid",
+                            "message": "tool result sequence must be an integer",
+                            "path": f"$.operations[{sequence - 1}].toolResultSequence",
+                        }
+                    )
+                    continue
+                tool_result_sequence = raw_tool_result_sequence
                 op = str(operation["op"])
                 if op == "tool_result_started":
                     result_event = ToolResultEvent.started(
