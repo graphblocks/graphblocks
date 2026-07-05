@@ -1749,6 +1749,47 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
 }
 
 #[test]
+fn callback_provider_operation_mismatch_does_not_resume_run() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-wrong-provider-operation", "idem-wrong-provider");
+    submission.provider_operation_id = Some("gha-run-other".to_owned());
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationIdentityMismatch {
+            operation_id: "op-1".to_owned(),
+            field: "provider_operation_id".to_owned(),
+            expected: "gha-run-1".to_owned(),
+            actual: "gha-run-other".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    let events = store.events_for_operation("op-1");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-wrong-provider-operation"
+            && reason == "identity_mismatch:provider_operation_id"
+    )));
+}
+
+#[test]
 fn callback_payload_limit_rejects_oversized_payload_before_journal_or_resume() {
     let store = AsyncOperationStore::new();
     store

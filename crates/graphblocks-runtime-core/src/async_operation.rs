@@ -2070,6 +2070,31 @@ impl AsyncOperationStore {
                 actual_attempt_id: submission.attempt_id,
             });
         }
+        if submission
+            .provider_operation_id
+            .as_ref()
+            .is_some_and(|provider_operation_id| {
+                operation.provider_operation_id.as_ref() != Some(provider_operation_id)
+            })
+        {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "identity_mismatch:provider_operation_id".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
+            return Err(AsyncOperationError::OperationIdentityMismatch {
+                operation_id: operation.operation_id,
+                field: "provider_operation_id".to_owned(),
+                expected: operation.provider_operation_id.unwrap_or_default(),
+                actual: submission.provider_operation_id.unwrap_or_default(),
+            });
+        }
 
         if let Err(error) = registry.validate(&operation.expected_schema, &submission.payload) {
             inner
