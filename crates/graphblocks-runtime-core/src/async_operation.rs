@@ -2702,15 +2702,35 @@ impl SqliteAsyncOperationStore {
         {
             let mut statement = connection
                 .prepare(
-                    "SELECT receipt_json FROM async_callback_receipts ORDER BY idempotency_key",
+                    "
+                    SELECT operation_id, idempotency_key, receipt_json
+                    FROM async_callback_receipts
+                    ORDER BY operation_id, idempotency_key
+                    ",
                 )
                 .map_err(storage_error)?;
             let receipts = statement
-                .query_map([], |row| row.get::<_, String>(0))
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
                 .map_err(storage_error)?;
             for receipt_json in receipts {
+                let (row_operation_id, row_idempotency_key, receipt_json) =
+                    receipt_json.map_err(storage_error)?;
                 let receipt =
-                    receipt_from_value(parse_json(&receipt_json.map_err(storage_error)?)?)?;
+                    receipt_from_value(parse_json(&receipt_json)?)?;
+                if receipt.operation_id != row_operation_id
+                    || receipt.idempotency_key != row_idempotency_key
+                {
+                    return Err(AsyncOperationError::Storage {
+                        message:
+                            "stored callback receipt identity does not match row key".to_owned(),
+                    });
+                }
                 inner.receipts_by_operation_and_idempotency.insert(
                     (
                         receipt.operation_id.clone(),

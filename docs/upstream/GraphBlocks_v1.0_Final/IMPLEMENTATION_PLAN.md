@@ -632,6 +632,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback receipt replay now verifies that the stored `payload_digest` still matches
   the canonical callback payload before the receipt can participate in duplicate detection, event
   replay, or scheduler resume decisions.
+- SQLite async callback receipt replay also validates that the receipt JSON operation/idempotency
+  identity matches the durable row key, preventing a corrupted receipt from relocating duplicate
+  detection to a different operation during recovery.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
