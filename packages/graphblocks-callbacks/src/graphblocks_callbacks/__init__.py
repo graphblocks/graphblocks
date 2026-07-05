@@ -281,6 +281,8 @@ class CallbackPayloadProjection:
                 raise ValueError("inline callback payload_size_bytes must match canonical payload size")
         if self.mode == "inline" and self.artifact is not None:
             raise ValueError("inline callback payload projection must not include an artifact")
+        if self.mode == "artifact_reference" and self.payload:
+            raise ValueError("artifact_reference callback payload projection must not include inline payload")
         if self.mode == "artifact_reference" and not isinstance(self.artifact, ArtifactRef):
             raise ValueError("artifact_reference callback payload projection requires an ArtifactRef")
 

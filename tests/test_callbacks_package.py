@@ -1064,6 +1064,16 @@ def test_callback_payload_projection_requires_payload_digest() -> None:
             artifact=artifact,
         ),
     )
+    _assert_raises_value_error(
+        "artifact_reference callback payload projection must not include inline payload",
+        lambda: CallbackPayloadProjection(
+            mode="artifact_reference",
+            payload={"log": "inline"},
+            payload_digest=canonical_hash(payload),
+            payload_size_bytes=211,
+            artifact=artifact,
+        ),
+    )
 
 
 def test_callback_payload_projection_deterministic_fuzz_canonical_integrity() -> None:
