@@ -637,6 +637,12 @@ impl CallbackEndpointRef {
                 });
             }
         }
+        if !(self.url.starts_with("https://") || self.url.starts_with("http://")) {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.endpoint_id.clone(),
+                reason: "callback endpoint url must use http or https".to_owned(),
+            });
+        }
         for (field, value) in [
             ("operation_id", &self.operation_id),
             ("run_id", &self.run_id),

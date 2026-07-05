@@ -152,6 +152,22 @@ fn bearer_callback_endpoint_rejects_whitespace_token() {
 }
 
 #[test]
+fn callback_endpoint_rejects_non_http_url_scheme() {
+    assert_eq!(
+        CallbackEndpointRef::new(
+            "callback-endpoint-1",
+            "file:///tmp/callback",
+            "schemas/CICallback@1",
+            CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+        ),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "callback-endpoint-1".to_owned(),
+            reason: "callback endpoint url must use http or https".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn callback_endpoint_binds_submission_to_current_operation_identity() {
     let endpoint = CallbackEndpointRef::new_bound(
         "callback-endpoint-1",

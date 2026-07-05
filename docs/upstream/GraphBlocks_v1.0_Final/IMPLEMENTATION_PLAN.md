@@ -708,6 +708,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback ingress deployment validation now requires every `SubmitAsyncCallback` route to include
   an `{operation_id}` path binding, keeping external callback endpoints tied to a concrete async
   operation identity before authentication, idempotency, and resume fencing are evaluated.
+- Async callback endpoint references now reject non-HTTP(S) URLs at construction/validation time,
+  preventing `file://`, socket-like, or other non-ingress schemes from becoming authenticated
+  callback resume endpoints.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.
