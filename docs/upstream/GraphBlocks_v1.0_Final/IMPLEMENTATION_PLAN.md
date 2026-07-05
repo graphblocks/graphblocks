@@ -976,6 +976,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timestamps.
 - Callback dead-letter construction now rejects zero `dead_lettered_at_unix_ms` values, keeping
   durable redrive/audit projections tied to a real recorded timestamp.
+- Callback dead-letter redrive now rejects zero `redriven_at_unix_ms` values and timestamps earlier
+  than the dead-letter record, preventing operator redrive audit time regressions.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control

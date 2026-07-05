@@ -785,6 +785,50 @@ fn redrive_rejects_empty_operator_or_reason() {
 }
 
 #[test]
+fn redrive_rejects_zero_or_regressed_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+
+    assert_eq!(
+        scheduler.redrive_dead_letter(
+            &dead_letter,
+            "operator:alice",
+            "receiver recovered",
+            0,
+        ),
+        Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+            field: "redriven_at_unix_ms".to_owned(),
+        })
+    );
+
+    let error = scheduler
+        .redrive_dead_letter(
+            &dead_letter,
+            "operator:alice",
+            "receiver recovered",
+            1_000,
+        )
+        .expect_err("redrive timestamp cannot precede dead-letter timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("redrive timestamp precedes dead-letter timestamp")
+    ));
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_persists_dead_letter_across_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
     let subscription = subscription(

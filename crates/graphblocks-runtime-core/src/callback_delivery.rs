@@ -2681,7 +2681,7 @@ impl CallbackDeliveryScheduler {
         dead_letter: &CallbackDeadLetter,
         operator: impl Into<String>,
         reason: impl Into<String>,
-        _redriven_at_unix_ms: u64,
+        redriven_at_unix_ms: u64,
     ) -> Result<CallbackDelivery, CallbackDeliveryError> {
         let operator = operator.into();
         if operator.trim().is_empty() {
@@ -2693,6 +2693,16 @@ impl CallbackDeliveryScheduler {
         if reason.trim().is_empty() {
             return Err(CallbackDeliveryError::EmptyField {
                 field: "reason".to_owned(),
+            });
+        }
+        if redriven_at_unix_ms == 0 {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "redriven_at_unix_ms".to_owned(),
+            });
+        }
+        if redriven_at_unix_ms < dead_letter.dead_lettered_at_unix_ms {
+            return Err(CallbackDeliveryError::Storage {
+                message: "redrive timestamp precedes dead-letter timestamp".to_owned(),
             });
         }
 
