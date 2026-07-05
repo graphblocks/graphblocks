@@ -451,6 +451,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   these diagnostics so shared compiler TCK results stay aligned with the Rust normative compiler.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
+- SQLite async operation replay validates that each stored operation JSON identity matches its
+  durable row key before the operation can re-enter scheduling, callback admission, or duplicate
+  detection state.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both
   in-memory and SQLite async operation stores, so provider delivery keys reused by separate
   operations do not suppress valid callback receipts or resume signals.

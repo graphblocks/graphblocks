@@ -2685,14 +2685,26 @@ impl SqliteAsyncOperationStore {
 
         {
             let mut statement = connection
-                .prepare("SELECT operation_json FROM async_operations ORDER BY operation_id")
+                .prepare(
+                    "
+                    SELECT operation_id, operation_json
+                    FROM async_operations
+                    ORDER BY operation_id
+                    ",
+                )
                 .map_err(storage_error)?;
             let operations = statement
-                .query_map([], |row| row.get::<_, String>(0))
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
                 .map_err(storage_error)?;
             for operation_json in operations {
-                let operation =
-                    operation_from_value(parse_json(&operation_json.map_err(storage_error)?)?)?;
+                let (row_operation_id, operation_json) = operation_json.map_err(storage_error)?;
+                let operation = operation_from_value(parse_json(&operation_json)?)?;
+                if operation.operation_id != row_operation_id {
+                    return Err(AsyncOperationError::Storage {
+                        message: "stored async operation identity does not match row key"
+                            .to_owned(),
+                    });
+                }
                 inner
                     .operations
                     .insert(operation.operation_id.clone(), operation);

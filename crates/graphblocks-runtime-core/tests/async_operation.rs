@@ -2797,6 +2797,54 @@ fn sqlite_async_operation_store_persists_waiting_operation_across_reopen()
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_operation_row_identity_mismatch_on_reopen() {
+    let path = sqlite_async_operation_path("operation-row-identity");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let operation_json: String = connection
+            .query_row(
+                "SELECT operation_json FROM async_operations WHERE operation_id = ?1",
+                params!["op-1"],
+                |row| row.get(0),
+            )
+            .expect("operation row exists");
+        let mut operation: serde_json::Value =
+            serde_json::from_str(&operation_json).expect("operation json parses");
+        operation["operation_id"] = json!("op-forged");
+        connection
+            .execute(
+                "UPDATE async_operations SET operation_json = ?1 WHERE operation_id = ?2",
+                params![
+                    serde_json::to_string(&operation).expect("operation serializes"),
+                    "op-1"
+                ],
+            )
+            .expect("operation row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("operation row identity mismatch must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::Storage { ref message }
+                if message.contains("stored async operation identity does not match row key")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-reopen");
