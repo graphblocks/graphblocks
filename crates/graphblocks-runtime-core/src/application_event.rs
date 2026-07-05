@@ -1040,6 +1040,7 @@ pub enum ApplicationProtocolError {
     InvalidPayload { field: &'static str },
     InvalidPayloadKey { field: String },
     InvalidToolResultEvent { source: ToolResultEventError },
+    DuplicateEventIdConflict { event_id: String },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
     RunMismatch {
@@ -1074,6 +1075,10 @@ impl fmt::Display for ApplicationProtocolError {
             Self::InvalidToolResultEvent { source } => {
                 write!(formatter, "tool result event is invalid: {source:?}")
             }
+            Self::DuplicateEventIdConflict { event_id } => write!(
+                formatter,
+                "application event id {event_id:?} was replayed with different event content"
+            ),
             Self::NonMonotonicSequence { previous, next } => write!(
                 formatter,
                 "application event sequence {next} must be greater than previous sequence {previous}"
@@ -1375,7 +1380,7 @@ impl ApplicationProtocolStreamState {
 #[derive(Clone, Debug, Default)]
 pub struct ApplicationProtocolLog {
     events: Vec<ApplicationProtocolEvent>,
-    event_ids: BTreeSet<String>,
+    events_by_id: BTreeMap<String, ApplicationProtocolEvent>,
     run_id: Option<String>,
     last_sequence: Option<u64>,
 }
@@ -1413,8 +1418,13 @@ impl ApplicationProtocolLog {
         &mut self,
         event: ApplicationProtocolEvent,
     ) -> Result<bool, ApplicationProtocolError> {
-        if self.event_ids.contains(&event.metadata.event_id) {
-            return Ok(false);
+        if let Some(existing) = self.events_by_id.get(&event.metadata.event_id) {
+            if existing == &event {
+                return Ok(false);
+            }
+            return Err(ApplicationProtocolError::DuplicateEventIdConflict {
+                event_id: event.metadata.event_id,
+            });
         }
         if let Some(run_id) = &self.run_id {
             if run_id != &event.metadata.run_id {
@@ -1435,7 +1445,8 @@ impl ApplicationProtocolLog {
             });
         }
         self.last_sequence = Some(event.metadata.sequence);
-        self.event_ids.insert(event.metadata.event_id.clone());
+        self.events_by_id
+            .insert(event.metadata.event_id.clone(), event.clone());
         self.events.push(event);
         Ok(true)
     }

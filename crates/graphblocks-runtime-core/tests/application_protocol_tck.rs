@@ -109,6 +109,9 @@ fn run_case(case: &Value) -> Result<Value, String> {
         ApplicationProtocolError::EmptyEventId => "empty_event_id",
         ApplicationProtocolError::EmptyMetadataField { .. } => "empty_metadata_field",
         ApplicationProtocolError::InvalidToolResultEvent { .. } => "invalid_tool_result_event",
+        ApplicationProtocolError::DuplicateEventIdConflict { .. } => {
+            "duplicate_event_id_conflict"
+        }
         ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         ApplicationProtocolError::RunMismatch { .. } => "run_mismatch",
     };
