@@ -1380,6 +1380,33 @@ fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_pending_retry_with_zero_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut retry =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    retry.next_retry_at_unix_ms = Some(0);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    let error = queue
+        .upsert_delivery(retry)
+        .expect_err("pending retry must retain a positive retry timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("pending delivery has zero retry timestamp")
+    ));
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_rejects_acknowledged_retry_timestamp_conflict() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

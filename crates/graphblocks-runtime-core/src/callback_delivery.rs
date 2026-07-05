@@ -2190,6 +2190,14 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             ),
         });
     }
+    if delivery.next_retry_at_unix_ms == Some(0) {
+        return Err(CallbackDeliveryError::Storage {
+            message: format!(
+                "{} delivery has zero retry timestamp",
+                callback_delivery_status_as_str(delivery.status)
+            ),
+        });
+    }
     if matches!(
         delivery.status,
         CallbackDeliveryStatus::Pending | CallbackDeliveryStatus::Delivering
