@@ -322,7 +322,16 @@ def _ip_is_forbidden(host: str) -> bool:
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return False
+        try:
+            if host.lower().startswith("0x"):
+                numeric_ipv4 = int(host, 16)
+            elif host.isascii() and host.isdecimal():
+                numeric_ipv4 = int(host, 10)
+            else:
+                return False
+            address = ipaddress.ip_address(numeric_ipv4)
+        except ValueError:
+            return False
     return (
         address.is_loopback
         or address.is_private

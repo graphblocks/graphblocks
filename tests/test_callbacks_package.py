@@ -944,6 +944,8 @@ def test_webhook_target_safety_rejects_forbidden_targets_by_default() -> None:
         "http://localhost/callback": "forbidden_host",
         "https://metadata.google.internal/computeMetadata/v1": "forbidden_host",
         "https://127.0.0.1/callback": "forbidden_ip",
+        "https://2130706433/callback": "forbidden_ip",
+        "https://0x7f000001/callback": "forbidden_ip",
         "https://10.0.0.7/callback": "forbidden_ip",
         "https://169.254.169.254/latest/meta-data": "forbidden_ip",
         "https://user:pass@example.com/callback": "userinfo_not_allowed",

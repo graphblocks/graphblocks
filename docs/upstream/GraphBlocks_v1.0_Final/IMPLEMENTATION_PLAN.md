@@ -951,8 +951,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   regressions relative to delivery and dead-letter records.
 - `graphblocks-callbacks` now exposes a dependency-free webhook target safety helper for callback
   delivery adapters, rejecting unsupported schemes, userinfo URLs, localhost/metadata hosts, and
-  loopback/private/link-local/reserved IP destinations unless private targets are explicitly
-  allowed by deployment policy.
+  loopback/private/link-local/reserved IP destinations, including decimal and hex numeric IPv4
+  aliases, unless private targets are explicitly allowed by deployment policy.
 - `graphblocks-callbacks` now provides callback payload projection helpers that canonicalize
   strict JSON payloads, keep bounded payloads inline with a digest, and require an `ArtifactRef`
   when payloads exceed the configured inline byte limit.
