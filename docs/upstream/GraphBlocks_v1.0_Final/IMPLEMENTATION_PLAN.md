@@ -615,6 +615,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback dead-letter storage now validates the same durable identity fields plus non-empty
   attempt history before insert and after load, preventing malformed dead letters from producing
   ambiguous redrive attempts after restart.
+- Dead-letter attempt history must now be consecutive from attempt `1`, so redrive after restart
+  cannot reuse attempt `0`, skip an attempt, or create duplicate attempt numbers in audit history.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

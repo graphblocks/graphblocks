@@ -867,6 +867,37 @@ fn sqlite_callback_dead_letter_store_rejects_blank_identity_fields() {
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_rejects_nonconsecutive_attempt_history() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let mut dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let store = SqliteCallbackDeadLetterStore::open_in_memory().expect("store opens");
+
+    for malformed_history in [vec![0], vec![2], vec![1, 3], vec![1, 2, 2]] {
+        dead_letter.attempt_history = malformed_history.clone();
+
+        assert_eq!(
+            store.insert_dead_letter(dead_letter.clone()),
+            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
+                message: "callback dead letter attempt history must be consecutive from 1"
+                    .to_owned(),
+            }),
+            "{malformed_history:?} should be rejected"
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_count() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(

@@ -2167,6 +2167,17 @@ fn validate_callback_dead_letter(
             message: "callback dead letter has empty attempt history".to_owned(),
         });
     }
+    if !dead_letter
+        .attempt_history
+        .iter()
+        .copied()
+        .enumerate()
+        .all(|(index, attempt)| attempt == (index as u32) + 1)
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "callback dead letter attempt history must be consecutive from 1".to_owned(),
+        });
+    }
     if dead_letter.dead_lettered_at_unix_ms == 0 {
         return Err(CallbackDeliveryError::EmptyField {
             field: "dead_lettered_at_unix_ms".to_owned(),
