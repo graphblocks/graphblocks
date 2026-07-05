@@ -170,6 +170,8 @@ Message
 - `OutputPolicyDecision` validation now rejects disposition/content mismatches, such as replacement
   chunks on `allow` decisions or typed redaction instructions on `replace` decisions, before the
   delivery gate can ignore contradictory policy content.
+- Declarative output policy evaluation now rejects zero evaluation timestamps before constructing
+  an `OutputPolicyDecision`, so generated decisions always carry a valid evaluation time.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `buffer_until_commit` and `immediate_draft` delivery policies now reject flush boundaries, keeping

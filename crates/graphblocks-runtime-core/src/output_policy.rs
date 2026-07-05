@@ -661,6 +661,9 @@ pub enum DeclarativeOutputPolicyRuleError {
         rule_id: String,
         policy_ref: String,
     },
+    InvalidEvaluationTimestamp {
+        evaluated_at_unix_ms: u64,
+    },
 }
 
 impl DeclarativeOutputPolicyRule {
@@ -791,6 +794,11 @@ impl DeclarativeOutputPolicyEvaluator {
         chunk: &GenerationChunk,
         evaluated_at_unix_ms: u64,
     ) -> Result<OutputPolicyDecision, DeclarativeOutputPolicyRuleError> {
+        if evaluated_at_unix_ms == 0 {
+            return Err(DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
+                evaluated_at_unix_ms,
+            });
+        }
         self.validate()?;
         Ok(self.evaluate_chunk_unchecked(chunk, evaluated_at_unix_ms))
     }

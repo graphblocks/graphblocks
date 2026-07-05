@@ -1215,6 +1215,25 @@ fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
 }
 
 #[test]
+fn declarative_output_policy_evaluator_rejects_zero_evaluation_timestamp() {
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
+        "blocked-secret",
+        "secret",
+        OutputDisposition::AbortResponse,
+    )]);
+
+    assert_eq!(
+        evaluator.evaluate_chunk_checked(
+            &GenerationChunk::text("stream-1", "response-1", 4, "unsafe secret"),
+            0,
+        ),
+        Err(DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
+            evaluated_at_unix_ms: 0,
+        })
+    );
+}
+
+#[test]
 fn declarative_output_policy_evaluator_redacts_literal_match() {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "redact-secret",
