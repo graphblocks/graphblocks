@@ -1711,6 +1711,9 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
             "last_policy_accepted_sequence": 1,
             "last_client_delivered_sequence": 1,
             "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "occurred_at_unix_ms": 1_700_210,
         }),
     )
     .expect("cutoff event is valid");
@@ -1752,6 +1755,9 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
             "last_policy_accepted_sequence": 1,
             "last_client_delivered_sequence": 1,
             "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "occurred_at_unix_ms": 1_700_210,
         }),
     )
     .expect("duplicate cutoff event is valid");
@@ -1821,6 +1827,44 @@ fn protocol_stream_state_rejects_invalid_output_cutoff_payload() {
 
     assert_eq!(state.accept(invalid_sequence_cutoff), None);
     assert_eq!(state.accept(invalid_reason_cutoff), None);
+    assert_eq!(state.cutoff_for_response("response-1"), None);
+    assert_eq!(state.cutoff_for_response("response-2"), None);
+    assert!(state.accepted_events().is_empty());
+}
+
+#[test]
+fn protocol_stream_state_rejects_noncanonical_output_cutoff_payload() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let missing_canonical_fields = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-missing-fields", 1, "cursor-1"),
+        json!({
+            "response_id": "response-1",
+            "last_generated_sequence": 2,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("noncanonical cutoff envelope is valid");
+    let keep_after_policy_acceptance = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-keep-after-policy", 2, "cursor-2"),
+        json!({
+            "response_id": "response-2",
+            "last_generated_sequence": 2,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "keep",
+            "durable_result": "partial",
+            "occurred_at_unix_ms": 1_700_210,
+        }),
+    )
+    .expect("noncanonical cutoff envelope is valid");
+
+    assert_eq!(state.accept(missing_canonical_fields), None);
+    assert_eq!(state.accept(keep_after_policy_acceptance), None);
     assert_eq!(state.cutoff_for_response("response-1"), None);
     assert_eq!(state.cutoff_for_response("response-2"), None);
     assert!(state.accepted_events().is_empty());

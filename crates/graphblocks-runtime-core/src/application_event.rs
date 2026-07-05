@@ -1295,6 +1295,27 @@ impl ApplicationProtocolStreamState {
             ) {
                 return None;
             }
+            let draft_disposition = event
+                .payload
+                .get("draft_disposition")
+                .and_then(Value::as_str)?;
+            if !matches!(draft_disposition, "keep" | "mark_incomplete" | "retract") {
+                return None;
+            }
+            if !matches!(
+                event.payload.get("durable_result").and_then(Value::as_str)?,
+                "none" | "incomplete" | "partial"
+            ) {
+                return None;
+            }
+            if event
+                .payload
+                .get("occurred_at_unix_ms")
+                .and_then(Value::as_u64)?
+                == 0
+            {
+                return None;
+            }
             let last_generated_sequence = event
                 .payload
                 .get("last_generated_sequence")
@@ -1309,6 +1330,11 @@ impl ApplicationProtocolStreamState {
                 .and_then(Value::as_u64)?;
             if last_policy_accepted_sequence > last_generated_sequence
                 || last_client_delivered_sequence > last_generated_sequence
+            {
+                return None;
+            }
+            if last_client_delivered_sequence > last_policy_accepted_sequence
+                && draft_disposition == "keep"
             {
                 return None;
             }
