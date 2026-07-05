@@ -1044,6 +1044,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` callback delivery projections now reject status/timestamp conflicts
   such as pending deliveries that already have a delivered timestamp or terminal deliveries that
   still carry a future retry timestamp, keeping retry metadata scoped to live retry attempts.
+- Callback delivery success projections now require delivered/acknowledged timestamps at direct
+  construction time, preserving an inspectable audit trail for accepted and duplicate webhook
+  deliveries.
 - `graphblocks-runtime-core` now validates callback delivery records before SQLite persistence and
   after replay, rejecting acknowledged or otherwise terminal deliveries that still carry retry
   timestamps.

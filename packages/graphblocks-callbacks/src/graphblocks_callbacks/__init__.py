@@ -458,6 +458,12 @@ class CallbackDeliveryProjection:
             raise ValueError("acknowledged_at must not be before delivered_at")
         if self.status == "pending" and delivered_at is not None:
             raise ValueError("pending callback delivery must not already have delivered_at")
+        if self.status == "delivered" and delivered_at is None:
+            raise ValueError("delivered callback delivery requires delivered_at")
+        if self.status == "acknowledged" and delivered_at is None:
+            raise ValueError("acknowledged callback delivery requires delivered_at")
+        if self.status == "acknowledged" and acknowledged_at is None:
+            raise ValueError("acknowledged callback delivery requires acknowledged_at")
         if self.status in TERMINAL_DELIVERY_STATUSES and self.next_retry_at is not None:
             raise ValueError("terminal callback delivery must not have next_retry_at")
 

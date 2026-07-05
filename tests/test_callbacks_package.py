@@ -928,6 +928,53 @@ def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> No
     )
 
 
+def test_callback_delivery_projection_requires_success_timestamps() -> None:
+    _assert_raises_value_error(
+        "delivered callback delivery requires delivered_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_success_missing_time",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042:delivered",
+            status="delivered",
+        ),
+    )
+    _assert_raises_value_error(
+        "acknowledged callback delivery requires delivered_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_ack_missing_delivered",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042:ack-delivered",
+            status="acknowledged",
+            acknowledged_at="2026-07-02T00:00:01Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "acknowledged callback delivery requires acknowledged_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_ack_missing_time",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042:ack",
+            status="acknowledged",
+            delivered_at="2026-07-02T00:00:00Z",
+        ),
+    )
+
+
 def test_webhook_target_safety_allows_public_https_targets() -> None:
     safety = validate_webhook_target_url("https://callbacks.example.com/graphblocks/events")
 
@@ -1402,6 +1449,11 @@ def test_callback_delivery_projection_rejects_webhook_response_after_terminal_st
     terminal_statuses = ("delivered", "acknowledged", "failed", "dead_lettered", "cancelled", "expired")
 
     for status in terminal_statuses:
+        timestamps = {}
+        if status in {"delivered", "acknowledged"}:
+            timestamps["delivered_at"] = "2026-07-02T00:00:00Z"
+        if status == "acknowledged":
+            timestamps["acknowledged_at"] = "2026-07-02T00:00:00Z"
         delivery = CallbackDeliveryProjection(
             delivery_id=f"del_{status}",
             subscription_id="sub_001",
@@ -1412,6 +1464,7 @@ def test_callback_delivery_projection_rejects_webhook_response_after_terminal_st
             attempt=1,
             idempotency_key=f"sub_001:evt_1042:{status}",
             status=status,
+            **timestamps,
         )
 
         _assert_raises_value_error(
