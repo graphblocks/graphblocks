@@ -5706,6 +5706,14 @@ fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) ->
             "code": "invalid_tool_result_event",
             "source": format!("{source:?}"),
         }),
+        ApplicationProtocolError::DuplicateEventIdConflict { event_id } => json!({
+            "code": "duplicate_event_id_conflict",
+            "eventId": event_id,
+        }),
+        ApplicationProtocolError::DuplicateCursorConflict { cursor } => json!({
+            "code": "duplicate_cursor_conflict",
+            "cursor": cursor,
+        }),
         ApplicationProtocolError::ProtocolVersionMismatch { left, right } => json!({
             "code": "protocol_version_mismatch",
             "left": left,
@@ -7340,6 +7348,7 @@ fn evaluate_tool_execution_plan_json(plan_json: &str, operations_json: &str) -> 
         match error {
             ToolExecutionPlanError::UnsafeParallelEffects { .. } => "unsafe_parallel_effects",
             ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
+            ToolExecutionPlanError::DuplicateDependency { .. } => "duplicate_dependency",
             ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
             ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
             ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",
@@ -7666,6 +7675,7 @@ fn evaluate_sequential_tool_queue_json(
         match error {
             ToolExecutionPlanError::UnsafeParallelEffects { .. } => "unsafe_parallel_effects",
             ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
+            ToolExecutionPlanError::DuplicateDependency { .. } => "duplicate_dependency",
             ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
             ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
             ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",

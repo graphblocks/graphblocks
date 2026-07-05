@@ -54,6 +54,10 @@ pub enum ToolExecutionPlanError {
         tool_call_id: String,
         dependency_id: String,
     },
+    DuplicateDependency {
+        tool_call_id: String,
+        dependency_id: String,
+    },
     DependencyCycle {
         tool_call_id: String,
     },
@@ -284,7 +288,14 @@ impl ToolExecutionPlan {
             states.insert(tool_call_id, ToolExecutionState::Pending);
         }
         for (tool_call_id, planned_call) in &indexed_calls {
+            let mut seen_dependencies = BTreeSet::new();
             for dependency_id in &planned_call.call.depends_on {
+                if !seen_dependencies.insert(dependency_id) {
+                    return Err(ToolExecutionPlanError::DuplicateDependency {
+                        tool_call_id: tool_call_id.clone(),
+                        dependency_id: dependency_id.clone(),
+                    });
+                }
                 if !indexed_calls.contains_key(dependency_id) {
                     return Err(ToolExecutionPlanError::UnknownDependency {
                         tool_call_id: tool_call_id.clone(),

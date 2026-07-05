@@ -124,6 +124,28 @@ fn plan_rejects_unknown_dependency() {
 }
 
 #[test]
+fn plan_rejects_duplicate_dependencies() {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-a".to_owned(), "call-a".to_owned()];
+
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+                ToolPlanCall::new(dependent),
+            ],
+            2,
+        ),
+        Err(ToolExecutionPlanError::DuplicateDependency {
+            tool_call_id: "call-b".to_owned(),
+            dependency_id: "call-a".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn plan_rejects_dependency_cycle() {
     let mut first = tool_call("call-a", "{\"resource_id\":\"a\"}");
     first.depends_on = vec!["call-b".to_owned()];

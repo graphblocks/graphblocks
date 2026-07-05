@@ -635,11 +635,13 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-execution"] * 17
+    assert [case.kind for case in cases] == ["tool-execution"] * 19
     assert report.ok
     assert {case.case_id for case in cases} == {
         "independent_read_tools_execute_concurrently",
-        "conflicting_write_tools_are_serialized_by_effect_key",
+        "conflicting_write_tools_with_same_effect_key_are_rejected",
+        "dependency_serialized_write_tools_share_effect_key",
+        "duplicate_dependencies_are_rejected",
         "parallel_state_changing_tools_require_effect_keys",
         "dependency_serialized_write_tools_do_not_require_effect_keys",
         "parallel_filesystem_write_tools_require_effect_keys",
@@ -657,6 +659,7 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
         "fail_fast_policy_cancels_pending_calls_after_failure",
     }
     assert any(result.observed.get("creationError") == "unsafe_parallel_effects" for result in report.results)
+    assert any(result.observed.get("creationError") == "duplicate_dependency" for result in report.results)
     assert any(
         result.observed.get("states") == {"call-a": "running", "call-b": "running"}
         for result in report.results
@@ -910,7 +913,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     )
     assert by_suite["tool-execution"].case_ids == (
         "independent_read_tools_execute_concurrently",
-        "conflicting_write_tools_are_serialized_by_effect_key",
+        "conflicting_write_tools_with_same_effect_key_are_rejected",
+        "dependency_serialized_write_tools_share_effect_key",
+        "duplicate_dependencies_are_rejected",
         "parallel_state_changing_tools_require_effect_keys",
         "dependency_serialized_write_tools_do_not_require_effect_keys",
         "parallel_filesystem_write_tools_require_effect_keys",

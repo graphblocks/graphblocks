@@ -252,8 +252,10 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 
 def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
     message = str(error)
-    if "requires an effect key" in message:
+    if "requires an effect key" in message or "share effect key" in message:
         return "unsafe_parallel_effects"
+    if "duplicate dependency" in message:
+        return "duplicate_dependency"
     if "not pending" in message:
         return "tool_call_not_pending"
     if "not running" in message:

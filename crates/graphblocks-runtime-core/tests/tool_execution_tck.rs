@@ -299,6 +299,7 @@ fn execution_error_code(error: &ToolExecutionPlanError) -> &'static str {
     match error {
         ToolExecutionPlanError::UnsafeParallelEffects { .. } => "unsafe_parallel_effects",
         ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
+        ToolExecutionPlanError::DuplicateDependency { .. } => "duplicate_dependency",
         ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
         ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
         ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",

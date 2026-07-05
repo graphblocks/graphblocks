@@ -1534,7 +1534,13 @@ class ToolExecutionPlan:
             self._states[tool_call_id] = "pending"
         for planned_call in self.calls:
             tool_call_id = planned_call.call.tool_call_id
+            seen_dependencies: set[str] = set()
             for dependency in planned_call.call.depends_on:
+                if dependency in seen_dependencies:
+                    raise ToolExecutionPlanError(
+                        f"tool call {tool_call_id} has duplicate dependency {dependency}"
+                    )
+                seen_dependencies.add(dependency)
                 if dependency not in self._calls_by_id:
                     raise ToolExecutionPlanError(
                         f"tool call {tool_call_id} depends on unknown tool call {dependency}"
@@ -1612,6 +1618,11 @@ class ToolExecutionPlan:
                     if right_call.effect_key is None:
                         raise ToolExecutionPlanError(
                             f"parallel state-changing tool call {right_id} requires an effect key"
+                        )
+                    if left_call.effect_key == right_call.effect_key:
+                        raise ToolExecutionPlanError(
+                            f"parallel state-changing tool calls {left_id} and {right_id} "
+                            f"share effect key {left_call.effect_key}"
                         )
 
     def state(self, tool_call_id: str) -> ToolExecutionState | None:

@@ -60,7 +60,7 @@
     }
   },
   {
-    "name": "conflicting_write_tools_are_serialized_by_effect_key",
+    "name": "conflicting_write_tools_with_same_effect_key_are_rejected",
     "kind": "execution_plan",
     "planId": "plan-2",
     "responseId": "response-1",
@@ -83,6 +83,50 @@
         "arguments": {
           "resource_id": "ticket-1"
         },
+        "effects": [
+          "external_write"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_write"
+        ]
+      }
+    ],
+    "expectedCreationError": "unsafe_parallel_effects"
+  },
+  {
+    "name": "dependency_serialized_write_tools_share_effect_key",
+    "kind": "execution_plan",
+    "planId": "plan-2a",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "effectKeyTemplate": "{tool.name}:{arguments.resource_id}",
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_write"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
         "effects": [
           "external_write"
         ]
@@ -133,6 +177,40 @@
       "call-b": "pending",
       "call-c": "pending"
     }
+  },
+  {
+    "name": "duplicate_dependencies_are_rejected",
+    "kind": "execution_plan",
+    "planId": "plan-2b",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a",
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "expectedCreationError": "duplicate_dependency"
   },
   {
     "name": "parallel_state_changing_tools_require_effect_keys",
