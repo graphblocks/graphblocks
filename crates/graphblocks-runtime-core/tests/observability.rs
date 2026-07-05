@@ -77,6 +77,20 @@ fn metric_label_set_rejects_high_cardinality_labels() {
 }
 
 #[test]
+fn metric_label_set_rejects_blank_label_keys_and_values() {
+    let labels = MetricLabelSet::new()
+        .with_label(" ", "prod")
+        .with_label("environment", " ");
+
+    assert_eq!(
+        labels.validate_cardinality_budget(),
+        Err(MetricLabelError::EmptyLabel {
+            field: "labels".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_and_callback_observation_names_match_spec_required_events() {
     let events = [
         ObservabilityEventName::AsyncOperationStart,

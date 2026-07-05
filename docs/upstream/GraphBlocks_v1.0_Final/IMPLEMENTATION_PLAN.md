@@ -714,6 +714,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async operation result validation now requires `diagnostics`, `metrics`, `checks`, and `usage`
   entries to be structured JSON objects before downstream graph nodes consume callback or polling
   results.
+- Observability metric label validation now rejects whitespace-only label keys or values before
+  applying the high-cardinality denylist, keeping async/callback telemetry dimensions usable for
+  bounded aggregation.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

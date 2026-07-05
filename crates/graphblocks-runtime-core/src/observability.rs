@@ -153,6 +153,15 @@ impl MetricLabelSet {
     }
 
     pub fn validate_cardinality_budget(&self) -> Result<(), MetricLabelError> {
+        if self
+            .labels
+            .iter()
+            .any(|(key, value)| key.trim().is_empty() || value.trim().is_empty())
+        {
+            return Err(MetricLabelError::EmptyLabel {
+                field: "labels".to_owned(),
+            });
+        }
         let labels = self
             .labels
             .keys()
@@ -169,12 +178,14 @@ impl MetricLabelSet {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MetricLabelError {
+    EmptyLabel { field: String },
     ForbiddenLabels { labels: Vec<String> },
 }
 
 impl fmt::Display for MetricLabelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyLabel { field } => write!(formatter, "{field} must not contain empty labels"),
             Self::ForbiddenLabels { labels } => {
                 write!(
                     formatter,
