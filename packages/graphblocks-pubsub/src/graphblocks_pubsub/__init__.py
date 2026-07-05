@@ -19,6 +19,34 @@ def _validate_topic(topic: str) -> None:
         raise PubsubAdapterError("topic must not be empty")
 
 
+def _positive_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PubsubAdapterError(f"{field_name} must be an integer")
+    if value <= 0:
+        raise PubsubAdapterError(f"{field_name} must be positive")
+    return value
+
+
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PubsubAdapterError(f"{field_name} must be an integer")
+    if value < 0:
+        raise PubsubAdapterError(f"{field_name} must be non-negative")
+    return value
+
+
+def _optional_positive_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(field_name, value)
+
+
+def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(field_name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class PubsubMessage:
     subscription: str
@@ -33,18 +61,23 @@ class PubsubMessage:
 
     def __post_init__(self) -> None:
         _validate_subscription(self.subscription)
-        if self.receive_sequence <= 0:
-            raise PubsubAdapterError("receive_sequence must be positive")
+        object.__setattr__(self, "receive_sequence", _positive_int("receive_sequence", self.receive_sequence))
         if not self.message_id.strip():
             raise PubsubAdapterError("message_id must not be empty")
         if not self.ack_id.strip():
             raise PubsubAdapterError("ack_id must not be empty")
-        if self.publish_time_unix_ms is not None and self.publish_time_unix_ms < 0:
-            raise PubsubAdapterError("publish_time_unix_ms must be non-negative")
+        object.__setattr__(
+            self,
+            "publish_time_unix_ms",
+            _optional_non_negative_int("publish_time_unix_ms", self.publish_time_unix_ms),
+        )
         if self.ordering_key is not None and not self.ordering_key.strip():
             raise PubsubAdapterError("ordering_key must not be empty")
-        if self.delivery_attempt is not None and self.delivery_attempt <= 0:
-            raise PubsubAdapterError("delivery_attempt must be positive")
+        object.__setattr__(
+            self,
+            "delivery_attempt",
+            _optional_positive_int("delivery_attempt", self.delivery_attempt),
+        )
         object.__setattr__(self, "attributes", dict(sorted(self.attributes.items())))
 
     def to_source_event(self) -> SourceEvent:
@@ -69,8 +102,7 @@ class PubsubSubscriptionCursor:
 
     def __post_init__(self) -> None:
         _validate_subscription(self.subscription)
-        if self.next_sequence <= 0:
-            raise PubsubAdapterError("next_sequence must be positive")
+        object.__setattr__(self, "next_sequence", _positive_int("next_sequence", self.next_sequence))
 
     @classmethod
     def from_source_cursor(cls, cursor: SourceCursor) -> PubsubSubscriptionCursor:

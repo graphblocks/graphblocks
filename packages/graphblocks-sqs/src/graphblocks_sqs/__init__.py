@@ -14,6 +14,28 @@ def _validate_queue(queue: str) -> None:
         raise SqsAdapterError("queue must not be empty")
 
 
+def _positive_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SqsAdapterError(f"{field_name} must be an integer")
+    if value <= 0:
+        raise SqsAdapterError(f"{field_name} must be positive")
+    return value
+
+
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SqsAdapterError(f"{field_name} must be an integer")
+    if value < 0:
+        raise SqsAdapterError(f"{field_name} must be non-negative")
+    return value
+
+
+def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(field_name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class SqsMessage:
     queue: str
@@ -27,14 +49,16 @@ class SqsMessage:
 
     def __post_init__(self) -> None:
         _validate_queue(self.queue)
-        if self.receive_sequence <= 0:
-            raise SqsAdapterError("receive_sequence must be positive")
+        object.__setattr__(self, "receive_sequence", _positive_int("receive_sequence", self.receive_sequence))
         if not self.message_id.strip():
             raise SqsAdapterError("message_id must not be empty")
         if not self.receipt_handle.strip():
             raise SqsAdapterError("receipt_handle must not be empty")
-        if self.sent_timestamp_unix_ms is not None and self.sent_timestamp_unix_ms < 0:
-            raise SqsAdapterError("sent_timestamp_unix_ms must be non-negative")
+        object.__setattr__(
+            self,
+            "sent_timestamp_unix_ms",
+            _optional_non_negative_int("sent_timestamp_unix_ms", self.sent_timestamp_unix_ms),
+        )
         object.__setattr__(self, "attributes", dict(sorted(self.attributes.items())))
         object.__setattr__(self, "message_attributes", dict(sorted(self.message_attributes.items())))
 
@@ -59,8 +83,7 @@ class SqsReceiveCursor:
 
     def __post_init__(self) -> None:
         _validate_queue(self.queue)
-        if self.next_sequence <= 0:
-            raise SqsAdapterError("next_sequence must be positive")
+        object.__setattr__(self, "next_sequence", _positive_int("next_sequence", self.next_sequence))
 
     @classmethod
     def from_source_cursor(cls, cursor: SourceCursor) -> SqsReceiveCursor:

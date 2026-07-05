@@ -58,6 +58,33 @@ def test_sqs_receive_cursor_round_trips_durable_cursor(monkeypatch) -> None:
         graphblocks_sqs.SqsReceiveCursor("orders", 0)
 
 
+def test_sqs_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
+    graphblocks_sqs = _import_sqs(monkeypatch)
+
+    cases = (
+        lambda: graphblocks_sqs.SqsMessage(
+            "orders",
+            True,  # type: ignore[arg-type]
+            "msg-41",
+            "receipt-41",
+            {"orderId": "ord-41"},
+        ),
+        lambda: graphblocks_sqs.SqsMessage(
+            "orders",
+            41,
+            "msg-41",
+            "receipt-41",
+            {"orderId": "ord-41"},
+            sent_timestamp_unix_ms=True,  # type: ignore[arg-type]
+        ),
+        lambda: graphblocks_sqs.SqsReceiveCursor("orders", True),  # type: ignore[arg-type]
+    )
+
+    for factory in cases:
+        with pytest.raises(graphblocks_sqs.SqsAdapterError):
+            factory()
+
+
 def test_sqs_send_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_sqs = _import_sqs(monkeypatch)
     request = graphblocks_sqs.SinkCommitRequest(

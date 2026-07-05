@@ -1459,9 +1459,9 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
 - `graphblocks-runtime-durable::InMemoryDurableSource` now tracks committed cursors per stream
   partition. A commit for one partition does not hide uncommitted events in another partition, and
   an explicit replay cursor only overrides replay for its own partition.
-- The Python Kafka durable adapter now rejects boolean and non-integer partition, offset,
-  next-offset, and timestamp cursor fields before projecting records into durable `SourceCursor`
-  and `SourceEvent` contracts.
+- The Python Kafka, Pub/Sub, and SQS durable adapters now reject boolean and non-integer partition,
+  offset, sequence, delivery-attempt, and timestamp cursor fields before projecting records into
+  durable `SourceCursor` and `SourceEvent` contracts.
 - Durable event-time window accumulation now treats watermarks as monotonic: stale watermark
   updates cannot move the late-data boundary backward or make already-late events admissible again.
 

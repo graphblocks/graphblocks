@@ -62,6 +62,41 @@ def test_pubsub_subscription_cursor_round_trips_durable_cursor(monkeypatch) -> N
         graphblocks_pubsub.PubsubSubscriptionCursor("orders-sub", 0)
 
 
+def test_pubsub_adapter_rejects_boolean_cursor_numbers(monkeypatch) -> None:
+    graphblocks_pubsub = _import_pubsub(monkeypatch)
+
+    cases = (
+        lambda: graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            True,  # type: ignore[arg-type]
+            "msg-41",
+            "ack-41",
+            {"orderId": "ord-41"},
+        ),
+        lambda: graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            41,
+            "msg-41",
+            "ack-41",
+            {"orderId": "ord-41"},
+            publish_time_unix_ms=True,  # type: ignore[arg-type]
+        ),
+        lambda: graphblocks_pubsub.PubsubMessage(
+            "orders-sub",
+            41,
+            "msg-41",
+            "ack-41",
+            {"orderId": "ord-41"},
+            delivery_attempt=True,  # type: ignore[arg-type]
+        ),
+        lambda: graphblocks_pubsub.PubsubSubscriptionCursor("orders-sub", True),  # type: ignore[arg-type]
+    )
+
+    for factory in cases:
+        with pytest.raises(graphblocks_pubsub.PubsubAdapterError):
+            factory()
+
+
 def test_pubsub_publish_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_pubsub = _import_pubsub(monkeypatch)
     request = graphblocks_pubsub.SinkCommitRequest(
