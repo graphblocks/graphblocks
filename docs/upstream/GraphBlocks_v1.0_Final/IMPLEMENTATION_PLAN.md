@@ -1465,6 +1465,9 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
 - Python durable checkpoint barriers now apply the same integer contract to `state_revision`,
   `created_at_unix_ms`, and `schema_versions`, preventing boolean protocol values from being
   coerced into checkpoint revisions or schema version records.
+- Python durable tool-terminal and response-policy-stop records now reject boolean and non-integer
+  revisions, stream sequence numbers, and completion/cutoff timestamps before durable replay or
+  terminal-state enforcement can observe them.
 - Durable event-time window accumulation now treats watermarks as monotonic: stale watermark
   updates cannot move the late-data boundary backward or make already-late events admissible again.
 

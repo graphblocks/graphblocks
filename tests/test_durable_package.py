@@ -395,6 +395,34 @@ def test_durable_tool_terminal_record_rejects_committed_effect_for_expired_state
         )
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"revision": True}, "revision must be an integer"),
+        ({"completed_at_unix_ms": False}, "completed_at_unix_ms must be an integer"),
+    ],
+)
+def test_durable_tool_terminal_record_rejects_boolean_integer_fields(
+    monkeypatch,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    config = {
+        "run_id": "run-000001",
+        "response_id": "response-1",
+        "tool_call_id": "call-1",
+        "revision": 1,
+        "terminal_state": "completed",
+        "arguments_digest": "sha256:arguments",
+        "completed_at_unix_ms": 1_820_000_000_000,
+        **kwargs,
+    }
+
+    with pytest.raises(graphblocks_durable.ToolTerminalStoreError, match=message):
+        graphblocks_durable.DurableToolTerminalRecord(**config)
+
+
 def test_durable_tool_terminal_record_projects_completed_tool_result(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     result = ToolResult.completed(
@@ -602,6 +630,35 @@ def test_durable_response_policy_stop_record_converts_to_output_cutoff(monkeypat
     assert cutoff.durable_result == "none"
     assert cutoff.policy_decision_id == "decision-abort"
     assert cutoff.occurred_at == "2026-06-23T00:00:02Z"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"last_generated_sequence": True}, "last_generated_sequence must be an integer"),
+        ({"last_policy_accepted_sequence": False}, "last_policy_accepted_sequence must be an integer"),
+        ({"last_client_delivered_sequence": True}, "last_client_delivered_sequence must be an integer"),
+        ({"occurred_at_unix_ms": False}, "occurred_at_unix_ms must be an integer"),
+    ],
+)
+def test_durable_response_policy_stop_record_rejects_boolean_integer_fields(
+    monkeypatch,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    config = {
+        "response_id": "response-1",
+        "policy_decision_id": "decision-abort",
+        "last_generated_sequence": 9,
+        "last_policy_accepted_sequence": 7,
+        "last_client_delivered_sequence": 6,
+        "occurred_at_unix_ms": 1_820_000_000_000,
+        **kwargs,
+    }
+
+    with pytest.raises(graphblocks_durable.ToolTerminalStoreError, match=message):
+        graphblocks_durable.DurableResponsePolicyStopRecord(**config)
 
 
 def test_durable_tool_terminal_store_rejects_late_result_commit_after_policy_stop(monkeypatch) -> None:

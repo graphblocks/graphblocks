@@ -106,6 +106,12 @@ class ToolTerminalStoreError(DurableError):
     pass
 
 
+def _require_tool_terminal_integer(field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ToolTerminalStoreError(f"{field_name} must be an integer")
+    return value
+
+
 class ToolTerminalStateConflictError(ToolTerminalStoreError):
     def __init__(self, response_id: str, tool_call_id: str, revision: int) -> None:
         self.response_id = response_id
@@ -502,14 +508,21 @@ class DurableToolTerminalRecord:
             raise ToolTerminalStoreError("response_id must not be empty")
         if not self.tool_call_id.strip():
             raise ToolTerminalStoreError("tool_call_id must not be empty")
-        if self.revision <= 0:
+        revision = _require_tool_terminal_integer("revision", self.revision)
+        if revision <= 0:
             raise ToolTerminalStoreError("revision must be positive")
         if self.terminal_state not in VALID_DURABLE_TOOL_TERMINAL_STATES:
             raise ToolTerminalStoreError(f"invalid terminal_state {self.terminal_state}")
         if not self.arguments_digest.strip():
             raise ToolTerminalStoreError("arguments_digest must not be empty")
-        if self.completed_at_unix_ms <= 0:
+        completed_at_unix_ms = _require_tool_terminal_integer(
+            "completed_at_unix_ms",
+            self.completed_at_unix_ms,
+        )
+        if completed_at_unix_ms <= 0:
             raise ToolTerminalStoreError("completed_at_unix_ms must be positive")
+        object.__setattr__(self, "revision", revision)
+        object.__setattr__(self, "completed_at_unix_ms", completed_at_unix_ms)
         if self.output_digest is not None and not self.output_digest.strip():
             raise ToolTerminalStoreError("output_digest must not be empty")
         if self.idempotency_key is not None and not self.idempotency_key.strip():
@@ -552,15 +565,31 @@ class DurableResponsePolicyStopRecord:
             raise ToolTerminalStoreError("stream_id must not be empty")
         if self.turn_id is not None and not self.turn_id.strip():
             raise ToolTerminalStoreError("turn_id must not be empty")
-        if self.last_generated_sequence < 0:
+        last_generated_sequence = _require_tool_terminal_integer(
+            "last_generated_sequence",
+            self.last_generated_sequence,
+        )
+        last_policy_accepted_sequence = _require_tool_terminal_integer(
+            "last_policy_accepted_sequence",
+            self.last_policy_accepted_sequence,
+        )
+        last_client_delivered_sequence = _require_tool_terminal_integer(
+            "last_client_delivered_sequence",
+            self.last_client_delivered_sequence,
+        )
+        occurred_at_unix_ms = _require_tool_terminal_integer(
+            "occurred_at_unix_ms",
+            self.occurred_at_unix_ms,
+        )
+        if last_generated_sequence < 0:
             raise ToolTerminalStoreError("last_generated_sequence must be non-negative")
-        if self.last_policy_accepted_sequence < 0:
+        if last_policy_accepted_sequence < 0:
             raise ToolTerminalStoreError("last_policy_accepted_sequence must be non-negative")
-        if self.last_client_delivered_sequence < 0:
+        if last_client_delivered_sequence < 0:
             raise ToolTerminalStoreError("last_client_delivered_sequence must be non-negative")
-        if self.last_policy_accepted_sequence > self.last_generated_sequence:
+        if last_policy_accepted_sequence > last_generated_sequence:
             raise ToolTerminalStoreError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
-        if self.last_client_delivered_sequence > self.last_generated_sequence:
+        if last_client_delivered_sequence > last_generated_sequence:
             raise ToolTerminalStoreError("last_client_delivered_sequence cannot exceed last_generated_sequence")
         if self.terminal_reason not in VALID_OUTPUT_CUTOFF_TERMINAL_REASONS:
             raise ToolTerminalStoreError(f"invalid terminal_reason {self.terminal_reason}")
@@ -568,8 +597,12 @@ class DurableResponsePolicyStopRecord:
             raise ToolTerminalStoreError(f"invalid draft_disposition {self.draft_disposition}")
         if self.durable_result not in VALID_OUTPUT_CUTOFF_DURABLE_RESULTS:
             raise ToolTerminalStoreError(f"invalid durable_result {self.durable_result}")
-        if self.occurred_at_unix_ms <= 0:
+        if occurred_at_unix_ms <= 0:
             raise ToolTerminalStoreError("occurred_at_unix_ms must be positive")
+        object.__setattr__(self, "last_generated_sequence", last_generated_sequence)
+        object.__setattr__(self, "last_policy_accepted_sequence", last_policy_accepted_sequence)
+        object.__setattr__(self, "last_client_delivered_sequence", last_client_delivered_sequence)
+        object.__setattr__(self, "occurred_at_unix_ms", occurred_at_unix_ms)
 
     def to_output_cutoff(self, *, occurred_at: str) -> OutputCutoff:
         if not isinstance(occurred_at, str) or not occurred_at.strip():
