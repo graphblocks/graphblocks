@@ -655,6 +655,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - SQLite callback delivery queue replay validates that each stored delivery JSON identity matches
   the durable delivery row key before it can be returned, recovered, cancelled, or delivered.
+- SQLite callback delivery queue replay also validates row status, retry due time, and sequence
+  metadata against the stored delivery JSON before those indexed columns can drive scheduling.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
   envelopes, an injected transport boundary, and persisted success/retry outcomes. If the signed
   envelope exceeds the target payload limit, the worker records a terminal delivery failure with a

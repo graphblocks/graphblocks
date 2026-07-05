@@ -1114,6 +1114,50 @@ fn sqlite_callback_delivery_queue_rejects_delivery_row_identity_mismatch_on_reop
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_delivery_row_status_mismatch_on_replay() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let failed =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ClientError(400), 2_000);
+    let path = sqlite_callback_delivery_queue_path("delivery-row-status");
+
+    {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+        queue
+            .upsert_delivery(failed)
+            .expect("failed delivery persists");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        connection
+            .execute(
+                "UPDATE callback_deliveries SET status = ?1 WHERE delivery_id = ?2",
+                params!["pending", "del_sub-1_event-1"],
+            )
+            .expect("delivery row is tampered");
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let error = queue
+        .due_deliveries(3_000, 10)
+        .expect_err("delivery row status mismatch must fail durable replay");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("stored callback delivery status does not match row status")
+    ));
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(
