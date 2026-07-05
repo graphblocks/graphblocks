@@ -3267,7 +3267,7 @@ fn receipt_to_value(receipt: &ExternalCallbackReceived) -> Value {
 }
 
 fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOperationError> {
-    Ok(ExternalCallbackReceived {
+    let receipt = ExternalCallbackReceived {
         callback_id: required_string(&value, "callback_id")?,
         operation_id: required_string(&value, "operation_id")?,
         run_id: required_string(&value, "run_id")?,
@@ -3286,7 +3286,13 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
         received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
         verified_by: required_string(&value, "verified_by")?,
         policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
-    })
+    };
+    if receipt.payload_digest != receipt.compute_payload_digest() {
+        return Err(AsyncOperationError::Storage {
+            message: "stored callback receipt payload_digest does not match payload".to_owned(),
+        });
+    }
+    Ok(receipt)
 }
 
 fn callback_submission_to_value(submission: &AsyncCallbackSubmission) -> Value {

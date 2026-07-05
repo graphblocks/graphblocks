@@ -11,6 +11,7 @@ use graphblocks_runtime_core::async_operation::{
 };
 use graphblocks_runtime_core::tool_result::ToolEffectOutcome;
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
+use rusqlite::{params, Connection};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -2831,6 +2832,64 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
         1
     );
     Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_rejects_tampered_callback_receipt_digest_on_reopen() {
+    let path = sqlite_async_operation_path("callback-receipt-digest-tamper");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        store
+            .accept_callback(
+                valid_submission("cb-1", "idem-cb-1"),
+                &callback_schema_registry(),
+            )
+            .expect("callback is accepted");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let receipt_json: String = connection
+            .query_row(
+                "SELECT receipt_json FROM async_callback_receipts WHERE operation_id = ?1 AND idempotency_key = ?2",
+                params!["op-1", "idem-cb-1"],
+                |row| row.get(0),
+            )
+            .expect("receipt row exists");
+        let mut receipt: serde_json::Value =
+            serde_json::from_str(&receipt_json).expect("receipt json parses");
+        receipt["payload_digest"] = json!("sha256:tampered-receipt");
+        connection
+            .execute(
+                "UPDATE async_callback_receipts SET receipt_json = ?1 WHERE operation_id = ?2 AND idempotency_key = ?3",
+                params![
+                    serde_json::to_string(&receipt).expect("receipt serializes"),
+                    "op-1",
+                    "idem-cb-1"
+                ],
+            )
+            .expect("receipt row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .accept_callback(
+            valid_submission("cb-duplicate", "idem-cb-1"),
+            &callback_schema_registry(),
+        )
+        .expect_err("tampered callback receipt digest must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::Storage { ref message }
+                if message.contains("stored callback receipt payload_digest does not match payload")
+        ),
+        "unexpected error: {error:?}"
+    );
 }
 
 #[test]
