@@ -2221,11 +2221,25 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             message: "delivered delivery has no delivered timestamp".to_owned(),
         });
     }
+    if delivery.status == CallbackDeliveryStatus::Delivered
+        && delivery.delivered_at_unix_ms == Some(0)
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "delivered delivery has zero delivered timestamp".to_owned(),
+        });
+    }
     if delivery.status == CallbackDeliveryStatus::Acknowledged
         && delivery.acknowledged_at_unix_ms.is_none()
     {
         return Err(CallbackDeliveryError::Storage {
             message: "acknowledged delivery has no acknowledged timestamp".to_owned(),
+        });
+    }
+    if delivery.status == CallbackDeliveryStatus::Acknowledged
+        && delivery.acknowledged_at_unix_ms == Some(0)
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "acknowledged delivery has zero acknowledged timestamp".to_owned(),
         });
     }
     if matches!(
