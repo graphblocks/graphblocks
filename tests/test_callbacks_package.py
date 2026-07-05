@@ -1079,7 +1079,7 @@ def test_callback_payload_projection_rejects_inline_digest_mismatch() -> None:
         lambda: CallbackPayloadProjection(
             mode="inline",
             payload={"status": "completed"},
-            payload_digest="sha256:wrong",
+            payload_digest="sha256:" + "0" * 64,
             payload_size_bytes=22,
         ),
     )
@@ -1132,6 +1132,16 @@ def test_callback_payload_projection_requires_payload_digest() -> None:
             mode="artifact_reference",
             payload={},
             payload_digest="md5:callback-log",
+            payload_size_bytes=211,
+            artifact=artifact,
+        ),
+    )
+    _assert_raises_value_error(
+        "callback payload projection payload_digest must be a sha256 digest",
+        lambda: CallbackPayloadProjection(
+            mode="artifact_reference",
+            payload={},
+            payload_digest="a" * 64,
             payload_size_bytes=211,
             artifact=artifact,
         ),
@@ -1192,7 +1202,7 @@ def test_callback_payload_projection_deterministic_fuzz_canonical_integrity() ->
             lambda payload=payload: CallbackPayloadProjection(
                 mode="inline",
                 payload=payload,
-                payload_digest=f"sha256:tampered-{index}",
+                payload_digest=f"sha256:{index:064x}",
                 payload_size_bytes=canonical_size,
             ),
         )

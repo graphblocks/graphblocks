@@ -86,6 +86,8 @@ def _require_non_empty_string(field_name: str, value: str) -> None:
 
 def _require_sha256_digest(field_name: str, value: str) -> None:
     _require_non_empty_string(field_name, value)
+    if not value.startswith("sha256:"):
+        raise ValueError(f"{field_name} must be a sha256 digest")
     digest = value.removeprefix("sha256:")
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise ValueError(f"{field_name} must be a sha256 digest")
