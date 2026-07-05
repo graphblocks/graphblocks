@@ -221,6 +221,7 @@ class WebhookResponseDecision:
         _require_non_empty_string("reason", self.reason)
         if self.retry_after is not None:
             _require_non_empty_string("retry_after", self.retry_after)
+            _parse_field_timestamp("retry_after", self.retry_after)
 
 
 def classify_webhook_response(

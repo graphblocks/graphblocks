@@ -684,6 +684,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   events for an ordered subscription enqueue only the first currently unblocked delivery for a run.
 - Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
+- Webhook response decisions now validate `retry_after` timestamps at construction time, so direct
+  decisions and classified receiver responses share the same retry scheduling contract.
 - Callback envelopes now validate `occurred_at` and `delivered_at` as ISO-8601 timestamps and
   reject deliveries whose delivery timestamp precedes the source event timestamp.
 - External callback receipts now validate `received_at` as an ISO-8601 timestamp and reject receipt

@@ -1224,6 +1224,20 @@ def test_webhook_response_classification_parses_retry_after() -> None:
     assert decision.reason == "rate_limited"
 
 
+def test_webhook_response_decision_rejects_malformed_retry_after() -> None:
+    _assert_raises_value_error(
+        "retry_after must be an ISO-8601 datetime",
+        lambda: WebhookResponseDecision(
+            status_code=429,
+            status="retry",
+            retry=True,
+            terminal=False,
+            reason="rate_limited",
+            retry_after="eventually",
+        ),
+    )
+
+
 def test_webhook_response_classification_ignores_past_retry_after() -> None:
     decision = classify_webhook_response(
         429,
