@@ -137,6 +137,21 @@ fn bearer_callback_endpoint_authenticates_and_builds_submission() {
 }
 
 #[test]
+fn bearer_callback_endpoint_rejects_whitespace_token() {
+    assert_eq!(
+        CallbackEndpointRef::new(
+            "callback-endpoint-1",
+            "https://graphblocks.example.com/v1/callbacks/op-1",
+            "schemas/CICallback@1",
+            CallbackEndpointAuth::bearer("secret://callbacks/op-1", " \t"),
+        ),
+        Err(AsyncOperationError::EmptyField {
+            field: "token".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn callback_endpoint_binds_submission_to_current_operation_identity() {
     let endpoint = CallbackEndpointRef::new_bound(
         "callback-endpoint-1",

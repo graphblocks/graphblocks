@@ -1010,7 +1010,7 @@ impl CallbackEndpointAuth {
                         field: "token_ref".to_owned(),
                     });
                 }
-                if token.is_empty() {
+                if token.trim().is_empty() {
                     return Err(AsyncOperationError::EmptyField {
                         field: "token".to_owned(),
                     });

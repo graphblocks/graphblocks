@@ -980,6 +980,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, and tenant identity into a stable fencing key so stale callbacks cannot be
   confused with the current resumable operation.
+- Bearer callback endpoint auth now rejects whitespace-only tokens at validation time, so callback
+  ingress cannot be configured with visually present but empty credentials.
 - `graphblocks-callbacks` now evaluates callback resume admission by comparing a durable
   `ExternalCallbackReceived` receipt against the callback endpoint's tenant/release/run/node/
   attempt/operation fencing key and endpoint expiry, returning explicit admitted, expired, or stale
