@@ -955,6 +955,63 @@ fn sqlite_callback_delivery_queue_rejects_acknowledged_retry_timestamp_conflict(
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_delivered_without_delivery_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut delivered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::Success, 2_000);
+    delivered.delivered_at_unix_ms = None;
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    let error = queue
+        .upsert_delivery(delivered)
+        .expect_err("delivered record must retain delivery timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("delivered delivery has no delivered timestamp")
+    ));
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_rejects_acknowledged_without_ack_timestamp() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut acknowledged = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        2_000,
+    );
+    acknowledged.acknowledged_at_unix_ms = None;
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    let error = queue
+        .upsert_delivery(acknowledged)
+        .expect_err("acknowledged record must retain acknowledgement timestamp");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("acknowledged delivery has no acknowledged timestamp")
+    ));
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_restart() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

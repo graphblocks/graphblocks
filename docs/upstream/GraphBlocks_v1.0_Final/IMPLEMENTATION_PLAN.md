@@ -599,6 +599,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   avoid run terminal actions for ordinary retry/dead-letter subscriptions. `graphblocks-callbacks`
   exposes this as a typed delivery-failure action decision so runtimes can apply the policy without
   reinterpreting raw delivery status strings.
+- Callback delivery persistence now rejects success-state records that have lost their required
+  timestamps: `delivered` requires `delivered_at_unix_ms`, and `acknowledged` requires
+  `acknowledged_at_unix_ms`. Queue validation covers malformed replay records before they can
+  re-enter the worker or ordered-delivery state machines.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

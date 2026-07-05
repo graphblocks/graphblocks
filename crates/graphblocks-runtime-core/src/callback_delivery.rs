@@ -2055,6 +2055,20 @@ fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), Callbac
             ),
         });
     }
+    if delivery.status == CallbackDeliveryStatus::Delivered
+        && delivery.delivered_at_unix_ms.is_none()
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "delivered delivery has no delivered timestamp".to_owned(),
+        });
+    }
+    if delivery.status == CallbackDeliveryStatus::Acknowledged
+        && delivery.acknowledged_at_unix_ms.is_none()
+    {
+        return Err(CallbackDeliveryError::Storage {
+            message: "acknowledged delivery has no acknowledged timestamp".to_owned(),
+        });
+    }
     Ok(())
 }
 
