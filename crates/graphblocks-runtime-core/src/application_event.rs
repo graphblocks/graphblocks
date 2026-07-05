@@ -1511,6 +1511,9 @@ impl ApplicationProtocolLog {
         cursor: Option<&str>,
         limit: usize,
     ) -> Vec<ApplicationProtocolEvent> {
+        if cursor.is_some_and(|cursor| cursor.trim().is_empty()) {
+            return Vec::new();
+        }
         let start_index = cursor
             .and_then(|cursor| {
                 self.events.iter().position(|event| {

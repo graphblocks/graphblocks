@@ -2066,6 +2066,22 @@ fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
 }
 
 #[test]
+fn protocol_log_replay_after_blank_cursor_does_not_replay_from_beginning() {
+    let mut log = ApplicationProtocolLog::new();
+    log.append(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            protocol_event_metadata("event-1", 1, "cursor-1"),
+            json!({}),
+        )
+        .expect("event is valid"),
+    )
+    .expect("event appends");
+
+    assert!(log.replay_after(Some("   "), 10).is_empty());
+}
+
+#[test]
 fn protocol_log_rejects_duplicate_replay_cursors() {
     let mut log = ApplicationProtocolLog::new();
     let first = ApplicationProtocolEvent::new(
