@@ -217,6 +217,9 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
     with raises_value_error("async operation result output must not contain non-finite numbers"):
         graphblocks.AsyncOperationResult.completed("op-1", output={"value": math.nan})
 
+    with raises_value_error("async operation result output must contain only JSON values"):
+        graphblocks.AsyncOperationResult.completed("op-1", output=("not", "json"))
+
     with raises_value_error("async operation result artifacts must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
 

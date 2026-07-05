@@ -87,6 +87,10 @@ VALID_ASYNC_OPERATION_KINDS = frozenset({
 })
 
 
+class _FrozenJsonArray(tuple[object, ...]):
+    pass
+
+
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
@@ -125,8 +129,12 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
         if not math.isfinite(value):
             raise ValueError(f"{owner} {field_name} must not contain non-finite numbers")
         return value
-    if isinstance(value, list) or isinstance(value, tuple):
-        return tuple(_freeze_json_value(owner, field_name, item) for item in value)
+    if isinstance(value, _FrozenJsonArray):
+        return _FrozenJsonArray(_freeze_json_value(owner, field_name, item) for item in value)
+    if isinstance(value, list):
+        return _FrozenJsonArray(_freeze_json_value(owner, field_name, item) for item in value)
+    if isinstance(value, tuple):
+        raise ValueError(f"{owner} {field_name} must contain only JSON values")
     if isinstance(value, dict):
         frozen: dict[str, object] = {}
         for key, item in value.items():
@@ -138,7 +146,7 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
 
 
 def _thaw_json_value(value: object) -> object:
-    if isinstance(value, tuple):
+    if isinstance(value, _FrozenJsonArray):
         return [_thaw_json_value(item) for item in value]
     if isinstance(value, dict):
         return {key: _thaw_json_value(item) for key, item in value.items()}
