@@ -295,6 +295,65 @@ fn in_memory_audit_outbox_publishes_failed_records_and_excludes_published_from_p
 }
 
 #[test]
+fn in_memory_audit_outbox_rejects_blank_record_identity_fields() {
+    let mut outbox = InMemoryAuditOutbox::new();
+
+    assert_eq!(
+        outbox.append(
+            " ",
+            json!({"event_id": "event-1"}),
+            "2026-06-23T00:00:00Z",
+            Some("audit-blank-type".to_owned()),
+        ),
+        Err(AuditOutboxError::InvalidRecord {
+            message: "audit outbox record_type must not be empty".to_owned(),
+        })
+    );
+    assert_eq!(
+        outbox.append(
+            "application_event",
+            json!({"event_id": "event-1"}),
+            " ",
+            Some("audit-blank-time".to_owned()),
+        ),
+        Err(AuditOutboxError::InvalidRecord {
+            message: "audit outbox occurred_at must not be empty".to_owned(),
+        })
+    );
+    assert_eq!(
+        outbox.append(
+            "application_event",
+            json!({"event_id": "event-1"}),
+            "2026-06-23T00:00:00Z",
+            Some(" ".to_owned()),
+        ),
+        Err(AuditOutboxError::InvalidRecord {
+            message: "audit outbox record_id must not be empty".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn in_memory_audit_outbox_rejects_blank_failure_reason() -> Result<(), AuditOutboxError> {
+    let mut outbox = InMemoryAuditOutbox::new();
+    outbox.append(
+        "application_event",
+        json!({"event_id": "event-1"}),
+        "2026-06-23T00:00:00Z",
+        Some("audit-1".to_owned()),
+    )?;
+
+    assert_eq!(
+        outbox.mark_failed("audit-1", " \t"),
+        Err(AuditOutboxError::InvalidRecord {
+            message: "audit outbox failure reason must not be empty".to_owned(),
+        })
+    );
+    assert_eq!(outbox.get("audit-1")?.status.as_str(), "pending");
+    Ok(())
+}
+
+#[test]
 fn in_memory_audit_outbox_treats_published_records_as_terminal() -> Result<(), AuditOutboxError> {
     let mut outbox = InMemoryAuditOutbox::new();
     outbox.append(

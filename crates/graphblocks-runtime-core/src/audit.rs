@@ -468,6 +468,7 @@ pub enum AuditOutboxError {
     DuplicateRecord { record_id: String },
     RecordNotFound { record_id: String },
     RecordAlreadyPublished { record_id: String },
+    InvalidRecord { message: String },
 }
 
 impl fmt::Display for AuditOutboxError {
@@ -491,6 +492,7 @@ impl fmt::Display for AuditOutboxError {
                     "audit outbox record {record_id:?} is already published"
                 )
             }
+            Self::InvalidRecord { message } => write!(formatter, "{message}"),
         }
     }
 }
@@ -515,8 +517,25 @@ impl InMemoryAuditOutbox {
         occurred_at: impl Into<String>,
         record_id: Option<String>,
     ) -> Result<AuditOutboxRecord, AuditOutboxError> {
+        let record_type = record_type.into();
+        let occurred_at = occurred_at.into();
+        if record_type.trim().is_empty() {
+            return Err(AuditOutboxError::InvalidRecord {
+                message: "audit outbox record_type must not be empty".to_owned(),
+            });
+        }
+        if occurred_at.trim().is_empty() {
+            return Err(AuditOutboxError::InvalidRecord {
+                message: "audit outbox occurred_at must not be empty".to_owned(),
+            });
+        }
         let payload_digest = canonical_hash(&payload);
         let actual_record_id = record_id.unwrap_or_else(|| format!("audit:{payload_digest}"));
+        if actual_record_id.trim().is_empty() {
+            return Err(AuditOutboxError::InvalidRecord {
+                message: "audit outbox record_id must not be empty".to_owned(),
+            });
+        }
         if self.record_indexes.contains_key(&actual_record_id) {
             return Err(AuditOutboxError::DuplicateRecord {
                 record_id: actual_record_id,
@@ -524,10 +543,10 @@ impl InMemoryAuditOutbox {
         }
         let record = AuditOutboxRecord {
             record_id: actual_record_id.clone(),
-            record_type: record_type.into(),
+            record_type,
             payload,
             payload_digest,
-            occurred_at: occurred_at.into(),
+            occurred_at,
             status: AuditOutboxStatus::Pending,
             attempts: 0,
             published_at: None,
@@ -579,6 +598,12 @@ impl InMemoryAuditOutbox {
         error: impl Into<String>,
     ) -> Result<AuditOutboxRecord, AuditOutboxError> {
         let index = self.record_index(record_id.as_ref())?;
+        let error = error.into();
+        if error.trim().is_empty() {
+            return Err(AuditOutboxError::InvalidRecord {
+                message: "audit outbox failure reason must not be empty".to_owned(),
+            });
+        }
         let record = &mut self.records[index];
         if record.status == AuditOutboxStatus::Published {
             return Err(AuditOutboxError::RecordAlreadyPublished {
@@ -587,7 +612,7 @@ impl InMemoryAuditOutbox {
         }
         record.status = AuditOutboxStatus::Failed;
         record.attempts += 1;
-        record.last_error = Some(error.into());
+        record.last_error = Some(error);
         Ok(record.clone())
     }
 

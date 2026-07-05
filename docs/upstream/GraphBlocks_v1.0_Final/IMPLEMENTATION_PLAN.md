@@ -465,6 +465,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `ExternalCallbackRejected`, recording operation/run/attempt identity, policy snapshot, release,
   idempotency, verification, payload digest, and artifact ids without copying untrusted callback
   payload bodies into the audit log.
+- Audit outbox records now reject blank record ids, record types, occurrence times, and failure
+  reasons before pending or failed delivery projections can enter retry/audit inspection.
 - Observability now exposes typed names for the amendment's required async operation, callback
   delivery, and run attach/detach/replay events, and `ObservabilityObservation` validates metric
   labels against the low-cardinality rule including `operation_id`, `event_id`, and `delivery_id`.
