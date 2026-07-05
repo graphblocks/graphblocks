@@ -436,6 +436,36 @@ impl CallbackSubscription {
                 field: "event_filter.visibility".to_owned(),
             });
         }
+        if self
+            .event_filter
+            .node_ids
+            .as_ref()
+            .is_some_and(|values| values.iter().any(|value| value.trim().is_empty()))
+        {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "event_filter.node_ids".to_owned(),
+            });
+        }
+        if self
+            .event_filter
+            .operation_ids
+            .as_ref()
+            .is_some_and(|values| values.iter().any(|value| value.trim().is_empty()))
+        {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "event_filter.operation_ids".to_owned(),
+            });
+        }
+        if self
+            .event_filter
+            .severity_min
+            .as_ref()
+            .is_some_and(|severity_min| severity_rank(severity_min).is_none())
+        {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "event_filter.severity_min".to_owned(),
+            });
+        }
         Ok(())
     }
 

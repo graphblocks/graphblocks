@@ -673,6 +673,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `include_terminal_events: false` as an explicit terminal-event exclusion even for otherwise broad
   subscriptions, and the framework-neutral server replay facade applies the same rule for
   `includeTerminalEvents`.
+- Callback subscription validation now rejects blank node and operation selector values, plus
+  malformed severity selector mutations, before the filter can create an ambiguous event projection.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
   redrive them while preserving original delivery identity, idempotency key, attempt history, and
   audit-visible redrive count. Repeated redrives append each redriven attempt to the durable

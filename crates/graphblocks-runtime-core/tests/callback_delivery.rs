@@ -218,6 +218,48 @@ fn callback_subscription_rejects_unknown_visibility_filter_literals() {
 }
 
 #[test]
+fn callback_subscription_rejects_blank_event_filter_selectors() {
+    for (field, filter) in [
+        (
+            "event_filter.node_ids",
+            EventFilter::new().with_node_ids(["runChecks", " "]),
+        ),
+        (
+            "event_filter.operation_ids",
+            EventFilter::new().with_operation_ids(["op-ci-1", "\t"]),
+        ),
+        (
+            "event_filter.severity_min",
+            EventFilter {
+                severity_min: Some(" ".to_owned()),
+                ..EventFilter::new()
+            },
+        ),
+    ] {
+        let result = CallbackSubscription::new(
+            "sub-filter",
+            "principal:ide",
+            "run",
+            "run-1",
+            filter,
+            "webhook:ide-relay",
+            CallbackFailurePolicy::RetryThenDeadLetter,
+            900,
+        );
+
+        assert_eq!(
+            result,
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                    field: field.to_owned(),
+                }
+            ),
+            "{field} should reject blank selector values",
+        );
+    }
+}
+
+#[test]
 fn callback_subscription_rejects_unknown_scope_literals() {
     let result = CallbackSubscription::new(
         "sub-scope",
