@@ -969,6 +969,88 @@ fn sqlite_callback_dead_letter_store_rejects_missing_error_reason() {
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_rejects_immutable_metadata_overwrite() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let mut mutated = dead_letter.clone();
+    mutated.subscription_id = "sub-forged".to_owned();
+    let store = SqliteCallbackDeadLetterStore::open_in_memory().expect("store opens");
+
+    store
+        .insert_dead_letter(dead_letter.clone())
+        .expect("original dead letter persists");
+    let error = store
+        .insert_dead_letter(mutated)
+        .expect_err("dead-letter immutable metadata cannot be overwritten");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("callback dead letter immutable metadata conflict")
+    ));
+    assert_eq!(
+        store
+            .get_dead_letter("del_sub-1_event-1")
+            .expect("dead letter loads"),
+        Some(dead_letter)
+    );
+}
+
+#[test]
+fn sqlite_callback_dead_letter_store_rejects_redrive_history_regression() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let store = SqliteCallbackDeadLetterStore::open_in_memory().expect("store opens");
+
+    store
+        .insert_dead_letter(dead_letter.clone())
+        .expect("original dead letter persists");
+    let redriven = store
+        .redrive_dead_letter(&scheduler, "del_sub-1_event-1", "operator:alice", "retry", 1_500)
+        .expect("redrive updates history");
+    assert_eq!(redriven.redrive_count, 1);
+
+    let error = store
+        .insert_dead_letter(dead_letter)
+        .expect_err("old dead-letter snapshots cannot erase redrive history");
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("callback dead letter redrive history regression")
+    ));
+    assert_eq!(
+        store
+            .get_dead_letter("del_sub-1_event-1")
+            .expect("dead letter loads")
+            .expect("dead letter exists")
+            .attempt_history,
+        vec![1, 2]
+    );
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_rejects_row_identity_mismatch_on_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(

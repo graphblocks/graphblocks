@@ -1140,6 +1140,36 @@ impl SqliteCallbackDeadLetterStore {
             .connection
             .lock()
             .expect("sqlite callback dead-letter store lock poisoned");
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT dead_letter_json
+                FROM callback_dead_letters
+                WHERE original_delivery_id = ?
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        let mut rows = statement
+            .query(params![&dead_letter.original_delivery_id])
+            .map_err(callback_storage_error)?;
+        if let Some(row) = rows.next().map_err(callback_storage_error)? {
+            let existing_json = row.get::<_, String>(0).map_err(callback_storage_error)?;
+            let existing = dead_letter_from_value(callback_parse_json(&existing_json)?)?;
+            if let Some(field) = callback_dead_letter_immutable_conflict(&existing, &dead_letter) {
+                return Err(CallbackDeliveryError::Storage {
+                    message: format!("callback dead letter immutable metadata conflict: {field}"),
+                });
+            }
+            if dead_letter.redrive_count < existing.redrive_count
+                || dead_letter.attempt_history.len() < existing.attempt_history.len()
+            {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback dead letter redrive history regression".to_owned(),
+                });
+            }
+        }
+        drop(rows);
+        drop(statement);
         connection
             .execute(
                 "
@@ -2254,6 +2284,43 @@ fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDe
     };
     validate_callback_dead_letter(&dead_letter)?;
     Ok(dead_letter)
+}
+
+fn callback_dead_letter_immutable_conflict(
+    existing: &CallbackDeadLetter,
+    incoming: &CallbackDeadLetter,
+) -> Option<&'static str> {
+    if existing.original_delivery_id != incoming.original_delivery_id {
+        return Some("original_delivery_id");
+    }
+    if existing.subscription_id != incoming.subscription_id {
+        return Some("subscription_id");
+    }
+    if existing.event_id != incoming.event_id {
+        return Some("event_id");
+    }
+    if existing.run_id != incoming.run_id {
+        return Some("run_id");
+    }
+    if existing.sequence != incoming.sequence {
+        return Some("sequence");
+    }
+    if existing.cursor != incoming.cursor {
+        return Some("cursor");
+    }
+    if existing.idempotency_key != incoming.idempotency_key {
+        return Some("idempotency_key");
+    }
+    if existing.failure_policy != incoming.failure_policy {
+        return Some("failure_policy");
+    }
+    if existing.last_error != incoming.last_error {
+        return Some("last_error");
+    }
+    if existing.dead_lettered_at_unix_ms != incoming.dead_lettered_at_unix_ms {
+        return Some("dead_lettered_at_unix_ms");
+    }
+    None
 }
 
 fn validate_callback_dead_letter(

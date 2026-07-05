@@ -641,6 +641,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   cannot reuse attempt `0`, skip an attempt, or create duplicate attempt numbers in audit history.
 - Dead-letter persistence now also requires `last_error`, keeping every dead-lettered delivery tied
   to the terminal failure reason that operators review and redrive.
+- SQLite callback dead-letter updates now reject immutable original delivery metadata conflicts and
+  redrive-history regressions, so a later write cannot overwrite the delivery identity or erase
+  preserved redrive attempt history.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained
