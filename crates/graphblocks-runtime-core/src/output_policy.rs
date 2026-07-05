@@ -200,6 +200,7 @@ pub struct OutputDeliveryPolicy {
 pub enum OutputDeliveryPolicyError {
     UnboundedPolicyHoldback,
     FlushBoundaryWithoutStreaming,
+    HoldbackLimitWithoutHoldback,
     ImmediateDraftWithoutRetractionSupport,
     InvalidHoldbackMaxTokens,
     InvalidHoldbackMaxBytes,
@@ -278,6 +279,13 @@ impl OutputDeliveryPolicy {
         }
         if self.holdback_max_duration_ms == Some(0) {
             return Err(OutputDeliveryPolicyError::InvalidHoldbackMaxDuration);
+        }
+        if self.mode != DeliveryMode::BoundedHoldback
+            && (self.holdback_max_tokens.is_some()
+                || self.holdback_max_bytes.is_some()
+                || self.holdback_max_duration_ms.is_some())
+        {
+            return Err(OutputDeliveryPolicyError::HoldbackLimitWithoutHoldback);
         }
 
         match self.mode {

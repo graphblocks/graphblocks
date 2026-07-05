@@ -970,6 +970,16 @@ fn buffer_until_commit_policy_rejects_flush_boundaries() {
 }
 
 #[test]
+fn buffer_until_commit_policy_rejects_holdback_limits() {
+    assert_eq!(
+        OutputDeliveryPolicy::buffer_until_commit(ViolationAction::AbortResponse)
+            .with_holdback_max_tokens(48)
+            .validate(),
+        Err(OutputDeliveryPolicyError::HoldbackLimitWithoutHoldback),
+    );
+}
+
+#[test]
 fn output_policy_decision_preserves_metadata_and_redaction_instructions() {
     let decision = OutputPolicyDecision::redact(
         "decision-redact",
