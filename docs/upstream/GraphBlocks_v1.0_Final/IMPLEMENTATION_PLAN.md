@@ -612,6 +612,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery queue validation now rejects blank persisted delivery identity fields
   (`delivery_id`, `subscription_id`, `event_id`, `run_id`, `cursor`, and `idempotency_key`) so
   malformed durable records cannot re-enter replay, worker recovery, signing, or redrive paths.
+- Callback dead-letter storage now validates the same durable identity fields plus non-empty
+  attempt history before insert and after load, preventing malformed dead letters from producing
+  ambiguous redrive attempts after restart.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

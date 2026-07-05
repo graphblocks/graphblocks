@@ -1063,6 +1063,7 @@ impl SqliteCallbackDeadLetterStore {
         &self,
         dead_letter: CallbackDeadLetter,
     ) -> Result<(), CallbackDeliveryError> {
+        validate_callback_dead_letter(&dead_letter)?;
         let connection = self
             .connection
             .lock()
@@ -2116,7 +2117,7 @@ fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDe
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(CallbackDeadLetter {
+    let dead_letter = CallbackDeadLetter {
         original_delivery_id: callback_required_string(&value, "original_delivery_id")?,
         subscription_id: callback_required_string(&value, "subscription_id")?,
         event_id: callback_required_string(&value, "event_id")?,
@@ -2136,7 +2137,42 @@ fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDe
             .map_err(|_| CallbackDeliveryError::Storage {
                 message: "stored callback dead letter has oversized redrive_count".to_owned(),
             })?,
-    })
+    };
+    validate_callback_dead_letter(&dead_letter)?;
+    Ok(dead_letter)
+}
+
+fn validate_callback_dead_letter(
+    dead_letter: &CallbackDeadLetter,
+) -> Result<(), CallbackDeliveryError> {
+    for (field, value) in [
+        (
+            "original_delivery_id",
+            dead_letter.original_delivery_id.as_str(),
+        ),
+        ("subscription_id", dead_letter.subscription_id.as_str()),
+        ("event_id", dead_letter.event_id.as_str()),
+        ("run_id", dead_letter.run_id.as_str()),
+        ("cursor", dead_letter.cursor.as_str()),
+        ("idempotency_key", dead_letter.idempotency_key.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: format!("callback_dead_letter.{field}"),
+            });
+        }
+    }
+    if dead_letter.attempt_history.is_empty() {
+        return Err(CallbackDeliveryError::Storage {
+            message: "callback dead letter has empty attempt history".to_owned(),
+        });
+    }
+    if dead_letter.dead_lettered_at_unix_ms == 0 {
+        return Err(CallbackDeliveryError::EmptyField {
+            field: "dead_lettered_at_unix_ms".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn callback_delivery_status_as_str(status: CallbackDeliveryStatus) -> &'static str {

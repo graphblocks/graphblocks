@@ -821,6 +821,52 @@ fn sqlite_callback_dead_letter_store_persists_dead_letter_across_reopen() {
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_rejects_blank_identity_fields() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let store = SqliteCallbackDeadLetterStore::open_in_memory().expect("store opens");
+
+    for field in [
+        "original_delivery_id",
+        "subscription_id",
+        "event_id",
+        "run_id",
+        "cursor",
+        "idempotency_key",
+    ] {
+        let mut malformed = dead_letter.clone();
+        match field {
+            "original_delivery_id" => malformed.original_delivery_id = " ".to_owned(),
+            "subscription_id" => malformed.subscription_id = " ".to_owned(),
+            "event_id" => malformed.event_id = " ".to_owned(),
+            "run_id" => malformed.run_id = " ".to_owned(),
+            "cursor" => malformed.cursor = " ".to_owned(),
+            "idempotency_key" => malformed.idempotency_key = " ".to_owned(),
+            _ => unreachable!("test field list is exhaustive"),
+        }
+
+        assert_eq!(
+            store.insert_dead_letter(malformed),
+            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: format!("callback_dead_letter.{field}"),
+            }),
+            "{field} should be required"
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_count() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(
