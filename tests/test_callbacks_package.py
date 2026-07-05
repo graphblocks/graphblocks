@@ -1923,6 +1923,42 @@ def test_callback_endpoint_auth_requires_kind_specific_credentials() -> None:
     )
 
 
+def test_callback_endpoint_auth_rejects_mixed_credential_fields() -> None:
+    _assert_raises_value_error(
+        "bearer callback auth must not define secret_ref",
+        lambda: CallbackEndpointAuth(
+            kind="bearer",
+            token_ref="secret://callbacks/bearer",
+            secret_ref="secret://callbacks/hmac",
+        ),
+    )
+    _assert_raises_value_error(
+        "hmac callback auth must not define token_ref",
+        lambda: CallbackEndpointAuth(
+            kind="hmac",
+            token_ref="secret://callbacks/bearer",
+            secret_ref="secret://callbacks/hmac",
+        ),
+    )
+    _assert_raises_value_error(
+        "mtls callback auth must not define secret_ref",
+        lambda: CallbackEndpointAuth(
+            kind="mtls",
+            client_identity_ref="spiffe://tenant/callback",
+            secret_ref="secret://callbacks/hmac",
+        ),
+    )
+    _assert_raises_value_error(
+        "oidc callback auth must not define token_ref",
+        lambda: CallbackEndpointAuth(
+            kind="oidc",
+            issuer="https://issuer.example.com",
+            audience="graphblocks-callbacks",
+            token_ref="secret://callbacks/bearer",
+        ),
+    )
+
+
 def test_callback_endpoint_ref_requires_complete_resume_identity() -> None:
     _assert_raises_value_error(
         "attempt_id must be a non-empty string",

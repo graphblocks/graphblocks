@@ -978,6 +978,15 @@ class CallbackEndpointAuth:
             raise ValueError("mtls callback auth requires client_identity_ref")
         if self.kind == "oidc" and (self.issuer is None or self.audience is None):
             raise ValueError("oidc callback auth requires issuer and audience")
+        allowed_fields = {
+            "bearer": frozenset({"token_ref"}),
+            "hmac": frozenset({"secret_ref"}),
+            "mtls": frozenset({"client_identity_ref"}),
+            "oidc": frozenset({"issuer", "audience"}),
+        }[self.kind]
+        for field_name in ("token_ref", "secret_ref", "client_identity_ref", "issuer", "audience"):
+            if field_name not in allowed_fields and getattr(self, field_name) is not None:
+                raise ValueError(f"{self.kind} callback auth must not define {field_name}")
 
 
 @dataclass(frozen=True, slots=True)

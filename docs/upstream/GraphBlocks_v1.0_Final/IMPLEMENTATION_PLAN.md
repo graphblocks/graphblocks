@@ -993,6 +993,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   confused with the current resumable operation. Endpoint refs also validate their callback ingress
   URL as an absolute HTTP(S) URL and reject embedded userinfo credentials before they can be used
   for resume admission.
+- Callback endpoint auth projections now reject mixed credential material for the wrong auth kind,
+  so a resumable callback endpoint has exactly one verifier boundary.
 - Bearer callback endpoint auth now rejects whitespace-only tokens at validation time, so callback
   ingress cannot be configured with visually present but empty credentials.
 - `graphblocks-callbacks` now evaluates callback resume admission by comparing a durable
