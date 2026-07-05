@@ -708,7 +708,7 @@ impl LocalBlobStore {
     }
 
     fn key_parts<'a>(&self, key: &'a BlobKey) -> Result<Vec<&'a str>, BlobStoreError> {
-        if key.key.is_empty() || key.key.starts_with('/') || key.key.contains('\\') {
+        if key.key.trim().is_empty() || key.key.starts_with('/') || key.key.contains('\\') {
             return Err(BlobStoreError::InvalidKey {
                 key: key.key.clone(),
             });
@@ -716,7 +716,7 @@ impl LocalBlobStore {
         let parts = key.key.split('/').collect::<Vec<_>>();
         if parts
             .iter()
-            .any(|part| part.is_empty() || *part == "." || *part == "..")
+            .any(|part| part.trim().is_empty() || *part == "." || *part == "..")
         {
             return Err(BlobStoreError::InvalidKey {
                 key: key.key.clone(),
@@ -727,7 +727,7 @@ impl LocalBlobStore {
 }
 
 fn validate_blob_key(key: &BlobKey) -> Result<(), BlobStoreError> {
-    if key.key.is_empty() || key.key.starts_with('/') || key.key.contains('\\') {
+    if key.key.trim().is_empty() || key.key.starts_with('/') || key.key.contains('\\') {
         return Err(BlobStoreError::InvalidKey {
             key: key.key.clone(),
         });
@@ -735,7 +735,7 @@ fn validate_blob_key(key: &BlobKey) -> Result<(), BlobStoreError> {
     let parts = key.key.split('/').collect::<Vec<_>>();
     if parts
         .iter()
-        .any(|part| part.is_empty() || *part == "." || *part == "..")
+        .any(|part| part.trim().is_empty() || *part == "." || *part == "..")
     {
         return Err(BlobStoreError::InvalidKey {
             key: key.key.clone(),

@@ -696,6 +696,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before writes, reads, queries, or deletes. This keeps durable record identities usable as stable
   row keys, cursors, compare-and-swap targets, and audit references rather than admitting visually
   blank state entries.
+- Local and S3-compatible blob stores now reject whitespace-only blob keys and key segments before
+  artifact writes, reads, listings, or metadata projection. This prevents visually blank artifact
+  identities from entering callback payload handling, artifact references, and replayable storage.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

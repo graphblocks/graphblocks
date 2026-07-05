@@ -168,6 +168,25 @@ fn local_blob_store_rejects_path_traversal() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn blob_stores_reject_blank_keys() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("blank-key");
+    let local = LocalBlobStore::new(&root)?;
+    let s3 = S3CompatibleBlobStore::new("kb-artifacts", FakeS3Client::default())?;
+
+    assert!(matches!(
+        local.put(&BlobKey::new("   "), b"nope", PutOptions::new()),
+        Err(BlobStoreError::InvalidKey { .. })
+    ));
+    assert!(matches!(
+        s3.put(&BlobKey::new("   "), b"nope", PutOptions::new()),
+        Err(BlobStoreError::InvalidKey { .. })
+    ));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn s3_compatible_blob_store_uses_injected_client_without_sdk_dependency()
 -> Result<(), Box<dyn std::error::Error>> {
     let client = FakeS3Client::default();
