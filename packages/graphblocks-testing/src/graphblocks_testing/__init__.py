@@ -3204,21 +3204,39 @@ class TckRunner:
                         }
                     )
             elif operation.get("op") == "output_cutoff":
-                cutoff = OutputCutoff(
-                    stream_id=str(operation.get("streamId", "stream-1")),
-                    response_id=response_id,
-                    turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
-                    last_generated_sequence=int(operation.get("lastGeneratedSequence", 0)),
-                    last_policy_accepted_sequence=int(operation.get("lastPolicyAcceptedSequence", 0)),
-                    last_client_delivered_sequence=int(operation.get("lastClientDeliveredSequence", 0)),
-                    terminal_reason=str(operation.get("terminalReason", "policy_denied")),
-                    draft_disposition=str(operation.get("draftDisposition", "retract")),
-                    durable_result=str(operation.get("durableResult", "none")),
-                    policy_decision_id=(
-                        str(operation["policyDecisionId"]) if operation.get("policyDecisionId") is not None else None
-                    ),
-                    occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
-                )
+                try:
+                    cutoff = OutputCutoff(
+                        stream_id=str(operation.get("streamId", "stream-1")),
+                        response_id=response_id,
+                        turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
+                        last_generated_sequence=operation.get("lastGeneratedSequence", 0),  # type: ignore[arg-type]
+                        last_policy_accepted_sequence=operation.get(  # type: ignore[arg-type]
+                            "lastPolicyAcceptedSequence",
+                            0,
+                        ),
+                        last_client_delivered_sequence=operation.get(  # type: ignore[arg-type]
+                            "lastClientDeliveredSequence",
+                            0,
+                        ),
+                        terminal_reason=str(operation.get("terminalReason", "policy_denied")),
+                        draft_disposition=str(operation.get("draftDisposition", "retract")),
+                        durable_result=str(operation.get("durableResult", "none")),
+                        policy_decision_id=(
+                            str(operation["policyDecisionId"])
+                            if operation.get("policyDecisionId") is not None
+                            else None
+                        ),
+                        occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
+                    )
+                except ValueError as error:
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventOutputCutoffInvalid",
+                            "message": str(error),
+                            "path": f"$.operations[{sequence - 1}]",
+                        }
+                    )
+                    continue
                 for event in ApplicationEvent.output_cutoff(metadata, cutoff):
                     if state.accept(event) is None:
                         diagnostics.append(

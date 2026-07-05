@@ -378,6 +378,30 @@ def test_testing_package_application_event_tck_rejects_boolean_policy_acceptance
     assert report.results[0].observed["accepted_kinds"] == []
 
 
+def test_testing_package_application_event_tck_rejects_boolean_output_cutoff_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_events(
+        case_id="application-events/boolean-output-cutoff-sequence",
+        operations=(
+            {
+                "op": "output_cutoff",
+                "lastGeneratedSequence": True,
+                "lastPolicyAcceptedSequence": 0,
+                "lastClientDeliveredSequence": 0,
+            },
+        ),
+        expected_accepted_kinds=(),
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics[0]["code"] == "ApplicationEventOutputCutoffInvalid"
+    assert report.results[0].observed["accepted_kinds"] == []
+
+
 def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

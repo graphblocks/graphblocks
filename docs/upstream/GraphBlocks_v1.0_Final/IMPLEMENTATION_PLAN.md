@@ -1062,6 +1062,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Output-policy decision fixtures in the application-event TCK now validate `acceptedThrough` as an
   integer-only optional sequence, preventing boolean acceptance windows from being normalized to
   sequence `1`.
+- Application-event `OutputCutoff` fixtures now pass sequence fields through the `OutputCutoff`
+  validator instead of coercing them, so malformed boolean cutoff bounds cannot enter replay or
+  draft-retention state.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
