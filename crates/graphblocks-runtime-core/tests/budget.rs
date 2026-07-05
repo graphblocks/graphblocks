@@ -2,6 +2,7 @@ use graphblocks_runtime_core::budget::{
     BudgetError, BudgetPermit, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
     InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, SqliteBudgetLedger, UsageAmount,
 };
+use rusqlite::params;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -855,6 +856,59 @@ fn sqlite_budget_ledger_permit_survives_reopen() -> Result<(), BudgetError> {
     assert_eq!(settlement.committed, vec![tokens(30)]);
     assert_eq!(settlement.released, vec![tokens(10)]);
     assert_eq!(ledger.balance("budget-1")?.committed, vec![tokens(30)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_rejects_invalid_permit_metadata_on_reopen()
+-> Result<(), BudgetError> {
+    let path = sqlite_budget_path("permit-invalid-reopen");
+    let reservation_id;
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        let reservation = ledger.reserve(
+            "budget-1",
+            "run:1",
+            [tokens(40)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )?;
+        ledger.issue_permit(
+            "permit-1",
+            vec![reservation.reservation_id.clone()],
+            "worker:1",
+            "turn:1",
+            1,
+            "finish_current_turn",
+            "sha256:policy",
+            "later",
+            Vec::new(),
+        )?;
+        reservation_id = reservation.reservation_id;
+    }
+
+    {
+        let connection = rusqlite::Connection::open(&path).expect("sqlite database opens");
+        connection
+            .execute(
+                "UPDATE budget_permits SET reservation_refs_json = ?1 WHERE permit_id = ?2",
+                params!["[]", "permit-1"],
+            )
+            .expect("permit row is corrupted");
+    }
+
+    let mut ledger = SqliteBudgetLedger::open(&path)?;
+    assert_eq!(
+        ledger.commit_with_permit("permit-1", &reservation_id, [tokens(30)]),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not be empty".to_string(),
+        })
+    );
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(40)]);
     fs::remove_file(path).ok();
     Ok(())
 }

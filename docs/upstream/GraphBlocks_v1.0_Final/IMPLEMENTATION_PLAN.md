@@ -1207,6 +1207,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   bypass the ledger-issued authority shape required for fenced background execution.
 - Python `BudgetPermit` validation now requires positive fencing token values, aligning the
   authoring/schema facade with the Rust runtime admission guard for fenced budget continuation.
+- SQLite budget permit replay now revalidates reservation refs, usage amount projections, and
+  positive fencing tokens before a stored permit can authorize resume, commit, release, or expire
+  paths after restart.
 - `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
   cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
   provider work, finalization, optional tasks, and trials remain denied. Explicit continuation

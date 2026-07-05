@@ -2703,21 +2703,40 @@ fn sqlite_load_permit(
         return Ok(None);
     };
 
+    let reservation_refs = string_list_from_json(&reservation_refs_json)?;
+    validate_permit_reservation_refs(&reservation_refs)?;
+    let authorized_amounts = usage_amounts_from_json(&authorized_amounts_json)?;
+    validate_usage_amounts(&authorized_amounts)?;
+    let low_watermark = usage_amounts_from_json(&low_watermark_json)?;
+    validate_usage_amounts(&low_watermark)?;
+    let spent_amounts = usage_amounts_from_json(&spent_json)?;
+    validate_usage_amounts(&spent_amounts)?;
+    let fencing_tokens = u64_map_from_json(&fencing_tokens_json)?;
+    if fencing_tokens
+        .iter()
+        .any(|(budget_id, token)| budget_id.trim().is_empty() || *token == 0)
+    {
+        return Err(BudgetError::InvalidPermit {
+            message: "budget permit fencing_tokens must contain non-empty budget ids and positive tokens"
+                .to_string(),
+        });
+    }
+
     Ok(Some(StoredBudgetPermit {
         permit: BudgetPermit {
             permit_id,
-            reservation_refs: string_list_from_json(&reservation_refs_json)?,
+            reservation_refs,
             owner,
             atomic_unit,
             admission_epoch: budget_i64_to_u64(admission_epoch, "permit admission epoch")?,
-            authorized_amounts: usage_amounts_from_json(&authorized_amounts_json)?,
+            authorized_amounts,
             continuation_profile,
             policy_snapshot_digest,
             expires_at,
-            low_watermark: usage_amounts_from_json(&low_watermark_json)?,
-            fencing_tokens: u64_map_from_json(&fencing_tokens_json)?,
+            low_watermark,
+            fencing_tokens,
         },
-        spent: amounts_to_map(usage_amounts_from_json(&spent_json)?),
+        spent: amounts_to_map(spent_amounts),
     }))
 }
 
