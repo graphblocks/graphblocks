@@ -865,6 +865,79 @@ fn sqlite_usage_ledger_migrates_existing_usage_tables_for_lineage() -> Result<()
 }
 
 #[test]
+fn sqlite_usage_ledger_rejects_invalid_replayed_usage_amounts() -> Result<(), UsageLedgerError> {
+    let path = sqlite_usage_path("usage-invalid-amount-replay");
+    {
+        let connection = rusqlite::Connection::open(&path).expect("usage ledger database opens");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE usage_records (
+                    sequence INTEGER PRIMARY KEY,
+                    record_id TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    amounts_json TEXT NOT NULL,
+                    occurred_at_unix_ms INTEGER NOT NULL,
+                    run_id TEXT,
+                    attempt_id TEXT,
+                    provider_response_id TEXT,
+                    pricing_ref TEXT,
+                    quota_window_id TEXT,
+                    execution_scope TEXT,
+                    reconciliation_of TEXT,
+                    metadata_json TEXT NOT NULL
+                );
+                INSERT INTO usage_records (
+                    sequence,
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    quota_window_id,
+                    execution_scope,
+                    reconciliation_of,
+                    metadata_json
+                )
+                VALUES (
+                    1,
+                    'usage-negative-replay',
+                    'runtime_measured',
+                    'estimated',
+                    '[{"kind":"model_output_tokens","amount":-1,"unit":"tokens","dimensions":{}}]',
+                    1000,
+                    'run-1',
+                    'attempt-1',
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    '{}'
+                );
+                "#,
+            )
+            .expect("malformed stored usage record is inserted");
+    }
+
+    let ledger = SqliteUsageLedger::open(&path)?;
+
+    assert_eq!(
+        ledger.get("usage-negative-replay"),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount must be non-negative".to_string(),
+        })
+    );
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage()
 -> Result<(), UsageLedgerError> {
     let mut ledger = SqliteUsageLedger::open_in_memory()?;

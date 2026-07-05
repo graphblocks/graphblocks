@@ -874,7 +874,7 @@ fn usage_record_from_storage(stored: StoredUsageRecord) -> Result<UsageRecord, U
             message: format!("unknown usage confidence {:?}", stored.confidence),
         })?;
 
-    Ok(UsageRecord {
+    let record = UsageRecord {
         record_id: stored.record_id,
         source,
         confidence,
@@ -888,7 +888,9 @@ fn usage_record_from_storage(stored: StoredUsageRecord) -> Result<UsageRecord, U
         execution_scope: stored.execution_scope,
         reconciliation_of: stored.reconciliation_of,
         metadata: string_map_from_json(&stored.metadata_json)?,
-    })
+    };
+    validate_usage_record(&record)?;
+    Ok(record)
 }
 
 fn usage_amounts_json(amounts: &[UsageAmount]) -> Result<String, UsageLedgerError> {

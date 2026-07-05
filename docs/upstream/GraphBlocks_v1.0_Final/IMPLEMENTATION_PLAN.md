@@ -1272,6 +1272,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   idempotent.
 - Rust usage ledgers now reject records with an empty `amounts` list, so late usage reconciliation
   and billing/quota projections cannot persist a meaningless no-op usage record as authoritative.
+- SQLite usage ledger replay now re-runs the normal Rust `UsageRecord` validation after parsing
+  stored JSON, so malformed durable rows with negative amounts or blank amount fields cannot enter
+  late usage totals after restart.
 - Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source
   usage record, preserving the amendment's late-final-usage ordering for in-memory and SQLite
   ledgers in both implementations.
