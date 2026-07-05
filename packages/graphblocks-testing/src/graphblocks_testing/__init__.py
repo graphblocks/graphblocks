@@ -4332,6 +4332,9 @@ class TckRunner:
             continuation=continuation,
         )
         observed: dict[str, object] = {"admissions": []}
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
 
         validation = fixture.get("validate")
         if isinstance(validation, Mapping):
@@ -4360,50 +4363,72 @@ class TckRunner:
                     }
                 )
 
-        atomic_unit = str(fixture.get("atomicUnit", "turn:1"))
-        admission_epoch = int(fixture.get("admissionEpoch", 7))
-        profile = str(policy.preset or "finish_current_turn")
-        stored_permit = None
-        stored_permit_mapping = fixture.get("continuationPermit")
-        if isinstance(stored_permit_mapping, Mapping):
-            authorized_usage = []
-            raw_authorized_usage = stored_permit_mapping.get(
-                "authorizedUsage",
-                [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
-            )
-            if isinstance(raw_authorized_usage, list):
-                for amount in raw_authorized_usage:
-                    if isinstance(amount, Mapping):
-                        authorized_usage.append(
-                            UsageAmount(
-                                kind=str(amount.get("kind", "")),
-                                amount=amount.get("amount", 0),
-                                unit=str(amount.get("unit", "")),
+        try:
+            atomic_unit = str(fixture.get("atomicUnit", "turn:1"))
+            admission_epoch = fixture.get("admissionEpoch", 7)
+            profile = str(policy.preset or "finish_current_turn")
+            stored_permit = None
+            stored_permit_mapping = fixture.get("continuationPermit")
+            if isinstance(stored_permit_mapping, Mapping):
+                authorized_usage = []
+                raw_authorized_usage = stored_permit_mapping.get(
+                    "authorizedUsage",
+                    [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
+                )
+                if isinstance(raw_authorized_usage, list):
+                    for amount in raw_authorized_usage:
+                        if isinstance(amount, Mapping):
+                            authorized_usage.append(
+                                UsageAmount(
+                                    kind=str(amount.get("kind", "")),
+                                    amount=amount.get("amount", 0),
+                                    unit=str(amount.get("unit", "")),
+                                )
                             )
-                        )
-            stored_permit = BudgetPermit(
-                permit_id=str(stored_permit_mapping.get("permitId", "permit-1")),
-                reservation_refs=("reservation-1",),
-                owner=PolicyResourceRef(str(stored_permit_mapping.get("owner", "worker:1"))),
-                atomic_unit=PolicyResourceRef(
-                    str(stored_permit_mapping.get("atomicUnit", atomic_unit)),
-                    resource_kind="turn",
-                ),
-                admission_epoch=int(stored_permit_mapping.get("admissionEpoch", admission_epoch)),
-                authorized_amounts=authorized_usage,
-                continuation_profile=str(stored_permit_mapping.get("continuationProfile", profile)),
-                policy_snapshot_digest="sha256:policy",
-                expires_at=str(stored_permit_mapping.get("expiresAt", "2026-06-22T01:00:00Z")),
-                fencing_tokens={"budget-1": 1},
-            )
+                stored_permit = BudgetPermit(
+                    permit_id=str(stored_permit_mapping.get("permitId", "permit-1")),
+                    reservation_refs=("reservation-1",),
+                    owner=PolicyResourceRef(str(stored_permit_mapping.get("owner", "worker:1"))),
+                    atomic_unit=PolicyResourceRef(
+                        str(stored_permit_mapping.get("atomicUnit", atomic_unit)),
+                        resource_kind="turn",
+                    ),
+                    admission_epoch=stored_permit_mapping.get(  # type: ignore[arg-type]
+                        "admissionEpoch",
+                        admission_epoch,
+                    ),
+                    authorized_amounts=authorized_usage,
+                    continuation_profile=str(stored_permit_mapping.get("continuationProfile", profile)),
+                    policy_snapshot_digest="sha256:policy",
+                    expires_at=str(stored_permit_mapping.get("expiresAt", "2026-06-22T01:00:00Z")),
+                    fencing_tokens={"budget-1": 1},
+                )
 
-        controller = ExhaustionController(
-            policy,
-            atomic_unit_id=atomic_unit,
-            admission_epoch=admission_epoch,
-            continuation_permit=stored_permit,
-            validation_time=str(fixture["validationTime"]) if fixture.get("validationTime") else None,
-        )
+            controller = ExhaustionController(
+                policy,
+                atomic_unit_id=atomic_unit,
+                admission_epoch=admission_epoch,  # type: ignore[arg-type]
+                continuation_permit=stored_permit,
+                validation_time=str(fixture["validationTime"]) if fixture.get("validationTime") else None,
+            )
+        except ValueError as error:
+            observed["error"] = str(error)
+            for key, expected_value in expected.items():
+                if observed.get(str(key)) != expected_value:
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionExpectedMismatch",
+                            "message": f"exhaustion observed {key} did not match expected value",
+                            "path": f"$.expected.{key}",
+                        }
+                    )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="passed" if not diagnostics else "failed",
+                diagnostics=tuple(diagnostics),
+                observed=observed,
+            )
 
         admission_results: list[dict[str, object]] = []
         admissions = fixture.get("admissions", [])

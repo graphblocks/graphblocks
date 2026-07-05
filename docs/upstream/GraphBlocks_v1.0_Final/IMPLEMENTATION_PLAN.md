@@ -1274,6 +1274,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
   reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
   bypass the ledger-issued authority shape required for fenced background execution.
+- The exhaustion TCK runner now passes continuation permit admission epochs through `BudgetPermit`
+  validation instead of coercing them, so boolean fencing/admission values cannot authorize resumed
+  budget work.
 - Python `BudgetPermit` validation now requires positive fencing token values, aligning the
   authoring/schema facade with the Rust runtime admission guard for fenced budget continuation.
 - SQLite budget permit replay now revalidates reservation refs, usage amount projections, and

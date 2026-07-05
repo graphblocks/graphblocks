@@ -660,11 +660,48 @@ def test_testing_package_loads_shared_exhaustion_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_exhaustion_tck_cases(ROOT / "tck" / "exhaustion" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["exhaustion"] * 5
+    assert [case.kind for case in cases] == ["exhaustion"] * 7
     assert report.ok
+    assert {case.case_id for case in cases} >= {
+        "continuation_permit_profile_mismatch_is_denied",
+        "continuation_usage_accumulates_against_envelope",
+    }
     assert any(result.observed.get("validation_error") == "missing_exhaustion_boundary" for result in report.results)
     assert {result.observed.get("usedAdditionalSteps") for result in report.results} >= {0, 1, 2}
     assert "load_exhaustion_tck_cases" in graphblocks_testing.__all__
+
+
+def test_testing_package_exhaustion_tck_rejects_boolean_continuation_permit_epoch(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.exhaustion(
+        case_id="exhaustion/boolean-continuation-permit-epoch",
+        fixture={
+            "kind": "checkpoint_and_pause",
+            "policy": {
+                "preset": "checkpoint_and_pause",
+                "unit": "turn",
+                "continuation": {
+                    "allowedWork": ["resume"],
+                    "maxAdditionalSteps": 1,
+                    "deadline": "2026-06-22T01:00:00Z",
+                },
+            },
+            "continuationPermit": {
+                "admissionEpoch": True,
+                "authorizedUsage": [{"kind": "model_output_tokens", "amount": 1, "unit": "tokens"}],
+            },
+            "expected": {
+                "error": "budget permit admission_epoch must be an integer",
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["error"] == "budget permit admission_epoch must be an integer"
 
 
 def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None:
