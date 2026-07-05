@@ -1462,6 +1462,9 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
 - The Python Kafka, Pub/Sub, and SQS durable adapters now reject boolean and non-integer partition,
   offset, sequence, delivery-attempt, and timestamp cursor fields before projecting records into
   durable `SourceCursor` and `SourceEvent` contracts.
+- Python durable checkpoint barriers now apply the same integer contract to `state_revision`,
+  `created_at_unix_ms`, and `schema_versions`, preventing boolean protocol values from being
+  coerced into checkpoint revisions or schema version records.
 - Durable event-time window accumulation now treats watermarks as monotonic: stale watermark
   updates cannot move the late-data boundary backward or make already-late events admissible again.
 

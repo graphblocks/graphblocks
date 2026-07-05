@@ -724,10 +724,21 @@ class CheckpointBarrier:
     created_at_unix_ms: int = 0
 
     def __post_init__(self) -> None:
-        if self.state_revision < 0:
+        state_revision = _require_integer("state_revision", self.state_revision)
+        if state_revision < 0:
             raise DurableError("state_revision must be non-negative")
-        if self.created_at_unix_ms < 0:
+        created_at_unix_ms = _require_integer("created_at_unix_ms", self.created_at_unix_ms)
+        if created_at_unix_ms < 0:
             raise DurableError("created_at_unix_ms must be non-negative")
+        schema_versions: dict[str, int] = {}
+        for key, value in sorted(dict(self.schema_versions).items()):
+            schema_key = str(key)
+            schema_version = _require_integer(f"schema_versions {schema_key}", value)
+            if schema_version < 0:
+                raise DurableError(f"schema_versions {schema_key} must be non-negative")
+            schema_versions[schema_key] = schema_version
+        object.__setattr__(self, "state_revision", state_revision)
+        object.__setattr__(self, "created_at_unix_ms", created_at_unix_ms)
         object.__setattr__(self, "completed_nodes", tuple(str(node) for node in self.completed_nodes))
         object.__setattr__(self, "pending_nodes", tuple(str(node) for node in self.pending_nodes))
         object.__setattr__(
@@ -748,7 +759,7 @@ class CheckpointBarrier:
         object.__setattr__(
             self,
             "schema_versions",
-            {str(key): int(value) for key, value in sorted(dict(self.schema_versions).items())},
+            schema_versions,
         )
 
     def with_source_cursor(self, source_id: str, cursor: SourceCursor) -> CheckpointBarrier:

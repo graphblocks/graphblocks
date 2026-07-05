@@ -718,6 +718,42 @@ def test_durable_checkpoint_barrier_validates_and_builds_source_commit_plan(monk
     )
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"state_revision": True}, "state_revision must be an integer"),
+        ({"created_at_unix_ms": False}, "created_at_unix_ms must be an integer"),
+        ({"schema_versions": {"checkpoint": True}}, "schema_versions checkpoint must be an integer"),
+    ],
+)
+def test_durable_checkpoint_barrier_rejects_boolean_integer_fields(
+    monkeypatch,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    config = {
+        "checkpoint_id": "checkpoint-000001",
+        "run_id": "run-000001",
+        "release_id": "release-2026-06-23",
+        "deployment_revision_id": "deployment-rev-1",
+        "plan_hash": "sha256:plan",
+        "checkpoint_schema": graphblocks_durable.SchemaRef("graphblocks.ai/Checkpoint", 1),
+        "state_revision": 1,
+        "completed_nodes": (),
+        "pending_nodes": (),
+        "source_cursors": {},
+        "operator_state": {},
+        "sink_commit_metadata": {},
+        "schema_versions": {"checkpoint": 1},
+        "created_at_unix_ms": 1_820_000_000_001,
+        **kwargs,
+    }
+
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.CheckpointBarrier(**config)
+
+
 def test_durable_checkpoint_store_replays_latest_compatible_checkpoint(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     store = graphblocks_durable.InMemoryCheckpointStore()
