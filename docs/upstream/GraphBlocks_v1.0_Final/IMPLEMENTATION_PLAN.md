@@ -483,6 +483,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   invalid callback endpoint deadlines are rejected before resume admission. The Python callback
   projection also denies resume when a durable callback receipt was recorded after the endpoint
   expiration, even if the projection is evaluated later with a different clock value.
+- `CallbackEndpointRef` now rejects endpoint URLs with surrounding whitespace before scheme
+  validation, preserving exact ingress route identity for signed callback submissions.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, unknown operations, run/node identity mismatches, schema mismatches, payload-limit
   failures, callbacks that arrive after an operation's callback deadline, and callbacks that target

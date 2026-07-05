@@ -168,6 +168,22 @@ fn callback_endpoint_rejects_non_http_url_scheme() {
 }
 
 #[test]
+fn callback_endpoint_rejects_url_with_surrounding_whitespace() {
+    assert_eq!(
+        CallbackEndpointRef::new(
+            "callback-endpoint-1",
+            " https://graphblocks.example.com/v1/callbacks/op-1 ",
+            "schemas/CICallback@1",
+            CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+        ),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "callback-endpoint-1".to_owned(),
+            reason: "callback endpoint url must not include surrounding whitespace".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn callback_endpoint_binds_submission_to_current_operation_identity() {
     let endpoint = CallbackEndpointRef::new_bound(
         "callback-endpoint-1",

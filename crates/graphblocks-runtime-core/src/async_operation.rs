@@ -637,6 +637,12 @@ impl CallbackEndpointRef {
                 });
             }
         }
+        if self.url.trim() != self.url {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.endpoint_id.clone(),
+                reason: "callback endpoint url must not include surrounding whitespace".to_owned(),
+            });
+        }
         if !(self.url.starts_with("https://") || self.url.starts_with("http://")) {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.endpoint_id.clone(),
