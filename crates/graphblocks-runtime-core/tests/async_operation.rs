@@ -2845,6 +2845,55 @@ fn sqlite_async_operation_store_rejects_operation_row_identity_mismatch_on_reope
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_event_row_identity_mismatch_on_reopen() {
+    let path = sqlite_async_operation_path("event-row-identity");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let event_json: String = connection
+            .query_row(
+                "SELECT event_json FROM async_operation_events WHERE operation_id = ?1 AND event_index = ?2",
+                params!["op-1", 1_i64],
+                |row| row.get(0),
+            )
+            .expect("event row exists");
+        let mut event: serde_json::Value =
+            serde_json::from_str(&event_json).expect("event json parses");
+        event["operation_id"] = json!("op-forged");
+        connection
+            .execute(
+                "UPDATE async_operation_events SET event_json = ?1 WHERE operation_id = ?2 AND event_index = ?3",
+                params![
+                    serde_json::to_string(&event).expect("event serializes"),
+                    "op-1",
+                    1_i64
+                ],
+            )
+            .expect("event row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("event row identity mismatch must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::Storage { ref message }
+                if message.contains("stored async operation event identity does not match row key")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-reopen");

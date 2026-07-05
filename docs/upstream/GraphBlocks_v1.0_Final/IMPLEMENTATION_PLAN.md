@@ -454,6 +454,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - SQLite async operation replay validates that each stored operation JSON identity matches its
   durable row key before the operation can re-enter scheduling, callback admission, or duplicate
   detection state.
+- SQLite async operation event replay validates that each stored event payload belongs to the
+  durable operation row key before it can re-enter the replayable operation journal.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both
   in-memory and SQLite async operation stores, so provider delivery keys reused by separate
   operations do not suppress valid callback receipts or resume signals.

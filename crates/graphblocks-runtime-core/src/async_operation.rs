@@ -2823,11 +2823,19 @@ impl SqliteAsyncOperationStore {
                 .map_err(storage_error)?;
             for event in events {
                 let (operation_id, event_json) = event.map_err(storage_error)?;
+                let event = event_from_value(parse_json(&event_json)?)?;
+                if event_operation_id(&event) != operation_id {
+                    return Err(AsyncOperationError::Storage {
+                        message:
+                            "stored async operation event identity does not match row key"
+                                .to_owned(),
+                    });
+                }
                 inner
                     .events_by_operation
                     .entry(operation_id)
                     .or_default()
-                    .push(event_from_value(parse_json(&event_json)?)?);
+                    .push(event);
             }
         }
         drop(inner);
@@ -3479,6 +3487,17 @@ fn event_to_value(event: &AsyncOperationEvent) -> Value {
             "receipt": receipt_to_value(receipt),
             "terminal_state": async_operation_state_as_str(*terminal_state),
         }),
+    }
+}
+
+fn event_operation_id(event: &AsyncOperationEvent) -> &str {
+    match event {
+        AsyncOperationEvent::StateChanged { operation_id, .. }
+        | AsyncOperationEvent::ExternalCallbackRejected { operation_id, .. }
+        | AsyncOperationEvent::CallbackResumePaused { operation_id, .. }
+        | AsyncOperationEvent::CallbackResumeDenied { operation_id, .. } => operation_id,
+        AsyncOperationEvent::ExternalCallbackReceived { receipt }
+        | AsyncOperationEvent::LateExternalCallbackReceived { receipt, .. } => &receipt.operation_id,
     }
 }
 
