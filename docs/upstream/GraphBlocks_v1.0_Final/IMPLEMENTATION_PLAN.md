@@ -958,7 +958,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   when payloads exceed the configured inline byte limit. Payload projections validate `sha256:`
   digest shape, and artifact-reference projections reject inline payload content, preserving the
   invariant that large callback bodies are referenced rather than embedded in durable callback
-  records.
+  records. Artifact-reference projections also require positive original payload size metadata so
+  omitted payloads cannot be confused with empty inline callbacks.
 - `graphblocks-callbacks` now maps webhook receiver HTTP responses into delivery decisions:
   2xx delivered, 409 acknowledged duplicate, 410 gone, 429/5xx retry, and other 4xx terminal
   failure, including `Retry-After` parsing and policy max-delay capping for retry scheduling.

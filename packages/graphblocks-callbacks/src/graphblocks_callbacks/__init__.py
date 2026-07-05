@@ -292,6 +292,8 @@ class CallbackPayloadProjection:
             raise ValueError("artifact_reference callback payload projection must not include inline payload")
         if self.mode == "artifact_reference" and not isinstance(self.artifact, ArtifactRef):
             raise ValueError("artifact_reference callback payload projection requires an ArtifactRef")
+        if self.mode == "artifact_reference" and self.payload_size_bytes == 0:
+            raise ValueError("artifact_reference callback payload_size_bytes must be positive")
 
 
 def project_callback_payload(

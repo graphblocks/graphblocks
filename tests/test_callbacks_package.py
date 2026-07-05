@@ -1075,6 +1075,16 @@ def test_callback_payload_projection_requires_payload_digest() -> None:
         ),
     )
     _assert_raises_value_error(
+        "artifact_reference callback payload_size_bytes must be positive",
+        lambda: CallbackPayloadProjection(
+            mode="artifact_reference",
+            payload={},
+            payload_digest=canonical_hash(payload),
+            payload_size_bytes=0,
+            artifact=artifact,
+        ),
+    )
+    _assert_raises_value_error(
         "artifact_reference callback payload projection must not include inline payload",
         lambda: CallbackPayloadProjection(
             mode="artifact_reference",
