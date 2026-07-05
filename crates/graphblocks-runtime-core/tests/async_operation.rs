@@ -2714,6 +2714,23 @@ fn async_operation_result_rejects_duplicate_external_effect_identities() {
 }
 
 #[test]
+fn async_operation_result_rejects_duplicate_artifact_ids() {
+    let mut result = AsyncOperationResult::completed("op-1");
+    result.artifacts = vec![
+        CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/log-1.json"),
+        CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/log-2.json"),
+    ];
+
+    assert_eq!(
+        result.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "duplicate artifact id artifact-ci-log".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn callback_and_cancel_race_has_single_terminal_winner() {
     for seed in 0..64_u64 {
         let store = Arc::new(AsyncOperationStore::new());

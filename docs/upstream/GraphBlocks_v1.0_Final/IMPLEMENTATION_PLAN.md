@@ -570,10 +570,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled`, `expired`, or `incomplete`; stdlib async
   terminal blocks can project `externalEffects` config into the final result instead of dropping
-  provider effect identity. Result projections reject duplicate `effect_id` and
-  `provider_effect_id` values so audit and ledger consumers can treat each recorded local and
-  provider effect identity as single-assignment within the operation result. The Rust runtime core
-  projects results to canonical protocol JSON with camelCase `externalEffects` entries for
+  provider effect identity. Result projections reject duplicate artifact ids, `effect_id`, and
+  `provider_effect_id` values so artifact, audit, and ledger consumers can treat each recorded
+  local and provider identity as single-assignment within the operation result. The Rust runtime
+  core projects results to canonical protocol JSON with camelCase `externalEffects` entries for
   downstream graph nodes and server adapters.
 - Python `graphblocks-core` now exposes the same authoring/schema facade for
   `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including

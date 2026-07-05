@@ -1490,8 +1490,15 @@ impl AsyncOperationResult {
                 field: "operation_id".to_owned(),
             });
         }
+        let mut artifact_ids = BTreeSet::new();
         for artifact in &self.artifacts {
             artifact.validate()?;
+            if !artifact_ids.insert(artifact.artifact_id.as_str()) {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!("duplicate artifact id {}", artifact.artifact_id),
+                });
+            }
         }
         let mut effect_ids = BTreeSet::new();
         let mut provider_effect_ids = BTreeSet::new();
