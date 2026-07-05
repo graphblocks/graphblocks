@@ -2757,18 +2757,39 @@ impl SqliteAsyncOperationStore {
             let mut statement = connection
                 .prepare(
                     "
-                    SELECT submission_json, expires_at_unix_ms
+                    SELECT operation_id, idempotency_key, submission_json, expires_at_unix_ms
                     FROM async_callback_quarantine
                     ORDER BY operation_id, idempotency_key
                     ",
                 )
                 .map_err(storage_error)?;
             let quarantined = statement
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })
                 .map_err(storage_error)?;
             for callback in quarantined {
-                let (submission_json, expires_at_unix_ms) = callback.map_err(storage_error)?;
+                let (
+                    row_operation_id,
+                    row_idempotency_key,
+                    submission_json,
+                    expires_at_unix_ms,
+                ) = callback.map_err(storage_error)?;
                 let submission = callback_submission_from_value(parse_json(&submission_json)?)?;
+                if submission.operation_id != row_operation_id
+                    || submission.idempotency_key != row_idempotency_key
+                {
+                    return Err(AsyncOperationError::Storage {
+                        message:
+                            "stored quarantined callback identity does not match row key"
+                                .to_owned(),
+                    });
+                }
                 inner.quarantined_callbacks.insert(
                     (
                         submission.operation_id.clone(),
