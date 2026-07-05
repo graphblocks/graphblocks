@@ -1112,6 +1112,45 @@ fn sqlite_completion_reserve_holds_capacity_across_reopen() -> Result<(), Budget
 }
 
 #[test]
+fn sqlite_completion_reserve_rejects_invalid_metadata_on_reopen() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("completion-reserve-invalid-reopen");
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.create_completion_reserve(
+            "finalization-reserve",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(20)],
+            ["agent.finalize"],
+            None,
+        )?;
+    }
+
+    {
+        let connection = rusqlite::Connection::open(&path).expect("sqlite database opens");
+        connection
+            .execute(
+                "UPDATE budget_completion_reserves SET spendable_by_json = ?1 WHERE reserve_id = ?2",
+                params!["[]", "finalization-reserve"],
+            )
+            .expect("completion reserve row is corrupted");
+    }
+
+    let mut ledger = SqliteBudgetLedger::open(&path)?;
+    assert_eq!(
+        ledger.spend_completion_reserve("finalization-reserve", "agent.finalize", "later"),
+        Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not be empty".to_string(),
+        })
+    );
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(20)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
 fn sqlite_completion_reserve_spend_commits_held_capacity() -> Result<(), BudgetError> {
     let mut ledger = SqliteBudgetLedger::open_in_memory()?;
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;

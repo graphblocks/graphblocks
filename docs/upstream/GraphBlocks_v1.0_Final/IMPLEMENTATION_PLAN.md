@@ -1210,6 +1210,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - SQLite budget permit replay now revalidates reservation refs, usage amount projections, and
   positive fencing tokens before a stored permit can authorize resume, commit, release, or expire
   paths after restart.
+- SQLite completion reserve replay now revalidates usage amount projections, spender authority,
+  positive fencing tokens, and held-budget ids before a stored reserve can authorize finalization
+  work after restart.
 - `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
   cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
   provider work, finalization, optional tasks, and trials remain denied. Explicit continuation

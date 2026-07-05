@@ -2436,20 +2436,40 @@ fn sqlite_load_completion_reserve(
         CompletionReserveStatus::from_str(&status).ok_or_else(|| BudgetError::Storage {
             message: format!("unknown completion reserve status {status:?}"),
         })?;
+    let amounts = usage_amounts_from_json(&amounts_json)?;
+    validate_usage_amounts(&amounts)?;
+    let spendable_by = string_set_from_json(&spendable_by_json)?;
+    validate_completion_reserve_spenders(&spendable_by)?;
+    let fencing_token = budget_i64_to_u64(fencing_token, "completion reserve fencing token")?;
+    if fencing_token == 0 {
+        return Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve fencing_token must be positive".to_string(),
+        });
+    }
+    let held_budget_ids = string_list_from_json(&held_budget_ids_json)?;
+    if held_budget_ids.is_empty()
+        || held_budget_ids
+            .iter()
+            .any(|budget_id| budget_id.trim().is_empty())
+    {
+        return Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve held_budget_ids must contain non-empty ids".to_string(),
+        });
+    }
 
     Ok(Some(StoredCompletionReserve {
         reserve: CompletionReserve {
             reserve_id,
             budget_id,
             purpose,
-            amounts: usage_amounts_from_json(&amounts_json)?,
-            spendable_by: string_set_from_json(&spendable_by_json)?,
+            amounts,
+            spendable_by,
             expires_at,
             status,
             reservation_id,
-            fencing_token: budget_i64_to_u64(fencing_token, "completion reserve fencing token")?,
+            fencing_token,
         },
-        held_budget_ids: string_list_from_json(&held_budget_ids_json)?,
+        held_budget_ids,
     }))
 }
 
