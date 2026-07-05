@@ -2066,6 +2066,32 @@ fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
 }
 
 #[test]
+fn protocol_log_rejects_duplicate_replay_cursors() {
+    let mut log = ApplicationProtocolLog::new();
+    let first = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunStarted,
+        protocol_event_metadata("event-1", 1, "cursor-1"),
+        json!({}),
+    )
+    .expect("event is valid");
+    let duplicate_cursor = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::JobProgress,
+        protocol_event_metadata("event-2", 2, "cursor-1"),
+        json!({"done": 1, "total": 2}),
+    )
+    .expect("event is valid");
+
+    assert!(log.append(first).expect("append succeeds"));
+    assert_eq!(
+        log.append(duplicate_cursor),
+        Err(ApplicationProtocolError::DuplicateCursorConflict {
+            cursor: "cursor-1".to_owned(),
+        })
+    );
+    assert_eq!(log.len(), 1);
+}
+
+#[test]
 fn protocol_log_rejects_mutated_duplicate_event_ids() {
     let mut log = ApplicationProtocolLog::new();
     let first = ApplicationProtocolEvent::new(

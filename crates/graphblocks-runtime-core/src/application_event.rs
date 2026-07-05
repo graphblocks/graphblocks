@@ -1041,6 +1041,7 @@ pub enum ApplicationProtocolError {
     InvalidPayloadKey { field: String },
     InvalidToolResultEvent { source: ToolResultEventError },
     DuplicateEventIdConflict { event_id: String },
+    DuplicateCursorConflict { cursor: String },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
     RunMismatch {
@@ -1078,6 +1079,10 @@ impl fmt::Display for ApplicationProtocolError {
             Self::DuplicateEventIdConflict { event_id } => write!(
                 formatter,
                 "application event id {event_id:?} was replayed with different event content"
+            ),
+            Self::DuplicateCursorConflict { cursor } => write!(
+                formatter,
+                "application event cursor {cursor:?} was assigned to more than one event"
             ),
             Self::NonMonotonicSequence { previous, next } => write!(
                 formatter,
@@ -1416,6 +1421,7 @@ impl ApplicationProtocolStreamState {
 pub struct ApplicationProtocolLog {
     events: Vec<ApplicationProtocolEvent>,
     events_by_id: BTreeMap<String, ApplicationProtocolEvent>,
+    event_ids_by_cursor: BTreeMap<String, String>,
     run_id: Option<String>,
     last_sequence: Option<u64>,
 }
@@ -1471,6 +1477,16 @@ impl ApplicationProtocolLog {
         } else {
             self.run_id = Some(event.metadata.run_id.clone());
         }
+        if let Some(cursor) = event.metadata.cursor.as_ref()
+            && self
+                .event_ids_by_cursor
+                .get(cursor)
+                .is_some_and(|event_id| event_id != &event.metadata.event_id)
+        {
+            return Err(ApplicationProtocolError::DuplicateCursorConflict {
+                cursor: cursor.clone(),
+            });
+        }
         if let Some(previous) = self.last_sequence
             && event.metadata.sequence <= previous
         {
@@ -1482,6 +1498,10 @@ impl ApplicationProtocolLog {
         self.last_sequence = Some(event.metadata.sequence);
         self.events_by_id
             .insert(event.metadata.event_id.clone(), event.clone());
+        if let Some(cursor) = event.metadata.cursor.as_ref() {
+            self.event_ids_by_cursor
+                .insert(cursor.clone(), event.metadata.event_id.clone());
+        }
         self.events.push(event);
         Ok(true)
     }
