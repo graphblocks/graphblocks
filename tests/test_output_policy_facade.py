@@ -361,6 +361,13 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:input",
         ).evaluated_at_time(" ")
 
+    with pytest.raises(ValueError, match="output policy evaluated_at must be an ISO datetime"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        ).evaluated_at_time("not-a-date")
+
     with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
 

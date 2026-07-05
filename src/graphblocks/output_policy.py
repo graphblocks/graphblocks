@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from types import MappingProxyType
 from typing import Literal
 
@@ -60,6 +61,16 @@ def _validate_non_negative_integer(field_name: str, value: object, *, owner: str
         raise ValueError(f"{prefix} must be an integer")
     if value < 0:
         raise ValueError(f"{prefix} must be non-negative")
+    return value
+
+
+def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
+    value = _validate_non_empty_string(owner, field_name, value)
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        datetime.fromisoformat(candidate)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
     return value
 
 
@@ -322,7 +333,7 @@ class OutputPolicyDecision:
             if self.accepted_through_sequence == 0:
                 raise ValueError("accepted_through_sequence must be positive")
         if self.evaluated_at is not None:
-            _validate_non_empty_string("output policy", "evaluated_at", self.evaluated_at)
+            _validate_iso_datetime("output policy", "evaluated_at", self.evaluated_at)
         try:
             if isinstance(self.replacement_parts, str):
                 raise TypeError
