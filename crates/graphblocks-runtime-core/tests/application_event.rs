@@ -1733,6 +1733,8 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
         json!({
             "response_id": "response-1",
             "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "last_client_delivered_sequence": 1,
         }),
     )
     .expect("incomplete event is valid");
@@ -1794,6 +1796,58 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
             ApplicationProtocolEventKind::AssistantIncomplete,
             ApplicationProtocolEventKind::AssistantDraftDelta,
         ]
+    );
+}
+
+#[test]
+fn protocol_stream_state_rejects_malformed_draft_terminal_event_after_cutoff() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff", 1, "cursor-1"),
+        json!({
+            "response_id": "response-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "occurred_at_unix_ms": 1_700_210,
+        }),
+    )
+    .expect("cutoff event is valid");
+    let malformed_retraction = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantRetracted,
+        protocol_event_metadata("event-retracted", 2, "cursor-2"),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("malformed retraction envelope is valid");
+    let wrong_disposition_retraction = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantRetracted,
+        protocol_event_metadata("event-retracted-wrong-disposition", 3, "cursor-3"),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "last_client_delivered_sequence": 1,
+        }),
+    )
+    .expect("wrong-disposition retraction envelope is valid");
+
+    assert_eq!(state.accept(cutoff.clone()), Some(cutoff));
+    assert_eq!(state.accept(malformed_retraction), None);
+    assert_eq!(state.accept(wrong_disposition_retraction), None);
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![ApplicationProtocolEventKind::OutputCutoff]
     );
 }
 

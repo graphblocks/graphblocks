@@ -1358,6 +1358,41 @@ impl ApplicationProtocolStreamState {
                 ApplicationProtocolEventKind::AssistantIncomplete
                     | ApplicationProtocolEventKind::AssistantRetracted
             ) {
+                if !matches!(
+                    event.payload.get("terminal_reason").and_then(Value::as_str),
+                    Some(
+                        "policy_denied"
+                            | "budget_exhausted"
+                            | "cancelled"
+                            | "client_disconnected"
+                    )
+                ) {
+                    return None;
+                }
+                let draft_disposition = event
+                    .payload
+                    .get("draft_disposition")
+                    .and_then(Value::as_str);
+                if !matches!(
+                    (event.kind, draft_disposition),
+                    (
+                        ApplicationProtocolEventKind::AssistantIncomplete,
+                        Some("mark_incomplete")
+                    ) | (
+                        ApplicationProtocolEventKind::AssistantRetracted,
+                        Some("retract")
+                    )
+                ) {
+                    return None;
+                }
+                if event
+                    .payload
+                    .get("last_client_delivered_sequence")
+                    .and_then(Value::as_u64)
+                    .is_none()
+                {
+                    return None;
+                }
                 self.accepted_events.push(event.clone());
                 return Some(event);
             }

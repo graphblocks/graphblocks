@@ -185,6 +185,9 @@ Message
 - The protocol-level stream state validates canonical `OutputCutoff` terminal reasons,
   draft/durable dispositions, occurrence time, generated/policy/client sequence bounds, and
   keep-draft semantics before recording a response cutoff.
+- Protocol replay also validates post-cutoff `AssistantIncomplete` and `AssistantRetracted` events
+  against canonical terminal reason, draft disposition, and delivered-sequence metadata before
+  allowing them after a response cutoff.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building
