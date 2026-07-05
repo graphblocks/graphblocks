@@ -392,6 +392,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust SQLite run-store replay now rejects malformed model-visible tool provenance fields such as
   non-integer `valid_until_unix_ms`, so durable run provenance cannot silently drop a resolved
   tool expiration fence after restart.
+- Rust SQLite run-store replay now rejects malformed deployment provenance JSON shape and
+  non-string provenance fields, so corrupted release or physical-plan identity cannot be silently
+  replayed as missing provenance after restart.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
   event streams as `GB6005`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now report accepted/background routes tied to

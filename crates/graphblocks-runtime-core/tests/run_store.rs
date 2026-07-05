@@ -797,6 +797,103 @@ fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
 }
 
 #[test]
+fn sqlite_run_store_rejects_malformed_deployment_provenance_shape_on_replay()
+-> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-store-{}-bad-provenance-shape.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .create_run_with_provenance(
+                "sha256:one",
+                json!({}),
+                RunDeploymentProvenance::new().with_release_digest("sha256:release"),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        connection
+            .execute(
+                "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
+                rusqlite::params![json!(["not", "an", "object"]).to_string(), "run-000001"],
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let replayed = store.get_run("run-000001");
+
+    assert_eq!(
+        replayed,
+        Err(RunStoreError::Storage {
+            message: "stored deployment provenance must be an object".to_owned(),
+        })
+    );
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay()
+-> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-store-{}-bad-provenance-field.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .create_run_with_provenance(
+                "sha256:one",
+                json!({}),
+                RunDeploymentProvenance::new().with_release_digest("sha256:release"),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        connection
+            .execute(
+                "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
+                rusqlite::params![
+                    json!({
+                        "release_digest": 17,
+                        "deployment_revision_id": "rev-1",
+                        "physical_plan_hash": "sha256:physical",
+                        "release_signature_digest": "sha256:signature"
+                    })
+                    .to_string(),
+                    "run-000001"
+                ],
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let replayed = store.get_run("run-000001");
+
+    assert_eq!(
+        replayed,
+        Err(RunStoreError::Storage {
+            message: "stored deployment provenance has invalid release_digest".to_owned(),
+        })
+    );
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn production_run_provenance_diagnostics_report_missing_required_fields() {
     let diagnostics = ProductionRunProvenanceDiagnostic::for_provenance(
         &RunDeploymentProvenance::new().with_deployment_revision_id("rev-1"),

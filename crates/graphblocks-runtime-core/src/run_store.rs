@@ -2088,13 +2088,15 @@ fn deployment_provenance_from_storage(
 ) -> Result<RunDeploymentProvenance, RunStoreError> {
     let value = parse_storage_json(text)?;
     let Some(object) = value.as_object() else {
-        return Ok(RunDeploymentProvenance::new());
+        return Err(RunStoreError::Storage {
+            message: "stored deployment provenance must be an object".to_owned(),
+        });
     };
     Ok(RunDeploymentProvenance {
-        release_digest: optional_string(object, "release_digest"),
-        deployment_revision_id: optional_string(object, "deployment_revision_id"),
-        physical_plan_hash: optional_string(object, "physical_plan_hash"),
-        release_signature_digest: optional_string(object, "release_signature_digest"),
+        release_digest: optional_string(object, "release_digest")?,
+        deployment_revision_id: optional_string(object, "deployment_revision_id")?,
+        physical_plan_hash: optional_string(object, "physical_plan_hash")?,
+        release_signature_digest: optional_string(object, "release_signature_digest")?,
     })
 }
 
@@ -2166,11 +2168,17 @@ fn sorted_model_visible_tools(mut tools: Vec<ModelVisibleToolRef>) -> Vec<ModelV
     tools
 }
 
-fn optional_string(object: &Map<String, Value>, key: &str) -> Option<String> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+fn optional_string(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, RunStoreError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(RunStoreError::Storage {
+            message: format!("stored deployment provenance has invalid {key}"),
+        }),
+    }
 }
 
 fn required_storage_string(
