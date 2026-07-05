@@ -705,6 +705,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable sink commit records now require structured JSON object metadata, so idempotent external
   effect commits cannot be represented by opaque scalar payloads that lose audit, reconciliation,
   or compensation fields.
+- Callback ingress deployment validation now requires every `SubmitAsyncCallback` route to include
+  an `{operation_id}` path binding, keeping external callback endpoints tied to a concrete async
+  operation identity before authentication, idempotency, and resume fencing are evaluated.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

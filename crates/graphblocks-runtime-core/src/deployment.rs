@@ -318,6 +318,11 @@ impl CallbackIngressRoute {
                 "callback ingress route command must not be empty",
             ));
         }
+        if self.command == "SubmitAsyncCallback" && !self.path.contains("{operation_id}") {
+            return Err(DeploymentTargetProfileError::new(
+                "SubmitAsyncCallback route path must include {operation_id}",
+            ));
+        }
         Ok(())
     }
 

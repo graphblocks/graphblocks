@@ -656,6 +656,34 @@ fn callback_ingress_requires_submit_async_callback_route() {
 }
 
 #[test]
+fn callback_ingress_submit_async_callback_route_requires_operation_id_binding() {
+    let error = CallbackIngressConfig::from_document(&json!({
+        "enabled": true,
+        "routes": [
+            {
+                "path": "/v1/callbacks",
+                "command": "SubmitAsyncCallback"
+            }
+        ],
+        "security": {
+            "requireSignature": true,
+            "antiEnumeration": true
+        },
+        "limits": {
+            "maxPayloadBytes": 262144,
+            "maxRequestsPerSecond": 100
+        }
+    }))
+    .expect_err("callback route must bind operation_id");
+
+    assert!(
+        error
+            .to_string()
+            .contains("SubmitAsyncCallback route path must include {operation_id}")
+    );
+}
+
+#[test]
 fn deployment_target_coverage_reports_missing_image_role() {
     let target_set = DeploymentTargetProfileSet::new([]);
 
