@@ -84,6 +84,13 @@ def _require_non_empty_string(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a non-empty string")
 
 
+def _require_sha256_digest(field_name: str, value: str) -> None:
+    _require_non_empty_string(field_name, value)
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"{field_name} must be a sha256 digest")
+
+
 def _non_negative_int(field_name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer")
@@ -270,7 +277,7 @@ class CallbackPayloadProjection:
         object.__setattr__(self, "payload", _json_payload(self.payload))
         if self.payload_digest is None:
             raise ValueError("callback payload projection requires payload_digest")
-        _require_non_empty_string("payload_digest", self.payload_digest)
+        _require_sha256_digest("callback payload projection payload_digest", self.payload_digest)
         object.__setattr__(self, "payload_size_bytes", _non_negative_int("payload_size_bytes", self.payload_size_bytes))
         if self.mode == "inline":
             canonical = canonical_dumps(self.payload).encode("utf-8")

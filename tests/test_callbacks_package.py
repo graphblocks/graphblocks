@@ -1065,6 +1065,16 @@ def test_callback_payload_projection_requires_payload_digest() -> None:
         ),
     )
     _assert_raises_value_error(
+        "callback payload projection payload_digest must be a sha256 digest",
+        lambda: CallbackPayloadProjection(
+            mode="artifact_reference",
+            payload={},
+            payload_digest="md5:callback-log",
+            payload_size_bytes=211,
+            artifact=artifact,
+        ),
+    )
+    _assert_raises_value_error(
         "artifact_reference callback payload projection must not include inline payload",
         lambda: CallbackPayloadProjection(
             mode="artifact_reference",
