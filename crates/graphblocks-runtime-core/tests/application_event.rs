@@ -1707,6 +1707,8 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
         protocol_event_metadata("event-cutoff", 2, "cursor-2"),
         json!({
             "response_id": "response-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
             "last_client_delivered_sequence": 1,
             "terminal_reason": "policy_denied",
         }),
@@ -1746,6 +1748,8 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
         protocol_event_metadata("event-cutoff-duplicate", 6, "cursor-6"),
         json!({
             "response_id": "response-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
             "last_client_delivered_sequence": 1,
             "terminal_reason": "policy_denied",
         }),
@@ -1785,6 +1789,41 @@ fn protocol_stream_state_discards_deltas_after_cutoff() {
             ApplicationProtocolEventKind::AssistantDraftDelta,
         ]
     );
+}
+
+#[test]
+fn protocol_stream_state_rejects_invalid_output_cutoff_payload() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let invalid_sequence_cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-invalid-sequence", 1, "cursor-1"),
+        json!({
+            "response_id": "response-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("invalid cutoff envelope is valid");
+    let invalid_reason_cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-invalid-reason", 2, "cursor-2"),
+        json!({
+            "response_id": "response-2",
+            "last_generated_sequence": 2,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "not-a-terminal-reason",
+        }),
+    )
+    .expect("invalid cutoff envelope is valid");
+
+    assert_eq!(state.accept(invalid_sequence_cutoff), None);
+    assert_eq!(state.accept(invalid_reason_cutoff), None);
+    assert_eq!(state.cutoff_for_response("response-1"), None);
+    assert_eq!(state.cutoff_for_response("response-2"), None);
+    assert!(state.accepted_events().is_empty());
 }
 
 #[test]

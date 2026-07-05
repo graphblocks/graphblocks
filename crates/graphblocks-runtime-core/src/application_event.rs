@@ -1289,10 +1289,29 @@ impl ApplicationProtocolStreamState {
             if response_id.trim().is_empty() || self.cutoffs.contains_key(&response_id) {
                 return None;
             }
+            if !matches!(
+                event.payload.get("terminal_reason").and_then(Value::as_str)?,
+                "policy_denied" | "budget_exhausted" | "cancelled" | "client_disconnected"
+            ) {
+                return None;
+            }
+            let last_generated_sequence = event
+                .payload
+                .get("last_generated_sequence")
+                .and_then(Value::as_u64)?;
+            let last_policy_accepted_sequence = event
+                .payload
+                .get("last_policy_accepted_sequence")
+                .and_then(Value::as_u64)?;
             let last_client_delivered_sequence = event
                 .payload
                 .get("last_client_delivered_sequence")
                 .and_then(Value::as_u64)?;
+            if last_policy_accepted_sequence > last_generated_sequence
+                || last_client_delivered_sequence > last_generated_sequence
+            {
+                return None;
+            }
             self.cutoffs
                 .insert(response_id, last_client_delivered_sequence);
             self.accepted_events.push(event.clone());

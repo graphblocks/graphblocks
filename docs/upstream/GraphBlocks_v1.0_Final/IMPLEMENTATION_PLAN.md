@@ -170,6 +170,8 @@ Message
   for both normal events and `OutputCutoff` events, and rejects events whose payload `response_id`
   disagrees, preventing malformed late deltas from bypassing an `OutputCutoff` by claiming a
   replacement response in the payload. The Python facade mirrors this state-machine behavior.
+- The protocol-level stream state validates `OutputCutoff` terminal reasons and generated/policy/
+  client sequence bounds before recording a response cutoff.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building
