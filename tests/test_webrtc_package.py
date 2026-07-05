@@ -69,6 +69,10 @@ def test_webrtc_validates_descriptions_and_candidates(monkeypatch) -> None:
     with pytest.raises(graphblocks_webrtc.WebRtcAdapterError):
         graphblocks_webrtc.WebRtcIceCandidate("candidate", sdp_mline_index=-1)
     with pytest.raises(graphblocks_webrtc.WebRtcAdapterError):
+        graphblocks_webrtc.WebRtcIceCandidate("candidate", sdp_mline_index=True)  # type: ignore[arg-type]
+    with pytest.raises(graphblocks_webrtc.WebRtcAdapterError):
+        graphblocks_webrtc.WebRtcIceCandidate("candidate", sequence=True)  # type: ignore[arg-type]
+    with pytest.raises(graphblocks_webrtc.WebRtcAdapterError):
         graphblocks_webrtc.WebRtcSession(" ", "browser", graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n"))
 
 

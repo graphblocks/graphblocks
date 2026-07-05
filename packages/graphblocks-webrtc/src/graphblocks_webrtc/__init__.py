@@ -15,6 +15,20 @@ def _require_non_empty(field_name: str, value: str) -> None:
         raise WebRtcAdapterError(f"{field_name} must not be empty")
 
 
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WebRtcAdapterError(f"{field_name} must be an integer")
+    if value < 0:
+        raise WebRtcAdapterError(f"{field_name} must be non-negative")
+    return value
+
+
+def _optional_non_negative_int(field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(field_name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class WebRtcSessionDescription:
     type: str
@@ -41,12 +55,14 @@ class WebRtcIceCandidate:
         _require_non_empty("candidate", self.candidate)
         if self.sdp_mid is not None:
             _require_non_empty("sdp_mid", self.sdp_mid)
-        if self.sdp_mline_index is not None and self.sdp_mline_index < 0:
-            raise WebRtcAdapterError("sdp_mline_index must be non-negative")
+        object.__setattr__(
+            self,
+            "sdp_mline_index",
+            _optional_non_negative_int("sdp_mline_index", self.sdp_mline_index),
+        )
         if self.username_fragment is not None:
             _require_non_empty("username_fragment", self.username_fragment)
-        if self.sequence < 0:
-            raise WebRtcAdapterError("sequence must be non-negative")
+        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
 
     def contract(self) -> dict[str, object]:
         return {
