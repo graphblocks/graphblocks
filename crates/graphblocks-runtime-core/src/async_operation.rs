@@ -2736,6 +2736,27 @@ impl SqliteAsyncOperationStore {
                             "stored callback receipt identity does not match row key".to_owned(),
                     });
                 }
+                let operation = inner.operations.get(&receipt.operation_id).ok_or_else(|| {
+                    AsyncOperationError::Storage {
+                        message: "stored callback receipt has no matching operation".to_owned(),
+                    }
+                })?;
+                if receipt.run_id != operation.run_id
+                    || receipt.node_id != operation.node_id
+                    || receipt.attempt_id != operation.attempt_id
+                    || receipt
+                        .provider_operation_id
+                        .as_ref()
+                        .is_some_and(|provider_operation_id| {
+                            operation.provider_operation_id.as_ref() != Some(provider_operation_id)
+                        })
+                {
+                    return Err(AsyncOperationError::Storage {
+                        message:
+                            "stored callback receipt operation metadata does not match operation"
+                                .to_owned(),
+                    });
+                }
                 inner.receipts_by_operation_and_idempotency.insert(
                     (
                         receipt.operation_id.clone(),
