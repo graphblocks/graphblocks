@@ -718,6 +718,43 @@ fn run_invocation_diagnostics_report_retention_shorter_than_replay_guarantee() {
 }
 
 #[test]
+fn run_invocation_diagnostics_report_zero_durable_replay_durations() {
+    let zero_retention =
+        RunInvocationRouteConfig::new("coding-task-events", RunInvocationMode::Background, true)
+            .expect("route config is valid")
+            .with_event_retention_ms(0)
+            .with_replay_guarantee_ms(1);
+    let zero_replay =
+        RunInvocationRouteConfig::new("coding-task-events", RunInvocationMode::Background, true)
+            .expect("route config is valid")
+            .with_event_retention_ms(1)
+            .with_replay_guarantee_ms(0);
+
+    let zero_retention_diagnostics = RunInvocationRouteDiagnostic::for_route(&zero_retention);
+    let zero_replay_diagnostics = RunInvocationRouteDiagnostic::for_route(&zero_replay);
+
+    assert_eq!(zero_retention_diagnostics.len(), 1);
+    assert_eq!(zero_retention_diagnostics[0].code, "GB6013");
+    assert_eq!(
+        zero_retention_diagnostics[0].field,
+        "event_retention_ms"
+    );
+    assert!(
+        zero_retention_diagnostics[0]
+            .message
+            .contains("positive event retention")
+    );
+    assert_eq!(zero_replay_diagnostics.len(), 1);
+    assert_eq!(zero_replay_diagnostics[0].code, "GB6013");
+    assert_eq!(zero_replay_diagnostics[0].field, "replay_guarantee_ms");
+    assert!(
+        zero_replay_diagnostics[0]
+            .message
+            .contains("positive replay guarantee")
+    );
+}
+
+#[test]
 fn run_invocation_diagnostics_allow_retention_covering_replay_guarantee() {
     let config =
         RunInvocationRouteConfig::new("coding-task-events", RunInvocationMode::Background, true)

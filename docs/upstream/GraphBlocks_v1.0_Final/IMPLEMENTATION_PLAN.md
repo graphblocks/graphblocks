@@ -383,7 +383,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Run invocation route diagnostics now report accepted/background routes tied to
   `client_connection` lifetime as `GB6009`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now compare declared event retention to reconnect/replay
-  guarantees and report insufficient retention as `GB6013`, with shared compiler TCK coverage.
+  guarantees and report insufficient or zero durable replay durations as `GB6013`, with shared
+  compiler TCK coverage.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
   started/updated/completed timestamps, wait reasons, and active async operation ids. A
   `waiting_callback` snapshot must include a callback wait reason whose operation is still listed

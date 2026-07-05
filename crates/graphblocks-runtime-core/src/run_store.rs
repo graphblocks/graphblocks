@@ -441,8 +441,30 @@ impl RunInvocationRouteDiagnostic {
                 ),
             });
         }
+        if route.invocation_mode.is_durable() && route.event_retention_ms == Some(0) {
+            diagnostics.push(Self {
+                code: "GB6013",
+                field: "event_retention_ms",
+                message: format!(
+                    "durable run route {} must declare positive event retention",
+                    route.route_id
+                ),
+            });
+        }
+        if route.invocation_mode.is_durable() && route.replay_guarantee_ms == Some(0) {
+            diagnostics.push(Self {
+                code: "GB6013",
+                field: "replay_guarantee_ms",
+                message: format!(
+                    "durable run route {} must declare a positive replay guarantee",
+                    route.route_id
+                ),
+            });
+        }
         if let (Some(event_retention_ms), Some(replay_guarantee_ms)) =
             (route.event_retention_ms, route.replay_guarantee_ms)
+            && event_retention_ms > 0
+            && replay_guarantee_ms > 0
             && event_retention_ms < replay_guarantee_ms
         {
             diagnostics.push(Self {
