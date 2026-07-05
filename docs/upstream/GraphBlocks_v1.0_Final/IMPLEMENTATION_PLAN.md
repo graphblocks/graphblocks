@@ -629,6 +629,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback dead-letter storage now validates the same durable identity fields plus non-empty
   attempt history before insert and after load, preventing malformed dead letters from producing
   ambiguous redrive attempts after restart.
+- SQLite callback dead-letter replay validates that the stored dead-letter identity matches the
+  durable row key before a record can be returned or redriven.
 - Dead-letter attempt history must now be consecutive from attempt `1`, so redrive after restart
   cannot reuse attempt `0`, skip an attempt, or create duplicate attempt numbers in audit history.
 - Dead-letter persistence now also requires `last_error`, keeping every dead-lettered delivery tied

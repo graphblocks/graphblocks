@@ -1169,7 +1169,7 @@ impl SqliteCallbackDeadLetterStore {
         let mut statement = connection
             .prepare(
                 "
-                SELECT dead_letter_json
+                SELECT original_delivery_id, dead_letter_json
                 FROM callback_dead_letters
                 WHERE original_delivery_id = ?
                 ",
@@ -1181,8 +1181,15 @@ impl SqliteCallbackDeadLetterStore {
         let Some(row) = rows.next().map_err(callback_storage_error)? else {
             return Ok(None);
         };
-        let dead_letter_json = row.get::<_, String>(0).map_err(callback_storage_error)?;
-        dead_letter_from_value(callback_parse_json(&dead_letter_json)?).map(Some)
+        let row_original_delivery_id = row.get::<_, String>(0).map_err(callback_storage_error)?;
+        let dead_letter_json = row.get::<_, String>(1).map_err(callback_storage_error)?;
+        let dead_letter = dead_letter_from_value(callback_parse_json(&dead_letter_json)?)?;
+        if dead_letter.original_delivery_id != row_original_delivery_id {
+            return Err(CallbackDeliveryError::Storage {
+                message: "stored callback dead letter identity does not match row key".to_owned(),
+            });
+        }
+        Ok(Some(dead_letter))
     }
 
     pub fn redrive_dead_letter(

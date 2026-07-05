@@ -925,6 +925,65 @@ fn sqlite_callback_dead_letter_store_rejects_missing_error_reason() {
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_rejects_row_identity_mismatch_on_reopen() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let path = sqlite_callback_dead_letter_path("row-identity");
+
+    {
+        let store = SqliteCallbackDeadLetterStore::open(&path).expect("store opens");
+        store
+            .insert_dead_letter(dead_letter)
+            .expect("dead letter persists");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let dead_letter_json: String = connection
+            .query_row(
+                "SELECT dead_letter_json FROM callback_dead_letters WHERE original_delivery_id = ?1",
+                params!["del_sub-1_event-1"],
+                |row| row.get(0),
+            )
+            .expect("dead-letter row exists");
+        let mut dead_letter: serde_json::Value =
+            serde_json::from_str(&dead_letter_json).expect("dead-letter json parses");
+        dead_letter["original_delivery_id"] = json!("del_forged");
+        connection
+            .execute(
+                "UPDATE callback_dead_letters SET dead_letter_json = ?1 WHERE original_delivery_id = ?2",
+                params![
+                    serde_json::to_string(&dead_letter).expect("dead-letter serializes"),
+                    "del_sub-1_event-1"
+                ],
+            )
+            .expect("dead-letter row is tampered");
+    }
+
+    let store = SqliteCallbackDeadLetterStore::open(&path).expect("store reopens");
+    let error = store
+        .get_dead_letter("del_sub-1_event-1")
+        .expect_err("dead-letter row identity mismatch must fail durable replay");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("stored callback dead letter identity does not match row key")
+    ));
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_count() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let subscription = subscription(
