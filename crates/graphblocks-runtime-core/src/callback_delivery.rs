@@ -2178,6 +2178,11 @@ fn validate_callback_dead_letter(
             message: "callback dead letter attempt history must be consecutive from 1".to_owned(),
         });
     }
+    if dead_letter.last_error.as_deref().is_none_or(str::is_empty) {
+        return Err(CallbackDeliveryError::Storage {
+            message: "callback dead letter has no error reason".to_owned(),
+        });
+    }
     if dead_letter.dead_lettered_at_unix_ms == 0 {
         return Err(CallbackDeliveryError::EmptyField {
             field: "dead_lettered_at_unix_ms".to_owned(),

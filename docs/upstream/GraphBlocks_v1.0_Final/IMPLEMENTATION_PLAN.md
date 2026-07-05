@@ -617,6 +617,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   ambiguous redrive attempts after restart.
 - Dead-letter attempt history must now be consecutive from attempt `1`, so redrive after restart
   cannot reuse attempt `0`, skip an attempt, or create duplicate attempt numbers in audit history.
+- Dead-letter persistence now also requires `last_error`, keeping every dead-lettered delivery tied
+  to the terminal failure reason that operators review and redrive.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained
