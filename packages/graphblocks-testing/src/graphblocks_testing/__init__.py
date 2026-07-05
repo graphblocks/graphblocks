@@ -3695,13 +3695,14 @@ class TckRunner:
                                     else None
                                 )
                             ),
-                            sequence=int(raw_metadata.get("sequence", 0)),
+                            sequence=raw_metadata.get("sequence", 0),  # type: ignore[arg-type]
                             cursor=(
                                 str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
                             ),
-                            occurred_at_unix_ms=int(
-                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
-                            ),
+                            occurred_at_unix_ms=raw_metadata.get(
+                                "occurredAtUnixMs",
+                                raw_metadata.get("occurred_at_unix_ms", 0),
+                            ),  # type: ignore[arg-type]
                         ),
                         payload=dict(raw_payload) if isinstance(raw_payload, Mapping) else raw_payload,  # type: ignore[arg-type]
                     )

@@ -437,6 +437,34 @@ def test_testing_package_application_protocol_tck_rejects_boolean_command_sequen
     assert report.results[0].observed["error"] == "application command sequence must be an integer"
 
 
+def test_testing_package_application_protocol_tck_rejects_boolean_event_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_protocol(
+        case_id="application-protocol/boolean-event-sequence",
+        fixture={
+            "kind": "event_envelope_error",
+            "eventKind": "AssistantDraftDelta",
+            "metadata": {
+                "eventId": "event-bool-sequence",
+                "protocolVersion": "graphblocks.app.v1",
+                "runId": "run-1",
+                "sequence": True,
+                "cursor": "cursor-bool-sequence",
+                "occurredAtUnixMs": 1765843201000,
+            },
+            "payload": {"text": "draft"},
+            "expected": {"error": "application event sequence must be an integer"},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["error"] == "application event sequence must be an integer"
+
+
 def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
