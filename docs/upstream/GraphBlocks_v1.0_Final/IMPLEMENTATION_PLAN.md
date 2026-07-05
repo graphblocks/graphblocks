@@ -990,9 +990,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   durable redrive/audit projections tied to a real recorded timestamp.
 - Callback dead-letter redrive now rejects zero `redriven_at_unix_ms` values and timestamps earlier
   than the dead-letter record, preventing operator redrive audit time regressions.
-- Async callback ingestion now treats a supplied `provider_operation_id` as fenced operation
-  metadata and rejects callbacks that contradict the registered operation before journaling receipt
-  or resuming the run.
+- Async callback ingestion now treats `provider_operation_id` as fenced operation metadata and
+  rejects callbacks that omit or contradict the registered provider operation before journaling
+  receipt or resuming the run.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control

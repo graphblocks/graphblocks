@@ -81,6 +81,7 @@ fn valid_submission(callback_id: &str, idempotency_key: &str) -> AsyncCallbackSu
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
     )
+    .with_provider_operation_id("gha-run-1")
 }
 
 #[test]
@@ -1333,7 +1334,8 @@ fn conflicting_early_callback_replay_does_not_overwrite_quarantine() {
             1_201,
             "hmac:callback-endpoint-1",
             "policy-snapshot-1",
-        ),
+        )
+        .with_provider_operation_id("gha-run-1"),
         5_001,
     );
 
@@ -1447,7 +1449,8 @@ fn early_callback_quarantine_conflict_fuzz_preserves_first_submission() {
                     1_300 + index,
                     "hmac:callback-endpoint-1",
                     "policy-snapshot-1",
-                ),
+                )
+                .with_provider_operation_id("gha-run-1"),
                 5_001 + index,
             );
 
@@ -1502,7 +1505,8 @@ fn callback_idempotency_key_conflict_rejects_mutated_payload_without_overwriting
             1_201,
             "hmac:callback-endpoint-1",
             "policy-snapshot-1",
-        ),
+        )
+        .with_provider_operation_id("gha-run-1"),
         &registry,
     );
     let duplicate = store
@@ -1588,7 +1592,8 @@ fn callback_idempotency_key_is_scoped_to_operation() {
                 1_201,
                 "hmac:callback-endpoint-1",
                 "policy-snapshot-1",
-            ),
+            )
+            .with_provider_operation_id("gha-run-2"),
             &registry,
         )
         .expect("same provider idempotency key is accepted for another operation");
@@ -1634,7 +1639,8 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         1_200,
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
-    );
+    )
+    .with_provider_operation_id("gha-run-1");
     let invalid_payload = AsyncCallbackSubmission::new(
         "cb-invalid",
         "op-1",
@@ -1646,7 +1652,8 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         1_200,
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
-    );
+    )
+    .with_provider_operation_id("gha-run-1");
     let wrong_run = AsyncCallbackSubmission::new(
         "cb-wrong-run",
         "op-1",
@@ -1658,7 +1665,8 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         1_201,
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
-    );
+    )
+    .with_provider_operation_id("gha-run-1");
     let wrong_node = AsyncCallbackSubmission::new(
         "cb-wrong-node",
         "op-1",
@@ -1670,7 +1678,8 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         1_202,
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
-    );
+    )
+    .with_provider_operation_id("gha-run-1");
 
     assert_eq!(
         store.accept_callback(stale_attempt, &callback_schema_registry()),
@@ -1787,6 +1796,76 @@ fn callback_provider_operation_mismatch_does_not_resume_run() {
         } if callback_id == "cb-wrong-provider-operation"
             && reason == "identity_mismatch:provider_operation_id"
     )));
+}
+
+#[test]
+fn callback_missing_provider_operation_identity_does_not_resume_run() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-missing-provider-operation", "idem-missing-provider");
+    submission.provider_operation_id = None;
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationIdentityMismatch {
+            operation_id: "op-1".to_owned(),
+            field: "provider_operation_id".to_owned(),
+            expected: "gha-run-1".to_owned(),
+            actual: String::new(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-missing-provider-operation"
+            && reason == "identity_mismatch:provider_operation_id"
+    )));
+}
+
+#[test]
+fn sqlite_callback_missing_provider_operation_identity_does_not_resume_run()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("missing-provider-operation");
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    store.register(waiting_operation())?;
+    let mut submission = valid_submission(
+        "cb-sqlite-missing-provider-operation",
+        "idem-sqlite-missing-provider",
+    );
+    submission.provider_operation_id = None;
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationIdentityMismatch {
+            operation_id: "op-1".to_owned(),
+            field: "provider_operation_id".to_owned(),
+            expected: "gha-run-1".to_owned(),
+            actual: String::new(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-sqlite-missing-provider-operation"
+            && reason == "identity_mismatch:provider_operation_id"
+    )));
+    Ok(())
 }
 
 #[test]
@@ -2767,7 +2846,8 @@ fn callback_idempotency_conflict_fuzz_preserves_first_receipt() {
                     1_300 + index,
                     "hmac:callback-endpoint-1",
                     "policy-snapshot-1",
-                ),
+                )
+                .with_provider_operation_id("gha-run-1"),
                 &registry,
             );
             match result {
@@ -3306,7 +3386,8 @@ fn sqlite_async_operation_store_rejects_idempotency_conflict_after_reopen()
             1_201,
             "hmac:callback-endpoint-1",
             "policy-snapshot-1",
-        ),
+        )
+        .with_provider_operation_id("gha-run-1"),
         &callback_schema_registry(),
     );
     let duplicate = store.accept_callback(
@@ -3377,7 +3458,8 @@ fn sqlite_async_operation_store_scopes_callback_idempotency_to_operation_after_r
             1_201,
             "hmac:callback-endpoint-1",
             "policy-snapshot-1",
-        ),
+        )
+        .with_provider_operation_id("gha-run-2"),
         &callback_schema_registry(),
     )?;
 
@@ -3654,7 +3736,8 @@ fn sqlite_async_operation_store_preserves_quarantine_after_conflicting_replay()
                 1_201,
                 "hmac:callback-endpoint-1",
                 "policy-snapshot-1",
-            ),
+            )
+            .with_provider_operation_id("gha-run-1"),
             5_001,
         );
 
@@ -3708,7 +3791,8 @@ fn sqlite_async_operation_store_persists_callback_rejection_events_across_reopen
             1_201,
             "hmac:callback-endpoint-1",
             "policy-snapshot-1",
-        );
+        )
+        .with_provider_operation_id("gha-run-1");
         assert!(matches!(
             store.accept_callback(wrong_run, &callback_schema_registry()),
             Err(AsyncOperationError::OperationIdentityMismatch { .. })

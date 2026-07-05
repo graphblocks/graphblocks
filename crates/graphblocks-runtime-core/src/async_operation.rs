@@ -477,6 +477,11 @@ impl AsyncCallbackSubmission {
             policy_snapshot_id: policy_snapshot_id.into(),
         }
     }
+
+    pub fn with_provider_operation_id(mut self, provider_operation_id: impl Into<String>) -> Self {
+        self.provider_operation_id = Some(provider_operation_id.into());
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2070,13 +2075,7 @@ impl AsyncOperationStore {
                 actual_attempt_id: submission.attempt_id,
             });
         }
-        if submission
-            .provider_operation_id
-            .as_ref()
-            .is_some_and(|provider_operation_id| {
-                operation.provider_operation_id.as_ref() != Some(provider_operation_id)
-            })
-        {
+        if operation.provider_operation_id != submission.provider_operation_id {
             inner
                 .events_by_operation
                 .entry(submission.operation_id.clone())
