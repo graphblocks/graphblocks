@@ -143,6 +143,21 @@ def test_callback_envelope_rejects_non_json_payload_values() -> None:
 
 def test_callback_envelope_validates_timestamp_fields() -> None:
     _assert_raises_value_error(
+        "sequence must be a non-negative integer",
+        lambda: CallbackEnvelope(
+            delivery_id="del_bool",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=True,  # type: ignore[arg-type]
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key="sub_001:evt_1042:bool",
+            occurred_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
         "occurred_at must be an ISO-8601 datetime",
         lambda: CallbackEnvelope(
             delivery_id="del_001",

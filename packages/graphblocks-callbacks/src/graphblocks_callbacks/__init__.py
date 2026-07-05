@@ -1075,7 +1075,7 @@ class CallbackEnvelope:
             _require_non_empty_string(field_name, getattr(self, field_name))
         if self.tenant_id is not None:
             _require_non_empty_string("tenant_id", self.tenant_id)
-        if not isinstance(self.sequence, int) or self.sequence < 0:
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
         occurred_at = _parse_field_timestamp("occurred_at", self.occurred_at)
         delivered_at = _parse_field_timestamp("delivered_at", self.delivered_at)
