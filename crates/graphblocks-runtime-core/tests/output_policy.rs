@@ -960,6 +960,16 @@ fn bounded_holdback_policy_accepts_time_or_size_bounds() -> Result<(), OutputDel
 }
 
 #[test]
+fn buffer_until_commit_policy_rejects_flush_boundaries() {
+    assert_eq!(
+        OutputDeliveryPolicy::buffer_until_commit(ViolationAction::AbortResponse)
+            .flush_on([FlushBoundary::Sentence])
+            .validate(),
+        Err(OutputDeliveryPolicyError::FlushBoundaryWithoutStreaming),
+    );
+}
+
+#[test]
 fn output_policy_decision_preserves_metadata_and_redaction_instructions() {
     let decision = OutputPolicyDecision::redact(
         "decision-redact",

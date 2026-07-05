@@ -199,6 +199,7 @@ pub struct OutputDeliveryPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputDeliveryPolicyError {
     UnboundedPolicyHoldback,
+    FlushBoundaryWithoutStreaming,
     ImmediateDraftWithoutRetractionSupport,
     InvalidHoldbackMaxTokens,
     InvalidHoldbackMaxBytes,
@@ -280,7 +281,12 @@ impl OutputDeliveryPolicy {
         }
 
         match self.mode {
-            DeliveryMode::BufferUntilCommit => Ok(()),
+            DeliveryMode::BufferUntilCommit => {
+                if !self.flush_boundaries.is_empty() {
+                    return Err(OutputDeliveryPolicyError::FlushBoundaryWithoutStreaming);
+                }
+                Ok(())
+            }
             DeliveryMode::BoundedHoldback => {
                 if self.holdback_max_tokens.is_none()
                     && self.holdback_max_bytes.is_none()
