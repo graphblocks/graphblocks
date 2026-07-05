@@ -1022,6 +1022,48 @@ fn sqlite_callback_delivery_queue_rejects_acknowledged_retry_timestamp_conflict(
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_rejects_blank_delivery_identity_fields() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+
+    for field in [
+        "delivery_id",
+        "subscription_id",
+        "event_id",
+        "run_id",
+        "cursor",
+        "idempotency_key",
+    ] {
+        let mut malformed = delivery.clone();
+        match field {
+            "delivery_id" => malformed.delivery_id = " ".to_owned(),
+            "subscription_id" => malformed.subscription_id = " ".to_owned(),
+            "event_id" => malformed.event_id = " ".to_owned(),
+            "run_id" => malformed.run_id = " ".to_owned(),
+            "cursor" => malformed.cursor = " ".to_owned(),
+            "idempotency_key" => malformed.idempotency_key = " ".to_owned(),
+            _ => unreachable!("test field list is exhaustive"),
+        }
+
+        assert_eq!(
+            queue.upsert_delivery(malformed),
+            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: format!("callback_delivery.{field}"),
+            }),
+            "{field} should be required"
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_rejects_delivered_without_delivery_timestamp() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

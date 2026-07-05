@@ -609,6 +609,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.
+- Callback delivery queue validation now rejects blank persisted delivery identity fields
+  (`delivery_id`, `subscription_id`, `event_id`, `run_id`, `cursor`, and `idempotency_key`) so
+  malformed durable records cannot re-enter replay, worker recovery, signing, or redrive paths.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained

@@ -2016,6 +2016,20 @@ fn delivery_from_value(value: Value) -> Result<CallbackDelivery, CallbackDeliver
 }
 
 fn validate_callback_delivery(delivery: &CallbackDelivery) -> Result<(), CallbackDeliveryError> {
+    for (field, value) in [
+        ("delivery_id", delivery.delivery_id.as_str()),
+        ("subscription_id", delivery.subscription_id.as_str()),
+        ("event_id", delivery.event_id.as_str()),
+        ("run_id", delivery.run_id.as_str()),
+        ("cursor", delivery.cursor.as_str()),
+        ("idempotency_key", delivery.idempotency_key.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: format!("callback_delivery.{field}"),
+            });
+        }
+    }
     if delivery.attempt == 0 {
         return Err(CallbackDeliveryError::Storage {
             message: "callback delivery attempt must be positive".to_owned(),
