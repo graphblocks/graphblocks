@@ -96,6 +96,16 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return stripped
 
 
+def _validate_sha256_digest(owner: str, field_name: str, value: object) -> str:
+    digest_value = _validate_non_empty_string(owner, field_name, value)
+    if not digest_value.startswith("sha256:"):
+        raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
+    digest = digest_value.removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
+    return digest_value
+
+
 def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -212,7 +222,6 @@ class AsyncOperation:
             "node_id",
             "attempt_id",
             "expected_schema",
-            "resume_token_hash",
             "idempotency_key",
             "created_at",
         ):
@@ -221,6 +230,11 @@ class AsyncOperation:
                 field_name,
                 _validate_non_empty_string("async operation", field_name, getattr(self, field_name)),
             )
+        object.__setattr__(
+            self,
+            "resume_token_hash",
+            _validate_sha256_digest("async operation", "resume_token_hash", self.resume_token_hash),
+        )
         object.__setattr__(self, "kind", _validate_operation_kind(self.kind))
         object.__setattr__(self, "state", _validate_operation_state(self.state))
         for field_name in (
