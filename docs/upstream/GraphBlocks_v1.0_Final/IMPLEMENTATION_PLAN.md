@@ -426,6 +426,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Protocol-log TCK operations now use the same event metadata validation path before append/replay,
   and expected construction errors are recorded as append errors instead of being masked by integer
   coercion.
+- Protocol-log replay limits are now passed through to `ApplicationProtocolLog.replay_after`
+  without integer coercion, so boolean replay bounds surface as cursor replay contract errors.
 - Stream-cutoff TCK operations also validate application-event metadata before cutoff acceptance,
   keeping malformed boolean sequence/timestamp values out of late-output delivery decisions.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and

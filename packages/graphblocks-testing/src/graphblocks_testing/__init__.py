@@ -3797,16 +3797,30 @@ class TckRunner:
                             }
                         )
                 replay_cursor = fixture.get("replayAfter", fixture.get("replay_after"))
-                replay_limit = int(fixture.get("replayLimit", fixture.get("replay_limit", 100)))
-                replay = log.replay_after(
-                    str(replay_cursor) if replay_cursor is not None else None,
-                    limit=replay_limit,
-                )
+                replay_limit = fixture.get("replayLimit", fixture.get("replay_limit", 100))
+                replay_error: str | None = None
+                try:
+                    replay = log.replay_after(
+                        str(replay_cursor) if replay_cursor is not None else None,
+                        limit=replay_limit,  # type: ignore[arg-type]
+                    )
+                except Exception as error:
+                    expected_replay_error = _first_mapping_value(
+                        expected,
+                        "replayError",
+                        "replay_error",
+                    )
+                    if expected_replay_error is not None and str(error) == str(expected_replay_error):
+                        replay = ()
+                        replay_error = str(error)
+                    else:
+                        raise
                 observed = {
                     "eventIds": [event.metadata.event_id for event in log.events],
                     "appendResults": append_results,
                     "appendErrors": append_errors,
                     "replayEventIds": [event.metadata.event_id for event in replay],
+                    "replayError": replay_error,
                     "length": len(log),
                 }
             elif kind == "stream_cutoff":

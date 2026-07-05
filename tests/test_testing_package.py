@@ -544,6 +544,49 @@ def test_testing_package_application_protocol_tck_rejects_boolean_stream_cutoff_
     assert report.results[0].observed["errors"] == ["application event sequence must be an integer"]
 
 
+def test_testing_package_application_protocol_tck_rejects_boolean_replay_limit(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_protocol(
+        case_id="application-protocol/boolean-replay-limit",
+        fixture={
+            "kind": "protocol_log",
+            "operations": [
+                {
+                    "eventKind": "RunStarted",
+                    "metadata": {
+                        "eventId": "event-replay-limit",
+                        "protocolVersion": "graphblocks.app.v1",
+                        "runId": "run-1",
+                        "sequence": 1,
+                        "cursor": "cursor-1",
+                        "occurredAtUnixMs": 1765843201000,
+                    },
+                    "payload": {},
+                    "expectAppended": True,
+                }
+            ],
+            "replayLimit": True,
+            "expected": {
+                "eventIds": ["event-replay-limit"],
+                "appendResults": [True],
+                "appendErrors": [],
+                "replayEventIds": [],
+                "length": 1,
+                "replayError": "application protocol replay limit must be an integer",
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["replayError"] == (
+        "application protocol replay limit must be an integer"
+    )
+
+
 def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
