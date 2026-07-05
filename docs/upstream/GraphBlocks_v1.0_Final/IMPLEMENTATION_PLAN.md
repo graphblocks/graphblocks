@@ -717,6 +717,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Observability metric label validation now rejects whitespace-only label keys or values before
   applying the high-cardinality denylist, keeping async/callback telemetry dimensions usable for
   bounded aggregation.
+- Diagnostic bundle validation now rejects blank bundle, run, and excerpt identities before
+  redaction checks, keeping exported support/audit bundles addressable and replay-safe.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

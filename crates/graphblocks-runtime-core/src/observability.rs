@@ -924,7 +924,22 @@ impl DiagnosticBundle {
     }
 
     pub fn validate_redaction(&self) -> Result<(), DiagnosticBundleError> {
+        if self.bundle_id.trim().is_empty() {
+            return Err(DiagnosticBundleError::EmptyField {
+                field: "bundle_id".to_owned(),
+            });
+        }
+        if self.run_id.trim().is_empty() {
+            return Err(DiagnosticBundleError::EmptyField {
+                field: "run_id".to_owned(),
+            });
+        }
         for excerpt in &self.excerpts {
+            if excerpt.excerpt_id.trim().is_empty() {
+                return Err(DiagnosticBundleError::EmptyField {
+                    field: "excerpt_id".to_owned(),
+                });
+            }
             let unredacted = match self.redaction {
                 DiagnosticBundleRedaction::ContentFree => matches!(
                     excerpt.content_mode,
@@ -962,12 +977,14 @@ impl DiagnosticBundle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiagnosticBundleError {
+    EmptyField { field: String },
     UnredactedContent { excerpt_id: String },
 }
 
 impl fmt::Display for DiagnosticBundleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyField { field } => write!(formatter, "{field} must not be empty"),
             Self::UnredactedContent { excerpt_id } => {
                 write!(
                     formatter,

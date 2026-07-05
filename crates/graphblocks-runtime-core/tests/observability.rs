@@ -443,6 +443,36 @@ fn redacted_diagnostic_bundle_rejects_unredacted_content_excerpts() {
 }
 
 #[test]
+fn diagnostic_bundle_rejects_blank_identity_fields() {
+    let blank_bundle_id = DiagnosticBundle::redacted(" ", "run-1");
+    let blank_run_id = DiagnosticBundle::redacted("bundle-1", " ");
+    let blank_excerpt_id = DiagnosticBundle::redacted("bundle-1", "run-1").with_excerpt(
+        DiagnosticExcerpt::new(" ", DiagnosticExcerptKind::Trace)
+            .with_content_mode(CaptureMode::HashOnly)
+            .with_payload(json!({"digest": "sha256:trace"})),
+    );
+
+    assert_eq!(
+        blank_bundle_id.validate_redaction(),
+        Err(DiagnosticBundleError::EmptyField {
+            field: "bundle_id".to_owned(),
+        })
+    );
+    assert_eq!(
+        blank_run_id.validate_redaction(),
+        Err(DiagnosticBundleError::EmptyField {
+            field: "run_id".to_owned(),
+        })
+    );
+    assert_eq!(
+        blank_excerpt_id.validate_redaction(),
+        Err(DiagnosticBundleError::EmptyField {
+            field: "excerpt_id".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn content_free_diagnostic_bundle_allows_hash_only_excerpts() -> Result<(), DiagnosticBundleError> {
     let bundle = DiagnosticBundle::content_free("bundle-1", "run-1").with_excerpt(
         DiagnosticExcerpt::new("metric-1", DiagnosticExcerptKind::Metric)
