@@ -3612,33 +3612,118 @@ fn event_operation_id(event: &AsyncOperationEvent) -> &str {
 
 fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationError> {
     match required_string(&value, "type")?.as_str() {
-        "StateChanged" => Ok(AsyncOperationEvent::StateChanged {
-            operation_id: required_string(&value, "operation_id")?,
-            from: async_operation_state_from_str(&required_string(&value, "from")?)?,
-            to: async_operation_state_from_str(&required_string(&value, "to")?)?,
-            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
-        }),
+        "StateChanged" => {
+            let operation_id = required_string(&value, "operation_id")?;
+            if operation_id.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "operation_id".to_owned(),
+                });
+            }
+            let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            if occurred_at_unix_ms == 0 {
+                return Err(AsyncOperationError::Storage {
+                    message:
+                        "stored async operation event occurred_at_unix_ms must be non-zero"
+                            .to_owned(),
+                });
+            }
+            Ok(AsyncOperationEvent::StateChanged {
+                operation_id,
+                from: async_operation_state_from_str(&required_string(&value, "from")?)?,
+                to: async_operation_state_from_str(&required_string(&value, "to")?)?,
+                occurred_at_unix_ms,
+            })
+        }
         "ExternalCallbackReceived" => Ok(AsyncOperationEvent::ExternalCallbackReceived {
             receipt: receipt_from_value(required_value(&value, "receipt")?)?,
         }),
-        "ExternalCallbackRejected" => Ok(AsyncOperationEvent::ExternalCallbackRejected {
-            operation_id: required_string(&value, "operation_id")?,
-            callback_id: required_string(&value, "callback_id")?,
-            reason: required_string(&value, "reason")?,
-            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
-            verified_by: required_string(&value, "verified_by")?,
-        }),
-        "CallbackResumePaused" => Ok(AsyncOperationEvent::CallbackResumePaused {
-            operation_id: required_string(&value, "operation_id")?,
-            reason: required_string(&value, "reason")?,
-            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
-        }),
-        "CallbackResumeDenied" => Ok(AsyncOperationEvent::CallbackResumeDenied {
-            operation_id: required_string(&value, "operation_id")?,
-            decision_id: required_string(&value, "decision_id")?,
-            reason: required_string(&value, "reason")?,
-            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
-        }),
+        "ExternalCallbackRejected" => {
+            let operation_id = required_string(&value, "operation_id")?;
+            let callback_id = required_string(&value, "callback_id")?;
+            let reason = required_string(&value, "reason")?;
+            let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            let verified_by = required_string(&value, "verified_by")?;
+            for (field, value) in [
+                ("operation_id", &operation_id),
+                ("callback_id", &callback_id),
+                ("reason", &reason),
+                ("verified_by", &verified_by),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+            }
+            if occurred_at_unix_ms == 0 {
+                return Err(AsyncOperationError::Storage {
+                    message:
+                        "stored async operation event occurred_at_unix_ms must be non-zero"
+                            .to_owned(),
+                });
+            }
+            Ok(AsyncOperationEvent::ExternalCallbackRejected {
+                operation_id,
+                callback_id,
+                reason,
+                occurred_at_unix_ms,
+                verified_by,
+            })
+        }
+        "CallbackResumePaused" => {
+            let operation_id = required_string(&value, "operation_id")?;
+            let reason = required_string(&value, "reason")?;
+            let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            for (field, value) in [("operation_id", &operation_id), ("reason", &reason)] {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+            }
+            if occurred_at_unix_ms == 0 {
+                return Err(AsyncOperationError::Storage {
+                    message:
+                        "stored async operation event occurred_at_unix_ms must be non-zero"
+                            .to_owned(),
+                });
+            }
+            Ok(AsyncOperationEvent::CallbackResumePaused {
+                operation_id,
+                reason,
+                occurred_at_unix_ms,
+            })
+        }
+        "CallbackResumeDenied" => {
+            let operation_id = required_string(&value, "operation_id")?;
+            let decision_id = required_string(&value, "decision_id")?;
+            let reason = required_string(&value, "reason")?;
+            let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            for (field, value) in [
+                ("operation_id", &operation_id),
+                ("decision_id", &decision_id),
+                ("reason", &reason),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+            }
+            if occurred_at_unix_ms == 0 {
+                return Err(AsyncOperationError::Storage {
+                    message:
+                        "stored async operation event occurred_at_unix_ms must be non-zero"
+                            .to_owned(),
+                });
+            }
+            Ok(AsyncOperationEvent::CallbackResumeDenied {
+                operation_id,
+                decision_id,
+                reason,
+                occurred_at_unix_ms,
+            })
+        }
         "LateExternalCallbackReceived" => Ok(AsyncOperationEvent::LateExternalCallbackReceived {
             receipt: receipt_from_value(required_value(&value, "receipt")?)?,
             terminal_state: async_operation_state_from_str(&required_string(

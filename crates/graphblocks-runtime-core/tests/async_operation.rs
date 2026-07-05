@@ -3125,6 +3125,57 @@ fn sqlite_async_operation_store_rejects_event_index_gap_on_reopen() {
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_invalid_event_metadata_on_reopen() {
+    let path = sqlite_async_operation_path("event-metadata-validation");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        let mut submission = valid_submission("cb-invalid-event", "idem-invalid-event");
+        submission.payload = json!({"status": 7});
+        assert!(matches!(
+            store.accept_callback(submission, &callback_schema_registry()),
+            Err(AsyncOperationError::CallbackSchemaInvalid { .. })
+        ));
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let event_json: String = connection
+            .query_row(
+                "SELECT event_json FROM async_operation_events WHERE operation_id = ?1 AND event_index = ?2",
+                params!["op-1", 2_i64],
+                |row| row.get(0),
+            )
+            .expect("callback rejection event row exists");
+        let mut event: serde_json::Value =
+            serde_json::from_str(&event_json).expect("event json parses");
+        event["callback_id"] = json!("  ");
+        connection
+            .execute(
+                "UPDATE async_operation_events SET event_json = ?1 WHERE operation_id = ?2 AND event_index = ?3",
+                params![
+                    serde_json::to_string(&event).expect("event serializes"),
+                    "op-1",
+                    2_i64
+                ],
+            )
+            .expect("event row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("invalid event metadata must fail durable replay");
+
+    assert!(
+        matches!(error, AsyncOperationError::EmptyField { ref field } if field == "callback_id"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-reopen");

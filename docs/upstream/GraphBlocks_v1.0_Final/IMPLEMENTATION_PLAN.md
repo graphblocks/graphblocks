@@ -514,6 +514,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   durable operation row key before it can re-enter the replayable operation journal.
 - SQLite async operation event replay also requires event indexes to be contiguous from zero for
   each operation, preserving deterministic journal order across recovery.
+- SQLite async operation event replay now revalidates event metadata such as callback ids,
+  decision ids, reasons, verifier identity, and occurrence timestamps before rehydrating the
+  replayable operation journal.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both
   in-memory and SQLite async operation stores, so provider delivery keys reused by separate
   operations do not suppress valid callback receipts or resume signals.
