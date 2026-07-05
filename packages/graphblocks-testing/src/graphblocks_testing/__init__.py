@@ -3814,6 +3814,7 @@ class TckRunner:
                 if not isinstance(raw_operations, list):
                     raise ValueError("application-protocol stream_cutoff operations must be a list")
                 state = ApplicationProtocolStreamState()
+                stream_errors: list[str] = []
                 for operation_index, raw_operation in enumerate(raw_operations):
                     if not isinstance(raw_operation, Mapping):
                         raise ValueError("application-protocol stream_cutoff operation must be a mapping")
@@ -3823,33 +3824,41 @@ class TckRunner:
                     raw_payload = raw_operation.get("payload", {})
                     if not isinstance(raw_payload, Mapping):
                         raise ValueError("application-protocol stream_cutoff operation payload must be a mapping")
-                    event = ApplicationProtocolEvent.new(
-                        str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
-                        ApplicationProtocolEventMetadata(
-                            event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
-                            protocol_version=str(
-                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                    expected_error = raw_operation.get("expectError", raw_operation.get("expect_error"))
+                    try:
+                        event = ApplicationProtocolEvent.new(
+                            str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
+                            ApplicationProtocolEventMetadata(
+                                event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                                protocol_version=str(
+                                    raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                                ),
+                                run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                                turn_id=(
+                                    str(raw_metadata["turnId"])
+                                    if raw_metadata.get("turnId") is not None
+                                    else (
+                                        str(raw_metadata["turn_id"])
+                                        if raw_metadata.get("turn_id") is not None
+                                        else None
+                                    )
+                                ),
+                                sequence=raw_metadata.get("sequence", 0),  # type: ignore[arg-type]
+                                cursor=(
+                                    str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                                ),
+                                occurred_at_unix_ms=raw_metadata.get(
+                                    "occurredAtUnixMs",
+                                    raw_metadata.get("occurred_at_unix_ms", 0),
+                                ),  # type: ignore[arg-type]
                             ),
-                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
-                            turn_id=(
-                                str(raw_metadata["turnId"])
-                                if raw_metadata.get("turnId") is not None
-                                else (
-                                    str(raw_metadata["turn_id"])
-                                    if raw_metadata.get("turn_id") is not None
-                                    else None
-                                )
-                            ),
-                            sequence=int(raw_metadata.get("sequence", 0)),
-                            cursor=(
-                                str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
-                            ),
-                            occurred_at_unix_ms=int(
-                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
-                            ),
-                        ),
-                        payload=dict(raw_payload),
-                    )
+                            payload=dict(raw_payload),
+                        )
+                    except Exception as error:
+                        if expected_error is not None and str(error) == str(expected_error):
+                            stream_errors.append(str(expected_error))
+                            continue
+                        raise
                     accepted = state.accept(event) is not None
                     if accepted is not bool(raw_operation.get("expectAccepted", True)):
                         diagnostics.append(
@@ -3868,6 +3877,7 @@ class TckRunner:
                         if cutoff_response_id is not None
                         else None
                     ),
+                    "errors": stream_errors,
                 }
             elif kind in {"capability_negotiation", "capability_negotiation_error"}:
                 raw_server = fixture.get("server", {})

@@ -506,6 +506,44 @@ def test_testing_package_application_protocol_tck_rejects_boolean_log_event_sequ
     ]
 
 
+def test_testing_package_application_protocol_tck_rejects_boolean_stream_cutoff_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_protocol(
+        case_id="application-protocol/boolean-stream-cutoff-sequence",
+        fixture={
+            "kind": "stream_cutoff",
+            "operations": [
+                {
+                    "eventKind": "AssistantDraftDelta",
+                    "metadata": {
+                        "eventId": "event-stream-bool-sequence",
+                        "protocolVersion": "graphblocks.app.v1",
+                        "runId": "run-1",
+                        "sequence": True,
+                        "cursor": "cursor-stream-bool-sequence",
+                        "occurredAtUnixMs": 1765843201000,
+                    },
+                    "payload": {"response_id": "response-1", "chunk_sequence": 1},
+                    "expectError": "application event sequence must be an integer",
+                }
+            ],
+            "expected": {
+                "acceptedKinds": [],
+                "cutoffResponseId": None,
+                "cutoffLastClientDeliveredSequence": None,
+                "errors": ["application event sequence must be an integer"],
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["errors"] == ["application event sequence must be an integer"]
+
+
 def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
