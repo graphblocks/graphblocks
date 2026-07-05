@@ -187,7 +187,8 @@ Message
   keep-draft semantics before recording a response cutoff.
 - Protocol replay also validates post-cutoff `AssistantIncomplete` and `AssistantRetracted` events
   against canonical terminal reason, draft disposition, and delivered-sequence metadata before
-  allowing them after a response cutoff.
+  allowing them after a response cutoff. Their delivered-sequence metadata must match the accepted
+  `OutputCutoff` boundary rather than establishing a new boundary.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building

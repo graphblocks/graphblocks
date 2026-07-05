@@ -1837,10 +1837,22 @@ fn protocol_stream_state_rejects_malformed_draft_terminal_event_after_cutoff() {
         }),
     )
     .expect("wrong-disposition retraction envelope is valid");
+    let wrong_boundary_retraction = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantRetracted,
+        protocol_event_metadata("event-retracted-wrong-boundary", 4, "cursor-4"),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "last_client_delivered_sequence": 2,
+        }),
+    )
+    .expect("wrong-boundary retraction envelope is valid");
 
     assert_eq!(state.accept(cutoff.clone()), Some(cutoff));
     assert_eq!(state.accept(malformed_retraction), None);
     assert_eq!(state.accept(wrong_disposition_retraction), None);
+    assert_eq!(state.accept(wrong_boundary_retraction), None);
     assert_eq!(
         state
             .accepted_events()

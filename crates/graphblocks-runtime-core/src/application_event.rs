@@ -1351,7 +1351,7 @@ impl ApplicationProtocolStreamState {
 
         let response_id = event.payload.get("response_id").and_then(Value::as_str);
         if let Some(response_id) = response_id
-            && self.cutoffs.contains_key(response_id)
+            && let Some(cutoff_last_client_delivered_sequence) = self.cutoffs.get(response_id)
         {
             if matches!(
                 event.kind,
@@ -1389,7 +1389,7 @@ impl ApplicationProtocolStreamState {
                     .payload
                     .get("last_client_delivered_sequence")
                     .and_then(Value::as_u64)
-                    .is_none()
+                    != Some(*cutoff_last_client_delivered_sequence)
                 {
                     return None;
                 }
