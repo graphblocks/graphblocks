@@ -4618,24 +4618,78 @@ class TckRunner:
                 }
                 for amount in balance.available
             ]
-            expected_reserved = [
-                {
-                    "kind": str(amount.get("kind", "")),
-                    "amount": int(amount.get("amount", 0)),
-                    "unit": str(amount.get("unit", "")),
-                }
-                for amount in fixture.get("expectedReserved", [])
-                if isinstance(amount, Mapping)
-            ]
-            expected_available = [
-                {
-                    "kind": str(amount.get("kind", "")),
-                    "amount": int(amount.get("amount", 0)),
-                    "unit": str(amount.get("unit", "")),
-                }
-                for amount in fixture.get("expectedAvailable", [])
-                if isinstance(amount, Mapping)
-            ]
+            expected_reserved = []
+            try:
+                for amount in fixture.get("expectedReserved", []):
+                    if isinstance(amount, Mapping):
+                        usage_amount = UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=amount.get("amount", 0),
+                            unit=str(amount.get("unit", "")),
+                        )
+                        expected_reserved.append(
+                            {
+                                "kind": usage_amount.kind,
+                                "amount": int(usage_amount.amount)
+                                if usage_amount.amount == usage_amount.amount.to_integral_value()
+                                else str(usage_amount.amount),
+                                "unit": usage_amount.unit,
+                            }
+                        )
+            except ValueError as error:
+                observed = {"error": str(error)}
+                expected = fixture.get("expected", {})
+                if not isinstance(expected, Mapping) or observed["error"] != expected.get("error"):
+                    diagnostics.append(
+                        {
+                            "code": "BudgetRaceExpectedAmountInvalid",
+                            "message": "budget-race expected reserved amount was invalid",
+                            "path": "$.expectedReserved",
+                        }
+                    )
+                return TckResult(
+                    case_id=case.case_id,
+                    kind=case.kind,
+                    status="passed" if not diagnostics else "failed",
+                    diagnostics=tuple(diagnostics),
+                    observed=observed,
+                )
+            expected_available = []
+            try:
+                for amount in fixture.get("expectedAvailable", []):
+                    if isinstance(amount, Mapping):
+                        usage_amount = UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=amount.get("amount", 0),
+                            unit=str(amount.get("unit", "")),
+                        )
+                        expected_available.append(
+                            {
+                                "kind": usage_amount.kind,
+                                "amount": int(usage_amount.amount)
+                                if usage_amount.amount == usage_amount.amount.to_integral_value()
+                                else str(usage_amount.amount),
+                                "unit": usage_amount.unit,
+                            }
+                        )
+            except ValueError as error:
+                observed = {"error": str(error)}
+                expected = fixture.get("expected", {})
+                if not isinstance(expected, Mapping) or observed["error"] != expected.get("error"):
+                    diagnostics.append(
+                        {
+                            "code": "BudgetRaceExpectedAmountInvalid",
+                            "message": "budget-race expected available amount was invalid",
+                            "path": "$.expectedAvailable",
+                        }
+                    )
+                return TckResult(
+                    case_id=case.case_id,
+                    kind=case.kind,
+                    status="passed" if not diagnostics else "failed",
+                    diagnostics=tuple(diagnostics),
+                    observed=observed,
+                )
             if observed_reserved != expected_reserved:
                 diagnostics.append(
                     {
@@ -4699,15 +4753,42 @@ class TckRunner:
                 }
                 for amount in balance.reserved
             ]
-            expected_reserved = [
-                {
-                    "kind": str(amount.get("kind", "")),
-                    "amount": int(amount.get("amount", 0)),
-                    "unit": str(amount.get("unit", "")),
-                }
-                for amount in fixture.get("expectedReserved", [])
-                if isinstance(amount, Mapping)
-            ]
+            expected_reserved = []
+            try:
+                for amount in fixture.get("expectedReserved", []):
+                    if isinstance(amount, Mapping):
+                        usage_amount = UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=amount.get("amount", 0),
+                            unit=str(amount.get("unit", "")),
+                        )
+                        expected_reserved.append(
+                            {
+                                "kind": usage_amount.kind,
+                                "amount": int(usage_amount.amount)
+                                if usage_amount.amount == usage_amount.amount.to_integral_value()
+                                else str(usage_amount.amount),
+                                "unit": usage_amount.unit,
+                            }
+                        )
+            except ValueError as error:
+                observed = {"error": str(error)}
+                expected = fixture.get("expected", {})
+                if not isinstance(expected, Mapping) or observed["error"] != expected.get("error"):
+                    diagnostics.append(
+                        {
+                            "code": "BudgetRaceExpectedAmountInvalid",
+                            "message": "budget-race expected reserved amount was invalid",
+                            "path": "$.expectedReserved",
+                        }
+                    )
+                return TckResult(
+                    case_id=case.case_id,
+                    kind=case.kind,
+                    status="passed" if not diagnostics else "failed",
+                    diagnostics=tuple(diagnostics),
+                    observed=observed,
+                )
             if reserve.status != fixture.get("expectedReserveStatus"):
                 diagnostics.append(
                     {

@@ -1271,6 +1271,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   ledgers in both implementations.
 - Python `UsageAmount` now rejects blank dimension values, matching the Rust runtime's usage record
   validation for non-empty dimension keys and values before budget or usage ledger admission.
+- The budget-race TCK runner now validates expected reserved and available `UsageAmount` values
+  through the same schema path as runtime budget inputs, so boolean amounts cannot be silently
+  treated as integer `1` in concurrency conformance fixtures.
 - `ExhaustionController` now rejects externally supplied continuation permits that lack concrete
   reservation refs, fencing tokens, or permit identity fields, so budget resume admission cannot
   bypass the ledger-issued authority shape required for fenced background execution.

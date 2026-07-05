@@ -788,6 +788,34 @@ def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None
     assert "load_budget_race_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_budget_race_tck_rejects_boolean_expected_amount(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.budget_race(
+        case_id="budget-race/boolean-expected-amount",
+        fixture={
+            "kind": "reservation_race",
+            "budgetId": "budget-1",
+            "scope": "tenant:acme",
+            "policyRef": "policy-1",
+            "allocated": [{"kind": "model_total_tokens", "amount": 100, "unit": "tokens"}],
+            "owners": ["run:1"],
+            "reservationAmounts": [{"kind": "model_total_tokens", "amount": 70, "unit": "tokens"}],
+            "expiresAt": "later",
+            "expectedAllowed": 1,
+            "expectedDenied": 0,
+            "expectedReserved": [{"kind": "model_total_tokens", "amount": True, "unit": "tokens"}],
+            "expected": {"error": "usage amount must be a decimal"},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["error"] == "usage amount must be a decimal"
+
+
 def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
