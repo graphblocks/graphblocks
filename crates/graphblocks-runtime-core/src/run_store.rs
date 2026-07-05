@@ -2132,7 +2132,11 @@ fn model_visible_tools_from_storage(text: &str) -> Result<Vec<ModelVisibleToolRe
         };
         let valid_until_unix_ms = match object.get("valid_until_unix_ms") {
             Some(Value::Null) | None => None,
-            Some(value) => value.as_u64(),
+            Some(value) => Some(value.as_u64().ok_or_else(|| RunStoreError::Storage {
+                message:
+                    "stored model-visible tool provenance valid_until_unix_ms must be a non-negative integer"
+                        .to_owned(),
+            })?),
         };
         tools.push(ModelVisibleToolRef {
             tool_name: required_storage_string(object, "tool_name")?,

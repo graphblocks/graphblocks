@@ -389,6 +389,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and initial cursor fields.
 - Python run-store records now recursively validate inputs, state, and patches as JSON values,
   rejecting arbitrary objects and non-finite numbers before durable replay or SQLite persistence.
+- Rust SQLite run-store replay now rejects malformed model-visible tool provenance fields such as
+  non-integer `valid_until_unix_ms`, so durable run provenance cannot silently drop a resolved
+  tool expiration fence after restart.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
   event streams as `GB6005`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now report accepted/background routes tied to

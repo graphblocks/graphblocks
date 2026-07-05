@@ -1175,6 +1175,64 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
 }
 
 #[test]
+fn sqlite_run_store_rejects_malformed_model_visible_tool_expiry_on_replay() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-store-{}-bad-tool-expiry.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .create_run_with_invocation_provenance(
+                "sha256:one",
+                json!({}),
+                RunDeploymentProvenance::new(),
+                vec![model_visible_tool("knowledge.search", "resolved-search", true)],
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    {
+        let connection =
+            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        connection
+            .execute(
+                "UPDATE runs SET model_visible_tools_json = ? WHERE run_id = ?",
+                rusqlite::params![
+                    json!([
+                        {
+                            "tool_name": "knowledge.search",
+                            "resolved_tool_id": "resolved-search",
+                            "definition_digest": "sha256:definition",
+                            "binding_digest": "sha256:binding",
+                            "effective_policy_snapshot_id": "policy-snapshot-1",
+                            "allowed_for_principal": true,
+                            "valid_until_unix_ms": "tomorrow"
+                        }
+                    ])
+                    .to_string(),
+                    "run-000001"
+                ],
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let replayed = store.get_run("run-000001");
+
+    assert_eq!(
+        replayed,
+        Err(RunStoreError::Storage {
+            message: "stored model-visible tool provenance valid_until_unix_ms must be a non-negative integer".to_owned(),
+        })
+    );
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn sqlite_run_store_records_model_visible_tools_after_run_creation() -> Result<(), String> {
     let mut store = SqliteRunStore::open_in_memory().map_err(|error| format!("{error:?}"))?;
     let record = store
