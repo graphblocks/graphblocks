@@ -3380,6 +3380,56 @@ fn sqlite_async_operation_store_rejects_quarantined_callback_row_identity_mismat
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_invalid_quarantined_callback_submission_on_reopen() {
+    let path = sqlite_async_operation_path("callback-quarantine-submission-validation");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .quarantine_callback_before_operation_commit(
+                valid_submission("cb-early", "provider-delivery-early"),
+                5_000,
+            )
+            .expect("callback is quarantined");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let submission_json: String = connection
+            .query_row(
+                "SELECT submission_json FROM async_callback_quarantine WHERE operation_id = ?1 AND idempotency_key = ?2",
+                params!["op-1", "provider-delivery-early"],
+                |row| row.get(0),
+            )
+            .expect("quarantine row exists");
+        let mut submission: serde_json::Value =
+            serde_json::from_str(&submission_json).expect("submission json parses");
+        submission["run_id"] = json!(" \t");
+        connection
+            .execute(
+                "UPDATE async_callback_quarantine SET submission_json = ?1 WHERE operation_id = ?2 AND idempotency_key = ?3",
+                params![
+                    serde_json::to_string(&submission).expect("submission serializes"),
+                    "op-1",
+                    "provider-delivery-early"
+                ],
+            )
+            .expect("quarantine row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("invalid quarantined submission must fail durable replay");
+
+    assert_eq!(
+        error,
+        AsyncOperationError::EmptyField {
+            field: "run_id".to_owned()
+        }
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_discards_expired_quarantined_callback_after_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("callback-quarantine-expired-reopen");

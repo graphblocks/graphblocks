@@ -3389,7 +3389,7 @@ fn callback_submission_to_value(submission: &AsyncCallbackSubmission) -> Value {
 fn callback_submission_from_value(
     value: Value,
 ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
-    Ok(AsyncCallbackSubmission {
+    let submission = AsyncCallbackSubmission {
         callback_id: required_string(&value, "callback_id")?,
         operation_id: required_string(&value, "operation_id")?,
         run_id: required_string(&value, "run_id")?,
@@ -3406,7 +3406,9 @@ fn callback_submission_from_value(
         received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
         verified_by: required_string(&value, "verified_by")?,
         policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
-    })
+    };
+    validate_callback_submission_identity(&submission)?;
+    Ok(submission)
 }
 
 fn callback_artifact_to_value(artifact: &CallbackArtifactRef) -> Value {
