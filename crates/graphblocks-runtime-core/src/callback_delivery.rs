@@ -2025,6 +2025,17 @@ fn is_forbidden_webhook_host(host: &str) -> bool {
         };
     }
 
+    let numeric_ipv4 = if let Some(hex) = host.strip_prefix("0x") {
+        u32::from_str_radix(hex, 16).ok()
+    } else if host.bytes().all(|byte| byte.is_ascii_digit()) {
+        host.parse::<u32>().ok()
+    } else {
+        None
+    };
+    if let Some(address) = numeric_ipv4.map(Ipv4Addr::from) {
+        return is_forbidden_ipv4(address);
+    }
+
     false
 }
 

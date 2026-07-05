@@ -2434,6 +2434,27 @@ fn webhook_target_rejects_forbidden_internal_endpoints_by_default() {
 }
 
 #[test]
+fn webhook_target_rejects_alternate_numeric_loopback_literals() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "http://2130706433/callback",
+        "http://0x7f000001/callback",
+    ] {
+        assert_eq!(
+            WebhookDeliveryTarget::new(url, &policy),
+            Err(WebhookEndpointError::UnsafeEndpoint {
+                host: url
+                    .trim_start_matches("http://")
+                    .trim_end_matches("/callback")
+                    .to_owned()
+            }),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let policy = WebhookEgressPolicy::default_deny_internal();
     let target =

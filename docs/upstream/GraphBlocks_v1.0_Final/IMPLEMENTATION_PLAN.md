@@ -614,6 +614,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   admission: webhook delivery requires HMAC-SHA256 or Ed25519 signing metadata and rejects obvious
   forbidden egress targets such as localhost, private/link-local IPs, `file://`, Unix socket URLs,
   and URLs with embedded userinfo credentials.
+- Runtime webhook target validation now also rejects alternate numeric IPv4 literals that resolve to
+  forbidden internal addresses, such as decimal or hex loopback forms, before delivery can reach an
+  HTTP transport.
 - Callback event filters now include visibility, node ID, operation ID, and minimum severity
   predicates in addition to event type and terminal-event inclusion. Runtime filters now treat
   `include_terminal_events: false` as an explicit terminal-event exclusion even for otherwise broad
