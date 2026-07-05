@@ -293,6 +293,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   diagnostics, metrics, checks, usage, and external effect records. Cancellation or timeout after an
   external provider committed a side effect MUST preserve that committed effect in the result
   projection and downstream audit/ledger path; cancellation is not treated as rollback.
+- Async operation result projection fields now reject bytes-like inputs even though they are Python
+  iterables, preventing callback logs or binary payload fragments from being split into integer
+  sequences in artifact, diagnostic, metric, check, usage, or external-effect projections.
 
 Example duplicate callback handling:
 

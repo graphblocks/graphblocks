@@ -186,7 +186,7 @@ def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
 
 
 def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
-    if isinstance(value, str) or isinstance(value, Mapping):
+    if isinstance(value, (str, bytes, bytearray, memoryview)) or isinstance(value, Mapping):
         raise ValueError(f"async operation result {field_name} must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
@@ -195,7 +195,7 @@ def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
 
 
 def _external_effect_sequence(value: object) -> tuple[object, ...]:
-    if isinstance(value, str) or isinstance(value, Mapping):
+    if isinstance(value, (str, bytes, bytearray, memoryview)) or isinstance(value, Mapping):
         raise ValueError("async operation result external_effects must be a sequence")
     try:
         return tuple(value)  # type: ignore[arg-type]
