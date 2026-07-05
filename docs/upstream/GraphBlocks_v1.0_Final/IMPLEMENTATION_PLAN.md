@@ -474,6 +474,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only
   after authentication succeeds.
+- OIDC callback authentication now rejects blank `Bearer` tokens before delegating to the verifier
+  hook, so an application verifier cannot accidentally authenticate an empty callback credential.
 - Rust `CallbackEndpointRef::new_bound` now carries operation, run, node, attempt, release, and
   tenant identity into the runtime endpoint reference, exposes the same canonical resume binding key
   as the Python callback projection, and rejects stale or wrong-scope callback submissions before

@@ -1259,6 +1259,9 @@ impl CallbackEndpointAuth {
             .get("Authorization")
             .and_then(|header| header.strip_prefix("Bearer "))
             .ok_or_else(|| callback_auth_failed(endpoint_id, "authorization_missing"))?;
+        if token.trim().is_empty() {
+            return Err(callback_auth_failed(endpoint_id, "oidc_token_empty"));
+        }
         if !verifier(issuer, audience, token) {
             return Err(callback_auth_failed(endpoint_id, "oidc_token_invalid"));
         }
