@@ -1468,6 +1468,8 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
 - Python durable tool-terminal and response-policy-stop records now reject boolean and non-integer
   revisions, stream sequence numbers, and completion/cutoff timestamps before durable replay or
   terminal-state enforcement can observe them.
+- `InMemoryDurableSource.poll` now validates demand before replay slicing, so malformed demand
+  values return durable demand errors instead of raw host-language slice exceptions.
 - Durable event-time window accumulation now treats watermarks as monotonic: stale watermark
   updates cannot move the late-data boundary backward or make already-late events admissible again.
 

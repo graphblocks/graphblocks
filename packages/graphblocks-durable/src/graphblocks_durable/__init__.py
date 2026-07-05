@@ -280,6 +280,9 @@ class InMemoryDurableSource:
     def poll(self, cursor: SourceCursor | None, *, demand: int) -> SourceBatch:
         if self.paused:
             raise SourcePausedError("source is paused")
+        demand = _require_integer("demand", demand)
+        if demand <= 0:
+            raise InvalidDemandError("demand must be positive")
         if cursor is not None:
             self._validate_cursor(cursor)
         replay_cursor = cursor if cursor is not None else self.committed_cursor

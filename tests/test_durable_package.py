@@ -197,6 +197,7 @@ def test_durable_source_rejects_invalid_delivery_guarantee(monkeypatch) -> None:
     ("demand", "message"),
     [
         (True, "demand must be an integer"),
+        ("1", "demand must be an integer"),
         (0, "demand must be positive"),
     ],
 )
@@ -206,11 +207,14 @@ def test_durable_source_batch_validates_guarantee_and_demand(
     message: str,
 ) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
+    source = graphblocks_durable.InMemoryDurableSource("at_least_once", [_order_event(graphblocks_durable, 10)])
 
     with pytest.raises(graphblocks_durable.DurableError, match="unsupported delivery guarantee"):
         graphblocks_durable.SourceBatch.new("exactly_once", [], None, demand=1)
     with pytest.raises(graphblocks_durable.DurableError, match=message):
         graphblocks_durable.SourceBatch.new("at_least_once", [], None, demand=demand)
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        source.poll(None, demand=demand)
 
 
 @pytest.mark.parametrize(
