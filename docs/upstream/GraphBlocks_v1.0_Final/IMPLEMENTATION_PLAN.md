@@ -711,6 +711,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async callback endpoint references now reject non-HTTP(S) URLs at construction/validation time,
   preventing `file://`, socket-like, or other non-ingress schemes from becoming authenticated
   callback resume endpoints.
+- Async operation result validation now requires `diagnostics`, `metrics`, `checks`, and `usage`
+  entries to be structured JSON objects before downstream graph nodes consume callback or polling
+  results.
 - Callback delivery IDs and receiver idempotency keys now percent-encode subscription and event
   identity components before joining them. This preserves the existing readable form for simple
   IDs while preventing `_`, `:`, `%`, or non-ASCII component collisions during replay and redrive.

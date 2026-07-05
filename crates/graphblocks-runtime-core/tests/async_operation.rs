@@ -2762,6 +2762,34 @@ fn async_operation_result_rejects_duplicate_artifact_ids() {
 }
 
 #[test]
+fn async_operation_result_rejects_non_object_record_lists() {
+    for (field, value) in [
+        ("diagnostics", json!("warning")),
+        ("metrics", json!(42)),
+        ("checks", json!(true)),
+        ("usage", json!("tokens")),
+    ] {
+        let mut result = AsyncOperationResult::completed("op-1");
+        match field {
+            "diagnostics" => result.diagnostics.push(value),
+            "metrics" => result.metrics.push(value),
+            "checks" => result.checks.push(value),
+            "usage" => result.usage.push(value),
+            _ => unreachable!("test fields are exhaustive"),
+        }
+
+        assert_eq!(
+            result.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: format!("{field} entries must be JSON objects"),
+            }),
+            "{field} should reject scalar entries",
+        );
+    }
+}
+
+#[test]
 fn callback_and_cancel_race_has_single_terminal_winner() {
     for seed in 0..64_u64 {
         let store = Arc::new(AsyncOperationStore::new());

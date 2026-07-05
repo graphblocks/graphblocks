@@ -1496,6 +1496,19 @@ impl AsyncOperationResult {
                 field: "operation_id".to_owned(),
             });
         }
+        for (field, values) in [
+            ("diagnostics", &self.diagnostics),
+            ("metrics", &self.metrics),
+            ("checks", &self.checks),
+            ("usage", &self.usage),
+        ] {
+            if values.iter().any(|value| !value.is_object()) {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!("{field} entries must be JSON objects"),
+                });
+            }
+        }
         let mut artifact_ids = BTreeSet::new();
         for artifact in &self.artifacts {
             artifact.validate()?;
