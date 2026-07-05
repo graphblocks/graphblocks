@@ -3068,6 +3068,62 @@ fn sqlite_async_operation_store_rejects_tampered_callback_receipt_digest_on_reop
 }
 
 #[test]
+fn sqlite_async_operation_store_rejects_invalid_callback_receipt_metadata_on_reopen() {
+    let path = sqlite_async_operation_path("callback-receipt-metadata-validation");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        store
+            .accept_callback(
+                valid_submission("cb-1", "idem-cb-1"),
+                &callback_schema_registry(),
+            )
+            .expect("callback is accepted");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let receipt_json: String = connection
+            .query_row(
+                "SELECT receipt_json FROM async_callback_receipts WHERE operation_id = ?1 AND idempotency_key = ?2",
+                params!["op-1", "idem-cb-1"],
+                |row| row.get(0),
+            )
+            .expect("receipt row exists");
+        let mut receipt: serde_json::Value =
+            serde_json::from_str(&receipt_json).expect("receipt json parses");
+        receipt["verified_by"] = json!(" \t");
+        connection
+            .execute(
+                "UPDATE async_callback_receipts SET receipt_json = ?1 WHERE operation_id = ?2 AND idempotency_key = ?3",
+                params![
+                    serde_json::to_string(&receipt).expect("receipt serializes"),
+                    "op-1",
+                    "idem-cb-1"
+                ],
+            )
+            .expect("receipt row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .accept_callback(
+            valid_submission("cb-duplicate", "idem-cb-1"),
+            &callback_schema_registry(),
+        )
+        .expect_err("invalid callback receipt metadata must fail durable replay");
+
+    assert_eq!(
+        error,
+        AsyncOperationError::EmptyField {
+            field: "verified_by".to_owned()
+        }
+    );
+}
+
+#[test]
 fn sqlite_async_operation_store_rejects_callback_receipt_row_identity_mismatch_on_reopen() {
     let path = sqlite_async_operation_path("callback-receipt-row-identity");
     {

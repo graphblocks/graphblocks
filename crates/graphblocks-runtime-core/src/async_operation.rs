@@ -3367,6 +3367,38 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
             message: "stored callback receipt payload_digest does not match payload".to_owned(),
         });
     }
+    for (field, value) in [
+        ("callback_id", &receipt.callback_id),
+        ("operation_id", &receipt.operation_id),
+        ("run_id", &receipt.run_id),
+        ("node_id", &receipt.node_id),
+        ("attempt_id", &receipt.attempt_id),
+        ("idempotency_key", &receipt.idempotency_key),
+        ("payload_digest", &receipt.payload_digest),
+        ("verified_by", &receipt.verified_by),
+        ("policy_snapshot_id", &receipt.policy_snapshot_id),
+    ] {
+        if value.trim().is_empty() {
+            return Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            });
+        }
+    }
+    if receipt
+        .provider_operation_id
+        .as_ref()
+        .is_some_and(|provider_operation_id| provider_operation_id.trim().is_empty())
+    {
+        return Err(AsyncOperationError::EmptyField {
+            field: "provider_operation_id".to_owned(),
+        });
+    }
+    if receipt.received_at_unix_ms == 0 {
+        return Err(AsyncOperationError::InvalidOperation {
+            operation_id: receipt.operation_id.clone(),
+            reason: "callback receipt received_at_unix_ms must be non-zero".to_owned(),
+        });
+    }
     Ok(receipt)
 }
 
