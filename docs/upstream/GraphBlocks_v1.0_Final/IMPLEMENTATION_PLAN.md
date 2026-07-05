@@ -1043,6 +1043,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The application-event TCK runner now validates streamed tool-result event sequence fixtures before
   event construction and rejects boolean/non-integer values instead of coercing them into protocol
   sequence numbers.
+- The same application-event fixture validation now covers generation chunk sequences before
+  `GenerationChunk` construction, keeping boolean JSON flags out of output-policy stream ordering.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

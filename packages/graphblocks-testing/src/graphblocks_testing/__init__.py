@@ -3097,10 +3097,20 @@ class TckRunner:
                 occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
             )
             if operation.get("op") == "output_policy_evaluation_started":
+                raw_generation_sequence = operation.get("sequence", operation.get("chunkSequence", 0))
+                if isinstance(raw_generation_sequence, bool) or not isinstance(raw_generation_sequence, int):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventGenerationSequenceInvalid",
+                            "message": "generation chunk sequence must be an integer",
+                            "path": f"$.operations[{sequence - 1}].sequence",
+                        }
+                    )
+                    continue
                 chunk = GenerationChunk.text(
                     str(operation.get("streamId", "stream-1")),
                     response_id,
-                    int(operation.get("sequence", operation.get("chunkSequence", 0))),
+                    raw_generation_sequence,
                     str(operation.get("text", "")),
                 )
                 event = ApplicationEvent.output_policy_evaluation_started(
