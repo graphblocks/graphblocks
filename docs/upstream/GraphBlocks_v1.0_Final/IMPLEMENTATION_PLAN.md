@@ -1429,6 +1429,9 @@ sandbox
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.
+- The Python TUI workspace projection now ignores boolean `tool_result_sequence` metadata in
+  `JobProgress` payloads, rendering an `updated` fallback instead of displaying booleans as stream
+  sequence numbers.
 
 ## 10. Phase 7 — Optional Extensions
 

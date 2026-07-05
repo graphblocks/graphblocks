@@ -214,6 +214,29 @@ def test_tui_package_projects_job_progress_from_streaming_tool_results(monkeypat
     }
 
 
+def test_tui_package_ignores_boolean_tool_result_sequence_in_job_progress(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    event = graphblocks_client.ApplicationProtocolEvent.new(
+        "JobProgress",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1_000,
+        ),
+        payload={"job_id": "embedding", "tool_result_sequence": True},
+    )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply(event)
+
+    assert state.tool_progress == {"embedding": "updated"}
+
+
 def test_tui_package_projects_output_cutoff_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))

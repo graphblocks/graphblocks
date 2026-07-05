@@ -236,7 +236,11 @@ class TuiProtocolSession:
                         summary = " ".join(text_parts) if text_parts else None
                 if not isinstance(summary, str) or not summary.strip():
                     sequence = payload.get("tool_result_sequence", payload.get("toolResultSequence"))
-                    summary = f"sequence {sequence}" if isinstance(sequence, int) else "updated"
+                    summary = (
+                        f"sequence {sequence}"
+                        if isinstance(sequence, int) and not isinstance(sequence, bool)
+                        else "updated"
+                    )
                 tool_progress[progress_id] = summary
 
         return replace(
