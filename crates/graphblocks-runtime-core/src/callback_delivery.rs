@@ -815,7 +815,7 @@ impl SqliteCallbackDeliveryQueue {
         let mut statement = connection
             .prepare(
                 "
-                SELECT delivery_json
+                SELECT delivery_id, delivery_json
                 FROM callback_deliveries
                 WHERE delivery_id = ?
                 ",
@@ -827,8 +827,9 @@ impl SqliteCallbackDeliveryQueue {
         let Some(row) = rows.next().map_err(callback_storage_error)? else {
             return Ok(None);
         };
-        let delivery_json = row.get::<_, String>(0).map_err(callback_storage_error)?;
-        delivery_from_value(callback_parse_json(&delivery_json)?).map(Some)
+        let row_delivery_id = row.get::<_, String>(0).map_err(callback_storage_error)?;
+        let delivery_json = row.get::<_, String>(1).map_err(callback_storage_error)?;
+        delivery_from_row_value(&row_delivery_id, callback_parse_json(&delivery_json)?).map(Some)
     }
 
     pub fn due_deliveries(
@@ -847,7 +848,7 @@ impl SqliteCallbackDeliveryQueue {
         let mut statement = connection
             .prepare(
                 "
-                SELECT delivery_json
+                SELECT delivery_id, delivery_json
                 FROM callback_deliveries
                 WHERE status = ?
                   AND (next_retry_at_unix_ms IS NULL OR next_retry_at_unix_ms <= ?)
@@ -863,11 +864,12 @@ impl SqliteCallbackDeliveryQueue {
                     callback_u64_to_i64(now_unix_ms, "callback delivery due time")?,
                     callback_usize_to_i64(limit, "callback delivery due limit")?,
                 ],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .map_err(callback_storage_error)?;
         rows.map(|row| {
-            delivery_from_value(callback_parse_json(&row.map_err(callback_storage_error)?)?)
+            let (row_delivery_id, delivery_json) = row.map_err(callback_storage_error)?;
+            delivery_from_row_value(&row_delivery_id, callback_parse_json(&delivery_json)?)
         })
         .collect()
     }
@@ -885,7 +887,7 @@ impl SqliteCallbackDeliveryQueue {
             let mut statement = connection
                 .prepare(
                     "
-                    SELECT delivery_json
+                    SELECT delivery_id, delivery_json
                     FROM callback_deliveries
                     WHERE status = ?
                     ORDER BY sequence, delivery_id
@@ -897,13 +899,15 @@ impl SqliteCallbackDeliveryQueue {
                     params![callback_delivery_status_as_str(
                         CallbackDeliveryStatus::Delivering
                     )],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
                 .map_err(callback_storage_error)?;
             for row in rows {
-                let mut delivery = delivery_from_value(callback_parse_json(
-                    &row.map_err(callback_storage_error)?,
-                )?)?;
+                let (row_delivery_id, delivery_json) = row.map_err(callback_storage_error)?;
+                let mut delivery = delivery_from_row_value(
+                    &row_delivery_id,
+                    callback_parse_json(&delivery_json)?,
+                )?;
                 delivery.status = CallbackDeliveryStatus::Pending;
                 delivery.next_retry_at_unix_ms = Some(now_unix_ms);
                 delivery.last_error = Some("delivery_recovered_after_worker_restart".to_owned());
@@ -965,7 +969,7 @@ impl SqliteCallbackDeliveryQueue {
             let mut statement = connection
                 .prepare(
                     "
-                    SELECT delivery_json
+                    SELECT delivery_id, delivery_json
                     FROM callback_deliveries
                     WHERE status = ?
                     ORDER BY sequence, delivery_id
@@ -977,13 +981,15 @@ impl SqliteCallbackDeliveryQueue {
                     params![callback_delivery_status_as_str(
                         CallbackDeliveryStatus::Pending
                     )],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
                 .map_err(callback_storage_error)?;
             for row in rows {
-                let mut delivery = delivery_from_value(callback_parse_json(
-                    &row.map_err(callback_storage_error)?,
-                )?)?;
+                let (row_delivery_id, delivery_json) = row.map_err(callback_storage_error)?;
+                let mut delivery = delivery_from_row_value(
+                    &row_delivery_id,
+                    callback_parse_json(&delivery_json)?,
+                )?;
                 if delivery.subscription_id == subscription_id {
                     delivery.status = CallbackDeliveryStatus::Cancelled;
                     delivery.next_retry_at_unix_ms = None;
@@ -2013,6 +2019,19 @@ fn delivery_from_value(value: Value) -> Result<CallbackDelivery, CallbackDeliver
         last_redrive_reason: callback_optional_string(&value, "last_redrive_reason")?,
     };
     validate_callback_delivery(&delivery)?;
+    Ok(delivery)
+}
+
+fn delivery_from_row_value(
+    row_delivery_id: &str,
+    value: Value,
+) -> Result<CallbackDelivery, CallbackDeliveryError> {
+    let delivery = delivery_from_value(value)?;
+    if delivery.delivery_id != row_delivery_id {
+        return Err(CallbackDeliveryError::Storage {
+            message: "stored callback delivery identity does not match row key".to_owned(),
+        });
+    }
     Ok(delivery)
 }
 

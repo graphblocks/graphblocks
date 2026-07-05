@@ -11,6 +11,7 @@ use graphblocks_runtime_core::callback_delivery::{
     WebhookDeliveryTarget, WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError,
     WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError, WebhookSigningConfig,
 };
+use rusqlite::{params, Connection};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
@@ -1055,6 +1056,61 @@ fn sqlite_callback_delivery_queue_persists_pending_delivery_across_reopen() {
 
     assert_eq!(loaded, delivery);
     assert_eq!(due, vec![delivery]);
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_rejects_delivery_row_identity_mismatch_on_reopen() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let path = sqlite_callback_delivery_queue_path("delivery-row-identity");
+
+    {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+        queue
+            .upsert_delivery(delivery)
+            .expect("delivery persists");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let delivery_json: String = connection
+            .query_row(
+                "SELECT delivery_json FROM callback_deliveries WHERE delivery_id = ?1",
+                params!["del_sub-1_event-1"],
+                |row| row.get(0),
+            )
+            .expect("delivery row exists");
+        let mut delivery: serde_json::Value =
+            serde_json::from_str(&delivery_json).expect("delivery json parses");
+        delivery["delivery_id"] = json!("del_forged");
+        connection
+            .execute(
+                "UPDATE callback_deliveries SET delivery_json = ?1 WHERE delivery_id = ?2",
+                params![
+                    serde_json::to_string(&delivery).expect("delivery serializes"),
+                    "del_sub-1_event-1"
+                ],
+            )
+            .expect("delivery row is tampered");
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let error = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect_err("delivery row identity mismatch must fail durable replay");
+
+    assert!(matches!(
+        error,
+        graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage { message }
+            if message.contains("stored callback delivery identity does not match row key")
+    ));
 }
 
 #[test]
