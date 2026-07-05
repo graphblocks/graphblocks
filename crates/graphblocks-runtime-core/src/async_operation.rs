@@ -379,14 +379,6 @@ impl AsyncOperation {
                 reason: "non-created operations require submitted_at".to_owned(),
             });
         }
-        if self.state == AsyncOperationState::CallbackReceived
-            && self.completed_at_unix_ms.is_none()
-        {
-            return Err(AsyncOperationError::InvalidOperation {
-                operation_id: self.operation_id.clone(),
-                reason: "callback_received operations require completed_at".to_owned(),
-            });
-        }
         if let Some(submitted_at_unix_ms) = self.submitted_at_unix_ms
             && submitted_at_unix_ms < self.created_at_unix_ms
         {
@@ -3304,7 +3296,7 @@ fn operation_to_value(operation: &AsyncOperation) -> Value {
 }
 
 fn operation_from_value(value: Value) -> Result<AsyncOperation, AsyncOperationError> {
-    Ok(AsyncOperation {
+    let operation = AsyncOperation {
         operation_id: required_string(&value, "operation_id")?,
         run_id: required_string(&value, "run_id")?,
         node_id: required_string(&value, "node_id")?,
@@ -3326,7 +3318,9 @@ fn operation_from_value(value: Value) -> Result<AsyncOperation, AsyncOperationEr
         callback_attempt_fencing: optional_bool(&value, "callback_attempt_fencing")?
             .unwrap_or(true),
         resume_ownership_fence: optional_bool(&value, "resume_ownership_fence")?.unwrap_or(true),
-    })
+    };
+    operation.validate()?;
+    Ok(operation)
 }
 
 fn receipt_to_value(receipt: &ExternalCallbackReceived) -> Value {

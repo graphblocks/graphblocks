@@ -454,6 +454,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - SQLite async operation replay validates that each stored operation JSON identity matches its
   durable row key before the operation can re-enter scheduling, callback admission, or duplicate
   detection state.
+- SQLite async operation replay also runs the normal `AsyncOperation` validation invariants over
+  stored operation JSON before the operation can be rehydrated.
 - SQLite async operation event replay validates that each stored event payload belongs to the
   durable operation row key before it can re-enter the replayable operation journal.
 - SQLite async operation event replay also requires event indexes to be contiguous from zero for

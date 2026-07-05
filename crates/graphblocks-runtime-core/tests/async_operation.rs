@@ -856,19 +856,16 @@ fn async_operation_validate_rejects_completion_after_expiration() {
 }
 
 #[test]
-fn async_operation_validate_rejects_callback_received_without_valid_receipt_time() {
-    let mut missing_receipt_time = waiting_operation();
-    missing_receipt_time.state = AsyncOperationState::CallbackReceived;
-    missing_receipt_time.completed_at_unix_ms = None;
+fn async_operation_validate_allows_callback_received_without_terminal_completion_time() {
+    let mut resumable = waiting_operation();
+    resumable.state = AsyncOperationState::CallbackReceived;
+    resumable.completed_at_unix_ms = None;
 
-    assert_eq!(
-        missing_receipt_time.validate(),
-        Err(AsyncOperationError::InvalidOperation {
-            operation_id: "op-1".to_owned(),
-            reason: "callback_received operations require completed_at".to_owned(),
-        })
-    );
+    assert_eq!(resumable.validate(), Ok(()));
+}
 
+#[test]
+fn async_operation_validate_rejects_callback_received_receipt_time_after_expiration() {
     let mut receipt_after_expiry = waiting_operation();
     receipt_after_expiry.state = AsyncOperationState::CallbackReceived;
     receipt_after_expiry.expires_at_unix_ms = Some(1_900);
@@ -2841,6 +2838,52 @@ fn sqlite_async_operation_store_rejects_operation_row_identity_mismatch_on_reope
                 if message.contains("stored async operation identity does not match row key")
         ),
         "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn sqlite_async_operation_store_rejects_invalid_operation_json_on_reopen() {
+    let path = sqlite_async_operation_path("operation-replay-validation");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let operation_json: String = connection
+            .query_row(
+                "SELECT operation_json FROM async_operations WHERE operation_id = ?1",
+                params!["op-1"],
+                |row| row.get(0),
+            )
+            .expect("operation row exists");
+        let mut operation: serde_json::Value =
+            serde_json::from_str(&operation_json).expect("operation json parses");
+        operation["run_id"] = json!(" \t");
+        connection
+            .execute(
+                "UPDATE async_operations SET operation_json = ?1 WHERE operation_id = ?2",
+                params![
+                    serde_json::to_string(&operation).expect("operation serializes"),
+                    "op-1"
+                ],
+            )
+            .expect("operation row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .register(waiting_operation())
+        .expect_err("invalid stored operation must fail durable replay");
+
+    assert_eq!(
+        error,
+        AsyncOperationError::EmptyField {
+            field: "run_id".to_owned()
+        }
     );
 }
 
