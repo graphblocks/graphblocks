@@ -159,6 +159,8 @@ class TuiProtocolSession:
             status = str(payload.get("status", "failed"))
         elif event.kind == "RunCancelled":
             status = str(payload.get("status", "cancelled"))
+        elif event.kind == "RunPolicyStopped":
+            status = str(payload.get("status", "policy_stopped"))
         elif event.kind == "BudgetExhausted":
             status = "budget_exhausted"
         elif event.kind == "ExecutionDegraded":
