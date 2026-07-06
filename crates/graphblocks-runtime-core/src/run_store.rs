@@ -680,6 +680,27 @@ impl RunStatusSnapshot {
                 field: "active_operations",
             });
         }
+        let mut sorted_wait_reason_keys = waiting_on
+            .iter()
+            .map(|reason| {
+                (
+                    reason.kind.as_str(),
+                    reason.node_id.as_deref(),
+                    reason.operation_id.as_deref(),
+                    reason.message.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        sorted_wait_reason_keys.sort();
+        if sorted_wait_reason_keys
+            .windows(2)
+            .any(|window| window[0] == window[1])
+        {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "wait reasons must not contain duplicates",
+            });
+        }
         let mut sorted_active_operations = active_operations.clone();
         sorted_active_operations.sort();
         if sorted_active_operations

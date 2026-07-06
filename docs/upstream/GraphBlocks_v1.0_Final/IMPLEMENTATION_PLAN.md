@@ -415,6 +415,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Non-callback wait and pause states also require matching typed wait reasons for input, approval,
   review, budget, policy, or operator intervention. The Rust runtime core provides a canonical
   protocol JSON projection with camelCase fields and typed `waitingOn` entries for server adapters.
+  Status projection also rejects duplicate wait-reason identities, so reconnect and resume clients
+  do not observe the same blocker as multiple independent conditions.
 - Run status snapshots now reject wait reasons on active non-waiting states such as `running` and
   `resuming`, while still allowing active operation ids, so callback/user-facing wait metadata only
   appears when the run is actually waiting or paused.

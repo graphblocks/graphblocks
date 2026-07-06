@@ -161,6 +161,33 @@ fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunSt
 }
 
 #[test]
+fn run_status_snapshot_rejects_duplicate_wait_reasons() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let paused = store.set_status(&record.run_id, RunStatus::PausedBudget)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &paused,
+            "evt_000045",
+            1_000,
+            1_600,
+            None,
+            vec![
+                RunWaitReason::budget("quota_exhausted")?,
+                RunWaitReason::budget("quota_exhausted")?,
+            ],
+            vec![],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: paused.run_id,
+            reason: "wait reasons must not contain duplicates",
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:graph", json!({"task": "ci"}));
