@@ -1044,6 +1044,72 @@ def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
     assert "maxInterval must not be less than interval" in failed[0].payload["error"]
 
 
+def test_stdlib_async_poll_rejects_oversized_string_duration() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-oversized-poll-duration"},
+        "spec": {
+            "interface": {
+                "outputs": {"poll": "graphblocks.ai/AsyncPoll@1"}
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-poll",
+                        "runId": "run-coding-1",
+                        "nodeId": "startPoll",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-op-poll",
+                        "resumeTokenHash": "sha256:resume-token-op-poll",
+                        "idempotencyKey": "idem-op-poll",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 10_000,
+                        "timeoutMs": 9_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "poll.operation"},
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "30s",
+                        "timeout": "18446744073709551616ms",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "poll"
+    assert "timeout must be an unsigned 64-bit duration" in failed[0].payload["error"]
+
+
 def test_stdlib_async_await_callback_rejects_non_boolean_checkpoint() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

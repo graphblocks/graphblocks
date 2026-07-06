@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 import re
 from dataclasses import dataclass, field
 import json
@@ -1300,7 +1301,10 @@ def stdlib_registry() -> RuntimeRegistry:
         seconds = parse_duration_seconds(value)
         if seconds is None or seconds <= 0:
             raise ValueError(f"async operation config.{label} must be a positive duration")
-        return int(seconds * 1000)
+        duration_ms = seconds * 1000
+        if not math.isfinite(duration_ms) or duration_ms > MAX_U64:
+            raise ValueError(f"async operation config.{label} must be an unsigned 64-bit duration")
+        return int(duration_ms)
 
     def _required_async_operation_input(inputs: Mapping[str, Any], block_label: str) -> dict[str, Any]:
         operation = inputs.get("operation")

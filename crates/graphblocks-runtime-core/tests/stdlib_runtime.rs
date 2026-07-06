@@ -1249,6 +1249,55 @@ fn rust_stdlib_async_poll_operation_rejects_max_interval_below_interval() -> Res
 }
 
 #[test]
+fn rust_stdlib_async_poll_operation_rejects_oversized_string_duration() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-poll-oversized-duration"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "30s",
+                        "timeout": "18446744073709551616ms",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                }
+            }
+        }
+    });
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("oversized poll duration should fail compiler diagnostics");
+
+    assert!(
+        error.contains("GB6001"),
+        "unexpected compiler error: {error:?}",
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_cancel_operation_rejects_invalid_terminal_timestamp() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

@@ -675,10 +675,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `async.cancel_operation@1`, and `async.expire_operation@1` projections for polling and terminal
   async operation results. `async.poll_operation@1` requires a timeout in its block config so
   graph-authored polling waits cannot silently become unbounded, and accepts positive duration
-  strings such as `30s`, `5m`, or `2h` for interval and timeout settings. Runtime poll projections
-  now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that unbounded
-  wait policy is declared, and reject poll configurations whose `maxInterval` is lower than the
-  initial `interval`. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
+  strings such as `30s`, `5m`, or `2h` for interval and timeout settings. Parsed string durations
+  must fit in unsigned 64-bit milliseconds, matching the integer duration contract. Runtime poll
+  projections now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that
+  unbounded wait policy is declared, and reject poll configurations whose `maxInterval` is lower
+  than the initial `interval`. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
   `expiredAtUnixMs` values and timestamps that regress before `submitted_at_unix_ms`, matching the
   durable operation-store timestamp invariant. Rust stdlib boundary coverage now also verifies that
   malformed terminal `externalEffects` with provider identities but no committed outcome fail before
