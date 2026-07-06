@@ -547,6 +547,37 @@ fn webhook_rate_limit_retry_after_is_capped_by_retry_policy() {
 }
 
 #[test]
+fn webhook_rate_limit_retry_after_zero_uses_positive_delay() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 250));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let retry = scheduler.record_response(
+        delivery,
+        CallbackDeliveryResponse::RateLimited {
+            retry_after_ms: Some(0),
+        },
+        1_000,
+    );
+
+    assert_eq!(retry.status, CallbackDeliveryStatus::Pending);
+    assert_eq!(retry.attempt, 2);
+    assert!(
+        retry
+            .next_retry_at_unix_ms
+            .is_some_and(|retry_at| retry_at > 1_000),
+        "zero retry-after must not schedule an immediate retry"
+    );
+    assert_eq!(retry.last_error.as_deref(), Some("rate_limited"));
+}
+
+#[test]
 fn callback_retry_policy_normalizes_zero_delays_to_positive_bound() {
     let policy = CallbackRetryPolicy::new(3, 0, 0);
 

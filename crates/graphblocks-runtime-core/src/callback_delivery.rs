@@ -2922,7 +2922,7 @@ impl CallbackDeliveryScheduler {
         delivery.attempt += 1;
         delivery.status = CallbackDeliveryStatus::Pending;
         let delay_ms = retry_after_ms
-            .map(|retry_after_ms| retry_after_ms.min(self.retry_policy.max_delay_ms))
+            .map(|retry_after_ms| retry_after_ms.max(1).min(self.retry_policy.max_delay_ms))
             .unwrap_or_else(|| {
                 self.retry_policy
                     .delay_for_attempt_with_jitter(delivery.attempt - 1, &delivery.idempotency_key)
