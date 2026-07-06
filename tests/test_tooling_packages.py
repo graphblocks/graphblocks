@@ -309,6 +309,31 @@ def test_tui_package_projects_policy_stopped_run_event(monkeypatch) -> None:
     assert state.counters["RunPolicyStopped"] == 1
 
 
+def test_tui_package_projects_expired_run_event(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    event = graphblocks_client.ApplicationProtocolEvent.new(
+        "RunExpired",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-expired",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=5,
+            occurred_at_unix_ms=5_000,
+        ),
+        payload={"reason": "deadline exceeded"},
+    )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1", status="running").apply(event)
+
+    assert state.status == "expired"
+    assert state.last_event == "RunExpired"
+    assert state.counters["RunExpired"] == 1
+
+
 def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))

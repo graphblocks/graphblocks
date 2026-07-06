@@ -237,6 +237,7 @@ ApplicationProtocolEventKind = Literal[
     "RunFailed",
     "RunCancelled",
     "RunPolicyStopped",
+    "RunExpired",
 ]
 
 APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
@@ -268,6 +269,7 @@ APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
     "RunFailed",
     "RunCancelled",
     "RunPolicyStopped",
+    "RunExpired",
 )
 APPLICATION_PROTOCOL_TCK_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = APPLICATION_PROTOCOL_EVENT_KINDS
 

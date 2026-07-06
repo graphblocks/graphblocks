@@ -62,6 +62,7 @@ SERVER_TERMINAL_EVENT_KINDS = frozenset({
     "RunCancelled",
     "RunPolicyStopped",
     "RunCompleted",
+    "RunExpired",
 })
 
 
@@ -2343,6 +2344,7 @@ class GraphBlocksServerApp:
             "RunFailed": "failed",
             "RunCancelled": "cancelled",
             "RunPolicyStopped": "policy_stopped",
+            "RunExpired": "expired",
         }
 
         for index, event in enumerate(events):
@@ -2471,6 +2473,8 @@ class GraphBlocksServerApp:
                 event_terminal_state = "cancelled"
             elif event_kind == "RunPolicyStopped":
                 event_terminal_state = "policy_stopped"
+            elif event_kind == "RunExpired":
+                event_terminal_state = "expired"
         if event_terminal_state is not None:
             return ServerResponse.json(
                 409,

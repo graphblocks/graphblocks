@@ -747,6 +747,7 @@ def test_server_app_rejects_run_control_after_terminal_event_stream() -> None:
         ("failed", "RunFailed", "failed"),
         ("cancelled", "RunCancelled", "cancelled"),
         ("policy-stopped", "RunPolicyStopped", "policy_stopped"),
+        ("expired", "RunExpired", "expired"),
     ):
         run_id = f"run-terminal-control-{suffix}"
         app._events_by_run_id[run_id] = (

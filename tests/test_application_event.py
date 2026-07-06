@@ -241,6 +241,7 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
         "RunFailed",
         "RunCancelled",
         "RunPolicyStopped",
+        "RunExpired",
     )
 
     command_payload = {"tool_call_id": "tool-call-1"}
