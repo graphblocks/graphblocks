@@ -1882,16 +1882,29 @@ impl AsyncOperationStore {
 
         let mut accepted = Vec::new();
         let mut resume_winner_seen = false;
+        let mut first_error = None;
         for submission in submissions {
             if resume_winner_seen {
                 self.record_callback_rejected(&submission, "quarantined_callback_superseded");
                 continue;
             }
-            let result = self.accept_callback(submission, registry)?;
+            let result = match self.accept_callback(submission, registry) {
+                Ok(result) => result,
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                    continue;
+                }
+            };
             if result.should_resume {
                 resume_winner_seen = true;
             }
             accepted.push(result);
+        }
+
+        if accepted.is_empty() && let Some(error) = first_error {
+            return Err(error);
         }
 
         Ok(accepted)

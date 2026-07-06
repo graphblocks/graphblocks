@@ -502,6 +502,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   the operation now produce `ExternalCallbackRejected` metadata with
   `quarantined_callback_superseded`, so early-callback race handling remains auditable instead of
   silently dropping distinct queued deliveries.
+- Quarantine replay now continues after an audited rejected callback, allowing a later valid
+  quarantined callback for the same operation to resume the run while preserving the first rejection
+  metadata in the operation event stream.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order for
   top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with

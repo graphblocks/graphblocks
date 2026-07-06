@@ -1433,6 +1433,60 @@ fn superseded_quarantined_callbacks_are_audited_after_first_resume() {
 }
 
 #[test]
+fn invalid_quarantined_callback_does_not_block_later_valid_callback() {
+    let store = AsyncOperationStore::new();
+    store
+        .quarantine_callback_before_operation_commit(
+            AsyncCallbackSubmission::new(
+                "cb-early-invalid",
+                "op-1",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                "provider-delivery-0-invalid",
+                json!({"status": 7}),
+                1_200,
+                "hmac:callback-endpoint-1",
+                "policy-snapshot-1",
+            )
+            .with_provider_operation_id("gha-run-1"),
+            5_000,
+        )
+        .expect("invalid early callback is quarantined before schema is known");
+    store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-valid", "provider-delivery-1-valid"),
+            5_000,
+        )
+        .expect("valid early callback is quarantined");
+
+    store
+        .register(waiting_operation())
+        .expect("operation is registered after callback ingress");
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("invalid quarantined callback is rejected and valid callback still resumes");
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early-valid");
+    assert!(accepted[0].should_resume);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-early-invalid" && reason == "schema_invalid"
+        )
+    }));
+}
+
+#[test]
 fn conflicting_early_callback_replay_does_not_overwrite_quarantine() {
     let store = AsyncOperationStore::new();
     store
