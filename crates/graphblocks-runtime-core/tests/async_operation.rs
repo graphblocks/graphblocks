@@ -1393,6 +1393,46 @@ fn duplicate_early_callback_is_quarantined_once_and_consumed_once() {
 }
 
 #[test]
+fn superseded_quarantined_callbacks_are_audited_after_first_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-first", "provider-delivery-first"),
+            5_000,
+        )
+        .expect("first early callback is quarantined");
+    store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-second", "provider-delivery-second"),
+            5_000,
+        )
+        .expect("second early callback is quarantined");
+
+    store
+        .register(waiting_operation())
+        .expect("operation is registered after callback ingress");
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("quarantined callbacks are consumed");
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early-first");
+    assert!(accepted[0].should_resume);
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-early-second"
+                && reason == "quarantined_callback_superseded"
+        )
+    }));
+}
+
+#[test]
 fn conflicting_early_callback_replay_does_not_overwrite_quarantine() {
     let store = AsyncOperationStore::new();
     store
