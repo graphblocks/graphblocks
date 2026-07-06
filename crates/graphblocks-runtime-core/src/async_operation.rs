@@ -1877,6 +1877,12 @@ impl AsyncOperationStore {
                     }
                 }
             }
+            submissions.sort_by(|left, right| {
+                left.received_at_unix_ms
+                    .cmp(&right.received_at_unix_ms)
+                    .then_with(|| left.callback_id.cmp(&right.callback_id))
+                    .then_with(|| left.idempotency_key.cmp(&right.idempotency_key))
+            });
             submissions
         };
 

@@ -505,6 +505,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Quarantine replay now continues after an audited rejected callback, allowing a later valid
   quarantined callback for the same operation to resume the run while preserving the first rejection
   metadata in the operation event stream.
+- Quarantined callback replay uses callback receipt time, not idempotency-key ordering, so the
+  earliest valid delivery wins admission even when durable quarantine storage uses keyed maps.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order for
   top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with
