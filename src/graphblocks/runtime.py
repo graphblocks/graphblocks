@@ -1053,15 +1053,18 @@ def stdlib_registry() -> RuntimeRegistry:
             operation["infinite_wait_policy"] = infinite_wait_policy
         if expires_at_unix_ms is not None:
             submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
+            if not isinstance(submitted_at_unix_ms, int) or isinstance(submitted_at_unix_ms, bool):
+                raise ValueError("async.start_operation@1 invalid operation: non-created operations require submitted_at")
             if (
-                isinstance(submitted_at_unix_ms, int)
-                and not isinstance(submitted_at_unix_ms, bool)
-                and expires_at_unix_ms <= submitted_at_unix_ms
+                expires_at_unix_ms <= submitted_at_unix_ms
             ):
                 raise ValueError("async.start_operation@1 invalid operation: expires_at must be after submitted_at")
             operation["expires_at_unix_ms"] = expires_at_unix_ms
             operation["state"] = "waiting_callback"
         elif infinite_wait_policy is not None:
+            submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
+            if not isinstance(submitted_at_unix_ms, int) or isinstance(submitted_at_unix_ms, bool):
+                raise ValueError("async.start_operation@1 invalid operation: non-created operations require submitted_at")
             operation["state"] = "waiting_callback"
         if "subject" in inputs:
             operation["subject"] = inputs["subject"]
