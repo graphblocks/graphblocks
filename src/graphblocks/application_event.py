@@ -145,6 +145,14 @@ POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = froz
     )
 )
 
+ApplicationEventVisibility = Literal["client", "operator", "internal", "audit_only"]
+APPLICATION_EVENT_VISIBILITIES: tuple[ApplicationEventVisibility, ...] = (
+    "client",
+    "operator",
+    "internal",
+    "audit_only",
+)
+
 ApplicationCommandKind = Literal[
     "InvokeGraph",
     "CancelRun",
@@ -625,6 +633,11 @@ class ApplicationEventMetadata:
     policy_snapshot_id: str
     occurred_at: str
     turn_id: str | None = None
+    cursor: str | None = None
+    graph_id: str | None = None
+    node_id: str | None = None
+    operation_id: str | None = None
+    visibility: ApplicationEventVisibility = "client"
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -645,6 +658,17 @@ class ApplicationEventMetadata:
             "application event turn_id",
             self.turn_id,
         )
+        for field_name in ("cursor", "graph_id", "node_id", "operation_id"):
+            _validate_optional_non_empty_string(
+                ApplicationEventError,
+                f"application event {field_name}",
+                getattr(self, field_name),
+            )
+        if self.visibility not in APPLICATION_EVENT_VISIBILITIES:
+            raise ApplicationEventError(
+                "application event visibility must be one of "
+                f"{', '.join(APPLICATION_EVENT_VISIBILITIES)}"
+            )
         _validate_non_negative_integer(
             ApplicationEventError,
             "application event sequence",

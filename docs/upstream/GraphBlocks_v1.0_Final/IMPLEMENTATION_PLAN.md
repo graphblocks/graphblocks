@@ -1205,6 +1205,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   that loads its multi-document YAML and pins accepted invocation, SSE cursor replay, callback
   ingress, pre-commit quarantine, await-callback checkpointing, CAS commit, and signed webhook
   subscription semantics.
+- The Python `ApplicationEvent` facade now carries the authoritative event-stream metadata needed
+  by callback projections and cursor replay: stable cursor, graph/node/operation ids, and typed
+  client/operator/internal/audit-only visibility.
 
 ### Package ownership
 

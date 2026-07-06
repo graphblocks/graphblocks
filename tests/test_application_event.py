@@ -8,6 +8,7 @@ import pytest
 import graphblocks
 from graphblocks import (
     APPLICATION_COMMAND_KINDS,
+    APPLICATION_EVENT_VISIBILITIES,
     APPLICATION_PROTOCOL_TCK_COMMAND_KINDS,
     APPLICATION_PROTOCOL_EVENT_KINDS,
     APPLICATION_PROTOCOL_TCK_EVENT_KINDS,
@@ -130,6 +131,61 @@ def test_application_event_metadata_rejects_empty_required_ids_and_negative_sequ
             release_id="release-1",
             policy_snapshot_id="policy-1",
             occurred_at=" ",
+        )
+
+
+def test_application_event_metadata_carries_authoritative_stream_fields() -> None:
+    metadata = ApplicationEventMetadata(
+        event_id="event-1",
+        run_id="run-1",
+        response_id="response-1",
+        sequence=7,
+        release_id="release-1",
+        policy_snapshot_id="policy-1",
+        occurred_at="2026-06-23T00:00:00Z",
+        cursor="cursor-7",
+        graph_id="graph-1",
+        node_id="node-1",
+        operation_id="operation-1",
+        visibility="operator",
+    )
+    event = ApplicationEvent.new("RunStarted", metadata, payload={})
+
+    assert event.metadata.cursor == "cursor-7"
+    assert event.metadata.graph_id == "graph-1"
+    assert event.metadata.node_id == "node-1"
+    assert event.metadata.operation_id == "operation-1"
+    assert event.metadata.visibility == "operator"
+
+    default_metadata = _metadata()
+    assert default_metadata.cursor is None
+    assert default_metadata.graph_id is None
+    assert default_metadata.node_id is None
+    assert default_metadata.operation_id is None
+    assert default_metadata.visibility == "client"
+    assert APPLICATION_EVENT_VISIBILITIES == ("client", "operator", "internal", "audit_only")
+
+    with pytest.raises(ApplicationEventError, match="application event visibility must be one of"):
+        ApplicationEventMetadata(
+            event_id="event-2",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:01Z",
+            visibility="public",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ApplicationEventError, match="application event cursor must not be empty"):
+        ApplicationEventMetadata(
+            event_id="event-3",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=9,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:02Z",
+            cursor=" ",
         )
 
 
