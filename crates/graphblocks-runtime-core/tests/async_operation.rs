@@ -2733,6 +2733,57 @@ fn callback_after_completion_records_late_callback_without_resume() {
 }
 
 #[test]
+fn cancel_and_expire_reject_zero_or_regressed_terminal_timestamps() {
+    for (label, terminal_at) in [("zero", 0), ("before_submitted", 1_049)] {
+        let store = AsyncOperationStore::new();
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+
+        assert_eq!(
+            store.cancel_operation("op-1", terminal_at),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: if terminal_at == 0 {
+                    "cancelled_at must be positive".to_owned()
+                } else {
+                    "cancelled_at precedes submitted_at".to_owned()
+                },
+            }),
+            "cancel timestamp case {label} should be rejected",
+        );
+        assert_eq!(
+            store.operation_state("op-1"),
+            Some(AsyncOperationState::WaitingCallback)
+        );
+    }
+
+    for (label, terminal_at) in [("zero", 0), ("before_submitted", 1_049)] {
+        let store = AsyncOperationStore::new();
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+
+        assert_eq!(
+            store.expire_operation("op-1", terminal_at),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: if terminal_at == 0 {
+                    "expired_at must be positive".to_owned()
+                } else {
+                    "expired_at precedes submitted_at".to_owned()
+                },
+            }),
+            "expire timestamp case {label} should be rejected",
+        );
+        assert_eq!(
+            store.operation_state("op-1"),
+            Some(AsyncOperationState::WaitingCallback)
+        );
+    }
+}
+
+#[test]
 fn cancelled_async_operation_result_preserves_committed_external_effect() {
     let result = AsyncOperationResult::cancelled("op-1").with_external_effects([
         ExternalEffectRecord::new(

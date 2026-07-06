@@ -935,6 +935,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency comparisons. Deployments can configure the server callback route to require an
   installed authentication hook before `SubmitAsyncCallback` will parse, validate, or store a
   callback receipt.
+- `graphblocks-runtime-core` now rejects async-operation cancel and expire terminal transitions
+  whose timestamps are zero or precede the operation submission timestamp. This keeps local
+  cancellation/expiry controls from writing impossible terminal state while preserving the existing
+  timeout behavior where expiry detection may occur after the configured callback deadline.
 - `graphblocks-client` now exposes a `SubmitAsyncCallback` HTTP helper that posts authenticated
   callback receipts to `/callbacks/{operation_id}` with the required idempotency header and typed
   run/node/attempt/provider fences, so clients do not need to hand-assemble callback ingress

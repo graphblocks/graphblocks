@@ -2395,6 +2395,7 @@ impl AsyncOperationStore {
                 state: operation.state,
             });
         }
+        validate_terminal_transition_timestamp(operation, "cancelled_at", cancelled_at_unix_ms)?;
 
         let from = operation.state;
         operation.state = AsyncOperationState::Cancelled;
@@ -2440,6 +2441,7 @@ impl AsyncOperationStore {
                 state: operation.state,
             });
         }
+        validate_terminal_transition_timestamp(operation, "expired_at", expired_at_unix_ms)?;
 
         let from = operation.state;
         operation.state = AsyncOperationState::Expired;
@@ -3258,6 +3260,28 @@ fn validate_callback_submission_and_resume_decision(
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_terminal_transition_timestamp(
+    operation: &AsyncOperation,
+    field: &'static str,
+    terminal_at_unix_ms: u64,
+) -> Result<(), AsyncOperationError> {
+    if terminal_at_unix_ms == 0 {
+        return Err(AsyncOperationError::InvalidOperation {
+            operation_id: operation.operation_id.clone(),
+            reason: format!("{field} must be positive"),
+        });
+    }
+    if let Some(submitted_at_unix_ms) = operation.submitted_at_unix_ms
+        && terminal_at_unix_ms < submitted_at_unix_ms
+    {
+        return Err(AsyncOperationError::InvalidOperation {
+            operation_id: operation.operation_id.clone(),
+            reason: format!("{field} precedes submitted_at"),
+        });
     }
     Ok(())
 }
