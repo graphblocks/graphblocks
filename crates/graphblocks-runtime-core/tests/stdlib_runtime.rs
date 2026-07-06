@@ -1204,6 +1204,58 @@ fn rust_stdlib_async_expire_operation_rejects_invalid_terminal_timestamp() -> Re
     Ok(())
 }
 
+#[test]
+fn rust_stdlib_async_terminal_effects_reject_provider_identity_without_committed_effect(
+) -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-invalid-effect-identity"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "cancelled": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-cancel", "node-cancel"),
+                    "outputs": {"operation": "cancel.operation"}
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {
+                        "cancelledAtUnixMs": 1_900,
+                        "externalEffects": [
+                            {
+                                "effectId": "effect-ticket-1",
+                                "target": "ticket-system",
+                                "operation": "ticket.create",
+                                "outcome": "no_external_effect",
+                                "providerEffectId": "ticket-123"
+                            }
+                        ]
+                    },
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    assert_eq!(
+        result
+            .pointer("/journal/4/payload/code")
+            .and_then(Value::as_str),
+        Some("async.operation_result.invalid_result")
+    );
+    Ok(())
+}
+
 fn async_start_config(operation_id: &str, node_id: &str) -> Value {
     json!({
         "operationId": operation_id,
