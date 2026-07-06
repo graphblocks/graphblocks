@@ -942,6 +942,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` also exposes a `GetRunStatus` HTTP helper for `/runs/{run_id}`, sharing the
   same run-id validation, authentication header handling, and JSON error mapping as attach/replay
   helpers.
+- `graphblocks-client` now exposes `ListRuns`, `PauseRun`, `ResumeRun`, and `ExpireRun` HTTP
+  helpers. The lifecycle helpers validate run ids and optional control fields before posting the
+  server's run-control JSON contract, while `ListRuns` returns the event-derived run status array
+  from the framework-neutral `GET /runs` route.
 - `graphblocks-client` now exposes an `AttachToRun` HTTP helper that posts the last replay cursor
   and declared surface capabilities, returning replayed events through the same
   `ApplicationEvent` parser used by event-stream helpers.

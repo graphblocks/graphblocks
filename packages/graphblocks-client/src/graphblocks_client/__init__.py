@@ -799,6 +799,18 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks health response")
 
+    def list_runs(self) -> dict[str, object]:
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs",
+            headers=headers,
+            method="GET",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks list runs response")
+
     def cancel_run(self, run_id: str) -> dict[str, object]:
         run_id = _http_run_id(run_id)
         headers = {"Accept": "application/json"}
@@ -812,6 +824,53 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks cancel response")
+
+    def pause_run(
+        self,
+        run_id: object,
+        *,
+        pause_kind: object = "operator",
+        reason: object | None = None,
+    ) -> dict[str, object]:
+        body: dict[str, object] = {
+            "pauseKind": _http_non_empty_string("pause_kind", pause_kind),
+        }
+        if reason is not None:
+            body["reason"] = _http_non_empty_string("reason", reason)
+        return self._run_control(run_id, action="pause", body=body, label="GraphBlocks pause response")
+
+    def resume_run(self, run_id: object) -> dict[str, object]:
+        return self._run_control(run_id, action="resume", body={}, label="GraphBlocks resume response")
+
+    def expire_run(self, run_id: object, *, reason: object | None = None) -> dict[str, object]:
+        body: dict[str, object] = {}
+        if reason is not None:
+            body["reason"] = _http_non_empty_string("reason", reason)
+        return self._run_control(run_id, action="expire", body=body, label="GraphBlocks expire response")
+
+    def _run_control(
+        self,
+        run_id: object,
+        *,
+        action: str,
+        body: Mapping[str, object],
+        label: str,
+    ) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/{action}",
+            data=json.dumps(dict(body), separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, label)
 
     def run_status(self, run_id: str) -> dict[str, object]:
         run_id = _http_run_id(run_id)
