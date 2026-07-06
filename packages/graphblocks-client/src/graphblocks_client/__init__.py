@@ -1040,6 +1040,52 @@ class HttpGraphBlocksClient:
             event_stream=stream_state,
         )
 
+    def unsubscribe_events(self, run_id: str, subscription_id: object) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
+        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/subscriptions/{subscription_id}",
+            headers=headers,
+            method="DELETE",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks unsubscribe response")
+
+    def ack_event(
+        self,
+        run_id: str,
+        subscription_id: object,
+        *,
+        event_id: object | None = None,
+        cursor: object | None = None,
+    ) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
+        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        if event_id is None and cursor is None:
+            raise ValueError("GraphBlocks HTTP ack requires event_id or cursor")
+        body: dict[str, object] = {}
+        if event_id is not None:
+            body["eventId"] = _http_non_empty_string("event_id", event_id)
+        if cursor is not None:
+            body["cursor"] = _http_non_empty_string("cursor", cursor)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/subscriptions/{subscription_id}/ack",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks ack response")
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {

@@ -1042,6 +1042,8 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
         "attach_to_run",
         "detach_from_run",
         "subscribe_events",
+        "unsubscribe_events",
+        "ack_event",
     ),
 )
 @pytest.mark.parametrize("run_id", (True, " "))
@@ -1066,6 +1068,10 @@ def test_client_package_rejects_malformed_http_run_id_arguments(
             getattr(client, method_name)(run_id, client_id="client-1")
         elif method_name == "subscribe_events":
             getattr(client, method_name)(run_id, delivery={"kind": "local_callback", "callback_name": "ide"})
+        elif method_name == "unsubscribe_events":
+            getattr(client, method_name)(run_id, "sub-1")
+        elif method_name == "ack_event":
+            getattr(client, method_name)(run_id, "sub-1", cursor="run-1:1")
         else:
             getattr(client, method_name)(run_id)
 
@@ -1728,6 +1734,199 @@ def test_client_package_subscribes_to_run_events_over_http_transport(monkeypatch
     assert snapshot.stream["eventFilter"] == {"types": ["RunSucceeded"]}
     assert [event.kind for event in snapshot.events] == ["RunSucceeded"]
     assert snapshot.events[0].payload["outputs"] == {"prompt": "Client subscribe ok"}
+
+
+def test_client_package_unsubscribes_from_run_events_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-unsubscribe"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client unsubscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-unsubscribe-http-1",
+                    "responseId": "response-unsubscribe-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-unsubscribe-http-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-client-unsubscribe-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-unsubscribe-http-1/subscriptions/sub-client-unsubscribe-1"
+        assert headers["authorization"] == "Bearer token-1"
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.unsubscribe_events("run-unsubscribe-http-1", "sub-client-unsubscribe-1")
+
+    assert response == {
+        "ok": True,
+        "runId": "run-unsubscribe-http-1",
+        "subscriptionId": "sub-client-unsubscribe-1",
+        "status": "revoked",
+    }
+    assert app.subscriptions("run-unsubscribe-http-1")[0].status == "revoked"
+
+
+def test_client_package_acknowledges_subscription_event_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-ack"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client ack {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-ack-http-1",
+                    "responseId": "response-ack-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-http-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-client-ack-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-ack-http-1/subscriptions/sub-client-ack-1/ack"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {"cursor": "run-ack-http-1:2"}
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.ack_event("run-ack-http-1", "sub-client-ack-1", cursor="run-ack-http-1:2")
+
+    assert response == {
+        "ok": True,
+        "runId": "run-ack-http-1",
+        "subscriptionId": "sub-client-ack-1",
+        "eventId": "run-ack-http-1:run-terminal",
+        "cursor": "run-ack-http-1:2",
+        "status": "acknowledged",
+    }
+    assert app.event_acks("run-ack-http-1", "sub-client-ack-1") == (
+        {
+            "eventId": "run-ack-http-1:run-terminal",
+            "cursor": "run-ack-http-1:2",
+            "acknowledgedAt": "2026-07-03T00:00:00Z",
+        },
+    )
 
 
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:
