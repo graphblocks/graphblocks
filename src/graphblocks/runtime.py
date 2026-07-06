@@ -37,6 +37,7 @@ JournalKind = Literal[
     "run_cancelled",
 ]
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
+MAX_U64 = (1 << 64) - 1
 
 
 class JournalLike(Protocol):
@@ -1036,6 +1037,8 @@ def stdlib_registry() -> RuntimeRegistry:
         if expires_at_unix_ms is None:
             timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
             if timeout_ms is not None:
+                if created_at_unix_ms > MAX_U64 - timeout_ms:
+                    raise ValueError("async.start_operation@1 timeout exceeds timestamp range")
                 expires_at_unix_ms = created_at_unix_ms + timeout_ms
         infinite_wait_policy = _optional_async_string(
             config,
@@ -1253,16 +1256,16 @@ def stdlib_registry() -> RuntimeRegistry:
         found, value = _config_value(config, camel_key, snake_key)
         if not found:
             raise TypeError(f"async.start_operation@1 config.{label} is required")
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise TypeError(f"async operation config.{label} must be a non-negative integer")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
+            raise TypeError(f"async operation config.{label} must be an unsigned 64-bit integer")
         return value
 
     def _optional_async_u64(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> int | None:
         found, value = _config_value(config, camel_key, snake_key)
         if not found or value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise TypeError(f"async operation config.{label} must be a non-negative integer")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
+            raise TypeError(f"async operation config.{label} must be an unsigned 64-bit integer")
         return value
 
     def _optional_duration_ms(config: Mapping[str, Any], keys: tuple[str, ...], label: str) -> int | None:
@@ -1278,6 +1281,8 @@ def stdlib_registry() -> RuntimeRegistry:
         if isinstance(value, int):
             if value <= 0:
                 raise ValueError(f"async operation config.{label} must be a positive duration")
+            if value > MAX_U64:
+                raise ValueError(f"async operation config.{label} must be an unsigned 64-bit duration")
             return value
         seconds = parse_duration_seconds(value)
         if seconds is None or seconds <= 0:

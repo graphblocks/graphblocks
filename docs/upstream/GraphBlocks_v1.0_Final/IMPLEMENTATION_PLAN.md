@@ -659,8 +659,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   checkpoint while waiting for callback without treating callback delivery as the source of truth.
   `async.start_operation@1` accepts either an absolute `expiresAtUnixMs` or a relative positive
   timeout duration such as `30m`, deriving the durable callback deadline from `createdAtUnixMs`.
-  It also accepts an explicit `infiniteWaitPolicy`, producing a `waiting_callback` operation with no
-  expiration only when that unbounded wait policy is declared.
+  Rust and Python both validate those millisecond timestamps as unsigned 64-bit values and reject a
+  derived expiration that would exceed the timestamp range. It also accepts an explicit
+  `infiniteWaitPolicy`, producing a `waiting_callback` operation with no expiration only when that
+  unbounded wait policy is declared.
   `async.await_callback@1` carries parsed timeout duration config or an explicit
   `infiniteWaitPolicy` into the wait projection so the scheduler can enforce the same boundary it
   compiled, and validates `onTimeout` as one of `fail`, `cancel`, or `expire` rather than accepting
