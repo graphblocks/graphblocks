@@ -442,5 +442,188 @@
       "auditedDurableResultCommitted": false,
       "toolTerminalCount": 1
     }
+  },
+  {
+    "name": "background_run_detach_replay_and_cursor_expiry",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "job",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-coding-001",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-coding-001/events",
+      "websocket": "/v1/runs/run-coding-001/ws",
+      "cancel": "/v1/runs/run-coding-001/cancel",
+      "initialCursor": "evt_000000"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "reason": "network_disconnect",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-000001",
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      },
+      {
+        "eventId": "evt-000002",
+        "cursor": "evt_000002",
+        "type": "JobProgress"
+      },
+      {
+        "eventId": "evt-000003",
+        "cursor": "evt_000003",
+        "type": "ReviewRequested"
+      }
+    ],
+    "attach": {
+      "lastCursor": "evt_000001",
+      "expiredCursor": "evt_000000",
+      "summaryOnExpiredCursor": true
+    },
+    "retention": {
+      "retainedFromCursor": "evt_000002"
+    },
+    "expected": {
+      "runContinuesAfterDetach": true,
+      "acceptedResponseReturnsRunId": true,
+      "replayEventIds": [
+        "evt-000002",
+        "evt-000003"
+      ],
+      "cursorExpired": true,
+      "summaryIncluded": true,
+      "authoritativeStream": true
+    }
+  },
+  {
+    "name": "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
+    "kind": "callback_delivery_projection",
+    "subscription": {
+      "subscriptionId": "sub-ide-001",
+      "failurePolicy": "retry_then_dead_letter",
+      "mandatory": false
+    },
+    "deliveries": [
+      {
+        "deliveryId": "del-001",
+        "eventId": "evt-0100",
+        "runId": "run-coding-001",
+        "sequence": 100,
+        "idempotencyKey": "sub-ide-001:evt-0100",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:10Z"
+      },
+      {
+        "deliveryId": "del-002",
+        "eventId": "evt-0101",
+        "runId": "run-coding-001",
+        "sequence": 101,
+        "idempotencyKey": "sub-ide-001:evt-0101",
+        "receiverStatus": 409,
+        "status": "acknowledged"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-dead-001",
+      "eventId": "evt-0100",
+      "originalEventId": "evt-0100",
+      "operatorPrincipal": "operator-1",
+      "createsApplicationEvent": false
+    },
+    "nonMandatoryOutageBlocksRun": false,
+    "expected": {
+      "retryScheduledAfter5xx": true,
+      "duplicate409Acknowledged": true,
+      "idempotencyKeysUniquePerSubscriptionEvent": true,
+      "deadLetterPreservesEventId": true,
+      "redriveCreatesApplicationEvent": false,
+      "nonMandatoryOutageBlocksRun": false
+    }
+  },
+  {
+    "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "resumeTokenHash": "sha256:resume-token",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false
+    },
+    "callback": {
+      "callbackId": "cb-ci-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:callback-payload",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release",
+        "ownership_lease",
+        "idempotency"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expected": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "receiptJournaledBeforeResume": true,
+      "resumeReevaluatesPolicyBudgetRelease": true,
+      "budgetExhaustionPausesResume": true,
+      "coordinatorFailoverResumesOnce": true
+    }
+  },
+  {
+    "name": "external_operation_late_side_effect_usage_reconciliation",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "state": "cancelled",
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "status": "completed",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 3
+        }
+      ],
+      "reconciled": true
+    },
+    "expected": {
+      "sideEffectCommitPreserved": true,
+      "lateCallbackCommitsResult": false,
+      "lateCallbackRecordedDiagnostic": true,
+      "lateUsageReconciled": true,
+      "largePayloadUsesArtifactRef": true
+    }
   }
 ]

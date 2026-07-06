@@ -1361,6 +1361,10 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool_terminal_record_projects_tool_result",
         "tool_terminal_rejects_expired_committed_effect",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+        "background_run_detach_replay_and_cursor_expiry",
+        "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
+        "async_callback_resume_auth_schema_stale_and_budget_guards",
+        "external_operation_late_side_effect_usage_reconciliation",
     )
     assert by_suite["orchestration"].case_ids == (
         "task_plan_patch_revises_steps_and_preserves_noop_digest",

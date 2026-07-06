@@ -1742,6 +1742,10 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "tool_terminal_from_tool_result",
             "tool_terminal_effect_invariant",
             "tool_terminal_policy_stop",
+            "background_run_event_stream",
+            "callback_delivery_projection",
+            "async_callback_resume_guards",
+            "external_operation_reconciliation",
         }:
             raise ValueError(f"durable TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
@@ -6870,6 +6874,98 @@ class TckRunner:
                 observed = {
                     "recordError": record_error,
                     "toolTerminalCount": store.tool_terminal_count(),
+                }
+            elif kind == "background_run_event_stream":
+                raw_events = fixture.get("events", [])
+                raw_attach = fixture.get("attach", {})
+                raw_detach = fixture.get("detach", {})
+                raw_retention = fixture.get("retention", {})
+                if not isinstance(raw_events, list) or not isinstance(raw_attach, Mapping):
+                    raise ValueError("durable background_run_event_stream case requires events and attach")
+                if not isinstance(raw_detach, Mapping):
+                    raw_detach = {}
+                if not isinstance(raw_retention, Mapping):
+                    raw_retention = {}
+                lifetime = str(fixture.get("lifetime", ""))
+                response_mode = str(fixture.get("responseMode", fixture.get("response_mode", "")))
+                event_records = [event for event in raw_events if isinstance(event, Mapping)]
+                last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
+                replay_after_cursor = [
+                    str(event.get("eventId", event.get("event_id", "")))
+                    for event in event_records
+                    if last_cursor is None or str(event.get("cursor", "")) > str(last_cursor)
+                ]
+                expired_cursor = str(raw_attach.get("expiredCursor", raw_attach.get("expired_cursor", "")))
+                retained_from = str(raw_retention.get("retainedFromCursor", raw_retention.get("retained_from_cursor", "")))
+                observed = {
+                    "runContinuesAfterDetach": lifetime in {"background", "job"} and not bool(raw_detach.get("cancelRun", raw_detach.get("cancel_run", False))),
+                    "acceptedResponseReturnsRunId": response_mode == "accepted" and bool(fixture.get("initialResponse", fixture.get("initial_response", {}))),
+                    "replayEventIds": replay_after_cursor,
+                    "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),
+                    "summaryIncluded": bool(raw_attach.get("summaryOnExpiredCursor", raw_attach.get("summary_on_expired_cursor", False))),
+                    "authoritativeStream": str(fixture.get("sourceOfTruth", fixture.get("source_of_truth", ""))) == "ApplicationEventStream",
+                }
+            elif kind == "callback_delivery_projection":
+                raw_deliveries = fixture.get("deliveries", [])
+                raw_redrive = fixture.get("redrive", {})
+                if not isinstance(raw_deliveries, list):
+                    raise ValueError("durable callback_delivery_projection case requires deliveries")
+                if not isinstance(raw_redrive, Mapping):
+                    raw_redrive = {}
+                deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
+                scheduled_retry_ids = [
+                    str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
+                    for delivery in deliveries
+                    if int(delivery.get("receiverStatus", delivery.get("receiver_status", 0))) >= 500
+                    and delivery.get("nextRetryAt", delivery.get("next_retry_at")) is not None
+                ]
+                acknowledged_duplicates = [
+                    str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
+                    for delivery in deliveries
+                    if int(delivery.get("receiverStatus", delivery.get("receiver_status", 0))) == 409
+                    and str(delivery.get("status", "")) == "acknowledged"
+                ]
+                idempotency_keys = [
+                    str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
+                    for delivery in deliveries
+                ]
+                observed = {
+                    "retryScheduledAfter5xx": bool(scheduled_retry_ids),
+                    "duplicate409Acknowledged": bool(acknowledged_duplicates),
+                    "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
+                    "deadLetterPreservesEventId": raw_redrive.get("eventId", raw_redrive.get("event_id")) == raw_redrive.get("originalEventId", raw_redrive.get("original_event_id")),
+                    "redriveCreatesApplicationEvent": bool(raw_redrive.get("createsApplicationEvent", raw_redrive.get("creates_application_event", True))),
+                    "nonMandatoryOutageBlocksRun": bool(fixture.get("nonMandatoryOutageBlocksRun", fixture.get("non_mandatory_outage_blocks_run", True))),
+                }
+            elif kind == "async_callback_resume_guards":
+                raw_checks = fixture.get("checks", {})
+                raw_resume = fixture.get("resume", {})
+                raw_callback = fixture.get("callback", {})
+                if not isinstance(raw_checks, Mapping) or not isinstance(raw_resume, Mapping) or not isinstance(raw_callback, Mapping):
+                    raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
+                observed = {
+                    "signatureFailureRevealsOperation": bool(raw_checks.get("signatureFailureRevealsOperation", raw_checks.get("signature_failure_reveals_operation", True))),
+                    "schemaFailureResumesRun": bool(raw_checks.get("schemaFailureResumesRun", raw_checks.get("schema_failure_resumes_run", True))),
+                    "timeoutCallbackResumesExpiredOperation": bool(raw_checks.get("timeoutCallbackResumesExpiredOperation", raw_checks.get("timeout_callback_resumes_expired_operation", True))),
+                    "cancelledCallbackCommitsResult": bool(raw_checks.get("cancelledCallbackCommitsResult", raw_checks.get("cancelled_callback_commits_result", True))),
+                    "staleAttemptCanResume": bool(raw_checks.get("staleAttemptCanResume", raw_checks.get("stale_attempt_can_resume", True))),
+                    "receiptJournaledBeforeResume": int(raw_callback.get("journalSequence", raw_callback.get("journal_sequence", 0))) < int(raw_resume.get("resumeSequence", raw_resume.get("resume_sequence", 0))),
+                    "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
+                    "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
+                    "coordinatorFailoverResumesOnce": int(raw_resume.get("successfulResumeCount", raw_resume.get("successful_resume_count", 0))) == 1,
+                }
+            elif kind == "external_operation_reconciliation":
+                raw_operation = fixture.get("operation", {})
+                raw_late_callback = fixture.get("lateCallback", fixture.get("late_callback", {}))
+                raw_usage = fixture.get("usage", {})
+                if not isinstance(raw_operation, Mapping) or not isinstance(raw_late_callback, Mapping) or not isinstance(raw_usage, Mapping):
+                    raise ValueError("durable external_operation_reconciliation case requires operation, lateCallback, and usage")
+                observed = {
+                    "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
+                    "lateCallbackCommitsResult": bool(raw_late_callback.get("commitsResult", raw_late_callback.get("commits_result", True))),
+                    "lateCallbackRecordedDiagnostic": bool(raw_late_callback.get("diagnosticRecorded", raw_late_callback.get("diagnostic_recorded", False))),
+                    "lateUsageReconciled": bool(raw_usage.get("reconciled", False)),
+                    "largePayloadUsesArtifactRef": bool(raw_late_callback.get("payloadConvertedToArtifactRef", raw_late_callback.get("payload_converted_to_artifact_ref", False))),
                 }
             else:
                 diagnostics.append(

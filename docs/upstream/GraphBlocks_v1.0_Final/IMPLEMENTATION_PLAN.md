@@ -1346,6 +1346,13 @@ resume, and resume without ownership fencing.
 - non-mandatory webhook outage does not block run completion.
 - external operation side-effect commit is preserved after cancellation.
 
+Implementation note: the durable shared TCK now includes async callback contract fixtures for
+background detach/cursor replay, webhook retry/duplicate/dead-letter projection, callback
+auth/schema/stale-attempt/budget resume guards, and late external-operation reconciliation. These
+fixtures keep the central rule executable: runs outlive clients, the event stream and journals are
+authoritative, and callbacks are projections or authenticated resume signals rather than sources of
+truth.
+
 ## 5. Phase 2 — AI Core Profiles (`GB-C2-AI-APPLICATION`)
 
 ### Documents
