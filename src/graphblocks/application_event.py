@@ -1181,6 +1181,28 @@ class ApplicationEventStreamState:
         cutoff = self.cutoffs.get(response_id)
         if cutoff is not None:
             if event.kind in {"AssistantRetracted", "AssistantIncomplete"}:
+                payload = event.payload
+                last_client_delivered_sequence = payload.get("last_client_delivered_sequence")
+                terminal_reason = payload.get("terminal_reason")
+                draft_disposition = payload.get("draft_disposition")
+                policy_decision_id = payload.get("policy_decision_id")
+                if not isinstance(last_client_delivered_sequence, int) or isinstance(
+                    last_client_delivered_sequence,
+                    bool,
+                ):
+                    return None
+                if last_client_delivered_sequence != cutoff.last_client_delivered_sequence:
+                    return None
+                if terminal_reason != cutoff.terminal_reason:
+                    return None
+                if draft_disposition != cutoff.draft_disposition:
+                    return None
+                if policy_decision_id != cutoff.policy_decision_id:
+                    return None
+                if cutoff.draft_disposition == "retract" and event.kind != "AssistantRetracted":
+                    return None
+                if cutoff.draft_disposition == "mark_incomplete" and event.kind != "AssistantIncomplete":
+                    return None
                 self.accepted_events.append(event)
                 return event
             chunk_sequence = event.payload.get("chunk_sequence")

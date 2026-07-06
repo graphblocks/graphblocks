@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -1475,6 +1476,54 @@ def test_application_event_stream_state_rejects_invalid_output_cutoff_payload() 
     assert state.accepted_events == []
 
 
+def test_application_event_stream_state_validates_post_cutoff_draft_terminal_metadata() -> None:
+    state = ApplicationEventStreamState()
+    cutoff_event, retraction_event = ApplicationEvent.output_cutoff(
+        _metadata(),
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            turn_id="turn-1",
+            last_generated_sequence=3,
+            last_policy_accepted_sequence=1,
+            last_client_delivered_sequence=1,
+            terminal_reason="policy_denied",
+            draft_disposition="retract",
+            durable_result="none",
+            policy_decision_id="decision-abort",
+            occurred_at="2026-06-23T00:00:01Z",
+        ),
+    )
+    wrong_sequence = ApplicationEvent.new(
+        "AssistantRetracted",
+        replace(_metadata(), event_id="event-wrong-sequence", sequence=9),
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "policy_decision_id": "decision-abort",
+        },
+    )
+    wrong_reason = ApplicationEvent.new(
+        "AssistantRetracted",
+        replace(_metadata(), event_id="event-wrong-reason", sequence=10),
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "cancelled",
+            "draft_disposition": "retract",
+            "policy_decision_id": "decision-abort",
+        },
+    )
+
+    assert state.accept(cutoff_event) == cutoff_event
+    assert state.accept(wrong_sequence) is None
+    assert state.accept(wrong_reason) is None
+    assert state.accept(retraction_event) == retraction_event
+    assert [event.kind for event in state.accepted_events] == ["OutputCutoff", "AssistantRetracted"]
+
+
 def test_application_event_stream_state_discards_late_output_after_cutoff() -> None:
     state = ApplicationEventStreamState()
     cutoff = OutputCutoff(
@@ -1497,7 +1546,7 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         input_digest="sha256:late",
     )
     replacement_response = ApplicationEvent.output_policy_evaluation_started(
-        _metadata(),
+        replace(_metadata(), event_id="event-replacement-response", response_id="response-2", sequence=7),
         GenerationChunk.text("stream-1", "response-2", 1, "replacement"),
         input_digest="sha256:replacement",
     )

@@ -205,7 +205,9 @@ Message
 - Runtime stream state now persists the accepted cutoff terminal reason with that boundary and
   rejects post-cutoff draft terminal events whose reason differs from the `OutputCutoff`.
 - `ApplicationEventStream` runtime state now applies the same canonical post-cutoff draft terminal
-  metadata check before accepting `AssistantIncomplete` or `AssistantRetracted` events.
+  metadata check before accepting `AssistantIncomplete` or `AssistantRetracted` events. The Python
+  stream-state facade now rejects post-cutoff draft terminal events whose delivered boundary,
+  terminal reason, draft disposition, or policy decision id differs from the stored `OutputCutoff`.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building
