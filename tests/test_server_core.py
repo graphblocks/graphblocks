@@ -1350,6 +1350,7 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
                     "attempt_id": "attempt-1",
                     "run_id": "run-1",
                     "node_id": "waitCI",
+                    "policySnapshotId": "policy-callback-1",
                     "payload": {"status": "completed"},
                 }
             ).encode("utf-8"),
@@ -1365,6 +1366,8 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
         "operationId": "op-ci-1",
         "callbackId": "cb-1",
         "idempotencyKey": "idem-callback-1",
+        "verifiedBy": "callback-relay",
+        "policySnapshotId": "policy-callback-1",
         "status": "accepted",
     }
     assert app.callback_submissions("op-ci-1") == (
@@ -1378,6 +1381,8 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
             attempt_id="attempt-1",
             provider_operation_id=None,
             received_at="2026-07-02T00:00:00Z",
+            verified_by="callback-relay",
+            policy_snapshot_id="policy-callback-1",
         ),
     )
     status = app.handle(
@@ -1788,6 +1793,8 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
         "operationId": "op-ci-1",
         "callbackId": "cb-1",
         "idempotencyKey": "idem-callback-1",
+        "verifiedBy": "callback-relay",
+        "policySnapshotId": "local",
         "status": "duplicate",
         "duplicate": True,
     }
@@ -2745,6 +2752,36 @@ def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> 
         "error": "server async callback received_at must be an ISO datetime",
     }
     assert app.callback_submissions("op-ci-invalid-time") == ()
+
+
+def test_server_app_rejects_async_callback_with_invalid_policy_snapshot_id() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-invalid-policy",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-invalid-policy"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-invalid-policy",
+                    "attempt_id": "attempt-1",
+                    "policySnapshotId": " ",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server async callback policy_snapshot_id must not be empty",
+    }
+    assert app.callback_submissions("op-ci-invalid-policy") == ()
 
 
 def test_server_app_rejects_oversized_async_callback_payload_before_storage() -> None:

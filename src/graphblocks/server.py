@@ -653,6 +653,8 @@ class ServerAsyncCallbackSubmission:
     attempt_id: str | None = None
     provider_operation_id: str | None = None
     received_at: str = ""
+    verified_by: str = "unauthenticated"
+    policy_snapshot_id: str = "local"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -691,6 +693,20 @@ class ServerAsyncCallbackSubmission:
                 "received_at",
                 _validate_iso_datetime("server async callback", "received_at", self.received_at),
             )
+        object.__setattr__(
+            self,
+            "verified_by",
+            _validate_non_empty_string("server async callback", "verified_by", self.verified_by),
+        )
+        object.__setattr__(
+            self,
+            "policy_snapshot_id",
+            _validate_non_empty_string(
+                "server async callback",
+                "policy_snapshot_id",
+                self.policy_snapshot_id,
+            ),
+        )
 
     @classmethod
     def from_request(
@@ -698,6 +714,7 @@ class ServerAsyncCallbackSubmission:
         *,
         operation_id: str,
         request: ServerRequest,
+        verified_by: str = "unauthenticated",
     ) -> ServerAsyncCallbackSubmission:
         body = json.loads(request.body.decode("utf-8") or "{}")
         if not isinstance(body, Mapping):
@@ -749,6 +766,12 @@ class ServerAsyncCallbackSubmission:
                 "providerOperationId",
             ),
             received_at=request.requested_at or _utc_now_iso(),
+            verified_by=verified_by,
+            policy_snapshot_id=_validate_non_empty_string(
+                "server async callback",
+                "policy_snapshot_id",
+                body.get("policy_snapshot_id", body.get("policySnapshotId", "local")),
+            ),
         )
 
     def response_payload(self) -> dict[str, object]:
@@ -757,6 +780,8 @@ class ServerAsyncCallbackSubmission:
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
             "idempotencyKey": self.idempotency_key,
+            "verifiedBy": self.verified_by,
+            "policySnapshotId": self.policy_snapshot_id,
             "status": "accepted",
         }
 
@@ -766,6 +791,8 @@ class ServerAsyncCallbackSubmission:
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
             "idempotencyKey": self.idempotency_key,
+            "verifiedBy": self.verified_by,
+            "policySnapshotId": self.policy_snapshot_id,
             "status": "duplicate",
             "duplicate": True,
         }
@@ -1434,6 +1461,7 @@ class GraphBlocksServerApp:
                 },
             )
 
+        auth_decision = ServerAuthDecision(True)
         if self.auth_hook is not None:
             auth_decision = self.auth_hook.authorize(
                 ServerAuthRequest(
@@ -1798,6 +1826,11 @@ class GraphBlocksServerApp:
                 submission = ServerAsyncCallbackSubmission.from_request(
                     operation_id=route_match.path_params.get("operation_id", ""),
                     request=request,
+                    verified_by=(
+                        auth_decision.principal.principal_id
+                        if auth_decision.principal is not None
+                        else "unauthenticated"
+                    ),
                 )
                 payload_size_bytes = len(canonical_dumps(_thaw_json_value(submission.payload)).encode("utf-8"))
                 if payload_size_bytes > self.max_async_callback_payload_bytes:
