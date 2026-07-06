@@ -642,6 +642,7 @@ impl CallbackDeadLetter {
                 status: delivery.status,
             });
         }
+        validate_callback_delivery(&delivery)?;
         if dead_lettered_at_unix_ms == 0 {
             return Err(CallbackDeliveryError::EmptyField {
                 field: "dead_lettered_at_unix_ms".to_owned(),

@@ -733,6 +733,49 @@ fn dead_letter_rejects_zero_dead_lettered_timestamp() {
 }
 
 #[test]
+fn dead_letter_rejects_blank_source_delivery_identity_fields() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+
+    for field in [
+        "delivery_id",
+        "subscription_id",
+        "event_id",
+        "run_id",
+        "cursor",
+        "idempotency_key",
+    ] {
+        let mut malformed = dead_lettered.clone();
+        match field {
+            "delivery_id" => malformed.delivery_id = " ".to_owned(),
+            "subscription_id" => malformed.subscription_id = " ".to_owned(),
+            "event_id" => malformed.event_id = " ".to_owned(),
+            "run_id" => malformed.run_id = " ".to_owned(),
+            "cursor" => malformed.cursor = " ".to_owned(),
+            "idempotency_key" => malformed.idempotency_key = " ".to_owned(),
+            _ => unreachable!("test field list is exhaustive"),
+        }
+
+        assert_eq!(
+            CallbackDeadLetter::from_delivery(malformed, 1_001),
+            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: format!("callback_delivery.{field}"),
+            }),
+            "{field} should be required before building a dead-letter"
+        );
+    }
+}
+
+#[test]
 fn ordered_delivery_blocks_later_events_until_prior_delivery_is_terminal() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(
