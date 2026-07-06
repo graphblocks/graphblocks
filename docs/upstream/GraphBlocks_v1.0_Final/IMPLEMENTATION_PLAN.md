@@ -1163,7 +1163,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projections from reopening completed application or protocol streams.
 - `RunPolicyStopped` is now a first-class `ApplicationProtocolEventKind` and participates in the
   callback subscription terminal-event filter, so policy-stopped background runs can notify
-  subscribers through the same projection path as completed, failed, or cancelled runs.
+  subscribers through the same projection path as completed, failed, or cancelled runs. The Python
+  protocol facade exports the same event kind and continues to compare its event tuple against the
+  shared application-protocol TCK.
 - Server run-status projection now keeps terminal application/protocol events authoritative over
   stale pause/resume control projections, so a completed event stream cannot continue to appear
   paused or resumable in `GetRunStatus`/`ListRuns`.
