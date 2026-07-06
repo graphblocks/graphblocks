@@ -1334,6 +1334,10 @@ def stdlib_registry() -> RuntimeRegistry:
         if isinstance(submitted_at_unix_ms, int) and not isinstance(submitted_at_unix_ms, bool):
             if completed_at_unix_ms < submitted_at_unix_ms:
                 raise ValueError(f"{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms")
+        expires_at_unix_ms = operation.get("expires_at_unix_ms")
+        if isinstance(expires_at_unix_ms, int) and not isinstance(expires_at_unix_ms, bool):
+            if completed_at_unix_ms > expires_at_unix_ms:
+                raise ValueError(f"{block_label} terminal timestamp must not exceed expires_at_unix_ms")
 
     def _async_operation_result(
         operation_id: str,

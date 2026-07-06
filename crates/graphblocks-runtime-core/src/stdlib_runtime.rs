@@ -2460,6 +2460,16 @@ fn validate_async_terminal_timestamp(
             false,
         ));
     }
+    if let Some(expires_at_unix_ms) = operation.get("expires_at_unix_ms").and_then(Value::as_u64)
+        && completed_at_unix_ms > expires_at_unix_ms
+    {
+        return Err(BlockError::new(
+            error_code,
+            ErrorCategory::Configuration,
+            format!("{block_label} terminal timestamp must not exceed expires_at_unix_ms"),
+            false,
+        ));
+    }
     Ok(())
 }
 
