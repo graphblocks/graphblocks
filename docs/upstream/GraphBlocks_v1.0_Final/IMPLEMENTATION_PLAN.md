@@ -1219,6 +1219,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   operation id, and typed client/operator/internal/audit-only visibility.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
+- `graphblocks-client` now preserves authoritative event metadata from server replay/attach
+  payloads, including cursor, graph/node/operation ids, and visibility.
 
 ### Package ownership
 

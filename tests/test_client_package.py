@@ -139,6 +139,61 @@ def test_client_package_exposes_application_event_protocol(monkeypatch) -> None:
     assert "OutputCutoff" in graphblocks_client.STANDARD_APPLICATION_EVENT_KINDS
 
 
+def test_client_package_preserves_authoritative_event_metadata_from_payloads(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    events = graphblocks_client._application_events_from_payloads(
+        [
+            {
+                "kind": "RunStarted",
+                "metadata": {
+                    "eventId": "event-1",
+                    "runId": "run-1",
+                    "responseId": "response-1",
+                    "turnId": "turn-1",
+                    "sequence": 7,
+                    "cursor": "run-1:7",
+                    "releaseId": "release-1",
+                    "policySnapshotId": "policy-1",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                    "graphId": "graph-1",
+                    "nodeId": "node-1",
+                    "operationId": "operation-1",
+                    "visibility": "operator",
+                },
+                "payload": {"status": "running"},
+            }
+        ]
+    )
+
+    assert events[0].metadata.cursor == "run-1:7"
+    assert events[0].metadata.graph_id == "graph-1"
+    assert events[0].metadata.node_id == "node-1"
+    assert events[0].metadata.operation_id == "operation-1"
+    assert events[0].metadata.visibility == "operator"
+
+    with pytest.raises(ValueError, match="metadata visibility must be a valid visibility value"):
+        graphblocks_client._application_events_from_payloads(
+            [
+                {
+                    "kind": "RunStarted",
+                    "metadata": {
+                        "eventId": "event-2",
+                        "runId": "run-1",
+                        "responseId": "response-1",
+                        "sequence": 8,
+                        "releaseId": "release-1",
+                        "policySnapshotId": "policy-1",
+                        "occurredAt": "2026-07-02T00:00:01Z",
+                        "visibility": "public",
+                    },
+                    "payload": {},
+                }
+            ]
+        )
+
+
 def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

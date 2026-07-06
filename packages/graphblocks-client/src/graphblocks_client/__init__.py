@@ -1031,6 +1031,21 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
         turn_id = metadata_payload.get("turnId", metadata_payload.get("turn_id"))
         if turn_id is not None and (not isinstance(turn_id, str) or not turn_id.strip()):
             raise ValueError("GraphBlocks HTTP event metadata turn_id must be a non-empty string")
+        cursor = metadata_payload.get("cursor")
+        graph_id = metadata_payload.get("graphId", metadata_payload.get("graph_id"))
+        node_id = metadata_payload.get("nodeId", metadata_payload.get("node_id"))
+        operation_id = metadata_payload.get("operationId", metadata_payload.get("operation_id"))
+        for field_name, value in (
+            ("cursor", cursor),
+            ("graph_id", graph_id),
+            ("node_id", node_id),
+            ("operation_id", operation_id),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"GraphBlocks HTTP event metadata {field_name} must be a non-empty string")
+        visibility = metadata_payload.get("visibility", "client")
+        if visibility not in {"client", "operator", "internal", "audit_only"}:
+            raise ValueError("GraphBlocks HTTP event metadata visibility must be a valid visibility value")
         sequence = metadata_payload.get("sequence", 0)
         if isinstance(sequence, bool) or not isinstance(sequence, int):
             raise ValueError("GraphBlocks HTTP event metadata sequence must be an integer")
@@ -1039,10 +1054,15 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
             run_id=run_id,
             response_id=response_id,
             turn_id=turn_id,
+            cursor=cursor,
+            graph_id=graph_id,
+            node_id=node_id,
+            operation_id=operation_id,
             sequence=sequence,
             release_id=release_id,
             policy_snapshot_id=policy_snapshot_id,
             occurred_at=occurred_at,
+            visibility=visibility,
         )
         event_body_payload = event_payload.get("payload", {})
         if not isinstance(event_body_payload, Mapping):
