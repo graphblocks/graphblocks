@@ -430,6 +430,15 @@ impl AsyncOperation {
                 expires_at_unix_ms,
             });
         }
+        if let (Some(submitted_at_unix_ms), Some(expires_at_unix_ms)) =
+            (self.submitted_at_unix_ms, self.expires_at_unix_ms)
+            && expires_at_unix_ms <= submitted_at_unix_ms
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "expires_at must be after submitted_at".to_owned(),
+            });
+        }
 
         Ok(())
     }

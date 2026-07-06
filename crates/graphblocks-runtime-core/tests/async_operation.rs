@@ -903,6 +903,9 @@ fn async_operation_validate_rejects_out_of_order_state_timestamps() {
     completed_before_submitted.state = AsyncOperationState::Completed;
     completed_before_submitted.completed_at_unix_ms =
         completed_before_submitted.submitted_at_unix_ms.map(|submitted_at| submitted_at - 1);
+    let mut expires_before_submitted = waiting_operation();
+    expires_before_submitted.expires_at_unix_ms =
+        expires_before_submitted.submitted_at_unix_ms.map(|submitted_at| submitted_at - 1);
 
     assert_eq!(
         submitted_before_created.validate(),
@@ -916,6 +919,13 @@ fn async_operation_validate_rejects_out_of_order_state_timestamps() {
         Err(AsyncOperationError::InvalidOperation {
             operation_id: "op-1".to_owned(),
             reason: "completed_at precedes submitted_at".to_owned(),
+        })
+    );
+    assert_eq!(
+        expires_before_submitted.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "expires_at must be after submitted_at".to_owned(),
         })
     );
 }
