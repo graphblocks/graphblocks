@@ -66,13 +66,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .unwrap_or("policy-1")
                 .to_owned(),
             occurred_at_unix_ms: optional_u64(operation, "occurredAtUnixMs").unwrap_or(1_700_000),
-            visibility: match optional_str(operation, "visibility").unwrap_or("client") {
-                "client" => ApplicationEventVisibility::Client,
-                "operator" => ApplicationEventVisibility::Operator,
-                "internal" => ApplicationEventVisibility::Internal,
-                "audit_only" => ApplicationEventVisibility::AuditOnly,
-                other => return Err(format!("{case_name}: unknown event visibility {other}")),
-            },
+            visibility: optional_str(operation, "visibility")
+                .unwrap_or("client")
+                .parse::<ApplicationEventVisibility>()
+                .map_err(|error| format!("{case_name}: {error}"))?,
         };
 
         match op {

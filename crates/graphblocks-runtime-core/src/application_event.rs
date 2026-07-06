@@ -152,6 +152,52 @@ pub enum ApplicationEventVisibility {
     AuditOnly,
 }
 
+impl ApplicationEventVisibility {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Client => "client",
+            Self::Operator => "operator",
+            Self::Internal => "internal",
+            Self::AuditOnly => "audit_only",
+        }
+    }
+}
+
+impl fmt::Display for ApplicationEventVisibility {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ApplicationEventVisibility {
+    type Err = ApplicationEventVisibilityParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "client" => Ok(Self::Client),
+            "operator" => Ok(Self::Operator),
+            "internal" => Ok(Self::Internal),
+            "audit_only" => Ok(Self::AuditOnly),
+            other => Err(ApplicationEventVisibilityParseError {
+                value: other.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationEventVisibilityParseError {
+    pub value: String,
+}
+
+impl fmt::Display for ApplicationEventVisibilityParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown application event visibility {:?}", self.value)
+    }
+}
+
+impl Error for ApplicationEventVisibilityParseError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplicationEventMetadata {
     pub event_id: String,

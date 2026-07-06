@@ -69,6 +69,20 @@ fn application_event_metadata_carries_authoritative_stream_fields() {
 }
 
 #[test]
+fn application_event_visibility_uses_stable_spec_literals() {
+    assert_eq!(ApplicationEventVisibility::Client.as_str(), "client");
+    assert_eq!(ApplicationEventVisibility::Operator.as_str(), "operator");
+    assert_eq!(ApplicationEventVisibility::Internal.as_str(), "internal");
+    assert_eq!(ApplicationEventVisibility::AuditOnly.as_str(), "audit_only");
+
+    assert_eq!(
+        "operator".parse::<ApplicationEventVisibility>(),
+        Ok(ApplicationEventVisibility::Operator)
+    );
+    assert!("public".parse::<ApplicationEventVisibility>().is_err());
+}
+
+#[test]
 fn standard_event_names_match_the_tool_and_output_policy_contract() {
     let names = [
         ApplicationEventKind::RunStarted.as_str(),
