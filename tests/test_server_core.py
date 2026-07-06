@@ -3757,7 +3757,7 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
     assert payload["failurePolicy"] == "best_effort"
     assert payload["replayFromCursor"] == "run-subscribe-1:1"
     assert payload["lastCursor"] == "run-subscribe-1:2"
-    assert payload["eventFilter"] == {"types": ["RunSucceeded"]}
+    assert payload["eventFilter"] == {"types": ["RunSucceeded"], "visibility": ["client"]}
     assert payload["delivery"] == {
         "kind": "local_callback",
         "callback_name": "ide",
@@ -3768,7 +3768,7 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         ServerEventSubscription(
             subscription_id="sub-run-1",
             run_id="run-subscribe-1",
-            event_filter={"types": ["RunSucceeded"]},
+            event_filter={"types": ("RunSucceeded",), "visibility": ("client",)},
             delivery={
                 "kind": "local_callback",
                 "callback_name": "ide",
@@ -3867,7 +3867,7 @@ def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> Non
         ServerEventSubscription(
             subscription_id="sub-duplicate-1",
             run_id="run-subscribe-duplicate-1",
-            event_filter={"types": ["RunSucceeded"]},
+            event_filter={"types": ("RunSucceeded",), "visibility": ("client",)},
             delivery={"kind": "local_callback", "callback_name": "ide"},
             status="active",
             failure_policy="retry_then_dead_letter",
@@ -3986,7 +3986,9 @@ def test_server_app_subscribes_from_accepted_run_initial_cursor() -> None:
 
 
 def test_server_app_subscription_replay_filters_visibility_node_operation_and_severity() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1", roles=("operator",))})
+    )
     app._events_by_run_id["run-subscribe-filter-1"] = (
         {
             "kind": "JobProgress",
@@ -4105,7 +4107,9 @@ def test_server_app_subscription_replay_filters_top_level_node_and_operation_fie
 
 
 def test_server_app_subscription_replay_filters_top_level_visibility_field() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1", roles=("operator",))})
+    )
     app._events_by_run_id["run-subscribe-top-level-visibility-1"] = (
         {
             "kind": "JobProgress",
@@ -5558,7 +5562,7 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
             subscription_id="callback-sub-1",
             scope="run",
             scope_id="run-register-callback-1",
-            event_filter={"types": ["RunSucceeded"]},
+            event_filter={"types": ("RunSucceeded",), "visibility": ("client",)},
             delivery={
                 "kind": "webhook",
                 "url": "https://relay.example/events",
@@ -5576,6 +5580,86 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
         "RunStarted",
         "RunSucceeded",
     ]
+
+
+def test_server_app_constrains_callback_registration_visibility_to_principal_authority() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "client-token": PrincipalRef("user-1"),
+                "operator-token": PrincipalRef("operator-1", roles=("operator",)),
+            }
+        )
+    )
+    app._events_by_run_id["run-register-callback-visibility-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-client", "sequence": 1},
+            "payload": {"visibility": "client", "severity": "info"},
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-operator", "sequence": 2},
+            "payload": {"visibility": "operator", "severity": "warning"},
+        },
+    )
+
+    client_response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer client-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-client-visibility",
+                    "scope": "run",
+                    "scopeId": "run-register-callback-visibility-1",
+                    "eventFilter": {"types": ["JobProgress"], "visibility": ["client", "operator"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+    operator_response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer operator-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-operator-visibility",
+                    "scope": "run",
+                    "scopeId": "run-register-callback-visibility-1",
+                    "eventFilter": {"types": ["JobProgress"], "visibility": ["client", "operator"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    client_payload = json.loads(client_response.body.decode("utf-8"))
+    operator_payload = json.loads(operator_response.body.decode("utf-8"))
+    assert client_response.status_code == 201
+    assert operator_response.status_code == 201
+    assert client_payload["eventFilter"]["visibility"] == ["client"]
+    assert [event["metadata"]["eventId"] for event in client_payload["events"]] == ["event-client"]
+    assert operator_payload["eventFilter"]["visibility"] == ["client", "operator"]
+    assert [event["metadata"]["eventId"] for event in operator_payload["events"]] == [
+        "event-client",
+        "event-operator",
+    ]
+    assert dict(app.callback_registrations()[0].event_filter) == {
+        "types": ("JobProgress",),
+        "visibility": ("client",),
+    }
 
 
 def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite() -> None:
@@ -5641,7 +5725,7 @@ def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite
             subscription_id="callback-sub-duplicate",
             scope="tenant",
             scope_id="tenant-1",
-            event_filter={"types": ["RunSucceeded"]},
+            event_filter={"types": ("RunSucceeded",), "visibility": ("client",)},
             delivery={
                 "kind": "webhook",
                 "url": "https://relay.example/events",

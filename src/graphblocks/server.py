@@ -344,6 +344,39 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
         raise ValueError(f"{owner} event_filter.include_terminal_events must be a boolean")
 
 
+def _authorized_callback_visibility(principal: PrincipalRef | None) -> tuple[str, ...]:
+    allowed = ["client"]
+    roles = set(principal.roles if principal is not None else ())
+    if "operator" in roles:
+        allowed.append("operator")
+    if "internal" in roles:
+        allowed.append("internal")
+    if "audit" in roles or "auditor" in roles:
+        allowed.append("audit_only")
+    return tuple(allowed)
+
+
+def _constrain_event_filter_visibility(
+    event_filter: Mapping[str, object],
+    principal: PrincipalRef | None,
+) -> Mapping[str, object]:
+    allowed_visibility = _authorized_callback_visibility(principal)
+    visibility = event_filter.get("visibility")
+    if visibility is None:
+        constrained_visibility = allowed_visibility
+    else:
+        requested_visibility = _validate_string_sequence(
+            "server event subscription",
+            "event_filter.visibility",
+            visibility,
+        )
+        allowed = set(allowed_visibility)
+        constrained_visibility = tuple(value for value in requested_visibility if value in allowed)
+    constrained = dict(event_filter)
+    constrained["visibility"] = list(constrained_visibility)
+    return MappingProxyType(constrained)
+
+
 def _thaw_json_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _thaw_json_value(item) for key, item in value.items()}
@@ -1654,6 +1687,10 @@ class GraphBlocksServerApp:
                     request=request,
                     ordinal=len(existing) + 1,
                 )
+                subscription = replace(
+                    subscription,
+                    event_filter=_constrain_event_filter_visibility(subscription.event_filter, auth_decision.principal),
+                )
                 existing_subscription = self._subscription_for(run_id, subscription.subscription_id)
                 if existing_subscription is not None:
                     return ServerResponse.json(
@@ -1788,6 +1825,10 @@ class GraphBlocksServerApp:
                 registration = ServerCallbackRegistration.from_request(
                     request=request,
                     ordinal=len(self._callback_registrations) + 1,
+                )
+                registration = replace(
+                    registration,
+                    event_filter=_constrain_event_filter_visibility(registration.event_filter, auth_decision.principal),
                 )
                 existing = self._callback_registrations.get(registration.subscription_id)
                 if existing is not None:
@@ -2926,6 +2967,10 @@ class GraphBlocksServerApp:
                 value = source.get("visibility")
                 if isinstance(value, str) and value in allowed_visibility:
                     visibility_matches = True
+            if "client" in allowed_visibility and not any(
+                isinstance(source.get("visibility"), str) for source in (event, payload)
+            ):
+                visibility_matches = True
             if not visibility_matches:
                 return False
         node_filter = event_filter.get("node_ids", event_filter.get("nodeIds"))
