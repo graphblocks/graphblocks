@@ -1032,7 +1032,7 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
         client.health()
 
 
-@pytest.mark.parametrize("method_name", ("cancel_run", "run_status", "run_events", "run_stream"))
+@pytest.mark.parametrize("method_name", ("cancel_run", "run_status", "run_events", "run_stream", "attach_to_run"))
 @pytest.mark.parametrize("run_id", (True, " "))
 def test_client_package_rejects_malformed_http_run_id_arguments(
     monkeypatch,
@@ -1452,6 +1452,91 @@ def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) ->
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("missing run events response was not raised as an HTTP error")
     assert "GraphBlocksHttpError" in graphblocks_client.__all__
+
+
+def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-attach"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client attach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-attach-http-1",
+                    "responseId": "response-attach-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-attach-http-1/attach"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {
+            "capabilities": ["assistant_drafts", "retractions"],
+            "lastCursor": "run-attach-http-1:1",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    snapshot = client.attach_to_run(
+        "run-attach-http-1",
+        last_cursor="run-attach-http-1:1",
+        capabilities=("assistant_drafts", "retractions"),
+    )
+
+    assert snapshot.run_id == "run-attach-http-1"
+    assert snapshot.stream["lastCursor"] == "run-attach-http-1:2"
+    assert snapshot.stream["liveCursor"] == "run-attach-http-1:2"
+    assert snapshot.stream["replayComplete"] is True
+    assert snapshot.stream["capabilities"] == ["assistant_drafts", "retractions"]
+    assert [event.kind for event in snapshot.events] == ["RunSucceeded"]
+    assert snapshot.events[0].payload["outputs"] == {"prompt": "Client attach ok"}
+    assert snapshot.event_stream.accept(snapshot.events[0]) == snapshot.events[0]
 
 
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:

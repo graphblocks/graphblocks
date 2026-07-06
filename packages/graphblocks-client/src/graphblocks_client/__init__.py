@@ -916,6 +916,53 @@ class HttpGraphBlocksClient:
             event_stream=stream_state,
         )
 
+    def attach_to_run(
+        self,
+        run_id: str,
+        *,
+        last_cursor: object | None = None,
+        capabilities: Iterable[object] = (),
+    ) -> RunStreamSnapshot:
+        run_id = _http_run_id(run_id)
+        if last_cursor is not None:
+            last_cursor = _http_non_empty_string("last_cursor", last_cursor)
+        if isinstance(capabilities, str):
+            raise ValueError("GraphBlocks HTTP capabilities must be a sequence")
+        try:
+            capability_values = tuple(capabilities)
+        except TypeError as error:
+            raise ValueError("GraphBlocks HTTP capabilities must be a sequence") from error
+        normalized_capabilities: list[str] = []
+        for capability in capability_values:
+            normalized_capabilities.append(_http_non_empty_string("capability", capability))
+        body: dict[str, object] = {"capabilities": normalized_capabilities}
+        if last_cursor is not None:
+            body["lastCursor"] = last_cursor
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/attach",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = _read_json_response(response, "GraphBlocks attach response")
+        events = _events_from_payload(payload, "GraphBlocks attach response")
+        stream_state = ApplicationEventStreamState()
+        for event in events:
+            stream_state.accept(event)
+        return RunStreamSnapshot(
+            run_id=_payload_string(payload, "GraphBlocks attach response", "run_id", "runId", "run_id"),
+            stream={key: deepcopy(value) for key, value in payload.items() if key != "events"},
+            events=events,
+            event_stream=stream_state,
+        )
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
