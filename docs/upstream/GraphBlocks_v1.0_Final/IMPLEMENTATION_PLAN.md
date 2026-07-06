@@ -1211,6 +1211,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records by event type,
   visibility, node id, operation id, severity floor, and terminal-event inclusion, aligning the
   core schema facade with server-side callback subscription filtering.
+- `graphblocks-server` invocation-created run events now persist the same authoritative metadata
+  envelope, including replay cursor and visibility, so accepted/background run attach and callback
+  replay surfaces do not require metadata to be duplicated in payloads.
 
 ### Package ownership
 

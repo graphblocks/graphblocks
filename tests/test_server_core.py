@@ -544,6 +544,10 @@ def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     assert attach.status_code == 200
     assert attach_payload["lastCursor"] == "run-accepted-1:2"
     assert [event["kind"] for event in attach_payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert attach_payload["events"][0]["metadata"]["cursor"] == "run-accepted-1:1"
+    assert attach_payload["events"][0]["metadata"]["visibility"] == "client"
+    assert attach_payload["events"][1]["metadata"]["cursor"] == "run-accepted-1:2"
+    assert attach_payload["events"][1]["metadata"]["visibility"] == "client"
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
 
 

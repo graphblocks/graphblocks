@@ -2195,6 +2195,7 @@ class GraphBlocksServerApp:
                         release_id=release_id,
                         policy_snapshot_id=policy_snapshot_id,
                         occurred_at=occurred_at,
+                        cursor=f"{result.run_id}:1",
                     ),
                     payload={
                         "status": "running",
@@ -2222,6 +2223,7 @@ class GraphBlocksServerApp:
                         release_id=release_id,
                         policy_snapshot_id=policy_snapshot_id,
                         occurred_at=occurred_at,
+                        cursor=f"{result.run_id}:2",
                     ),
                     payload=terminal_payload,
                 )
@@ -2235,9 +2237,14 @@ class GraphBlocksServerApp:
                             "responseId": event.metadata.response_id,
                             "turnId": event.metadata.turn_id,
                             "sequence": event.metadata.sequence,
+                            "cursor": event.metadata.cursor,
                             "releaseId": event.metadata.release_id,
                             "policySnapshotId": event.metadata.policy_snapshot_id,
                             "occurredAt": event.metadata.occurred_at,
+                            "graphId": event.metadata.graph_id,
+                            "nodeId": event.metadata.node_id,
+                            "operationId": event.metadata.operation_id,
+                            "visibility": event.metadata.visibility,
                         },
                         "payload": dict(event.payload),
                     }
