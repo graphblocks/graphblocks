@@ -1190,6 +1190,53 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
 }
 
 #[test]
+fn idempotency_conflict_rejection_records_callback_receipt_metadata() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .accept_callback(
+            valid_submission("cb-1", "idem-cb-1"),
+            &callback_schema_registry(),
+        )
+        .expect("first callback is accepted");
+
+    let mut mutated = valid_submission("cb-mutated", "idem-cb-1");
+    mutated.payload = json!({"status": "failed", "workflow_run_id": "gha-run-1"});
+    let expected_payload_digest =
+        graphblocks_compiler::canonical::canonical_hash(&mutated.payload);
+
+    assert_eq!(
+        store.accept_callback(mutated, &callback_schema_registry()),
+        Err(AsyncOperationError::CallbackIdempotencyConflict {
+            operation_id: "op-1".to_owned(),
+            idempotency_key: "idem-cb-1".to_owned(),
+            field: "payload_digest".to_owned(),
+        })
+    );
+
+    assert!(store
+        .events_for_operation("op-1")
+        .iter()
+        .any(|event| matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                payload_digest,
+                verified_by,
+                policy_snapshot_id,
+                ..
+            } if callback_id == "cb-mutated"
+                && reason == "idempotency_conflict:payload_digest"
+                && payload_digest == &expected_payload_digest
+                && verified_by == "hmac:callback-endpoint-1"
+                && policy_snapshot_id == "policy-snapshot-1"
+        )));
+}
+
+#[test]
 fn callback_for_non_waiting_operation_is_rejected_with_audit_event() {
     let store = AsyncOperationStore::new();
     store

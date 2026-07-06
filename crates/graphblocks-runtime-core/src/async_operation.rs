@@ -1611,7 +1611,9 @@ pub enum AsyncOperationEvent {
         callback_id: String,
         reason: String,
         occurred_at_unix_ms: u64,
+        payload_digest: String,
         verified_by: String,
+        policy_snapshot_id: String,
     },
     CallbackResumePaused {
         operation_id: String,
@@ -1870,6 +1872,8 @@ impl AsyncOperationStore {
             for key in keys {
                 if let Some(record) = inner.quarantined_callbacks.remove(&key) {
                     if record.expires_at_unix_ms <= operation_created_at_unix_ms {
+                        let payload_digest = canonical_hash(&record.submission.payload);
+                        let policy_snapshot_id = record.submission.policy_snapshot_id.clone();
                         inner
                             .events_by_operation
                             .entry(operation_id.to_owned())
@@ -1879,7 +1883,9 @@ impl AsyncOperationStore {
                                 callback_id: record.submission.callback_id,
                                 reason: "quarantined_callback_expired".to_owned(),
                                 occurred_at_unix_ms: record.expires_at_unix_ms,
+                                payload_digest,
                                 verified_by: record.submission.verified_by,
+                                policy_snapshot_id,
                             });
                     } else {
                         submissions.push(record.submission);
@@ -2035,6 +2041,9 @@ impl AsyncOperationStore {
             submission.operation_id.clone(),
             submission.idempotency_key.clone(),
         );
+        let rejected_payload_digest = canonical_hash(&submission.payload);
+        let rejected_verified_by = submission.verified_by.clone();
+        let rejected_policy_snapshot_id = submission.policy_snapshot_id.clone();
         if let Some(receipt) = inner
             .receipts_by_operation_and_idempotency
             .get(&receipt_key)
@@ -2049,7 +2058,9 @@ impl AsyncOperationStore {
                         callback_id: submission.callback_id,
                         reason: format!("idempotency_conflict:{field}"),
                         occurred_at_unix_ms: submission.received_at_unix_ms,
-                        verified_by: submission.verified_by,
+                        payload_digest: rejected_payload_digest.clone(),
+                        verified_by: rejected_verified_by.clone(),
+                        policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                     });
                 return Err(AsyncOperationError::CallbackIdempotencyConflict {
                     operation_id: receipt_key.0,
@@ -2076,7 +2087,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "operation_not_found".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::OperationNotFound {
                 operation_id: submission.operation_id,
@@ -2093,7 +2106,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:run_id".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
@@ -2112,7 +2127,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:node_id".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
@@ -2131,7 +2148,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "stale_attempt".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::StaleAttempt {
                 operation_id: operation.operation_id,
@@ -2149,7 +2168,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "identity_mismatch:provider_operation_id".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
@@ -2169,7 +2190,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "schema_invalid".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(match error {
                 ToolSchemaValidationError::SchemaMissing { schema_id } => {
@@ -2220,7 +2243,9 @@ impl AsyncOperationStore {
                         async_operation_state_as_str(operation_state)
                     ),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::OperationNotWaitingCallback {
                 operation_id,
@@ -2244,7 +2269,9 @@ impl AsyncOperationStore {
                     callback_id: submission.callback_id,
                     reason: "callback_after_expiration".to_owned(),
                     occurred_at_unix_ms: submission.received_at_unix_ms,
-                    verified_by: submission.verified_by,
+                    payload_digest: rejected_payload_digest.clone(),
+                    verified_by: rejected_verified_by.clone(),
+                    policy_snapshot_id: rejected_policy_snapshot_id.clone(),
                 });
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id,
@@ -2508,7 +2535,9 @@ impl AsyncOperationStore {
                 callback_id: submission.callback_id.clone(),
                 reason: reason.to_owned(),
                 occurred_at_unix_ms: submission.received_at_unix_ms,
+                payload_digest: canonical_hash(&submission.payload),
                 verified_by: submission.verified_by.clone(),
+                policy_snapshot_id: submission.policy_snapshot_id.clone(),
             });
     }
 }
@@ -3638,14 +3667,18 @@ fn event_to_value(event: &AsyncOperationEvent) -> Value {
             callback_id,
             reason,
             occurred_at_unix_ms,
+            payload_digest,
             verified_by,
+            policy_snapshot_id,
         } => json!({
             "type": "ExternalCallbackRejected",
             "operation_id": operation_id,
             "callback_id": callback_id,
             "reason": reason,
             "occurred_at_unix_ms": occurred_at_unix_ms,
+            "payload_digest": payload_digest,
             "verified_by": verified_by,
+            "policy_snapshot_id": policy_snapshot_id,
         }),
         AsyncOperationEvent::CallbackResumePaused {
             operation_id,
@@ -3723,12 +3756,16 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             let callback_id = required_string(&value, "callback_id")?;
             let reason = required_string(&value, "reason")?;
             let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            let payload_digest = required_string(&value, "payload_digest")?;
             let verified_by = required_string(&value, "verified_by")?;
+            let policy_snapshot_id = required_string(&value, "policy_snapshot_id")?;
             for (field, value) in [
                 ("operation_id", &operation_id),
                 ("callback_id", &callback_id),
                 ("reason", &reason),
+                ("payload_digest", &payload_digest),
                 ("verified_by", &verified_by),
+                ("policy_snapshot_id", &policy_snapshot_id),
             ] {
                 if value.trim().is_empty() {
                     return Err(AsyncOperationError::EmptyField {
@@ -3748,7 +3785,9 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
                 callback_id,
                 reason,
                 occurred_at_unix_ms,
+                payload_digest,
                 verified_by,
+                policy_snapshot_id,
             })
         }
         "CallbackResumePaused" => {

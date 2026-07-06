@@ -964,6 +964,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency comparisons. Accepted callback submission projections now also record the canonical
   payload digest, verifying principal, and policy snapshot id, and duplicate acknowledgements
   return the same receipt metadata instead of reducing the callback to an idempotency key.
+  The Rust `graphblocks-runtime-core` async operation journal now records the same payload digest,
+  verifying principal, and policy snapshot metadata on `ExternalCallbackRejected` events, including
+  idempotency-conflict rejections for mutated callback replays.
   Deployments can configure the server callback route to require an installed authentication hook
   before `SubmitAsyncCallback` will parse, validate, or store a callback receipt.
 - `graphblocks-runtime-core` now rejects async-operation cancel and expire terminal transitions
