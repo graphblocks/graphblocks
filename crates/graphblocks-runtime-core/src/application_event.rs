@@ -807,12 +807,15 @@ impl ApplicationEventStreamState {
             return None;
         }
         let response_id = event.metadata.response_id.as_str();
-        if self.cutoffs.contains_key(response_id) {
+        if let Some(cutoff) = self.cutoffs.get(response_id) {
             if matches!(
                 event.kind,
                 ApplicationEventKind::AssistantRetracted
                     | ApplicationEventKind::AssistantIncomplete
             ) {
+                if !draft_terminal_event_matches_cutoff(&event, cutoff) {
+                    return None;
+                }
                 self.accepted_events.push(event.clone());
                 return Some(event);
             }
@@ -1276,6 +1279,33 @@ fn invalid_payload_key_path(value: &Value, field: &str) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn draft_terminal_event_matches_cutoff(event: &ApplicationEvent, cutoff: &OutputCutoff) -> bool {
+    let terminal_reason = match cutoff.terminal_reason {
+        TerminalReason::PolicyDenied => "policy_denied",
+        TerminalReason::BudgetExhausted => "budget_exhausted",
+        TerminalReason::Cancelled => "cancelled",
+        TerminalReason::ClientDisconnected => "client_disconnected",
+    };
+    if event.payload.get("terminal_reason").and_then(Value::as_str) != Some(terminal_reason) {
+        return false;
+    }
+
+    let draft_disposition = match event.kind {
+        ApplicationEventKind::AssistantIncomplete => "mark_incomplete",
+        ApplicationEventKind::AssistantRetracted => "retract",
+        _ => return false,
+    };
+    if event.payload.get("draft_disposition").and_then(Value::as_str) != Some(draft_disposition) {
+        return false;
+    }
+
+    event
+        .payload
+        .get("last_client_delivered_sequence")
+        .and_then(Value::as_u64)
+        == Some(cutoff.last_client_delivered_sequence)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

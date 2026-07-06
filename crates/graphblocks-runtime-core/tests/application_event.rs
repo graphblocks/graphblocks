@@ -1119,6 +1119,51 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
 }
 
 #[test]
+fn application_event_stream_state_rejects_malformed_draft_terminal_after_cutoff() {
+    let mut state = ApplicationEventStreamState::default();
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 3,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_700_020,
+    };
+    let cutoff_events =
+        ApplicationEvent::output_cutoff(metadata(), &cutoff).expect("cutoff events are valid");
+    let wrong_reason_retraction = ApplicationEvent::new(
+        ApplicationEventKind::AssistantRetracted,
+        metadata(),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "cancelled",
+            "draft_disposition": "retract",
+            "last_client_delivered_sequence": 1,
+        }),
+    )
+    .expect("malformed retraction envelope is valid");
+
+    assert_eq!(
+        state.accept(cutoff_events[0].clone()),
+        Some(cutoff_events[0].clone())
+    );
+    assert_eq!(state.accept(wrong_reason_retraction), None);
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![ApplicationEventKind::OutputCutoff]
+    );
+}
+
+#[test]
 fn application_event_stream_state_rejects_payload_response_id_mismatch_after_cutoff() {
     let mut state = ApplicationEventStreamState::default();
     let cutoff = OutputCutoff {
