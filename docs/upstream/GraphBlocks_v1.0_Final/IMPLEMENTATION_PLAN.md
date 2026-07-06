@@ -1221,6 +1221,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach
   payloads, including cursor, graph/node/operation ids, and visibility.
+- `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
+  application events, matching the replay contract used by server attach/event-stream routes.
 
 ### Package ownership
 

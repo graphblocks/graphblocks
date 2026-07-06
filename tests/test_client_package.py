@@ -701,6 +701,7 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     assert response.outputs == {"prompt": "Client ok"}
     assert [event.kind for event in response.events] == ["RunStarted", "RunSucceeded"]
     assert [event.metadata.sequence for event in response.events] == [1, 2]
+    assert [event.metadata.cursor for event in response.events] == ["run-client-1:1", "run-client-1:2"]
     assert response.events[0].payload["graph_hash"].startswith("sha256:")
     assert response.events[1].payload == {"status": "succeeded", "outputs": {"prompt": "Client ok"}}
     assert response.event_stream.accept(response.events[0]) == response.events[0]
