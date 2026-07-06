@@ -947,6 +947,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `ApplicationEvent` parser used by event-stream helpers.
 - `graphblocks-client` now exposes a `DetachFromRun` HTTP helper that records client detachment
   with an optional reason while preserving the authoritative run event stream.
+- `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
+  subscriptions with replay cursor, filter, delivery target, and failure-policy configuration, and
+  parses replayed events through the shared event-stream parser.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async
