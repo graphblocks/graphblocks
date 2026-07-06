@@ -2174,6 +2174,102 @@ fn webhook_delivery_worker_persists_retry_after_server_error() {
 }
 
 #[test]
+fn webhook_delivery_worker_returns_mandatory_terminal_run_actions() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::PauseRunOnFailure,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+
+    let outcome = worker
+        .process_due_with_run_actions(
+            2_000,
+            10,
+            |_| CallbackDeliveryResponse::ClientError(403),
+            |_| Some(event.clone()),
+        )
+        .expect("worker processes due delivery");
+
+    assert_eq!(outcome.attempts, 1);
+    assert_eq!(
+        outcome.run_actions,
+        vec![CallbackDeliveryRunAction::PauseRun {
+            run_id: "run-1".to_owned(),
+            subscription_id: "sub-1".to_owned(),
+            delivery_id: "del_sub-1_event-1".to_owned(),
+            reason: "client_error:403".to_owned(),
+        }]
+    );
+
+    let oversized_queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let oversized_event = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::ReviewRequested,
+        ApplicationProtocolEventMetadata {
+            event_id: "event-oversized-action".to_owned(),
+            protocol_version: "graphblocks.app.v1".to_owned(),
+            run_id: "run-1".to_owned(),
+            turn_id: None,
+            sequence: 11,
+            cursor: Some("cursor-11".to_owned()),
+            occurred_at_unix_ms: 1_011,
+        },
+        json!({"message": "x".repeat(512)}),
+    )
+    .expect("event is valid");
+    let oversized_delivery = scheduler
+        .schedule_event(&subscription, &oversized_event)
+        .expect("delivery schedules");
+    oversized_queue
+        .upsert_delivery(oversized_delivery)
+        .expect("delivery persists");
+    let tiny_target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid")
+    .with_max_payload_bytes(128)
+    .expect("payload limit is valid");
+    let oversized_worker =
+        WebhookDeliveryWorker::new(&scheduler, &oversized_queue, &tiny_target, &signing);
+
+    let oversized_outcome = oversized_worker
+        .process_due_with_run_actions(
+            2_000,
+            10,
+            |_| panic!("oversized payload must not be sent"),
+            |_| Some(oversized_event.clone()),
+        )
+        .expect("worker records oversized payload failure");
+
+    assert_eq!(oversized_outcome.attempts, 1);
+    assert_eq!(oversized_outcome.run_actions.len(), 1);
+    assert!(matches!(
+        &oversized_outcome.run_actions[0],
+        CallbackDeliveryRunAction::PauseRun {
+            delivery_id,
+            reason,
+            ..
+        } if delivery_id == "del_sub-1_event-oversized-action"
+            && reason.starts_with("payload_too_large:")
+    ));
+}
+
+#[test]
 fn webhook_http_transport_blocks_delivery_when_dns_resolution_is_unsafe() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

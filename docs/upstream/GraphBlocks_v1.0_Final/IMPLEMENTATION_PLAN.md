@@ -970,6 +970,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Mandatory callback-delivery failure actions can now be applied to Rust run state: pause actions
   transition the run to `paused_callback_delivery` and return the callback-delivery wait reason,
   while fail actions transition the run to `failed`.
+  The Rust webhook delivery worker now also returns terminal mandatory run actions from due
+  delivery processing, including receiver failures and local signing failures such as oversized
+  payloads, while preserving the existing attempt-count API for callers that only need delivery
+  progress.
   Deployments can configure the server callback route to require an installed authentication hook
   before `SubmitAsyncCallback` will parse, validate, or store a callback receipt.
 - `graphblocks-runtime-core` now rejects async-operation cancel and expire terminal transitions

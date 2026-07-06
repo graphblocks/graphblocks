@@ -1840,6 +1840,12 @@ pub struct WebhookDeliveryWorker<'a> {
     signing: &'a WebhookSigningConfig,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebhookDeliveryWorkerOutcome {
+    pub attempts: usize,
+    pub run_actions: Vec<CallbackDeliveryRunAction>,
+}
+
 impl<'a> WebhookDeliveryWorker<'a> {
     pub fn new(
         scheduler: &'a CallbackDeliveryScheduler,
@@ -1859,15 +1865,30 @@ impl<'a> WebhookDeliveryWorker<'a> {
         &self,
         now_unix_ms: u64,
         limit: usize,
-        mut transport: T,
-        mut event_lookup: E,
+        transport: T,
+        event_lookup: E,
     ) -> Result<usize, CallbackDeliveryError>
     where
         T: FnMut(&WebhookDeliveryAttempt) -> CallbackDeliveryResponse,
         E: FnMut(&str) -> Option<ApplicationProtocolEvent>,
     {
+        self.process_due_with_run_actions(now_unix_ms, limit, transport, event_lookup)
+            .map(|outcome| outcome.attempts)
+    }
+
+    pub fn process_due_with_run_actions<T, E>(
+        &self,
+        now_unix_ms: u64,
+        limit: usize,
+        mut transport: T,
+        mut event_lookup: E,
+    ) -> Result<WebhookDeliveryWorkerOutcome, CallbackDeliveryError>
+    where
+        T: FnMut(&WebhookDeliveryAttempt) -> CallbackDeliveryResponse,
+        E: FnMut(&str) -> Option<ApplicationProtocolEvent>,
+    {
         let due = self.queue.due_deliveries(now_unix_ms, limit)?;
-        let mut attempts = 0;
+        let mut outcome = WebhookDeliveryWorkerOutcome::default();
         for delivery in due {
             let event = event_lookup(&delivery.event_id).ok_or_else(|| {
                 CallbackDeliveryError::EventNotFound {
@@ -1891,8 +1912,13 @@ impl<'a> WebhookDeliveryWorker<'a> {
                     updated.last_error = Some(format!(
                         "payload_too_large:{actual_payload_bytes}>{max_payload_bytes}"
                     ));
+                    if let Some(run_action) =
+                        self.scheduler.run_action_for_terminal_failure(&updated)
+                    {
+                        outcome.run_actions.push(run_action);
+                    }
                     self.queue.upsert_delivery(updated)?;
-                    attempts += 1;
+                    outcome.attempts += 1;
                     continue;
                 }
                 Err(error) => return Err(CallbackDeliveryError::WebhookSigning { error }),
@@ -1910,10 +1936,13 @@ impl<'a> WebhookDeliveryWorker<'a> {
             let updated = self
                 .scheduler
                 .record_response(in_flight, response, now_unix_ms);
+            if let Some(run_action) = self.scheduler.run_action_for_terminal_failure(&updated) {
+                outcome.run_actions.push(run_action);
+            }
             self.queue.upsert_delivery(updated)?;
-            attempts += 1;
+            outcome.attempts += 1;
         }
-        Ok(attempts)
+        Ok(outcome)
     }
 }
 
