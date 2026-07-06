@@ -822,6 +822,7 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
 }
 
 fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let config = required_async_terminal_config(config, "async.complete_operation@1")?;
     let operation = required_async_operation_input(inputs, "async.complete_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.complete_operation@1")?;
     let output = inputs.get("output").cloned().unwrap_or(Value::Null);
@@ -851,6 +852,7 @@ fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Va
 }
 
 fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let config = required_async_terminal_config(config, "async.cancel_operation@1")?;
     let operation = required_async_operation_input(inputs, "async.cancel_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.cancel_operation@1")?;
     let completed_at_unix_ms = optional_async_terminal_u64(
@@ -877,6 +879,7 @@ fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Valu
 }
 
 fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let config = required_async_terminal_config(config, "async.expire_operation@1")?;
     let operation = required_async_operation_input(inputs, "async.expire_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.expire_operation@1")?;
     let completed_at_unix_ms = optional_async_terminal_u64(
@@ -2292,7 +2295,7 @@ fn required_async_operation_id<'a>(
 }
 
 fn parse_async_external_effects(
-    config: &Value,
+    config: &serde_json::Map<String, Value>,
     block_label: &str,
 ) -> Result<Vec<ExternalEffectRecord>, BlockError> {
     let Some(raw_effects) = config
@@ -2407,7 +2410,7 @@ fn async_operation_result_json(
 }
 
 fn optional_async_terminal_u64(
-    config: &Value,
+    config: &serde_json::Map<String, Value>,
     primary: &str,
     alternate: &str,
     code: &'static str,
@@ -2427,6 +2430,20 @@ fn optional_async_terminal_u64(
             })
         })
         .transpose()
+}
+
+fn required_async_terminal_config<'a>(
+    config: &'a Value,
+    block_label: &str,
+) -> Result<&'a serde_json::Map<String, Value>, BlockError> {
+    config.as_object().ok_or_else(|| {
+        BlockError::new(
+            format!("{block_label}.invalid_config"),
+            ErrorCategory::Configuration,
+            format!("{block_label} config must be an object"),
+            false,
+        )
+    })
 }
 
 fn validate_async_terminal_timestamp(

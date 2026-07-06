@@ -1134,6 +1134,7 @@ def stdlib_registry() -> RuntimeRegistry:
         return {"poll": poll}
 
     def async_complete_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        config = _required_async_config_mapping(config, "async.complete_operation@1")
         operation = _required_async_operation_input(inputs, "async.complete_operation@1")
         completed_at_unix_ms = _optional_async_u64(
             config,
@@ -1153,6 +1154,7 @@ def stdlib_registry() -> RuntimeRegistry:
         }
 
     def async_cancel_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        config = _required_async_config_mapping(config, "async.cancel_operation@1")
         operation = _required_async_operation_input(inputs, "async.cancel_operation@1")
         completed_at_unix_ms = _optional_async_u64(
             config,
@@ -1171,6 +1173,7 @@ def stdlib_registry() -> RuntimeRegistry:
         }
 
     def async_expire_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        config = _required_async_config_mapping(config, "async.expire_operation@1")
         operation = _required_async_operation_input(inputs, "async.expire_operation@1")
         completed_at_unix_ms = _optional_async_u64(
             config,
@@ -1194,6 +1197,11 @@ def stdlib_registry() -> RuntimeRegistry:
         if snake_key in config:
             return True, config[snake_key]
         return False, None
+
+    def _required_async_config_mapping(config: Any, block_label: str) -> Mapping[str, Any]:
+        if not isinstance(config, Mapping):
+            raise TypeError(f"{block_label} config must be a mapping")
+        return config
 
     def _validate_config_string(value: Any, label: str) -> str:
         if not isinstance(value, str):

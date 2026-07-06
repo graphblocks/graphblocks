@@ -1342,6 +1342,54 @@ fn rust_stdlib_async_cancel_operation_rejects_invalid_terminal_timestamp() -> Re
 }
 
 #[test]
+fn rust_stdlib_async_cancel_operation_rejects_non_object_config() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-cancel-non-object-config"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "cancelled": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-cancel", "node-cancel"),
+                    "outputs": {"operation": "cancel.operation"}
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": "invalid",
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(&graph, &json!({}))?;
+    assert_eq!(result["status"], "failed");
+    let node_failed = result["journal"]
+        .as_array()
+        .and_then(|records| {
+            records.iter().find(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some("node_failed")
+            })
+        })
+        .ok_or_else(|| "missing node_failed journal record".to_string())?;
+    assert!(
+        node_failed
+            .pointer("/payload/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("async.cancel_operation@1 config must be an object")
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_cancel_operation_rejects_terminal_after_expiration() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
