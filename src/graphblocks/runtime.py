@@ -1063,10 +1063,13 @@ def stdlib_registry() -> RuntimeRegistry:
         on_timeout = str(config.get("onTimeout", config.get("on_timeout", "fail")))
         if on_timeout not in {"fail", "cancel", "expire"}:
             raise ValueError("async.await_callback@1 onTimeout must be one of fail, cancel, or expire")
+        checkpoint = config.get("checkpoint", True)
+        if not isinstance(checkpoint, bool):
+            raise ValueError("async.await_callback@1 checkpoint must be a boolean")
         wait: dict[str, Any] = {
             "state": "waiting_callback",
             "operation": operation,
-            "checkpoint": bool(config.get("checkpoint", True)),
+            "checkpoint": checkpoint,
             "onTimeout": on_timeout,
         }
         timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")

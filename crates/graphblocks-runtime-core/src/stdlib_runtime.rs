@@ -681,10 +681,17 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
             false,
         ));
     }
-    let checkpoint = config
-        .get("checkpoint")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+    let checkpoint = match config.get("checkpoint") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            BlockError::new(
+                "async.await_callback.invalid_config",
+                ErrorCategory::Configuration,
+                "async.await_callback@1 checkpoint must be a boolean",
+                false,
+            )
+        })?,
+        None => true,
+    };
     let on_timeout = config
         .get("onTimeout")
         .or_else(|| config.get("on_timeout"))

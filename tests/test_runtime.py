@@ -1042,3 +1042,69 @@ def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "poll"
     assert "maxInterval must not be less than interval" in failed[0].payload["error"]
+
+
+def test_stdlib_async_await_callback_rejects_non_boolean_checkpoint() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-invalid-checkpoint"},
+        "spec": {
+            "interface": {
+                "outputs": {"wait": "graphblocks.ai/AsyncWait@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeoutMs": 1_800_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "waitCI.operation"},
+                },
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "checkpoint": "yes",
+                        "onTimeout": "fail",
+                        "timeout": "30m",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "inputs": {"operation": "startCI.operation"},
+                    "outputs": {"wait": "$output.wait"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "waitCI"
+    assert "checkpoint must be a boolean" in failed[0].payload["error"]
