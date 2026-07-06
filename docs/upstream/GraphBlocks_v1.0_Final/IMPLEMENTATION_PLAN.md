@@ -669,6 +669,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   strings such as `30s`, `5m`, or `2h` for interval and timeout settings. Runtime poll projections
   now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that unbounded
   wait policy is declared.
+- Python `graphblocks-core` now exposes immutable callback schema facades for `EventFilter`,
+  `CallbackSubscription`, and `CallbackDelivery`, covering subscription scope/status/failure-policy
+  validation, terminal-event filter projection, delivery idempotency metadata, and terminal delivery
+  timestamp invariants.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

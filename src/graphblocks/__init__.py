@@ -61,6 +61,7 @@ from .blob_store import (
     PutOptions,
     S3CompatibleBlobStore,
 )
+from .callbacks import CallbackDelivery, CallbackSubscription, EventFilter
 from .budget import (
     BudgetAccount,
     BudgetBalance,
@@ -631,6 +632,8 @@ __all__ = [
     "BudgetReservationStateError",
     "BudgetSettlement",
     "BudgetStatus",
+    "CallbackDelivery",
+    "CallbackSubscription",
     "CompletionReserve",
     "CompletionReservePurpose",
     "CompletionReserveStatus",
@@ -674,6 +677,7 @@ __all__ = [
     "AsyncOperationResultStatus",
     "AsyncOperationState",
     "ExternalCallbackReceived",
+    "EventFilter",
     "AssetRevision",
     "Citation",
     "CitationSourceTrace",
