@@ -1359,6 +1359,7 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     )
 
     payload = json.loads(response.body.decode("utf-8"))
+    payload_digest = graphblocks.canonical_hash({"status": "completed"})
 
     assert response.status_code == 202
     assert payload == {
@@ -1366,6 +1367,7 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
         "operationId": "op-ci-1",
         "callbackId": "cb-1",
         "idempotencyKey": "idem-callback-1",
+        "payloadDigest": payload_digest,
         "verifiedBy": "callback-relay",
         "policySnapshotId": "policy-callback-1",
         "status": "accepted",
@@ -1376,6 +1378,7 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
             callback_id="cb-1",
             idempotency_key="idem-callback-1",
             payload={"status": "completed"},
+            payload_digest=payload_digest,
             run_id="run-1",
             node_id="waitCI",
             attempt_id="attempt-1",
@@ -1785,6 +1788,7 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
 
     first = app.handle(request)
     duplicate = app.handle(request)
+    payload_digest = graphblocks.canonical_hash({"status": "completed"})
 
     assert first.status_code == 202
     assert duplicate.status_code == 200
@@ -1793,6 +1797,7 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
         "operationId": "op-ci-1",
         "callbackId": "cb-1",
         "idempotencyKey": "idem-callback-1",
+        "payloadDigest": payload_digest,
         "verifiedBy": "callback-relay",
         "policySnapshotId": "local",
         "status": "duplicate",
@@ -2627,10 +2632,24 @@ def test_server_async_callback_submission_deep_freezes_nested_payload() -> None:
     payload["summary"]["passed"] = False  # type: ignore[index]
 
     assert submission.payload == {"checks": ({"name": "unit", "status": "passed"},), "summary": {"passed": True}}
+    assert submission.payload_digest == graphblocks.canonical_hash(
+        {"checks": [{"name": "unit", "status": "passed"}], "summary": {"passed": True}}
+    )
     with pytest.raises(TypeError):
         submission.payload["summary"]["passed"] = False  # type: ignore[index]
     with pytest.raises(TypeError):
         submission.payload["checks"][0]["status"] = "failed"  # type: ignore[index]
+
+
+def test_server_async_callback_submission_rejects_payload_digest_mismatch() -> None:
+    with pytest.raises(ValueError, match="server async callback payload_digest must match payload"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest="sha256:not-the-payload",
+        )
 
 
 def test_server_app_callback_idempotency_survives_returned_payload_mutation_attempts() -> None:

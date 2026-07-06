@@ -648,6 +648,7 @@ class ServerAsyncCallbackSubmission:
     callback_id: str
     idempotency_key: str
     payload: Mapping[str, object]
+    payload_digest: str = ""
     run_id: str | None = None
     node_id: str | None = None
     attempt_id: str | None = None
@@ -679,6 +680,21 @@ class ServerAsyncCallbackSubmission:
             "payload",
             _freeze_json_value("server async callback", "payload", self.payload),
         )
+        if self.payload_digest == "":
+            object.__setattr__(
+                self,
+                "payload_digest",
+                canonical_hash(_thaw_json_value(self.payload)),
+            )
+        else:
+            payload_digest = _validate_non_empty_string(
+                "server async callback",
+                "payload_digest",
+                self.payload_digest,
+            )
+            if payload_digest != canonical_hash(_thaw_json_value(self.payload)):
+                raise ValueError("server async callback payload_digest must match payload")
+            object.__setattr__(self, "payload_digest", payload_digest)
         for field_name in ("run_id", "node_id", "attempt_id", "provider_operation_id"):
             value = getattr(self, field_name)
             if value is not None:
@@ -780,6 +796,7 @@ class ServerAsyncCallbackSubmission:
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
             "idempotencyKey": self.idempotency_key,
+            "payloadDigest": self.payload_digest,
             "verifiedBy": self.verified_by,
             "policySnapshotId": self.policy_snapshot_id,
             "status": "accepted",
@@ -791,6 +808,7 @@ class ServerAsyncCallbackSubmission:
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
             "idempotencyKey": self.idempotency_key,
+            "payloadDigest": self.payload_digest,
             "verifiedBy": self.verified_by,
             "policySnapshotId": self.policy_snapshot_id,
             "status": "duplicate",
