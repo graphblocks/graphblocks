@@ -957,6 +957,23 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def operation_id_mismatch(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="operation_id_mismatch",
+            received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
+        )
+
+    @classmethod
     def payload_too_large(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -2167,6 +2184,62 @@ class GraphBlocksServerApp:
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
+                if str(error) == "server async callback operation_id must match callback endpoint operation_id":
+                    try:
+                        body = json.loads(request.body.decode("utf-8") or "{}")
+                        if not isinstance(body, Mapping):
+                            raise ValueError("server async callback body must be a JSON object")
+                        payload = body.get("payload")
+                        if payload is None:
+                            raise ValueError("server async callback payload is required")
+                        headers = request.headers
+                        idempotency_key = body.get(
+                            "idempotency_key",
+                            body.get(
+                                "idempotencyKey",
+                                headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
+                            ),
+                        )
+                        submission = ServerAsyncCallbackSubmission(
+                            operation_id=route_match.path_params.get("operation_id", ""),
+                            callback_id=_validate_non_empty_string(
+                                "server async callback",
+                                "callback_id",
+                                body.get("callback_id", body.get("callbackId", "")),
+                            ),
+                            idempotency_key=_validate_non_empty_string(
+                                "server async callback",
+                                "idempotency_key",
+                                idempotency_key,
+                            ),
+                            payload=payload,
+                            run_id=_optional_callback_string(body, "run_id", "runId"),
+                            node_id=_optional_callback_string(body, "node_id", "nodeId"),
+                            attempt_id=_optional_callback_string(body, "attempt_id", "attemptId"),
+                            provider_operation_id=_optional_callback_string(
+                                body,
+                                "provider_operation_id",
+                                "providerOperationId",
+                            ),
+                            received_at=request.requested_at or _utc_now_iso(),
+                            verified_by=(
+                                auth_decision.principal.principal_id
+                                if auth_decision.principal is not None
+                                else "unauthenticated"
+                            ),
+                            policy_snapshot_id=_validate_non_empty_string(
+                                "server async callback",
+                                "policy_snapshot_id",
+                                body.get("policy_snapshot_id", body.get("policySnapshotId", "local")),
+                            ),
+                        )
+                        rejection = ServerAsyncCallbackRejection.operation_id_mismatch(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
                 return ServerResponse.json(
                     400,
                     {

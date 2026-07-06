@@ -1454,6 +1454,17 @@ def test_server_app_rejects_async_callback_operation_id_mismatch() -> None:
     }
     assert app.callback_submissions("op-ci-path") == ()
     assert app.callback_submissions("op-ci-body") == ()
+    assert app.async_callback_rejections("op-ci-path") == (
+        {
+            "operationId": "op-ci-path",
+            "callbackId": "cb-mismatch",
+            "idempotencyKey": "idem-callback-mismatch",
+            **_callback_rejection_metadata({"status": "completed"}),
+            "attemptId": "attempt-1",
+            "reason": "operation_id_mismatch",
+            "receivedAt": "2026-07-03T00:00:00Z",
+        },
+    )
 
 
 def test_server_app_rejects_async_callback_when_required_authentication_is_unconfigured() -> None:
