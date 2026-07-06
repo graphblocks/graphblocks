@@ -1361,6 +1361,7 @@ class GraphBlocksServerApp:
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
     max_async_callback_payload_bytes: int = 262144
     require_async_callback_authentication: bool = False
+    anti_enumerate_async_callbacks: bool = False
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1417,6 +1418,8 @@ class GraphBlocksServerApp:
             raise ValueError("server max_async_callback_payload_bytes must be a positive integer")
         if not isinstance(self.require_async_callback_authentication, bool):
             raise ValueError("server require_async_callback_authentication must be a boolean")
+        if not isinstance(self.anti_enumerate_async_callbacks, bool):
+            raise ValueError("server anti_enumerate_async_callbacks must be a boolean")
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -1819,6 +1822,14 @@ class GraphBlocksServerApp:
                         *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                         rejection,
                     )
+                    if self.anti_enumerate_async_callbacks:
+                        return ServerResponse.json(
+                            202,
+                            {
+                                "ok": True,
+                                "status": "accepted",
+                            },
+                        )
                     return ServerResponse.json(
                         404,
                         {

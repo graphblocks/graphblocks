@@ -925,6 +925,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   even for terminal-run rejections that never become accepted callback receipts. This supports
   payload-too-large, unknown-run, missing-fence, terminal-run, stale-attempt, node-mismatch,
   scope-mismatch, and idempotency-conflict rejection audit and inspection.
+  Public callback ingress can opt into anti-enumeration acknowledgements for unknown declared runs:
+  the server records the same `unknown_run` rejection projection but returns a generic `202`
+  acknowledgement instead of exposing run existence through a `404`.
   The server route enforces a configurable inline callback payload limit, defaulting to the
   specification's `262144` bytes, before accepting or storing a callback receipt.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are

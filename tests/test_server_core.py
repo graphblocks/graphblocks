@@ -1467,6 +1467,8 @@ def test_server_app_rejects_async_callback_when_required_authentication_is_uncon
 def test_server_app_validates_async_callback_authentication_requirement_flag() -> None:
     with pytest.raises(ValueError, match="server require_async_callback_authentication must be a boolean"):
         GraphBlocksServerApp(require_async_callback_authentication="yes")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server anti_enumerate_async_callbacks must be a boolean"):
+        GraphBlocksServerApp(anti_enumerate_async_callbacks="yes")  # type: ignore[arg-type]
 
 
 def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> None:
@@ -1561,6 +1563,52 @@ def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
         "operationId": "op-ci-unknown-run",
         "runId": "missing-run",
         "error": "async callback run 'missing-run' not found",
+    }
+    assert app.callback_submissions("op-ci-unknown-run") == ()
+    assert app.async_callback_rejections("op-ci-unknown-run") == (
+        {
+            "operationId": "op-ci-unknown-run",
+            "callbackId": "cb-unknown-run",
+            "idempotencyKey": "idem-callback-unknown-run",
+            "runId": "missing-run",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "reason": "unknown_run",
+            "receivedAt": "2026-07-03T00:00:00Z",
+        },
+    )
+
+
+def test_server_app_can_anti_enumerate_unknown_declared_async_callback_run() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}),
+        anti_enumerate_async_callbacks=True,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unknown-run",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-unknown-run"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-unknown-run",
+                    "attempt_id": "attempt-1",
+                    "run_id": "missing-run",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "status": "accepted",
     }
     assert app.callback_submissions("op-ci-unknown-run") == ()
     assert app.async_callback_rejections("op-ci-unknown-run") == (
