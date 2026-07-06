@@ -26,6 +26,19 @@ from graphblocks.server import (
 )
 
 
+def _callback_rejection_metadata(
+    payload: dict[str, object],
+    *,
+    verified_by: str = "callback-relay",
+    policy_snapshot_id: str = "local",
+) -> dict[str, object]:
+    return {
+        "payloadDigest": graphblocks.canonical_hash(payload),
+        "verifiedBy": verified_by,
+        "policySnapshotId": policy_snapshot_id,
+    }
+
+
 def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     left = default_server_route_manifest().with_endpoint(
         "GET",
@@ -1578,6 +1591,7 @@ def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
             "operationId": "op-ci-unknown-run",
             "callbackId": "cb-unknown-run",
             "idempotencyKey": "idem-callback-unknown-run",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "missing-run",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -1624,6 +1638,7 @@ def test_server_app_can_anti_enumerate_unknown_declared_async_callback_run() -> 
             "operationId": "op-ci-unknown-run",
             "callbackId": "cb-unknown-run",
             "idempotencyKey": "idem-callback-unknown-run",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "missing-run",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -1702,6 +1717,7 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
             "operationId": operation_id,
             "callbackId": f"cb-fence-{index}",
             "idempotencyKey": f"idem-callback-fence-{index}",
+            **_callback_rejection_metadata(body["payload"]),  # type: ignore[arg-type]
             "runId": run_id,
             "reason": "missing_attempt_fence",
             "receivedAt": "2026-07-03T00:00:01Z",
@@ -1760,6 +1776,7 @@ def test_server_app_rejects_async_callback_declared_run_without_node_fence() -> 
             "operationId": "op-ci-node-fence-1",
             "callbackId": "cb-node-fence",
             "idempotencyKey": "idem-callback-node-fence",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-callback-node-fence-1",
             "attemptId": "attempt-1",
             "reason": "missing_node_fence",
@@ -1853,11 +1870,15 @@ def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> N
         "error": "async callback idempotency key was reused with different content",
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
+    rejected_payload_digest = graphblocks.canonical_hash({"status": "failed"})
     assert app.async_callback_rejections("op-ci-1") == (
         {
             "operationId": "op-ci-1",
             "callbackId": "cb-2",
             "idempotencyKey": "idem-callback-1",
+            "payloadDigest": rejected_payload_digest,
+            "verifiedBy": "callback-relay",
+            "policySnapshotId": "local",
             "attemptId": "attempt-1",
             "reason": "idempotency_conflict",
             "receivedAt": "2026-07-02T00:00:01Z",
@@ -1936,6 +1957,7 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
             "operationId": "op-ci-1",
             "callbackId": "cb-stale",
             "idempotencyKey": "idem-callback-stale",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-1",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -2017,6 +2039,7 @@ def test_server_app_rejects_async_callback_for_different_node_on_existing_run_at
             "operationId": "op-ci-1",
             "callbackId": "cb-wrong-node",
             "idempotencyKey": "idem-callback-wrong-node",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-1",
             "nodeId": "otherWait",
             "attemptId": "attempt-1",
@@ -2098,6 +2121,7 @@ def test_server_app_rejects_async_callback_for_different_run_on_existing_operati
             "operationId": "op-ci-1",
             "callbackId": "cb-wrong-run",
             "idempotencyKey": "idem-callback-wrong-run",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-2",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -2179,6 +2203,7 @@ def test_server_app_rejects_second_async_callback_for_same_operation_attempt() -
             "operationId": "op-ci-1",
             "callbackId": "cb-2",
             "idempotencyKey": "idem-callback-2",
+            **_callback_rejection_metadata({"status": "completed", "sequence": 2}),
             "runId": "run-1",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -2373,6 +2398,7 @@ def test_server_app_rejects_async_callback_scope_change_for_existing_operation()
             "operationId": "op-ci-unscoped-first",
             "callbackId": "cb-scoped",
             "idempotencyKey": "idem-callback-scoped",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-1",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -2435,6 +2461,7 @@ def test_server_app_rejects_async_callback_scope_change_for_existing_operation()
             "operationId": "op-ci-scoped-first",
             "callbackId": "cb-unscoped-after-scoped",
             "idempotencyKey": "idem-callback-unscoped-after-scoped",
+            **_callback_rejection_metadata({"status": "completed"}),
             "attemptId": "attempt-1",
             "reason": "scope_mismatch",
             "receivedAt": "2026-07-03T00:00:04Z",
@@ -2495,6 +2522,7 @@ def test_server_app_rejects_unscoped_async_callback_attempt_change_for_existing_
             "operationId": "op-ci-unscoped-attempt",
             "callbackId": "cb-attempt-2",
             "idempotencyKey": "idem-callback-attempt-2",
+            **_callback_rejection_metadata({"status": "completed"}),
             "attemptId": "attempt-2",
             "reason": "stale_attempt",
             "receivedAt": "2026-07-03T00:00:02Z",
@@ -2563,6 +2591,7 @@ def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
             "operationId": "op-ci-terminal-1",
             "callbackId": "cb-terminal",
             "idempotencyKey": "idem-callback-terminal",
+            **_callback_rejection_metadata({"status": "completed"}),
             "runId": "run-terminal-1",
             "nodeId": "waitCI",
             "attemptId": "attempt-1",
@@ -2832,6 +2861,7 @@ def test_server_app_rejects_oversized_async_callback_payload_before_storage() ->
             "operationId": "op-ci-large",
             "callbackId": "cb-large",
             "idempotencyKey": "idem-callback-large",
+            **_callback_rejection_metadata({"log": "x" * 64}, verified_by="unauthenticated"),
             "reason": "payload_too_large",
             "receivedAt": "2026-07-03T00:00:00Z",
         },

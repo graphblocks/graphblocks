@@ -823,6 +823,9 @@ class ServerAsyncCallbackRejection:
     idempotency_key: str
     reason: str
     received_at: str
+    payload_digest: str = ""
+    verified_by: str = "unauthenticated"
+    policy_snapshot_id: str = "local"
     run_id: str | None = None
     node_id: str | None = None
     attempt_id: str | None = None
@@ -840,6 +843,16 @@ class ServerAsyncCallbackRejection:
             "received_at",
             _validate_iso_datetime("server async callback rejection", "received_at", self.received_at),
         )
+        for field_name in ("payload_digest", "verified_by", "policy_snapshot_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string(
+                    "server async callback rejection",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
         for field_name in ("run_id", "node_id", "attempt_id", "status"):
             value = getattr(self, field_name)
             if value is not None:
@@ -848,6 +861,14 @@ class ServerAsyncCallbackRejection:
                     field_name,
                     _validate_non_empty_string("server async callback rejection", field_name, value),
                 )
+
+    @staticmethod
+    def _receipt_metadata(submission: ServerAsyncCallbackSubmission) -> dict[str, object]:
+        return {
+            "payload_digest": submission.payload_digest,
+            "verified_by": submission.verified_by,
+            "policy_snapshot_id": submission.policy_snapshot_id,
+        }
 
     @classmethod
     def terminal_run(
@@ -865,6 +886,7 @@ class ServerAsyncCallbackRejection:
             status=_validate_non_empty_string("server async callback rejection", "status", status),
             reason="terminal_run",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -881,6 +903,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="unknown_run",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -897,6 +920,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="payload_too_large",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -912,6 +936,7 @@ class ServerAsyncCallbackRejection:
             node_id=submission.node_id,
             reason="missing_attempt_fence",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -927,6 +952,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="missing_node_fence",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -943,6 +969,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="stale_attempt",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -959,6 +986,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="idempotency_conflict",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -975,6 +1003,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="node_mismatch",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -991,6 +1020,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="scope_mismatch",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     @classmethod
@@ -1007,6 +1037,7 @@ class ServerAsyncCallbackRejection:
             attempt_id=submission.attempt_id,
             reason="duplicate_operation_receipt",
             received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
         )
 
     def protocol_value(self) -> dict[str, object]:
@@ -1014,6 +1045,9 @@ class ServerAsyncCallbackRejection:
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
             "idempotencyKey": self.idempotency_key,
+            "payloadDigest": self.payload_digest,
+            "verifiedBy": self.verified_by,
+            "policySnapshotId": self.policy_snapshot_id,
             "reason": self.reason,
             "receivedAt": self.received_at,
         }
