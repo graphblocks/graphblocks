@@ -679,7 +679,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   terminal result projection, duration-string parsing, and the same terminal timestamp guard for
   cancel/expire results. Python terminal result projections now also preserve configured external
   effect records so cancellation and expiry retain committed side-effect metadata for audit and
-  compensation.
+  compensation, and reject provider effect identities unless the external effect outcome is
+  `committed`.
 - Python `graphblocks-core` now exposes immutable callback schema facades for `EventFilter`,
   `CallbackSubscription`, and `CallbackDelivery`, covering subscription scope/status/failure-policy
   validation, terminal-event filter projection, delivery idempotency metadata, and terminal delivery

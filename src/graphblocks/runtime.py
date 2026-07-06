@@ -1357,6 +1357,8 @@ def stdlib_registry() -> RuntimeRegistry:
                 block_label,
             )
             if provider_effect_id is not None:
+                if effect["outcome"] != "committed":
+                    raise ValueError(f"{block_label} provider identity but no committed external effect")
                 effect["provider_effect_id"] = provider_effect_id
             effects.append(effect)
         return effects

@@ -910,3 +910,68 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
             "provider_effect_id": "ticket-123",
         }
     ]
+
+
+def test_stdlib_async_terminal_effects_reject_provider_identity_without_committed_effect() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-invalid-effect-identity"},
+        "spec": {
+            "interface": {
+                "outputs": {"cancelled": "graphblocks.ai/AsyncOperationResult@1"}
+            },
+            "nodes": {
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-cancel",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCancel",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-op-cancel",
+                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "idempotencyKey": "idem-op-cancel",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 2_000,
+                        "timeoutMs": 1_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "cancel.operation"},
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {
+                        "cancelledAtUnixMs": 1_900,
+                        "externalEffects": [
+                            {
+                                "effectId": "effect-ticket-1",
+                                "target": "ticket-system",
+                                "operation": "ticket.create",
+                                "outcome": "no_external_effect",
+                                "providerEffectId": "ticket-123",
+                            }
+                        ],
+                    },
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "cancel"
+    assert "provider identity but no committed external effect" in failed[0].payload["error"]
