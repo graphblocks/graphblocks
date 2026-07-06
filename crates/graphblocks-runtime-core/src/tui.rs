@@ -231,6 +231,7 @@ fn event_severity(kind: ApplicationProtocolEventKind) -> TuiRowSeverity {
     match kind {
         ApplicationProtocolEventKind::RunFailed
         | ApplicationProtocolEventKind::RunCancelled
+        | ApplicationProtocolEventKind::RunPolicyStopped
         | ApplicationProtocolEventKind::OutputCutoff => TuiRowSeverity::Error,
         ApplicationProtocolEventKind::BudgetConstrained
         | ApplicationProtocolEventKind::BudgetExhausted
@@ -248,6 +249,7 @@ fn state_after_event(kind: ApplicationProtocolEventKind, current: RunStatus) -> 
         ApplicationProtocolEventKind::RunCompleted => RunStatus::Completed,
         ApplicationProtocolEventKind::RunFailed => RunStatus::Failed,
         ApplicationProtocolEventKind::RunCancelled => RunStatus::Cancelled,
+        ApplicationProtocolEventKind::RunPolicyStopped => RunStatus::PolicyStopped,
         ApplicationProtocolEventKind::BudgetExhausted => RunStatus::PausedBudget,
         ApplicationProtocolEventKind::PolicyDecisionRequired => RunStatus::PausedPolicy,
         _ => current,

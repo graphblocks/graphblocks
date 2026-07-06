@@ -1165,7 +1165,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback subscription terminal-event filter, so policy-stopped background runs can notify
   subscribers through the same projection path as completed, failed, or cancelled runs. The Python
   protocol facade exports the same event kind and continues to compare its event tuple against the
-  shared application-protocol TCK.
+  shared application-protocol TCK. Rust TUI attach projections now also display `RunPolicyStopped`
+  as an error row and advance the run view to `policy_stopped`.
 - Server run-status projection now keeps terminal application/protocol events authoritative over
   stale pause/resume control projections, so a completed event stream cannot continue to appear
   paused or resumable in `GetRunStatus`/`ListRuns`.

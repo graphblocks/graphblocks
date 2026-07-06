@@ -151,3 +151,22 @@ fn tui_view_ignores_other_run_events_without_poisoning_deduplication() {
     assert_eq!(view.rows()[0].summary, "right run");
     assert_eq!(view.last_cursor(), Some("cursor-002"));
 }
+
+#[test]
+fn tui_view_projects_policy_stopped_as_terminal_error_state() {
+    let mut view = TuiRunView::from_status(status_snapshot());
+    let policy_stopped = protocol_event(
+        "evt-policy-stopped",
+        4,
+        "cursor-004",
+        ApplicationProtocolEventKind::RunPolicyStopped,
+        json!({"reason": "output policy denied"}),
+    );
+
+    assert!(view.apply_event(policy_stopped));
+
+    assert_eq!(view.state(), RunStatus::PolicyStopped);
+    assert_eq!(view.rows().len(), 1);
+    assert_eq!(view.rows()[0].summary, "output policy denied");
+    assert_eq!(view.rows()[0].severity, TuiRowSeverity::Error);
+}
