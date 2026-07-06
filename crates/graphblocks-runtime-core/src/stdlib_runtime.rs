@@ -830,6 +830,12 @@ fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Valu
         .get("cancelledAtUnixMs")
         .or_else(|| config.get("cancelled_at_unix_ms"))
         .and_then(Value::as_u64);
+    validate_async_terminal_timestamp(
+        operation,
+        completed_at_unix_ms,
+        "async.cancel_operation@1",
+        "async.cancel_operation.invalid_config",
+    )?;
     let external_effects =
         parse_async_external_effects(config, "async.cancel_operation@1")?;
 
@@ -848,6 +854,12 @@ fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Valu
         .get("expiredAtUnixMs")
         .or_else(|| config.get("expired_at_unix_ms"))
         .and_then(Value::as_u64);
+    validate_async_terminal_timestamp(
+        operation,
+        completed_at_unix_ms,
+        "async.expire_operation@1",
+        "async.expire_operation.invalid_config",
+    )?;
     let external_effects =
         parse_async_external_effects(config, "async.expire_operation@1")?;
 
@@ -2361,6 +2373,40 @@ fn async_operation_result_json(
             .collect::<Vec<_>>(),
         "completed_at_unix_ms": completed_at_unix_ms,
     }))
+}
+
+fn validate_async_terminal_timestamp(
+    operation: &Value,
+    completed_at_unix_ms: Option<u64>,
+    block_label: &str,
+    error_code: &'static str,
+) -> Result<(), BlockError> {
+    let Some(completed_at_unix_ms) = completed_at_unix_ms else {
+        return Ok(());
+    };
+    if completed_at_unix_ms == 0 {
+        return Err(BlockError::new(
+            error_code,
+            ErrorCategory::Configuration,
+            format!("{block_label} terminal timestamp must be positive"),
+            false,
+        ));
+    }
+    if let Some(submitted_at_unix_ms) = operation
+        .get("submitted_at_unix_ms")
+        .and_then(Value::as_u64)
+        && completed_at_unix_ms < submitted_at_unix_ms
+    {
+        return Err(BlockError::new(
+            error_code,
+            ErrorCategory::Configuration,
+            format!(
+                "{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms"
+            ),
+            false,
+        ));
+    }
+    Ok(())
 }
 
 fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
