@@ -1,10 +1,12 @@
 use graphblocks_runtime_core::{
+    callback_delivery::CallbackDeliveryRunAction,
     evaluation::ModelVisibleToolRef,
     run_store::{
         InMemoryRunStore, PatchOperation, ProductionRunProvenanceDiagnostic,
         RunDeploymentProvenance, RunInvocationMode, RunInvocationResponse,
         RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunLifetime, RunOwnershipLease,
-        RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
+        RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason, RunWaitReasonKind,
+        SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -283,6 +285,58 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     assert_eq!(
         snapshot.waiting_on[0].message.as_deref(),
         Some("del_001")
+    );
+    Ok(())
+}
+
+#[test]
+fn callback_delivery_run_action_updates_run_status_and_wait_reason() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let pause_run = store.create_run("sha256:pause-callback-delivery", json!({}));
+    let fail_run = store.create_run("sha256:fail-callback-delivery", json!({}));
+
+    let paused = store.apply_callback_delivery_run_action(CallbackDeliveryRunAction::PauseRun {
+        run_id: pause_run.run_id.clone(),
+        subscription_id: "sub-1".to_owned(),
+        delivery_id: "del-1".to_owned(),
+        reason: "client_error:403".to_owned(),
+    })?;
+    let failed = store.apply_callback_delivery_run_action(CallbackDeliveryRunAction::FailRun {
+        run_id: fail_run.run_id.clone(),
+        subscription_id: "sub-1".to_owned(),
+        delivery_id: "del-2".to_owned(),
+        reason: "client_error:410".to_owned(),
+    })?;
+
+    assert_eq!(paused.run.status, RunStatus::PausedCallbackDelivery);
+    assert_eq!(paused.wait_reason.kind, RunWaitReasonKind::CallbackDelivery);
+    assert_eq!(paused.wait_reason.message.as_deref(), Some("del-1"));
+    assert_eq!(failed.run.status, RunStatus::Failed);
+    assert_eq!(failed.wait_reason.kind, RunWaitReasonKind::CallbackDelivery);
+    assert_eq!(failed.wait_reason.message.as_deref(), Some("del-2"));
+    assert_eq!(
+        store.get_run(&pause_run.run_id)?.status,
+        RunStatus::PausedCallbackDelivery
+    );
+    assert_eq!(store.get_run(&fail_run.run_id)?.status, RunStatus::Failed);
+
+    let mut sqlite = SqliteRunStore::open_in_memory()?;
+    let sqlite_run = sqlite.create_run("sha256:sqlite-callback-delivery", json!({}))?;
+    let sqlite_paused =
+        sqlite.apply_callback_delivery_run_action(CallbackDeliveryRunAction::PauseRun {
+            run_id: sqlite_run.run_id.clone(),
+            subscription_id: "sub-1".to_owned(),
+            delivery_id: "del-sqlite".to_owned(),
+            reason: "client_error:403".to_owned(),
+        })?;
+    assert_eq!(sqlite_paused.run.status, RunStatus::PausedCallbackDelivery);
+    assert_eq!(
+        sqlite_paused.wait_reason.kind,
+        RunWaitReasonKind::CallbackDelivery
+    );
+    assert_eq!(
+        sqlite.get_run(&sqlite_run.run_id)?.status,
+        RunStatus::PausedCallbackDelivery
     );
     Ok(())
 }

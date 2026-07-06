@@ -967,6 +967,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   The Rust `graphblocks-runtime-core` async operation journal now records the same payload digest,
   verifying principal, and policy snapshot metadata on `ExternalCallbackRejected` events, including
   idempotency-conflict rejections for mutated callback replays.
+  Mandatory callback-delivery failure actions can now be applied to Rust run state: pause actions
+  transition the run to `paused_callback_delivery` and return the callback-delivery wait reason,
+  while fail actions transition the run to `failed`.
   Deployments can configure the server callback route to require an installed authentication hook
   before `SubmitAsyncCallback` will parse, validate, or store a callback receipt.
 - `graphblocks-runtime-core` now rejects async-operation cancel and expire terminal transitions

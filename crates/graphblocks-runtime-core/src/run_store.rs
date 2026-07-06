@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Number, Value, json};
 
+use crate::callback_delivery::CallbackDeliveryRunAction;
 use crate::evaluation::ModelVisibleToolRef;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -617,6 +618,14 @@ pub struct RunStatusSnapshot {
     pub active_operations: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallbackDeliveryRunUpdate {
+    pub run: RunRecord,
+    pub wait_reason: RunWaitReason,
+    pub subscription_id: String,
+    pub delivery_reason: String,
+}
+
 impl RunStatusSnapshot {
     pub fn from_run(
         run: &RunRecord,
@@ -959,6 +968,50 @@ fn record_with_status(current: &RunRecord, status: RunStatus) -> Result<RunRecor
     let mut updated = current.clone();
     updated.status = status;
     Ok(updated)
+}
+
+fn callback_delivery_run_action_parts(
+    action: CallbackDeliveryRunAction,
+) -> Result<(String, RunStatus, RunWaitReason, String, String), RunStoreError> {
+    let (run_id, status, subscription_id, delivery_id, reason) = match action {
+        CallbackDeliveryRunAction::PauseRun {
+            run_id,
+            subscription_id,
+            delivery_id,
+            reason,
+        } => (
+            run_id,
+            RunStatus::PausedCallbackDelivery,
+            subscription_id,
+            delivery_id,
+            reason,
+        ),
+        CallbackDeliveryRunAction::FailRun {
+            run_id,
+            subscription_id,
+            delivery_id,
+            reason,
+        } => (
+            run_id,
+            RunStatus::Failed,
+            subscription_id,
+            delivery_id,
+            reason,
+        ),
+    };
+    if run_id.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "run_id" });
+    }
+    if subscription_id.trim().is_empty() {
+        return Err(RunStoreError::EmptyField {
+            field: "subscription_id",
+        });
+    }
+    if reason.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "reason" });
+    }
+    let wait_reason = RunWaitReason::callback_delivery(delivery_id)?;
+    Ok((run_id, status, wait_reason, subscription_id, reason))
 }
 
 fn record_with_state_patch(
@@ -1367,6 +1420,21 @@ impl InMemoryRunStore {
         Ok(updated)
     }
 
+    pub fn apply_callback_delivery_run_action(
+        &mut self,
+        action: CallbackDeliveryRunAction,
+    ) -> Result<CallbackDeliveryRunUpdate, RunStoreError> {
+        let (run_id, status, wait_reason, subscription_id, delivery_reason) =
+            callback_delivery_run_action_parts(action)?;
+        let run = self.set_status(&run_id, status)?;
+        Ok(CallbackDeliveryRunUpdate {
+            run,
+            wait_reason,
+            subscription_id,
+            delivery_reason,
+        })
+    }
+
     pub fn set_status_with_ownership_lease(
         &mut self,
         run_id: impl AsRef<str>,
@@ -1720,6 +1788,21 @@ impl SqliteRunStore {
             )
             .map_err(storage_error)?;
         Ok(updated)
+    }
+
+    pub fn apply_callback_delivery_run_action(
+        &mut self,
+        action: CallbackDeliveryRunAction,
+    ) -> Result<CallbackDeliveryRunUpdate, RunStoreError> {
+        let (run_id, status, wait_reason, subscription_id, delivery_reason) =
+            callback_delivery_run_action_parts(action)?;
+        let run = self.set_status(&run_id, status)?;
+        Ok(CallbackDeliveryRunUpdate {
+            run,
+            wait_reason,
+            subscription_id,
+            delivery_reason,
+        })
     }
 
     pub fn set_status_with_ownership_lease(
