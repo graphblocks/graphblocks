@@ -953,6 +953,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` now exposes `UnsubscribeEvents` and `AckEvent` HTTP helpers for run-scoped
   subscriptions, preserving the server's idempotent revoke and event/cursor acknowledgement
   projections.
+- `graphblocks-client` now exposes `RegisterCallback` and `RevokeCallback` HTTP helpers for
+  callback delivery registrations, including replayed run-scope events, delivery target config,
+  failure policy, and dead-letter policy projection.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

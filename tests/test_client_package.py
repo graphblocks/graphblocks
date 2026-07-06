@@ -1929,6 +1929,175 @@ def test_client_package_acknowledges_subscription_event_over_http_transport(monk
     )
 
 
+def test_client_package_registers_callback_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-register-callback"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client callback {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-register-callback-http-1",
+                    "responseId": "response-register-callback-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/register"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {
+            "deadLetterPolicy": "webhook-standard",
+            "delivery": {
+                "kind": "webhook",
+                "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                "url": "https://relay.example/events",
+            },
+            "eventFilter": {"types": ["RunSucceeded"]},
+            "failurePolicy": "retry_then_dead_letter",
+            "replayFromCursor": "run-register-callback-http-1:1",
+            "scope": "run",
+            "scopeId": "run-register-callback-http-1",
+            "subscriptionId": "callback-sub-client-1",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    snapshot = client.register_callback(
+        subscription_id="callback-sub-client-1",
+        scope="run",
+        scope_id="run-register-callback-http-1",
+        event_filter={"types": ["RunSucceeded"]},
+        delivery={
+            "kind": "webhook",
+            "url": "https://relay.example/events",
+            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+        },
+        replay_from_cursor="run-register-callback-http-1:1",
+        failure_policy="retry_then_dead_letter",
+        dead_letter_policy="webhook-standard",
+    )
+
+    assert snapshot.run_id == "run-register-callback-http-1"
+    assert snapshot.stream["subscriptionId"] == "callback-sub-client-1"
+    assert snapshot.stream["scope"] == "run"
+    assert snapshot.stream["scopeId"] == "run-register-callback-http-1"
+    assert snapshot.stream["lastCursor"] == "run-register-callback-http-1:2"
+    assert [event.kind for event in snapshot.events] == ["RunSucceeded"]
+    assert snapshot.events[0].payload["outputs"] == {"prompt": "Client callback ok"}
+
+
+def test_client_package_revokes_callback_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-revoke-client-1",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
+                    "deadLetterPolicy": "webhook-standard",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/callback-sub-revoke-client-1"
+        assert headers["authorization"] == "Bearer token-1"
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.revoke_callback("callback-sub-revoke-client-1")
+
+    assert response == {
+        "ok": True,
+        "subscriptionId": "callback-sub-revoke-client-1",
+        "status": "revoked",
+    }
+    assert app.callback_registrations()[0].status == "revoked"
+
+
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

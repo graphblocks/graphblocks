@@ -1086,6 +1086,75 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks ack response")
 
+    def register_callback(
+        self,
+        *,
+        subscription_id: object | None = None,
+        scope: object,
+        scope_id: object,
+        event_filter: object | None = None,
+        delivery: object,
+        replay_from_cursor: object | None = None,
+        failure_policy: object = "retry_then_dead_letter",
+        dead_letter_policy: object | None = None,
+    ) -> RunStreamSnapshot:
+        if event_filter is None:
+            event_filter = {}
+        if not isinstance(event_filter, Mapping):
+            raise ValueError("GraphBlocks HTTP event_filter must be a JSON object")
+        if not isinstance(delivery, Mapping):
+            raise ValueError("GraphBlocks HTTP delivery must be a JSON object")
+        body: dict[str, object] = {
+            "scope": _http_non_empty_string("scope", scope),
+            "scopeId": _http_non_empty_string("scope_id", scope_id),
+            "eventFilter": deepcopy(dict(event_filter)),
+            "delivery": deepcopy(dict(delivery)),
+            "failurePolicy": _http_non_empty_string("failure_policy", failure_policy),
+        }
+        if subscription_id is not None:
+            body["subscriptionId"] = _http_non_empty_string("subscription_id", subscription_id)
+        if replay_from_cursor is not None:
+            body["replayFromCursor"] = _http_non_empty_string("replay_from_cursor", replay_from_cursor)
+        if dead_letter_policy is not None:
+            body["deadLetterPolicy"] = _http_non_empty_string("dead_letter_policy", dead_letter_policy)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/callbacks/register",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = _read_json_response(response, "GraphBlocks callback registration response")
+        events = _events_from_payload(payload, "GraphBlocks callback registration response")
+        stream_state = ApplicationEventStreamState()
+        for event in events:
+            stream_state.accept(event)
+        return RunStreamSnapshot(
+            run_id=str(payload.get("scopeId", "")) if payload.get("scope") == "run" else "",
+            stream={key: deepcopy(value) for key, value in payload.items() if key != "events"},
+            events=events,
+            event_stream=stream_state,
+        )
+
+    def revoke_callback(self, subscription_id: object) -> dict[str, object]:
+        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/callbacks/{subscription_id}",
+            headers=headers,
+            method="DELETE",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks callback revoke response")
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
