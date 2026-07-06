@@ -1118,6 +1118,7 @@ def stdlib_registry() -> RuntimeRegistry:
                 str(operation["operation_id"]),
                 "completed",
                 output=inputs.get("output"),
+                external_effects=_async_external_effects(config, "async.complete_operation@1"),
                 completed_at_unix_ms=None,
             )
         }
@@ -1135,6 +1136,7 @@ def stdlib_registry() -> RuntimeRegistry:
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "cancelled",
+                external_effects=_async_external_effects(config, "async.cancel_operation@1"),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
         }
@@ -1152,6 +1154,7 @@ def stdlib_registry() -> RuntimeRegistry:
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "expired",
+                external_effects=_async_external_effects(config, "async.expire_operation@1"),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
         }
@@ -1303,6 +1306,7 @@ def stdlib_registry() -> RuntimeRegistry:
         status: str,
         *,
         output: Any = None,
+        external_effects: list[dict[str, Any]] | None = None,
         completed_at_unix_ms: int | None,
     ) -> dict[str, Any]:
         return {
@@ -1314,9 +1318,76 @@ def stdlib_registry() -> RuntimeRegistry:
             "metrics": [],
             "checks": [],
             "usage": [],
-            "external_effects": [],
+            "external_effects": [] if external_effects is None else external_effects,
             "completed_at_unix_ms": completed_at_unix_ms,
         }
+
+    def _async_external_effects(config: Mapping[str, Any], block_label: str) -> list[dict[str, Any]]:
+        raw_effects = config.get("externalEffects", config.get("external_effects", []))
+        if not isinstance(raw_effects, list | tuple):
+            raise TypeError(f"{block_label} config.externalEffects must be a sequence")
+        effects = []
+        for index, raw_effect in enumerate(raw_effects):
+            if not isinstance(raw_effect, Mapping):
+                raise TypeError(f"{block_label} config.externalEffects[{index}] must be a mapping")
+            effect = {
+                "effect_id": _required_effect_string(raw_effect, "effectId", "effect_id", "effectId", block_label),
+                "target": _required_effect_string(raw_effect, "target", "target", "target", block_label),
+                "operation": _required_effect_string(raw_effect, "operation", "operation", "operation", block_label),
+                "outcome": _required_effect_string(raw_effect, "outcome", "outcome", "outcome", block_label),
+                "idempotency_key": None,
+                "provider_effect_id": None,
+            }
+            if effect["outcome"] not in {"no_external_effect", "committed", "not_committed", "unknown"}:
+                raise ValueError(f"{block_label} config.externalEffects[{index}].outcome is unsupported")
+            idempotency_key = _optional_effect_string(
+                raw_effect,
+                "idempotencyKey",
+                "idempotency_key",
+                "idempotencyKey",
+                block_label,
+            )
+            if idempotency_key is not None:
+                effect["idempotency_key"] = idempotency_key
+            provider_effect_id = _optional_effect_string(
+                raw_effect,
+                "providerEffectId",
+                "provider_effect_id",
+                "providerEffectId",
+                block_label,
+            )
+            if provider_effect_id is not None:
+                effect["provider_effect_id"] = provider_effect_id
+            effects.append(effect)
+        return effects
+
+    def _required_effect_string(
+        config: Mapping[str, Any],
+        camel_key: str,
+        snake_key: str,
+        label: str,
+        block_label: str,
+    ) -> str:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            raise TypeError(f"{block_label} config.externalEffects.{label} is required")
+        if not isinstance(value, str) or not value.strip():
+            raise TypeError(f"{block_label} config.externalEffects.{label} must be a non-empty string")
+        return value
+
+    def _optional_effect_string(
+        config: Mapping[str, Any],
+        camel_key: str,
+        snake_key: str,
+        label: str,
+        block_label: str,
+    ) -> str | None:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found or value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise TypeError(f"{block_label} config.externalEffects.{label} must be a non-empty string")
+        return value
 
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)

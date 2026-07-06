@@ -779,3 +779,134 @@ def test_stdlib_async_terminal_blocks_reject_invalid_terminal_timestamps() -> No
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "cancel"
     assert "async.cancel_operation@1 terminal timestamp" in failed[0].payload["error"]
+
+
+def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_details() -> None:
+    start_config = {
+        "operationId": "op-placeholder",
+        "runId": "run-coding-1",
+        "nodeId": "node-placeholder",
+        "attemptId": "attempt-1",
+        "kind": "ci_job",
+        "providerOperationId": "provider-placeholder",
+        "resumeTokenHash": "sha256:resume-token-placeholder",
+        "idempotencyKey": "idem-placeholder",
+        "expectedSchema": "schemas/CICallback@1",
+        "createdAtUnixMs": 1_000,
+        "submittedAtUnixMs": 1_050,
+        "expiresAtUnixMs": 2_000,
+        "timeoutMs": 1_000,
+        "resume": {
+            "requirePolicyReevaluation": True,
+            "requireBudgetReservation": True,
+            "requireReleaseCompatibility": True,
+            "requireOwnershipFence": True,
+        },
+        "attemptFencing": True,
+    }
+
+    def config(operation_id: str, node_id: str) -> dict[str, object]:
+        configured = dict(start_config)
+        configured["operationId"] = operation_id
+        configured["nodeId"] = node_id
+        configured["providerOperationId"] = f"provider-{operation_id}"
+        configured["resumeTokenHash"] = f"sha256:resume-token-{operation_id}"
+        configured["idempotencyKey"] = f"idem-{operation_id}"
+        return configured
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-terminal-details"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1",
+                    "completed": "graphblocks.ai/AsyncOperationResult@1",
+                    "cancelled": "graphblocks.ai/AsyncOperationResult@1",
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"},
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "30s",
+                        "maxInterval": "5m",
+                        "timeout": "2h",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"},
+                },
+                "startComplete": {
+                    "block": "async.start_operation@1",
+                    "config": config("op-complete", "node-complete"),
+                    "outputs": {"operation": "complete.operation"},
+                },
+                "complete": {
+                    "block": "async.complete_operation@1",
+                    "inputs": {
+                        "operation": "startComplete.operation",
+                        "output": "$input.payload",
+                    },
+                    "outputs": {"result": "$output.completed"},
+                },
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": config("op-cancel", "node-cancel"),
+                    "outputs": {"operation": "cancel.operation"},
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {
+                        "cancelledAtUnixMs": 1_900,
+                        "externalEffects": [
+                            {
+                                "effectId": "effect-ticket-1",
+                                "target": "ticket-system",
+                                "operation": "ticket.create",
+                                "outcome": "committed",
+                                "idempotencyKey": "idem-ticket-1",
+                                "providerEffectId": "ticket-123",
+                            }
+                        ],
+                    },
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {"payload": {"status": "completed"}})
+
+    assert result.status == "succeeded"
+    assert result.outputs["poll"]["intervalMs"] == 30_000
+    assert result.outputs["poll"]["maxIntervalMs"] == 300_000
+    assert result.outputs["poll"]["timeoutMs"] == 7_200_000
+    assert result.outputs["completed"]["status"] == "completed"
+    assert result.outputs["completed"]["output"] == {"status": "completed"}
+    assert result.outputs["cancelled"]["status"] == "cancelled"
+    assert result.outputs["cancelled"]["external_effects"] == [
+        {
+            "effect_id": "effect-ticket-1",
+            "target": "ticket-system",
+            "operation": "ticket.create",
+            "outcome": "committed",
+            "idempotency_key": "idem-ticket-1",
+            "provider_effect_id": "ticket-123",
+        }
+    ]
