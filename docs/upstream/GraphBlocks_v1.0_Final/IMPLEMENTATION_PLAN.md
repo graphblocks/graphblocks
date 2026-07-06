@@ -201,7 +201,8 @@ Message
 - Protocol replay also validates post-cutoff `AssistantIncomplete` and `AssistantRetracted` events
   against canonical terminal reason, draft disposition, and delivered-sequence metadata before
   allowing them after a response cutoff. Their delivered-sequence metadata must match the accepted
-  `OutputCutoff` boundary rather than establishing a new boundary.
+  `OutputCutoff` boundary rather than establishing a new boundary; protocol stream state also
+  retains the cutoff policy decision id so draft terminal events cannot mutate cutoff attribution.
 - Runtime stream state now persists the accepted cutoff terminal reason with that boundary and
   rejects post-cutoff draft terminal events whose reason differs from the `OutputCutoff`.
 - `ApplicationEventStream` runtime state now applies the same canonical post-cutoff draft terminal

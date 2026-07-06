@@ -586,23 +586,36 @@ class ApplicationProtocolLog:
 
 @dataclass(slots=True)
 class ApplicationProtocolStreamState:
-    cutoffs: dict[str, int] = field(default_factory=dict)
+    cutoffs: dict[str, dict[str, object]] = field(default_factory=dict)
     accepted_events: list[ApplicationProtocolEvent] = field(default_factory=list)
 
     def accept(self, event: ApplicationProtocolEvent) -> ApplicationProtocolEvent | None:
         if event.kind == "OutputCutoff":
             response_id = event.payload.get("response_id")
             last_client_delivered_sequence = event.payload.get("last_client_delivered_sequence")
+            terminal_reason = event.payload.get("terminal_reason")
+            draft_disposition = event.payload.get("draft_disposition")
+            policy_decision_id = event.payload.get("policy_decision_id")
             if (
                 not isinstance(response_id, str)
                 or not response_id.strip()
                 or not isinstance(last_client_delivered_sequence, int)
                 or isinstance(last_client_delivered_sequence, bool)
                 or last_client_delivered_sequence < 0
+                or not isinstance(terminal_reason, str)
+                or not terminal_reason.strip()
+                or not isinstance(draft_disposition, str)
+                or not draft_disposition.strip()
+                or (policy_decision_id is not None and not isinstance(policy_decision_id, str))
                 or response_id in self.cutoffs
             ):
                 return None
-            self.cutoffs[response_id] = last_client_delivered_sequence
+            self.cutoffs[response_id] = {
+                "last_client_delivered_sequence": last_client_delivered_sequence,
+                "terminal_reason": terminal_reason,
+                "draft_disposition": draft_disposition,
+                "policy_decision_id": policy_decision_id,
+            }
             self.accepted_events.append(event)
             return event
 
@@ -610,6 +623,25 @@ class ApplicationProtocolStreamState:
         response_id = payload_response_id if isinstance(payload_response_id, str) else None
         if response_id is not None and response_id in self.cutoffs:
             if event.kind in {"AssistantIncomplete", "AssistantRetracted"}:
+                cutoff = self.cutoffs[response_id]
+                last_client_delivered_sequence = event.payload.get("last_client_delivered_sequence")
+                if not isinstance(last_client_delivered_sequence, int) or isinstance(
+                    last_client_delivered_sequence,
+                    bool,
+                ):
+                    return None
+                if last_client_delivered_sequence != cutoff["last_client_delivered_sequence"]:
+                    return None
+                if event.payload.get("terminal_reason") != cutoff["terminal_reason"]:
+                    return None
+                if event.payload.get("draft_disposition") != cutoff["draft_disposition"]:
+                    return None
+                if event.payload.get("policy_decision_id") != cutoff["policy_decision_id"]:
+                    return None
+                if cutoff["draft_disposition"] == "retract" and event.kind != "AssistantRetracted":
+                    return None
+                if cutoff["draft_disposition"] == "mark_incomplete" and event.kind != "AssistantIncomplete":
+                    return None
                 self.accepted_events.append(event)
                 return event
             if event.kind == "AssistantDraftDelta":
@@ -620,7 +652,11 @@ class ApplicationProtocolStreamState:
         return event
 
     def cutoff_for_response(self, response_id: str) -> int | None:
-        return self.cutoffs.get(response_id)
+        cutoff = self.cutoffs.get(response_id)
+        if cutoff is None:
+            return None
+        value = cutoff.get("last_client_delivered_sequence")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 @dataclass(frozen=True, slots=True)

@@ -785,6 +785,8 @@ def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> Non
             "response_id": "response-1",
             "last_client_delivered_sequence": 1,
             "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "policy_decision_id": "decision-cutoff",
         },
     )
     late_delta = ApplicationProtocolEvent.new(
@@ -811,7 +813,32 @@ def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> Non
             cursor="cursor-4",
             occurred_at_unix_ms=1_765_843_200_300,
         ),
-        payload={"response_id": "response-1", "terminal_reason": "policy_denied"},
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "policy_decision_id": "decision-cutoff",
+        },
+    )
+    wrong_incomplete = ApplicationProtocolEvent.new(
+        "AssistantIncomplete",
+        ApplicationProtocolEventMetadata(
+            event_id="event-incomplete-wrong",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=8,
+            cursor="cursor-8",
+            occurred_at_unix_ms=1_765_843_200_700,
+        ),
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "policy_decision_id": "decision-cutoff",
+        },
     )
     replacement_delta = ApplicationProtocolEvent.new(
         "AssistantDraftDelta",
@@ -861,6 +888,7 @@ def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> Non
     assert state.accept(cutoff) == cutoff
     assert state.cutoff_for_response("response-1") == 1
     assert state.accept(late_delta) is None
+    assert state.accept(wrong_incomplete) is None
     assert state.accept(incomplete) == incomplete
     assert state.accept(replacement_delta) == replacement_delta
     assert state.accept(duplicate_cutoff) is None
