@@ -671,7 +671,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   graph-authored polling waits cannot silently become unbounded, and accepts positive duration
   strings such as `30s`, `5m`, or `2h` for interval and timeout settings. Runtime poll projections
   now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that unbounded
-  wait policy is declared. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
+  wait policy is declared, and reject poll configurations whose `maxInterval` is lower than the
+  initial `interval`. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
   `expiredAtUnixMs` values and timestamps that regress before `submitted_at_unix_ms`, matching the
   durable operation-store timestamp invariant. Rust stdlib boundary coverage now also verifies that
   malformed terminal `externalEffects` with provider identities but no committed outcome fail before

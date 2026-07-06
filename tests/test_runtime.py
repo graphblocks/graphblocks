@@ -975,3 +975,70 @@ def test_stdlib_async_terminal_effects_reject_provider_identity_without_committe
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "cancel"
     assert "provider identity but no committed external effect" in failed[0].payload["error"]
+
+
+def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-invalid-poll-interval"},
+        "spec": {
+            "interface": {
+                "outputs": {"poll": "graphblocks.ai/AsyncPoll@1"}
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-poll",
+                        "runId": "run-coding-1",
+                        "nodeId": "startPoll",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-op-poll",
+                        "resumeTokenHash": "sha256:resume-token-op-poll",
+                        "idempotencyKey": "idem-op-poll",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 10_000,
+                        "timeoutMs": 9_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "poll.operation"},
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "5m",
+                        "maxInterval": "30s",
+                        "timeout": "2h",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "poll"
+    assert "maxInterval must not be less than interval" in failed[0].payload["error"]

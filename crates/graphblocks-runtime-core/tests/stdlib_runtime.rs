@@ -1127,6 +1127,58 @@ fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), Str
 }
 
 #[test]
+fn rust_stdlib_async_poll_operation_rejects_max_interval_below_interval() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-poll-invalid-max-interval"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "5m",
+                        "maxInterval": "30s",
+                        "timeout": "2h",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    assert_eq!(
+        result
+            .pointer("/journal/4/payload/code")
+            .and_then(Value::as_str),
+        Some("async.poll_operation.invalid_config")
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_cancel_operation_rejects_invalid_terminal_timestamp() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

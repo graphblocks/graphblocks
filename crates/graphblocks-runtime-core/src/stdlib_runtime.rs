@@ -764,6 +764,14 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
         "async.poll_operation@1 maxInterval must be a positive duration",
     )?
         .unwrap_or(interval_ms);
+    if max_interval_ms < interval_ms {
+        return Err(BlockError::new(
+            "async.poll_operation.invalid_config",
+            ErrorCategory::Configuration,
+            "async.poll_operation@1 maxInterval must not be less than interval",
+            false,
+        ));
+    }
     let timeout_ms = optional_alias_duration_ms(
         config,
         &["timeoutMs", "timeout_ms", "timeout"],

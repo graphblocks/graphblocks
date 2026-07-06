@@ -1089,6 +1089,8 @@ def stdlib_registry() -> RuntimeRegistry:
             _optional_duration_ms(config, ("maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"), "maxInterval")
             or interval_ms
         )
+        if max_interval_ms < interval_ms:
+            raise ValueError("async.poll_operation@1 maxInterval must not be less than interval")
         timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
         infinite_wait_policy = _optional_async_string(
             config,
