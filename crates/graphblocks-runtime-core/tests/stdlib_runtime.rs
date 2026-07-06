@@ -1439,6 +1439,67 @@ fn rust_stdlib_async_start_operation_rejects_timeout_expiration_overflow() -> Re
     Ok(())
 }
 
+#[test]
+fn rust_stdlib_async_start_operation_rejects_submitted_before_created() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-start-submitted-before-created"},
+        "spec": {
+            "interface": {
+                "outputs": {"operation": "graphblocks.ai/AsyncOperation@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 2_000,
+                        "submittedAtUnixMs": 1_999,
+                        "timeoutMs": 1_000,
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "outputs": {"operation": "$output.operation"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    let node_failed = result["journal"]
+        .as_array()
+        .and_then(|records| {
+            records.iter().find(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some("node_failed")
+            })
+        })
+        .ok_or_else(|| "missing node_failed journal record".to_string())?;
+    assert!(
+        node_failed
+            .pointer("/payload/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("submitted_at precedes created_at")
+    );
+    Ok(())
+}
+
 fn async_start_config(operation_id: &str, node_id: &str) -> Value {
     json!({
         "operationId": operation_id,

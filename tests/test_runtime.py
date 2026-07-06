@@ -1155,3 +1155,50 @@ def test_stdlib_async_start_operation_rejects_timeout_expiration_overflow() -> N
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "startCI"
     assert "timeout exceeds timestamp range" in failed[0].payload["error"]
+
+
+def test_stdlib_async_start_operation_rejects_submitted_before_created() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-submitted-before-created"},
+        "spec": {
+            "interface": {
+                "outputs": {"operation": "graphblocks.ai/AsyncOperation@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 2_000,
+                        "submittedAtUnixMs": 1_999,
+                        "timeoutMs": 1_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "$output.operation"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "startCI"
+    assert "submitted_at precedes created_at" in failed[0].payload["error"]

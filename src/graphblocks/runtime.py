@@ -1026,12 +1026,15 @@ def stdlib_registry() -> RuntimeRegistry:
         )
         if provider_operation_id is not None:
             operation["provider_operation_id"] = provider_operation_id
-            operation["submitted_at_unix_ms"] = _required_async_u64(
+            submitted_at_unix_ms = _required_async_u64(
                 config,
                 "submittedAtUnixMs",
                 "submitted_at_unix_ms",
                 "submittedAtUnixMs",
             )
+            if submitted_at_unix_ms < created_at_unix_ms:
+                raise ValueError("async.start_operation@1 invalid operation: submitted_at precedes created_at")
+            operation["submitted_at_unix_ms"] = submitted_at_unix_ms
             operation["state"] = "submitted"
         expires_at_unix_ms = _optional_async_u64(config, "expiresAtUnixMs", "expires_at_unix_ms", "expiresAtUnixMs")
         if expires_at_unix_ms is None:
