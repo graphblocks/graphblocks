@@ -44,6 +44,7 @@ from .async_operation import (
     AsyncOperationResult,
     AsyncOperationResultStatus,
     AsyncOperationState,
+    ExternalCallbackReceived,
     ExternalEffectRecord,
     VALID_ASYNC_OPERATION_RESULT_STATUSES,
 )
@@ -672,6 +673,7 @@ __all__ = [
     "AsyncOperationResult",
     "AsyncOperationResultStatus",
     "AsyncOperationState",
+    "ExternalCallbackReceived",
     "AssetRevision",
     "Citation",
     "CitationSourceTrace",

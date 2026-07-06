@@ -586,6 +586,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
   `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,
   idempotency key, timestamps, transition helpers, and JSON projection coverage.
+- Python `graphblocks-core` now also exposes an immutable `ExternalCallbackReceived` schema facade
+  with callback/run/node/attempt identity, provider operation identity, idempotency key, canonical
+  payload digest, verified principal, policy snapshot, artifact references, and JSON projection
+  coverage.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move

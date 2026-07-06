@@ -324,6 +324,129 @@ def test_async_operation_result_projects_late_callback_as_incomplete_diagnostic(
     assert late_result.to_json()["external_effects"][0]["provider_effect_id"] == "gha-run-1"
 
 
+def test_external_callback_received_schema_freezes_payload_and_artifacts() -> None:
+    payload = {"status": "completed", "checks": ["lint"]}
+    artifacts = [{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}]
+
+    receipt = graphblocks.ExternalCallbackReceived(
+        callback_id="cb-1",
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        idempotency_key="idem-callback-1",
+        payload=payload,
+        payload_digest="sha256:" + "b" * 64,
+        received_at="2026-07-02T00:10:00Z",
+        verified_by="hmac-sha256:callback-endpoint-1",
+        policy_snapshot_id="policy-1",
+        provider_operation_id="gha-run-1",
+        artifacts=artifacts,
+    )
+
+    payload["checks"].append("unit")  # type: ignore[index, union-attr]
+    artifacts[0]["uri"] = "blob://ci/mutated"
+    projected = receipt.to_json()
+    projected["payload"]["checks"].append("caller-mutation")  # type: ignore[index]
+    projected["artifacts"][0]["uri"] = "blob://ci/caller-mutation"  # type: ignore[index]
+
+    assert receipt.payload == {"status": "completed", "checks": ("lint",)}
+    assert receipt.artifacts == ({"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"},)
+    assert receipt.to_json() == {
+        "callback_id": "cb-1",
+        "operation_id": "op-ci-1",
+        "run_id": "run-1",
+        "node_id": "startCI",
+        "attempt_id": "attempt-1",
+        "provider_operation_id": "gha-run-1",
+        "idempotency_key": "idem-callback-1",
+        "payload": {"status": "completed", "checks": ["lint"]},
+        "payload_digest": "sha256:" + "b" * 64,
+        "artifacts": [{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}],
+        "received_at": "2026-07-02T00:10:00Z",
+        "verified_by": "hmac-sha256:callback-endpoint-1",
+        "policy_snapshot_id": "policy-1",
+    }
+
+
+def test_external_callback_received_rejects_invalid_identity_digest_and_json() -> None:
+    with raises_value_error("external callback received callback_id must not be empty"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id=" ",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest="sha256:" + "b" * 64,
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received payload_digest must be a canonical sha256 digest"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest="sha256:not-a-digest",
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received received_at must be an ISO datetime"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest="sha256:" + "b" * 64,
+            received_at="not-a-date",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received payload must contain only JSON values"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"bad": object()},
+            payload_digest="sha256:" + "b" * 64,
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received artifacts must be a sequence"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest="sha256:" + "b" * 64,
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+            artifacts={"artifact_id": "artifact-ci-log"},  # type: ignore[arg-type]
+        )
+
+
 def test_async_operation_result_rejects_projection_from_non_terminal_operation() -> None:
     waiting = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
@@ -1062,6 +1185,7 @@ def test_async_operation_result_exports_are_available() -> None:
     assert "AsyncOperationState" in graphblocks.__all__
     assert "AsyncOperationResult" in graphblocks.__all__
     assert "ExternalEffectRecord" in graphblocks.__all__
+    assert "ExternalCallbackReceived" in graphblocks.__all__
     assert graphblocks.AsyncOperationState.WAITING_CALLBACK == "waiting_callback"
     assert graphblocks.AsyncOperationResultStatus.CANCELLED == "cancelled"
 

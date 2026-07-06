@@ -203,6 +203,15 @@ def _external_effect_sequence(value: object) -> tuple[object, ...]:
         raise ValueError("async operation result external_effects must be a sequence") from None
 
 
+def _external_callback_artifact_sequence(value: object) -> tuple[object, ...]:
+    if isinstance(value, (str, bytes, bytearray, memoryview)) or isinstance(value, Mapping):
+        raise ValueError("external callback received artifacts must be a sequence")
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except TypeError:
+        raise ValueError("external callback received artifacts must be a sequence") from None
+
+
 @dataclass(frozen=True, slots=True)
 class AsyncOperation:
     operation_id: str
@@ -479,6 +488,105 @@ class AsyncOperation:
             "submitted_at": self.submitted_at,
             "expires_at": self.expires_at,
             "completed_at": self.completed_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalCallbackReceived:
+    callback_id: str
+    operation_id: str
+    run_id: str
+    node_id: str
+    attempt_id: str
+    idempotency_key: str
+    payload: object
+    payload_digest: str
+    received_at: str
+    verified_by: str
+    policy_snapshot_id: str
+    provider_operation_id: str | None = None
+    artifacts: tuple[object, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "callback_id",
+            "operation_id",
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "idempotency_key",
+            "received_at",
+            "verified_by",
+            "policy_snapshot_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string(
+                    "external callback received",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if self.provider_operation_id is not None:
+            object.__setattr__(
+                self,
+                "provider_operation_id",
+                _validate_non_empty_string(
+                    "external callback received",
+                    "provider_operation_id",
+                    self.provider_operation_id,
+                ),
+            )
+        object.__setattr__(
+            self,
+            "payload_digest",
+            _validate_sha256_digest(
+                "external callback received",
+                "payload_digest",
+                self.payload_digest,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_json_value(
+                "external callback received",
+                "payload",
+                self.payload,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "artifacts",
+            tuple(
+                _freeze_json_value("external callback received", "artifacts", artifact)
+                for artifact in _external_callback_artifact_sequence(self.artifacts)
+            ),
+        )
+        object.__setattr__(
+            self,
+            "received_at",
+            _parse_iso_datetime("external callback received", "received_at", self.received_at)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "callback_id": self.callback_id,
+            "operation_id": self.operation_id,
+            "run_id": self.run_id,
+            "node_id": self.node_id,
+            "attempt_id": self.attempt_id,
+            "provider_operation_id": self.provider_operation_id,
+            "idempotency_key": self.idempotency_key,
+            "payload": _thaw_json_value(self.payload),
+            "payload_digest": self.payload_digest,
+            "artifacts": [_thaw_json_value(artifact) for artifact in self.artifacts],
+            "received_at": self.received_at,
+            "verified_by": self.verified_by,
+            "policy_snapshot_id": self.policy_snapshot_id,
         }
 
 
