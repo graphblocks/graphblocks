@@ -939,6 +939,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback receipts to `/callbacks/{operation_id}` with the required idempotency header and typed
   run/node/attempt/provider fences, so clients do not need to hand-assemble callback ingress
   requests.
+- `graphblocks-client` also exposes a `GetRunStatus` HTTP helper for `/runs/{run_id}`, sharing the
+  same run-id validation, authentication header handling, and JSON error mapping as attach/replay
+  helpers.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

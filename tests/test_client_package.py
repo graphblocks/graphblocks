@@ -1032,7 +1032,7 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
         client.health()
 
 
-@pytest.mark.parametrize("method_name", ("cancel_run", "run_events", "run_stream"))
+@pytest.mark.parametrize("method_name", ("cancel_run", "run_status", "run_events", "run_stream"))
 @pytest.mark.parametrize("run_id", (True, " "))
 def test_client_package_rejects_malformed_http_run_id_arguments(
     monkeypatch,
@@ -1147,6 +1147,61 @@ def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> Non
         "runId": "run-http-1",
         "status": "cancelled",
     }
+
+
+def test_client_package_reads_run_status_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-status-http-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-status-http-1"},
+            "metadata": {
+                "runId": "run-status-http-1",
+                "sequence": 1,
+                "cursor": "run-status-http-1:1",
+                "releaseId": "release-status-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-status-http-1"
+        assert headers["authorization"] == "Bearer token-1"
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    status = client.run_status("run-status-http-1")
+
+    assert status["runId"] == "run-status-http-1"
+    assert status["state"] == "running"
+    assert status["releaseId"] == "release-status-1"
+    assert status["lastCursor"] == "run-status-http-1:1"
+    assert status["waitingOn"] == []
+    assert status["activeOperations"] == []
 
 
 def test_client_package_submits_async_callback_over_http_transport(monkeypatch) -> None:

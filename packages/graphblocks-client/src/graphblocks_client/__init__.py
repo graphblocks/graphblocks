@@ -813,6 +813,19 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks cancel response")
 
+    def run_status(self, run_id: str) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}",
+            headers=headers,
+            method="GET",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks run status response")
+
     def submit_async_callback(
         self,
         *,
