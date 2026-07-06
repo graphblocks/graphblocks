@@ -83,6 +83,42 @@ impl EventFilter {
         self
     }
 
+    pub fn authorized_for_visibility(
+        &self,
+        allowed_visibility: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let allowed: BTreeSet<String> = allowed_visibility.into_iter().map(Into::into).collect();
+        if allowed.iter().any(|value| {
+            value.trim().is_empty()
+                || !matches!(
+                    value.as_str(),
+                    "client" | "operator" | "internal" | "audit_only"
+                )
+        }) {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "authorized_visibility".to_owned(),
+            });
+        }
+        let visibility = match &self.visibility {
+            Some(requested) => Some(
+                requested
+                    .iter()
+                    .filter(|value| allowed.contains(*value))
+                    .cloned()
+                    .collect(),
+            ),
+            None => Some(allowed),
+        };
+        Ok(Self {
+            types: self.types.clone(),
+            visibility,
+            node_ids: self.node_ids.clone(),
+            operation_ids: self.operation_ids.clone(),
+            severity_min: self.severity_min.clone(),
+            include_terminal_events: self.include_terminal_events,
+        })
+    }
+
     pub fn matches(&self, event: &ApplicationProtocolEvent) -> bool {
         if !self.payload_field_matches(event, &["visibility"], &self.visibility)
             || !self.payload_field_matches(event, &["node_id", "nodeId"], &self.node_ids)

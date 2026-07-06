@@ -4,7 +4,7 @@ use graphblocks_runtime_core::application_event::{
 };
 use graphblocks_runtime_core::callback_delivery::{
     CallbackAuthoritativeUse, CallbackConfigurationDiagnostic, CallbackDeadLetter,
-    CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
+    CallbackDeliveryError, CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackDeliveryTarget, CallbackFailurePolicy, CallbackRetryPolicy,
     CallbackSubscription, CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState,
     SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt,
@@ -13,6 +13,7 @@ use graphblocks_runtime_core::callback_delivery::{
 };
 use rusqlite::{params, Connection};
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -180,6 +181,47 @@ fn subscription_filter_matches_visibility_node_operation_and_severity() {
     assert!(!filter.matches(&wrong_visibility));
     assert!(!filter.matches(&wrong_node));
     assert!(!filter.matches(&below_severity));
+}
+
+#[test]
+fn event_filter_visibility_is_constrained_by_subscriber_authorization() {
+    let mut client_event = protocol_event(
+        "event-client-visible",
+        ApplicationProtocolEventKind::RunStarted,
+        13,
+    );
+    client_event.payload["visibility"] = json!("client");
+    let mut operator_event = protocol_event(
+        "event-operator-visible",
+        ApplicationProtocolEventKind::RunStarted,
+        14,
+    );
+    operator_event.payload["visibility"] = json!("operator");
+    let requested = EventFilter::new()
+        .with_types([ApplicationProtocolEventKind::RunStarted])
+        .with_visibility(["client", "operator"]);
+
+    let authorized = requested
+        .authorized_for_visibility(["client"])
+        .expect("authorized visibility projection is valid");
+    let denied = EventFilter::new()
+        .with_visibility(["operator"])
+        .authorized_for_visibility(["client"])
+        .expect("empty authorized visibility is still a deny-all filter");
+    let invalid = requested.authorized_for_visibility(["private"]);
+
+    assert_eq!(
+        authorized.visibility,
+        Some(["client".to_owned()].into_iter().collect())
+    );
+    assert!(authorized.matches(&client_event));
+    assert!(!authorized.matches(&operator_event));
+    assert_eq!(denied.visibility, Some(BTreeSet::new()));
+    assert!(matches!(
+        invalid,
+        Err(CallbackDeliveryError::EmptyField { field })
+        if field == "authorized_visibility"
+    ));
 }
 
 #[test]
