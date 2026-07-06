@@ -1135,13 +1135,20 @@ def stdlib_registry() -> RuntimeRegistry:
 
     def async_complete_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         operation = _required_async_operation_input(inputs, "async.complete_operation@1")
+        completed_at_unix_ms = _optional_async_u64(
+            config,
+            "completedAtUnixMs",
+            "completed_at_unix_ms",
+            "completedAtUnixMs",
+        )
+        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.complete_operation@1")
         return {
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "completed",
                 output=inputs.get("output"),
                 external_effects=_async_external_effects(config, "async.complete_operation@1"),
-                completed_at_unix_ms=None,
+                completed_at_unix_ms=completed_at_unix_ms,
             )
         }
 

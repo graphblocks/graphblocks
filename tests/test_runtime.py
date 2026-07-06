@@ -858,6 +858,7 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
                 },
                 "complete": {
                     "block": "async.complete_operation@1",
+                    "config": {"completedAtUnixMs": 1_900},
                     "inputs": {
                         "operation": "startComplete.operation",
                         "output": "$input.payload",
@@ -899,6 +900,7 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
     assert result.outputs["poll"]["timeoutMs"] == 7_200_000
     assert result.outputs["completed"]["status"] == "completed"
     assert result.outputs["completed"]["output"] == {"status": "completed"}
+    assert result.outputs["completed"]["completed_at_unix_ms"] == 1_900
     assert result.outputs["cancelled"]["status"] == "cancelled"
     assert result.outputs["cancelled"]["external_effects"] == [
         {

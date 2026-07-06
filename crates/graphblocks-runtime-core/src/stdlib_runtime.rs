@@ -825,6 +825,18 @@ fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Va
     let operation = required_async_operation_input(inputs, "async.complete_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.complete_operation@1")?;
     let output = inputs.get("output").cloned().unwrap_or(Value::Null);
+    let completed_at_unix_ms = optional_async_terminal_u64(
+        config,
+        "completedAtUnixMs",
+        "completed_at_unix_ms",
+        "async.complete_operation.invalid_config",
+    )?;
+    validate_async_terminal_timestamp(
+        operation,
+        completed_at_unix_ms,
+        "async.complete_operation@1",
+        "async.complete_operation.invalid_config",
+    )?;
     let external_effects =
         parse_async_external_effects(config, "async.complete_operation@1")?;
 
@@ -833,7 +845,7 @@ fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Va
             AsyncOperationResult::completed(operation_id)
                 .with_output(output)
                 .with_external_effects(external_effects),
-            None,
+            completed_at_unix_ms,
         )?,
     }))
 }

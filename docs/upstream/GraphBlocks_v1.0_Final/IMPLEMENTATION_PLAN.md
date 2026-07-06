@@ -679,7 +679,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   must fit in unsigned 64-bit milliseconds, matching the integer duration contract. Runtime poll
   projections now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that
   unbounded wait policy is declared, and reject poll configurations whose `maxInterval` is lower
-  than the initial `interval`. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
+  than the initial `interval`. Terminal stdlib projections now preserve `completedAtUnixMs` for
+  successful completions and reject zero `completedAtUnixMs`, `cancelledAtUnixMs`, or
   `expiredAtUnixMs` values, malformed non-integer terminal timestamp fields, and timestamps that
   regress before `submitted_at_unix_ms`, matching the durable operation-store timestamp invariant.
   Rust stdlib boundary coverage now also verifies that malformed terminal `externalEffects` with

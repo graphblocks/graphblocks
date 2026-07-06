@@ -924,6 +924,7 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
                 },
                 "complete": {
                     "block": "async.complete_operation@1",
+                    "config": {"completedAtUnixMs": 1_900},
                     "inputs": {
                         "operation": "startComplete.operation",
                         "output": "$input.payload"
@@ -981,6 +982,10 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
         "op-complete"
     );
     assert_eq!(result["outputs"]["completed"]["status"], "completed");
+    assert_eq!(
+        result["outputs"]["completed"]["completed_at_unix_ms"],
+        1_900
+    );
     assert_eq!(
         result["outputs"]["completed"]["output"],
         json!({"status": "completed"})
