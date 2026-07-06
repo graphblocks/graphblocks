@@ -1208,6 +1208,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The Python `ApplicationEvent` facade now carries the authoritative event-stream metadata needed
   by callback projections and cursor replay: stable cursor, graph/node/operation ids, and typed
   client/operator/internal/audit-only visibility.
+- Python callback `EventFilter` now matches typed `ApplicationEvent` records by event type,
+  visibility, node id, operation id, severity floor, and terminal-event inclusion, aligning the
+  core schema facade with server-side callback subscription filtering.
 
 ### Package ownership
 

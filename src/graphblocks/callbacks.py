@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+from .application_event import ApplicationEvent
+
 
 CallbackSubscriptionScope = Literal["run", "conversation", "project", "tenant", "deployment"]
 CallbackSubscriptionStatus = Literal["active", "paused", "expired", "revoked"]
@@ -44,6 +46,24 @@ VALID_CALLBACK_DELIVERY_STATUSES = frozenset({
     "expired",
 })
 VALID_EVENT_VISIBILITIES = frozenset({"client", "operator", "internal", "audit_only"})
+EVENT_SEVERITY_RANKS = {
+    "debug": 10,
+    "info": 20,
+    "notice": 30,
+    "warning": 40,
+    "warn": 40,
+    "error": 50,
+    "critical": 60,
+    "fatal": 60,
+}
+TERMINAL_APPLICATION_EVENT_KINDS = frozenset({
+    "RunSucceeded",
+    "RunFailed",
+    "RunCancelled",
+    "RunPolicyStopped",
+    "RunCompleted",
+    "RunExpired",
+})
 TERMINAL_CALLBACK_DELIVERY_STATUSES = frozenset({
     "delivered",
     "acknowledged",
@@ -155,6 +175,27 @@ class EventFilter:
             "severity_min": self.severity_min,
             "include_terminal_events": self.include_terminal_events,
         }
+
+    def matches(self, event: ApplicationEvent) -> bool:
+        if not isinstance(event, ApplicationEvent):
+            raise ValueError("event filter event must be an ApplicationEvent")
+        if self.visibility is not None and event.metadata.visibility not in self.visibility:
+            return False
+        if self.node_ids is not None and event.metadata.node_id not in self.node_ids:
+            return False
+        if self.operation_ids is not None and event.metadata.operation_id not in self.operation_ids:
+            return False
+        if self.severity_min is not None:
+            minimum_rank = EVENT_SEVERITY_RANKS.get(self.severity_min)
+            event_severity = event.payload.get("severity")
+            event_rank = EVENT_SEVERITY_RANKS.get(event_severity) if isinstance(event_severity, str) else None
+            if minimum_rank is None or event_rank is None or event_rank < minimum_rank:
+                return False
+        if event.kind in TERMINAL_APPLICATION_EVENT_KINDS and not self.include_terminal_events:
+            return False
+        if self.types is not None and event.kind not in self.types:
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True)

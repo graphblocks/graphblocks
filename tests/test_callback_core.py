@@ -94,6 +94,58 @@ def test_callback_subscription_rejects_invalid_scope_status_and_expiration() -> 
         graphblocks.EventFilter(visibility=["private"])
 
 
+def test_event_filter_matches_authoritative_application_event_metadata() -> None:
+    event = graphblocks.ApplicationEvent.new(
+        "RunStarted",
+        graphblocks.ApplicationEventMetadata(
+            event_id="evt-1",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=7,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-07-02T00:00:00Z",
+            cursor="run-1:7",
+            node_id="node-plan",
+            operation_id="operation-ci",
+            visibility="operator",
+        ),
+        payload={"severity": "warning"},
+    )
+
+    assert graphblocks.EventFilter(
+        types=["RunStarted"],
+        visibility=["operator"],
+        node_ids=["node-plan"],
+        operation_ids=["operation-ci"],
+        severity_min="info",
+    ).matches(event)
+    assert not graphblocks.EventFilter(visibility=["client"]).matches(event)
+    assert not graphblocks.EventFilter(node_ids=["node-other"]).matches(event)
+    assert not graphblocks.EventFilter(operation_ids=["operation-other"]).matches(event)
+    assert not graphblocks.EventFilter(severity_min="error").matches(event)
+
+
+def test_event_filter_excludes_terminal_events_when_disabled() -> None:
+    failed = graphblocks.ApplicationEvent.new(
+        "RunFailed",
+        graphblocks.ApplicationEventMetadata(
+            event_id="evt-2",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-07-02T00:00:01Z",
+            cursor="run-1:8",
+        ),
+        payload={"severity": "error"},
+    )
+
+    assert graphblocks.EventFilter(include_terminal_events=True).matches(failed)
+    assert not graphblocks.EventFilter(include_terminal_events=False).matches(failed)
+
+
 def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
     delivered = graphblocks.CallbackDelivery(
         delivery_id="del-1",
