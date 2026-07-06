@@ -1955,6 +1955,11 @@ class GraphBlocksServerApp:
                         and submission.run_id is not None
                         and (previous.run_id != submission.run_id or previous.attempt_id != submission.attempt_id)
                     ):
+                        rejection = ServerAsyncCallbackRejection.stale_attempt(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
                         return ServerResponse.json(
                             409,
                             {

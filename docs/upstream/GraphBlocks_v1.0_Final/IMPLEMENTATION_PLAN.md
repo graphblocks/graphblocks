@@ -552,7 +552,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Server callback ingress now treats the first accepted receipt for an operation/run/node/attempt
   as the authoritative resume signal. Exact idempotent replays return `duplicate`; later callbacks
   for the same bound operation attempt but with a new idempotency key are rejected as
-  `duplicate_operation_receipt` and are not appended as accepted submissions.
+  `duplicate_operation_receipt` and are not appended as accepted submissions. Conflicting scoped
+  callbacks for a different run, attempt, or node now also append `ServerAsyncCallbackRejection`
+  metadata before returning `409`, preserving audit evidence for stale or misrouted callback
+  attempts.
 - Async callback ingestion now supports durable pre-operation quarantine for the race where an
   external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate
