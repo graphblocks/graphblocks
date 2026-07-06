@@ -2098,6 +2098,189 @@ def test_client_package_revokes_callback_over_http_transport(monkeypatch) -> Non
     assert app.callback_registrations()[0].status == "revoked"
 
 
+def test_client_package_redrives_callback_delivery_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/deliveries/del-client-1/redrive"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {
+            "operator": "operator-1",
+            "reason": "receiver recovered",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.redrive_callback_delivery(
+        "del-client-1",
+        operator="operator-1",
+        reason="receiver recovered",
+    )
+
+    assert response == {
+        "ok": True,
+        "deliveryId": "del-client-1",
+        "operator": "operator-1",
+        "reason": "receiver recovered",
+        "status": "redrive_requested",
+    }
+    assert app.callback_delivery_redrives("del-client-1") == (
+        {
+            "deliveryId": "del-client-1",
+            "operator": "operator-1",
+            "reason": "receiver recovered",
+            "requestedAt": "2026-07-03T00:00:00Z",
+            "status": "redrive_requested",
+        },
+    )
+
+
+def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/deliveries/del-client-2/dead-letter"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {
+            "operator": "operator-1",
+            "reason": "max attempts exhausted",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:01:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.move_callback_to_dead_letter(
+        "del-client-2",
+        operator="operator-1",
+        reason="max attempts exhausted",
+    )
+    duplicate = client.move_callback_to_dead_letter(
+        "del-client-2",
+        operator="operator-1",
+        reason="max attempts exhausted",
+    )
+
+    assert response == {
+        "ok": True,
+        "deliveryId": "del-client-2",
+        "operator": "operator-1",
+        "reason": "max attempts exhausted",
+        "status": "dead_letter_requested",
+    }
+    assert duplicate == {
+        "ok": True,
+        "deliveryId": "del-client-2",
+        "operator": "operator-1",
+        "reason": "max attempts exhausted",
+        "status": "dead_letter_requested",
+        "requestedAt": "2026-07-03T00:01:00Z",
+        "duplicate": True,
+    }
+    assert app.callback_delivery_dead_letter_moves("del-client-2") == (
+        {
+            "deliveryId": "del-client-2",
+            "operator": "operator-1",
+            "reason": "max attempts exhausted",
+            "requestedAt": "2026-07-03T00:01:00Z",
+            "status": "dead_letter_requested",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args", "kwargs", "message"),
+    (
+        (
+            "redrive_callback_delivery",
+            (" ",),
+            {"operator": "operator-1", "reason": "receiver recovered"},
+            "GraphBlocks HTTP delivery_id must be a non-empty string",
+        ),
+        (
+            "move_callback_to_dead_letter",
+            ("del-1",),
+            {"operator": True, "reason": "max attempts exhausted"},
+            "GraphBlocks HTTP operator must be a non-empty string",
+        ),
+        (
+            "redrive_callback_delivery",
+            ("del-1",),
+            {"operator": "operator-1", "reason": ""},
+            "GraphBlocks HTTP reason must be a non-empty string",
+        ),
+    ),
+)
+def test_client_package_rejects_malformed_callback_delivery_control_arguments(
+    monkeypatch,
+    method_name: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise AssertionError("transport should not be called for malformed delivery control arguments")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        getattr(client, method_name)(*args, **kwargs)
+
+
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

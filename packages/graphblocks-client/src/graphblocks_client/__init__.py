@@ -1155,6 +1155,65 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks callback revoke response")
 
+    def redrive_callback_delivery(
+        self,
+        delivery_id: object,
+        *,
+        operator: object,
+        reason: object,
+    ) -> dict[str, object]:
+        return self._callback_delivery_control(
+            delivery_id,
+            operator=operator,
+            reason=reason,
+            action="redrive",
+            label="GraphBlocks callback delivery redrive response",
+        )
+
+    def move_callback_to_dead_letter(
+        self,
+        delivery_id: object,
+        *,
+        operator: object,
+        reason: object,
+    ) -> dict[str, object]:
+        return self._callback_delivery_control(
+            delivery_id,
+            operator=operator,
+            reason=reason,
+            action="dead-letter",
+            label="GraphBlocks callback delivery dead-letter response",
+        )
+
+    def _callback_delivery_control(
+        self,
+        delivery_id: object,
+        *,
+        operator: object,
+        reason: object,
+        action: str,
+        label: str,
+    ) -> dict[str, object]:
+        delivery_id = _http_non_empty_string("delivery_id", delivery_id)
+        body = {
+            "operator": _http_non_empty_string("operator", operator),
+            "reason": _http_non_empty_string("reason", reason),
+        }
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/callbacks/deliveries/{delivery_id}/{action}",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, label)
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
