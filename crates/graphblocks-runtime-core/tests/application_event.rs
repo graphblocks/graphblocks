@@ -1624,6 +1624,7 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
         ApplicationProtocolEventKind::RunFailed.as_str(),
         ApplicationProtocolEventKind::RunCancelled.as_str(),
         ApplicationProtocolEventKind::RunPolicyStopped.as_str(),
+        ApplicationProtocolEventKind::RunExpired.as_str(),
     ];
 
     let event = ApplicationProtocolEvent::new(
@@ -1636,6 +1637,7 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
     assert_eq!(names[0], "RunStarted");
     assert_eq!(names[26], "RunCancelled");
     assert_eq!(names[27], "RunPolicyStopped");
+    assert_eq!(names[28], "RunExpired");
     assert_eq!(event.metadata.event_id, "event-1");
     assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
     assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));

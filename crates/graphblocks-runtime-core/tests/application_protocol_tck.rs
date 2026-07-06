@@ -77,6 +77,7 @@ fn event_kind(value: &str) -> Result<ApplicationProtocolEventKind, String> {
         "RunFailed" => Ok(ApplicationProtocolEventKind::RunFailed),
         "RunCancelled" => Ok(ApplicationProtocolEventKind::RunCancelled),
         "RunPolicyStopped" => Ok(ApplicationProtocolEventKind::RunPolicyStopped),
+        "RunExpired" => Ok(ApplicationProtocolEventKind::RunExpired),
         other => Err(format!(
             "unsupported application protocol event kind {other:?}"
         )),
@@ -178,6 +179,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 ApplicationProtocolEventKind::RunFailed.as_str(),
                 ApplicationProtocolEventKind::RunCancelled.as_str(),
                 ApplicationProtocolEventKind::RunPolicyStopped.as_str(),
+                ApplicationProtocolEventKind::RunExpired.as_str(),
             ],
         })),
         "command_envelope" | "command_envelope_error" => {

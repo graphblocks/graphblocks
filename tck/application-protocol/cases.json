@@ -61,7 +61,8 @@
         "RunCompleted",
         "RunFailed",
         "RunCancelled",
-        "RunPolicyStopped"
+        "RunPolicyStopped",
+        "RunExpired"
       ]
     }
   },

@@ -116,6 +116,7 @@ impl EventFilter {
                 | ApplicationProtocolEventKind::RunFailed
                 | ApplicationProtocolEventKind::RunCancelled
                 | ApplicationProtocolEventKind::RunPolicyStopped
+                | ApplicationProtocolEventKind::RunExpired
         );
         if is_terminal_event {
             return self.include_terminal_events;

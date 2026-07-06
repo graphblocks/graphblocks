@@ -170,3 +170,22 @@ fn tui_view_projects_policy_stopped_as_terminal_error_state() {
     assert_eq!(view.rows()[0].summary, "output policy denied");
     assert_eq!(view.rows()[0].severity, TuiRowSeverity::Error);
 }
+
+#[test]
+fn tui_view_projects_expired_as_terminal_error_state() {
+    let mut view = TuiRunView::from_status(status_snapshot());
+    let expired = protocol_event(
+        "evt-expired",
+        5,
+        "cursor-005",
+        ApplicationProtocolEventKind::RunExpired,
+        json!({"reason": "run deadline exceeded"}),
+    );
+
+    assert!(view.apply_event(expired));
+
+    assert_eq!(view.state(), RunStatus::Expired);
+    assert_eq!(view.rows().len(), 1);
+    assert_eq!(view.rows()[0].summary, "run deadline exceeded");
+    assert_eq!(view.rows()[0].severity, TuiRowSeverity::Error);
+}

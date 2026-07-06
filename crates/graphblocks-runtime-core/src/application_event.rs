@@ -982,6 +982,7 @@ pub enum ApplicationProtocolEventKind {
     RunFailed,
     RunCancelled,
     RunPolicyStopped,
+    RunExpired,
 }
 
 impl ApplicationProtocolEventKind {
@@ -1015,6 +1016,7 @@ impl ApplicationProtocolEventKind {
             Self::RunFailed => "RunFailed",
             Self::RunCancelled => "RunCancelled",
             Self::RunPolicyStopped => "RunPolicyStopped",
+            Self::RunExpired => "RunExpired",
         }
     }
 }

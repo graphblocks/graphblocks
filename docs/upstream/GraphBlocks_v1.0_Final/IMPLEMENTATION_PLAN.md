@@ -1168,6 +1168,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   shared application-protocol TCK. Rust TUI attach projections now also display `RunPolicyStopped`
   as an error row and advance the run view to `policy_stopped`; the Python TUI package maps the
   same protocol event to `policy_stopped` session status.
+- `RunExpired` is now a first-class Rust `ApplicationProtocolEventKind`, is included in the shared
+  application-protocol TCK, participates in callback terminal-event filtering, and advances Rust
+  TUI attach projections to terminal `expired` state.
 - Server run-status projection now keeps terminal application/protocol events authoritative over
   stale pause/resume control projections, so a completed event stream cannot continue to appear
   paused or resumable in `GetRunStatus`/`ListRuns`.
