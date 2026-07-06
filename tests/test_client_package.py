@@ -1103,6 +1103,19 @@ def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> Non
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-http-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-http-1"},
+            "metadata": {
+                "runId": "run-http-1",
+                "sequence": 1,
+                "cursor": "run-http-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
 
     def transport(request: object, *, timeout: float) -> object:
         assert timeout == 4.0
@@ -1128,10 +1141,150 @@ def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> Non
     response = client.cancel_run("run-http-1")
 
     assert response == {
+        "lastCursor": "run-http-1:1",
         "ok": True,
+        "reason": None,
         "runId": "run-http-1",
-        "status": "cancel_requested",
+        "status": "cancelled",
     }
+
+
+def test_client_package_submits_async_callback_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-client-callback-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-client-callback-1"},
+            "metadata": {
+                "runId": "run-client-callback-1",
+                "sequence": 1,
+                "cursor": "run-client-callback-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/op-ci-client-1"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert headers["graphblocks-idempotency-key"] == "idem-client-callback-1"
+        body = json.loads(request.data.decode("utf-8"))
+        assert body == {
+            "attemptId": "attempt-1",
+            "callbackId": "cb-client-1",
+            "nodeId": "waitCI",
+            "payload": {"status": "completed", "checks": [{"name": "unit", "passed": True}]},
+            "providerOperationId": "provider-ci-1",
+            "runId": "run-client-callback-1",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.submit_async_callback(
+        operation_id="op-ci-client-1",
+        callback_id="cb-client-1",
+        idempotency_key="idem-client-callback-1",
+        payload={"status": "completed", "checks": [{"name": "unit", "passed": True}]},
+        run_id="run-client-callback-1",
+        node_id="waitCI",
+        attempt_id="attempt-1",
+        provider_operation_id="provider-ci-1",
+    )
+
+    assert response == {
+        "ok": True,
+        "operationId": "op-ci-client-1",
+        "callbackId": "cb-client-1",
+        "idempotencyKey": "idem-client-callback-1",
+        "status": "accepted",
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        (
+            {
+                "operation_id": " ",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {"status": "completed"},
+            },
+            "GraphBlocks HTTP operation_id must be a non-empty string",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": True,
+                "idempotency_key": "idem-1",
+                "payload": {"status": "completed"},
+            },
+            "GraphBlocks HTTP callback_id must be a non-empty string",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "",
+                "payload": {"status": "completed"},
+            },
+            "GraphBlocks HTTP idempotency_key must be a non-empty string",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": ["completed"],
+            },
+            "GraphBlocks HTTP callback payload must be a JSON object",
+        ),
+    ),
+)
+def test_client_package_rejects_malformed_async_callback_arguments(
+    monkeypatch,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise AssertionError("transport should not be called for malformed callback arguments")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        client.submit_async_callback(**kwargs)
 
 
 def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> None:

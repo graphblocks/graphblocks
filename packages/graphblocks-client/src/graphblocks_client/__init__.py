@@ -813,6 +813,54 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks cancel response")
 
+    def submit_async_callback(
+        self,
+        *,
+        operation_id: object,
+        callback_id: object,
+        idempotency_key: object,
+        payload: object,
+        run_id: object | None = None,
+        node_id: object | None = None,
+        attempt_id: object | None = None,
+        provider_operation_id: object | None = None,
+    ) -> dict[str, object]:
+        operation_id = _http_non_empty_string("operation_id", operation_id)
+        callback_id = _http_non_empty_string("callback_id", callback_id)
+        idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
+        if not isinstance(payload, Mapping):
+            raise ValueError("GraphBlocks HTTP callback payload must be a JSON object")
+        body: dict[str, object] = {
+            "callbackId": callback_id,
+            "payload": deepcopy(dict(payload)),
+        }
+        if run_id is not None:
+            body["runId"] = _http_non_empty_string("run_id", run_id)
+        if node_id is not None:
+            body["nodeId"] = _http_non_empty_string("node_id", node_id)
+        if attempt_id is not None:
+            body["attemptId"] = _http_non_empty_string("attempt_id", attempt_id)
+        if provider_operation_id is not None:
+            body["providerOperationId"] = _http_non_empty_string(
+                "provider_operation_id",
+                provider_operation_id,
+            )
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "GraphBlocks-Idempotency-Key": idempotency_key,
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/callbacks/{operation_id}",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks async callback response")
+
     def run_events(self, run_id: str) -> tuple[ApplicationEvent, ...]:
         run_id = _http_run_id(run_id)
         headers = {"Accept": "application/json"}
@@ -900,9 +948,13 @@ class HttpGraphBlocksClient:
 
 
 def _http_run_id(run_id: object) -> str:
-    if not isinstance(run_id, str) or not run_id.strip():
-        raise ValueError("GraphBlocks HTTP run_id must be a non-empty string")
-    return run_id
+    return _http_non_empty_string("run_id", run_id)
+
+
+def _http_non_empty_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"GraphBlocks HTTP {field_name} must be a non-empty string")
+    return value
 
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:

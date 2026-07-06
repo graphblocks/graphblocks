@@ -935,6 +935,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency comparisons. Deployments can configure the server callback route to require an
   installed authentication hook before `SubmitAsyncCallback` will parse, validate, or store a
   callback receipt.
+- `graphblocks-client` now exposes a `SubmitAsyncCallback` HTTP helper that posts authenticated
+  callback receipts to `/callbacks/{operation_id}` with the required idempotency header and typed
+  run/node/attempt/provider fences, so clients do not need to hand-assemble callback ingress
+  requests.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async
