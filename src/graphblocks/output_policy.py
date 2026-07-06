@@ -590,6 +590,22 @@ class OutputDeliveryPolicy:
             raise OutputDeliveryPolicyError(
                 "bounded_holdback output delivery requires a token, byte, or duration bound"
             )
+        if self.mode == "buffer_until_commit" and (
+            self.holdback_max_tokens is not None
+            or self.holdback_max_bytes is not None
+            or self.holdback_max_duration_ms is not None
+        ):
+            raise OutputDeliveryPolicyError("buffer_until_commit output delivery must not define holdback limits")
+        if self.mode == "buffer_until_commit" and self.flush_boundaries:
+            raise OutputDeliveryPolicyError("buffer_until_commit output delivery must not define flush boundaries")
+        if self.mode == "immediate_draft" and (
+            self.holdback_max_tokens is not None
+            or self.holdback_max_bytes is not None
+            or self.holdback_max_duration_ms is not None
+        ):
+            raise OutputDeliveryPolicyError("immediate_draft output delivery must not define holdback limits")
+        if self.mode == "immediate_draft" and self.flush_boundaries:
+            raise OutputDeliveryPolicyError("immediate_draft output delivery must not define flush boundaries")
         if self.mode == "immediate_draft" and self.delivered_draft_disposition == "keep":
             raise OutputDeliveryPolicyError("immediate_draft requires incomplete or retracted draft semantics")
         return self

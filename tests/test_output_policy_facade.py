@@ -555,6 +555,46 @@ def test_output_delivery_policy_accepts_bounded_holdback_and_rejects_unsafe_imme
     assert str(error.value) == "immediate_draft requires incomplete or retracted draft semantics"
 
 
+def test_buffer_until_commit_rejects_holdback_limits_and_flush_boundaries() -> None:
+    with pytest.raises(OutputDeliveryPolicyError) as token_error:
+        OutputDeliveryPolicy(
+            mode="buffer_until_commit",
+            holdback_max_tokens=48,
+            on_violation="abort_response",
+        ).validate()
+
+    with pytest.raises(OutputDeliveryPolicyError) as boundary_error:
+        OutputDeliveryPolicy(
+            mode="buffer_until_commit",
+            flush_boundaries=frozenset({"sentence"}),
+            on_violation="abort_response",
+        ).validate()
+
+    assert str(token_error.value) == "buffer_until_commit output delivery must not define holdback limits"
+    assert str(boundary_error.value) == "buffer_until_commit output delivery must not define flush boundaries"
+
+
+def test_immediate_draft_rejects_holdback_limits_and_flush_boundaries() -> None:
+    with pytest.raises(OutputDeliveryPolicyError) as token_error:
+        OutputDeliveryPolicy(
+            mode="immediate_draft",
+            holdback_max_tokens=48,
+            on_violation="abort_response",
+            delivered_draft_disposition="retract",
+        ).validate()
+
+    with pytest.raises(OutputDeliveryPolicyError) as boundary_error:
+        OutputDeliveryPolicy(
+            mode="immediate_draft",
+            flush_boundaries=frozenset({"sentence"}),
+            on_violation="abort_response",
+            delivered_draft_disposition="retract",
+        ).validate()
+
+    assert str(token_error.value) == "immediate_draft output delivery must not define holdback limits"
+    assert str(boundary_error.value) == "immediate_draft output delivery must not define flush boundaries"
+
+
 def test_declarative_output_policy_evaluator_allows_unmatched_chunk() -> None:
     evaluator = DeclarativeOutputPolicyEvaluator(
         rules=(

@@ -184,6 +184,8 @@ Message
 - Output delivery policy validation now rejects holdback limits on `buffer_until_commit` and
   `immediate_draft`, and the Rust compiler reports `HoldbackLimitWithoutHoldback` for the same
   shape before deployment. Holdback size/time semantics remain scoped to `bounded_holdback`.
+  The Python facade enforces the same constraints even when callers construct
+  `OutputDeliveryPolicy` directly instead of using the named factory helpers.
 - `abort_response`는 local delivery cutoff를 즉시 수행하고 provider/worker cancellation은 cooperative request로 처리한다. local cutoff가 authoritative하다.
 - policy-aborted response는 assistant message나 tool result를 durable commit하지 않는다. safe replacement는 새 `response_id`를 사용한다.
 - Terminal output-gate decisions validate the constructed canonical `OutputCutoff` before clearing
