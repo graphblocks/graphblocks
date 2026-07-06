@@ -926,6 +926,14 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
                     "block": "async.complete_operation@1",
                     "config": {
                         "completedAtUnixMs": 1_900,
+                        "artifacts": [
+                            {
+                                "artifact_id": "artifact-ci-log",
+                                "uri": "blob://ci/op-complete/log.json",
+                                "media_type": "application/json",
+                                "checksum": "sha256:ci-log"
+                            }
+                        ],
                         "diagnostics": [{"severity": "info", "message": "checks complete"}],
                         "metrics": [{"name": "duration_ms", "value": 840}],
                         "checks": [{"name": "unit", "status": "passed"}],
@@ -991,6 +999,17 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
     assert_eq!(
         result["outputs"]["completed"]["completed_at_unix_ms"],
         1_900
+    );
+    assert_eq!(
+        result["outputs"]["completed"]["artifacts"],
+        json!([
+            {
+                "artifact_id": "artifact-ci-log",
+                "uri": "blob://ci/op-complete/log.json",
+                "media_type": "application/json",
+                "checksum": "sha256:ci-log"
+            }
+        ])
     );
     assert_eq!(
         result["outputs"]["completed"]["diagnostics"],
@@ -1083,6 +1102,62 @@ fn rust_stdlib_async_terminal_blocks_reject_invalid_projection_entries() -> Resu
         .ok_or_else(|| "missing node_failed message".to_string())?;
     assert!(
         message.contains("config.diagnostics[0] must be an object"),
+        "unexpected message: {message}",
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_stdlib_async_terminal_blocks_reject_invalid_artifact_entries() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "rust-stdlib-async-invalid-result-artifact"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "completed": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startComplete": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-complete", "node-complete"),
+                    "outputs": {"operation": "complete.operation"}
+                },
+                "complete": {
+                    "block": "async.complete_operation@1",
+                    "config": {
+                        "completedAtUnixMs": 1_900,
+                        "artifacts": [{"artifact_id": "artifact-ci-log"}]
+                    },
+                    "inputs": {"operation": "startComplete.operation"},
+                    "outputs": {"result": "$output.completed"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    let node_failed = result["journal"]
+        .as_array()
+        .and_then(|journal| {
+            journal.iter().find(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some("node_failed")
+            })
+        })
+        .ok_or_else(|| "missing node_failed journal record".to_string())?;
+    assert_eq!(
+        node_failed.pointer("/payload/code").and_then(Value::as_str),
+        Some("async.complete_operation.invalid_config")
+    );
+    let message = node_failed
+        .pointer("/payload/message")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing node_failed message".to_string())?;
+    assert!(
+        message.contains("config.artifacts[0].uri is required"),
         "unexpected message: {message}",
     );
     Ok(())

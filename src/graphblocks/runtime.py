@@ -1364,7 +1364,7 @@ def stdlib_registry() -> RuntimeRegistry:
             "operation_id": operation_id,
             "status": status,
             "output": output,
-            "artifacts": [],
+            "artifacts": projections.get("artifacts", []),
             "diagnostics": projections.get("diagnostics", []),
             "metrics": projections.get("metrics", []),
             "checks": projections.get("checks", []),
@@ -1375,6 +1375,7 @@ def stdlib_registry() -> RuntimeRegistry:
 
     def _async_result_projections(config: Mapping[str, Any], block_label: str) -> dict[str, list[dict[str, Any]]]:
         return {
+            "artifacts": _async_result_projection(config, "artifacts", block_label),
             "diagnostics": _async_result_projection(config, "diagnostics", block_label),
             "metrics": _async_result_projection(config, "metrics", block_label),
             "checks": _async_result_projection(config, "checks", block_label),

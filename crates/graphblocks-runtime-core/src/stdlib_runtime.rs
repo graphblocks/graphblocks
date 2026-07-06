@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::async_operation::{
     AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
-    AsyncOperationState,
+    AsyncOperationState, CallbackArtifactRef,
     ExternalEffectRecord,
 };
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
@@ -2373,6 +2373,7 @@ fn apply_async_result_projections(
     block_label: &str,
     result: &mut AsyncOperationResult,
 ) -> Result<(), BlockError> {
+    result.artifacts = parse_async_result_artifacts(config, block_label)?;
     result.diagnostics = parse_async_result_projection(config, "diagnostics", block_label)?;
     result.metrics = parse_async_result_projection(config, "metrics", block_label)?;
     result.checks = parse_async_result_projection(config, "checks", block_label)?;
@@ -2412,6 +2413,100 @@ fn parse_async_result_projection(
     Ok(raw_items.clone())
 }
 
+fn parse_async_result_artifacts(
+    config: &serde_json::Map<String, Value>,
+    block_label: &str,
+) -> Result<Vec<CallbackArtifactRef>, BlockError> {
+    let Some(raw_items) = config.get("artifacts") else {
+        return Ok(Vec::new());
+    };
+    if raw_items.is_null() {
+        return Ok(Vec::new());
+    }
+    let Some(raw_items) = raw_items.as_array() else {
+        return Err(BlockError::new(
+            format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+            ErrorCategory::Configuration,
+            format!("{block_label} config.artifacts must be an array"),
+            false,
+        ));
+    };
+    let mut artifacts = Vec::with_capacity(raw_items.len());
+    for (index, raw_item) in raw_items.iter().enumerate() {
+        let Some(raw_item) = raw_item.as_object() else {
+            return Err(BlockError::new(
+                format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+                ErrorCategory::Configuration,
+                format!("{block_label} config.artifacts[{index}] must be an object"),
+                false,
+            ));
+        };
+        let artifact_id =
+            required_artifact_string(raw_item, "artifact_id", "artifactId", block_label, index)?;
+        let uri = required_artifact_string(raw_item, "uri", "uri", block_label, index)?;
+        let mut artifact = CallbackArtifactRef::new(artifact_id, uri);
+        if let Some(media_type) =
+            optional_artifact_string(raw_item, "media_type", "mediaType", block_label, index)?
+        {
+            artifact = artifact.with_media_type(media_type);
+        }
+        if let Some(checksum) =
+            optional_artifact_string(raw_item, "checksum", "checksum", block_label, index)?
+        {
+            artifact = artifact.with_checksum(checksum);
+        }
+        artifacts.push(artifact);
+    }
+    Ok(artifacts)
+}
+
+fn required_artifact_string(
+    artifact: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    block_label: &str,
+    index: usize,
+) -> Result<String, BlockError> {
+    optional_artifact_string(artifact, primary, alternate, block_label, index)?.ok_or_else(|| {
+        BlockError::new(
+            format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+            ErrorCategory::Configuration,
+            format!("{block_label} config.artifacts[{index}].{primary} is required"),
+            false,
+        )
+    })
+}
+
+fn optional_artifact_string(
+    artifact: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    block_label: &str,
+    index: usize,
+) -> Result<Option<String>, BlockError> {
+    artifact
+        .get(primary)
+        .or_else(|| artifact.get(alternate))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+                        ErrorCategory::Configuration,
+                        format!(
+                            "{block_label} config.artifacts[{index}].{primary} must be a non-empty string"
+                        ),
+                        false,
+                    )
+                })
+        })
+        .transpose()
+}
+
 fn async_operation_result_json(
     result: AsyncOperationResult,
     completed_at_unix_ms: Option<u64>,
@@ -2435,7 +2530,11 @@ fn async_operation_result_json(
         "operation_id": result.operation_id,
         "status": status,
         "output": result.output,
-        "artifacts": [],
+        "artifacts": result
+            .artifacts
+            .iter()
+            .map(CallbackArtifactRef::canonical_value)
+            .collect::<Vec<_>>(),
         "diagnostics": result.diagnostics,
         "metrics": result.metrics,
         "checks": result.checks,

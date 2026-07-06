@@ -685,10 +685,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `expiredAtUnixMs` values, non-object terminal block configs, malformed non-integer terminal
   timestamp fields, and timestamps that regress before `submitted_at_unix_ms` or exceed
   `expires_at_unix_ms`, matching the durable operation-store timestamp invariant. Terminal result
-  projections also preserve structured `diagnostics`, `metrics`, `checks`, and `usage` lists and
-  reject malformed non-object entries before returning graph-visible `AsyncOperationResult` values.
-  Rust stdlib boundary coverage now also verifies that malformed terminal `externalEffects` with
-  provider identities but no committed outcome fail before a result projection is returned.
+  projections also preserve artifact references and structured `diagnostics`, `metrics`, `checks`,
+  and `usage` lists, rejecting malformed non-object entries before returning graph-visible
+  `AsyncOperationResult` values. Rust stdlib boundary coverage now also verifies that malformed
+  terminal `artifacts` and `externalEffects` with provider identities but no committed outcome fail
+  before a result projection is returned.
 - Python `graphblocks-core`'s in-process stdlib registry now mirrors those async operation block
   projections for authoring and local tests, including callback wait projection, poll projection,
   terminal result projection, duration-string parsing, and the same terminal timestamp guard for
