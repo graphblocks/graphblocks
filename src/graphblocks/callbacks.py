@@ -176,6 +176,26 @@ class EventFilter:
             "include_terminal_events": self.include_terminal_events,
         }
 
+    def authorized_for_visibility(self, allowed_visibility: Iterable[str]) -> EventFilter:
+        allowed = _string_tuple("event filter", "authorized visibility", allowed_visibility)
+        if allowed is None:
+            raise ValueError("event filter authorized visibility must be a sequence")
+        if any(item not in VALID_EVENT_VISIBILITIES for item in allowed):
+            raise ValueError("event filter authorized visibility must contain only valid visibility values")
+        if self.visibility is None:
+            constrained_visibility = allowed
+        else:
+            allowed_set = set(allowed)
+            constrained_visibility = tuple(item for item in self.visibility if item in allowed_set)
+        return EventFilter(
+            types=self.types,
+            visibility=constrained_visibility,
+            node_ids=self.node_ids,
+            operation_ids=self.operation_ids,
+            severity_min=self.severity_min,
+            include_terminal_events=self.include_terminal_events,
+        )
+
     def matches(self, event: ApplicationEvent) -> bool:
         if not isinstance(event, ApplicationEvent):
             raise ValueError("event filter event must be an ApplicationEvent")

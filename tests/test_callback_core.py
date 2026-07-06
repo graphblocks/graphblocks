@@ -126,6 +126,54 @@ def test_event_filter_matches_authoritative_application_event_metadata() -> None
     assert not graphblocks.EventFilter(severity_min="error").matches(event)
 
 
+def test_event_filter_visibility_is_constrained_by_subscriber_authorization() -> None:
+    requested = graphblocks.EventFilter(
+        types=["RunStarted"],
+        visibility=["client", "operator"],
+        node_ids=["node-plan"],
+    )
+    authorized = requested.authorized_for_visibility(["client"])
+    client_event = graphblocks.ApplicationEvent.new(
+        "RunStarted",
+        graphblocks.ApplicationEventMetadata(
+            event_id="evt-client",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=7,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-07-02T00:00:00Z",
+            cursor="run-1:7",
+            node_id="node-plan",
+            visibility="client",
+        ),
+        payload={},
+    )
+    operator_event = graphblocks.ApplicationEvent.new(
+        "RunStarted",
+        graphblocks.ApplicationEventMetadata(
+            event_id="evt-operator",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-07-02T00:00:01Z",
+            cursor="run-1:8",
+            node_id="node-plan",
+            visibility="operator",
+        ),
+        payload={},
+    )
+
+    assert authorized.visibility == ("client",)
+    assert authorized.matches(client_event)
+    assert not authorized.matches(operator_event)
+    assert graphblocks.EventFilter(visibility=["operator"]).authorized_for_visibility(["client"]).visibility == ()
+    with raises_value_error("event filter authorized visibility must contain only valid visibility values"):
+        requested.authorized_for_visibility(["private"])
+
+
 def test_event_filter_excludes_terminal_events_when_disabled() -> None:
     failed = graphblocks.ApplicationEvent.new(
         "RunFailed",

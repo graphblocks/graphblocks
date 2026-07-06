@@ -912,6 +912,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime callback subscription construction now validates visibility filter literals against the
   specification's `client`, `operator`, `internal`, and `audit_only` set before storing a
   subscription projection.
+- Python callback event filters now expose an authorization projection that intersects requested
+  visibility with the subscriber's allowed visibility, so a callback subscription filter cannot
+  widen access to operator/internal/audit-only events.
 - Runtime callback subscription construction now validates scope literals against the specification's
   `run`, `conversation`, `project`, `tenant`, and `deployment` set.
 - Runtime callback subscription construction now validates typed webhook delivery targets so direct
