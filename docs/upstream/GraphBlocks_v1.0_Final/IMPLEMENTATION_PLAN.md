@@ -680,10 +680,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projections now also honor an explicit `infiniteWaitPolicy`, omitting `timeoutMs` only when that
   unbounded wait policy is declared, and reject poll configurations whose `maxInterval` is lower
   than the initial `interval`. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
-  `expiredAtUnixMs` values and timestamps that regress before `submitted_at_unix_ms`, matching the
-  durable operation-store timestamp invariant. Rust stdlib boundary coverage now also verifies that
-  malformed terminal `externalEffects` with provider identities but no committed outcome fail before
-  a result projection is returned.
+  `expiredAtUnixMs` values, malformed non-integer terminal timestamp fields, and timestamps that
+  regress before `submitted_at_unix_ms`, matching the durable operation-store timestamp invariant.
+  Rust stdlib boundary coverage now also verifies that malformed terminal `externalEffects` with
+  provider identities but no committed outcome fail before a result projection is returned.
 - Python `graphblocks-core`'s in-process stdlib registry now mirrors those async operation block
   projections for authoring and local tests, including callback wait projection, poll projection,
   terminal result projection, duration-string parsing, and the same terminal timestamp guard for

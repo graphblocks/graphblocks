@@ -1337,6 +1337,45 @@ fn rust_stdlib_async_cancel_operation_rejects_invalid_terminal_timestamp() -> Re
 }
 
 #[test]
+fn rust_stdlib_async_cancel_operation_rejects_malformed_terminal_timestamp() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-cancel-malformed-terminal-timestamp"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "cancelled": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-cancel", "node-cancel"),
+                    "outputs": {"operation": "cancel.operation"}
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {"cancelledAtUnixMs": "soon"},
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(&graph, &json!({}))?;
+    assert_eq!(result["status"], "failed");
+    assert_eq!(
+        result
+            .pointer("/journal/4/payload/code")
+            .and_then(Value::as_str),
+        Some("async.cancel_operation.invalid_config")
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_expire_operation_rejects_invalid_terminal_timestamp() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

@@ -841,10 +841,12 @@ fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Va
 fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let operation = required_async_operation_input(inputs, "async.cancel_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.cancel_operation@1")?;
-    let completed_at_unix_ms = config
-        .get("cancelledAtUnixMs")
-        .or_else(|| config.get("cancelled_at_unix_ms"))
-        .and_then(Value::as_u64);
+    let completed_at_unix_ms = optional_async_terminal_u64(
+        config,
+        "cancelledAtUnixMs",
+        "cancelled_at_unix_ms",
+        "async.cancel_operation.invalid_config",
+    )?;
     validate_async_terminal_timestamp(
         operation,
         completed_at_unix_ms,
@@ -865,10 +867,12 @@ fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Valu
 fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let operation = required_async_operation_input(inputs, "async.expire_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.expire_operation@1")?;
-    let completed_at_unix_ms = config
-        .get("expiredAtUnixMs")
-        .or_else(|| config.get("expired_at_unix_ms"))
-        .and_then(Value::as_u64);
+    let completed_at_unix_ms = optional_async_terminal_u64(
+        config,
+        "expiredAtUnixMs",
+        "expired_at_unix_ms",
+        "async.expire_operation.invalid_config",
+    )?;
     validate_async_terminal_timestamp(
         operation,
         completed_at_unix_ms,
@@ -2388,6 +2392,29 @@ fn async_operation_result_json(
             .collect::<Vec<_>>(),
         "completed_at_unix_ms": completed_at_unix_ms,
     }))
+}
+
+fn optional_async_terminal_u64(
+    config: &Value,
+    primary: &str,
+    alternate: &str,
+    code: &'static str,
+) -> Result<Option<u64>, BlockError> {
+    config
+        .get(primary)
+        .or_else(|| config.get(alternate))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                BlockError::new(
+                    code,
+                    ErrorCategory::Configuration,
+                    format!("field {primary} must be an unsigned integer"),
+                    false,
+                )
+            })
+        })
+        .transpose()
 }
 
 fn validate_async_terminal_timestamp(
