@@ -305,6 +305,52 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_application_event_tck_preserves_authoritative_event_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.application_events(
+        case_id="application-events/authoritative-event-metadata",
+        operations=(
+            {
+                "op": "run_succeeded",
+                "runId": "run-metadata",
+                "responseId": "response-metadata",
+                "turnId": "turn-metadata",
+                "cursor": "evt_000123",
+                "releaseId": "release-metadata",
+                "policySnapshotId": "policy-metadata",
+                "graphId": "graph-metadata",
+                "nodeId": "node-metadata",
+                "operationId": "operation-metadata",
+                "visibility": "operator",
+            },
+        ),
+        expected_accepted_kinds=("RunSucceeded",),
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["accepted_metadata"] == [
+        {
+            "event_id": "application-events/authoritative-event-metadata:1",
+            "run_id": "run-metadata",
+            "response_id": "response-metadata",
+            "turn_id": "turn-metadata",
+            "sequence": 1,
+            "cursor": "evt_000123",
+            "release_id": "release-metadata",
+            "policy_snapshot_id": "policy-metadata",
+            "occurred_at": "2026-06-23T00:00:00Z",
+            "graph_id": "graph-metadata",
+            "node_id": "node-metadata",
+            "operation_id": "operation-metadata",
+            "visibility": "operator",
+        }
+    ]
+
+
 def test_testing_package_application_event_tck_rejects_boolean_tool_result_sequence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

@@ -1223,6 +1223,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   payloads, including cursor, graph/node/operation ids, and visibility.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
   application events, matching the replay contract used by server attach/event-stream routes.
+- `graphblocks-testing` now preserves and reports authoritative event metadata when running
+  application-event TCK cases, so cursor replay and callback-projection conformance fixtures can
+  assert cursor, graph/node/operation ids, and visibility directly.
 
 ### Package ownership
 

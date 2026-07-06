@@ -3092,9 +3092,30 @@ class TckRunner:
                 response_id=response_id,
                 turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
                 sequence=sequence,
+                cursor=(
+                    str(operation.get("cursor", operation.get("eventCursor")))
+                    if operation.get("cursor", operation.get("eventCursor")) is not None
+                    else None
+                ),
                 release_id=str(operation.get("releaseId", "release-1")),
                 policy_snapshot_id=str(operation.get("policySnapshotId", "policy-1")),
                 occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
+                graph_id=(
+                    str(operation.get("graphId", operation.get("graph_id")))
+                    if operation.get("graphId", operation.get("graph_id")) is not None
+                    else None
+                ),
+                node_id=(
+                    str(operation.get("nodeId", operation.get("node_id")))
+                    if operation.get("nodeId", operation.get("node_id")) is not None
+                    else None
+                ),
+                operation_id=(
+                    str(operation.get("operationId", operation.get("operation_id")))
+                    if operation.get("operationId", operation.get("operation_id")) is not None
+                    else None
+                ),
+                visibility=str(operation.get("visibility", "client")),
             )
             if operation.get("op") == "output_policy_evaluation_started":
                 raw_generation_sequence = operation.get("sequence", operation.get("chunkSequence", 0))
@@ -3602,7 +3623,27 @@ class TckRunner:
             kind=case.kind,
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
-            observed={"accepted_kinds": accepted_kinds},
+            observed={
+                "accepted_kinds": accepted_kinds,
+                "accepted_metadata": [
+                    {
+                        "event_id": event.metadata.event_id,
+                        "run_id": event.metadata.run_id,
+                        "response_id": event.metadata.response_id,
+                        "turn_id": event.metadata.turn_id,
+                        "sequence": event.metadata.sequence,
+                        "cursor": event.metadata.cursor,
+                        "release_id": event.metadata.release_id,
+                        "policy_snapshot_id": event.metadata.policy_snapshot_id,
+                        "occurred_at": event.metadata.occurred_at,
+                        "graph_id": event.metadata.graph_id,
+                        "node_id": event.metadata.node_id,
+                        "operation_id": event.metadata.operation_id,
+                        "visibility": event.metadata.visibility,
+                    }
+                    for event in state.accepted_events
+                ],
+            },
         )
 
     def _run_application_protocol_case(self, case: TckCase) -> TckResult:
