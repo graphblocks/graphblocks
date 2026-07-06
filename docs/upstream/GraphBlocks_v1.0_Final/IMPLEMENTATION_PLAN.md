@@ -1159,8 +1159,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   receipt or resuming the run.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
-  `RunCompleted`, `RunFailed`, `RunCancelled`, or `RunPolicyStopped` event, preventing control
-  projections from reopening completed application or protocol streams.
+  `RunCompleted`, `RunFailed`, `RunCancelled`, `RunPolicyStopped`, or `RunExpired` event,
+  preventing control projections from reopening completed application or protocol streams.
 - `RunPolicyStopped` is now a first-class `ApplicationProtocolEventKind` and participates in the
   callback subscription terminal-event filter, so policy-stopped background runs can notify
   subscribers through the same projection path as completed, failed, or cancelled runs. The Python
