@@ -1280,8 +1280,14 @@ fn invalid_payload_key_path(value: &Value, field: &str) -> Option<String> {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ApplicationProtocolStreamState {
-    cutoffs: BTreeMap<String, u64>,
+    cutoffs: BTreeMap<String, OutputCutoffBoundary>,
     accepted_events: Vec<ApplicationProtocolEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OutputCutoffBoundary {
+    last_client_delivered_sequence: u64,
+    terminal_reason: String,
 }
 
 impl ApplicationProtocolStreamState {
@@ -1299,8 +1305,9 @@ impl ApplicationProtocolStreamState {
             if response_id.trim().is_empty() || self.cutoffs.contains_key(&response_id) {
                 return None;
             }
+            let terminal_reason = event.payload.get("terminal_reason").and_then(Value::as_str)?;
             if !matches!(
-                event.payload.get("terminal_reason").and_then(Value::as_str)?,
+                terminal_reason,
                 "policy_denied" | "budget_exhausted" | "cancelled" | "client_disconnected"
             ) {
                 return None;
@@ -1348,30 +1355,29 @@ impl ApplicationProtocolStreamState {
             {
                 return None;
             }
-            self.cutoffs
-                .insert(response_id, last_client_delivered_sequence);
+            self.cutoffs.insert(
+                response_id,
+                OutputCutoffBoundary {
+                    last_client_delivered_sequence,
+                    terminal_reason: terminal_reason.to_owned(),
+                },
+            );
             self.accepted_events.push(event.clone());
             return Some(event);
         }
 
         let response_id = event.payload.get("response_id").and_then(Value::as_str);
         if let Some(response_id) = response_id
-            && let Some(cutoff_last_client_delivered_sequence) = self.cutoffs.get(response_id)
+            && let Some(cutoff_boundary) = self.cutoffs.get(response_id)
         {
             if matches!(
                 event.kind,
                 ApplicationProtocolEventKind::AssistantIncomplete
                     | ApplicationProtocolEventKind::AssistantRetracted
             ) {
-                if !matches!(
-                    event.payload.get("terminal_reason").and_then(Value::as_str),
-                    Some(
-                        "policy_denied"
-                            | "budget_exhausted"
-                            | "cancelled"
-                            | "client_disconnected"
-                    )
-                ) {
+                if event.payload.get("terminal_reason").and_then(Value::as_str)
+                    != Some(cutoff_boundary.terminal_reason.as_str())
+                {
                     return None;
                 }
                 let draft_disposition = event
@@ -1394,7 +1400,7 @@ impl ApplicationProtocolStreamState {
                     .payload
                     .get("last_client_delivered_sequence")
                     .and_then(Value::as_u64)
-                    != Some(*cutoff_last_client_delivered_sequence)
+                    != Some(cutoff_boundary.last_client_delivered_sequence)
                 {
                     return None;
                 }
@@ -1413,7 +1419,9 @@ impl ApplicationProtocolStreamState {
     }
 
     pub fn cutoff_for_response(&self, response_id: &str) -> Option<u64> {
-        self.cutoffs.get(response_id).copied()
+        self.cutoffs
+            .get(response_id)
+            .map(|boundary| boundary.last_client_delivered_sequence)
     }
 }
 

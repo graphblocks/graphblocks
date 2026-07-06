@@ -200,6 +200,8 @@ Message
   against canonical terminal reason, draft disposition, and delivered-sequence metadata before
   allowing them after a response cutoff. Their delivered-sequence metadata must match the accepted
   `OutputCutoff` boundary rather than establishing a new boundary.
+- Runtime stream state now persists the accepted cutoff terminal reason with that boundary and
+  rejects post-cutoff draft terminal events whose reason differs from the `OutputCutoff`.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building

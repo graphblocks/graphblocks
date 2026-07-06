@@ -1864,6 +1864,48 @@ fn protocol_stream_state_rejects_malformed_draft_terminal_event_after_cutoff() {
 }
 
 #[test]
+fn protocol_stream_state_rejects_draft_terminal_reason_mismatch_after_cutoff() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff", 1, "cursor-1"),
+        json!({
+            "response_id": "response-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "mark_incomplete",
+            "durable_result": "none",
+            "occurred_at_unix_ms": 1_700_210,
+        }),
+    )
+    .expect("cutoff event is valid");
+    let wrong_reason_incomplete = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantIncomplete,
+        protocol_event_metadata("event-incomplete-wrong-reason", 2, "cursor-2"),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "cancelled",
+            "draft_disposition": "mark_incomplete",
+            "last_client_delivered_sequence": 1,
+        }),
+    )
+    .expect("wrong-reason incomplete envelope is valid");
+
+    assert_eq!(state.accept(cutoff.clone()), Some(cutoff));
+    assert_eq!(state.accept(wrong_reason_incomplete), None);
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![ApplicationProtocolEventKind::OutputCutoff]
+    );
+}
+
+#[test]
 fn protocol_stream_state_rejects_invalid_output_cutoff_payload() {
     let mut state = ApplicationProtocolStreamState::new();
     let invalid_sequence_cutoff = ApplicationProtocolEvent::new(
