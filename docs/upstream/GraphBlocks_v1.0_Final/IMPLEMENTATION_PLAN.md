@@ -649,8 +649,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   returns thawed copies from `to_json()` so untrusted callback/result payloads cannot be mutated
   after journaling. Caller-supplied tuples are rejected rather than accepted as JSON arrays, while
   real JSON lists still freeze internally for immutability. Projection helpers reject malformed
-  non-sequence and string inputs, including malformed external-effect sequences, before validating
-  individual projection items or effect records.
+  non-sequence and string inputs, require each projection entry to be a JSON object, and reject
+  malformed external-effect sequences before validating individual projection items or effect
+  records.
 - Python `AsyncOperationResult.from_operation` now projects durable results only from terminal
   `AsyncOperation` records, mapping terminal state to result status while preserving the operation
   id and rejecting non-terminal waits or resumes.

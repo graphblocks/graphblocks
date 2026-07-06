@@ -189,9 +189,12 @@ def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
     if isinstance(value, (str, bytes, bytearray, memoryview)) or isinstance(value, Mapping):
         raise ValueError(f"async operation result {field_name} must be a sequence")
     try:
-        return tuple(value)  # type: ignore[arg-type]
+        items = tuple(value)  # type: ignore[arg-type]
     except TypeError:
         raise ValueError(f"async operation result {field_name} must be a sequence") from None
+    if any(not isinstance(item, Mapping) for item in items):
+        raise ValueError(f"async operation result {field_name} entries must be JSON objects")
+    return items
 
 
 def _external_effect_sequence(value: object) -> tuple[object, ...]:
