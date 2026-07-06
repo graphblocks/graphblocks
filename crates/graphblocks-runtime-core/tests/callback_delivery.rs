@@ -126,11 +126,17 @@ fn subscription_filter_excludes_terminal_events_when_disabled() {
         ApplicationProtocolEventKind::RunCancelled,
         4,
     );
+    let policy_stopped = protocol_event(
+        "event-policy-stopped",
+        ApplicationProtocolEventKind::RunPolicyStopped,
+        5,
+    );
 
     assert!(scheduler.schedule_event(&subscription, &started).is_some());
     assert!(scheduler.schedule_event(&subscription, &completed).is_none());
     assert!(scheduler.schedule_event(&subscription, &failed).is_none());
     assert!(scheduler.schedule_event(&subscription, &cancelled).is_none());
+    assert!(scheduler.schedule_event(&subscription, &policy_stopped).is_none());
 }
 
 #[test]

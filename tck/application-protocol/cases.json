@@ -60,7 +60,8 @@
         "StateSnapshot",
         "RunCompleted",
         "RunFailed",
-        "RunCancelled"
+        "RunCancelled",
+        "RunPolicyStopped"
       ]
     }
   },
