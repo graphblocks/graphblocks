@@ -145,15 +145,28 @@ impl ApplicationEventKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationEventVisibility {
+    Client,
+    Operator,
+    Internal,
+    AuditOnly,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplicationEventMetadata {
     pub event_id: String,
     pub run_id: String,
     pub response_id: String,
     pub turn_id: Option<String>,
+    pub cursor: Option<String>,
+    pub graph_id: Option<String>,
+    pub node_id: Option<String>,
+    pub operation_id: Option<String>,
     pub sequence: u64,
     pub release_id: String,
     pub policy_snapshot_id: String,
     pub occurred_at_unix_ms: u64,
+    pub visibility: ApplicationEventVisibility,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -665,12 +678,16 @@ impl ApplicationEvent {
                 return Err(ApplicationEventError::EmptyMetadataField { field });
             }
         }
-        if metadata
-            .turn_id
-            .as_ref()
-            .is_some_and(|turn_id| turn_id.trim().is_empty())
-        {
-            return Err(ApplicationEventError::EmptyMetadataField { field: "turn_id" });
+        for (field, value) in [
+            ("turn_id", &metadata.turn_id),
+            ("cursor", &metadata.cursor),
+            ("graph_id", &metadata.graph_id),
+            ("node_id", &metadata.node_id),
+            ("operation_id", &metadata.operation_id),
+        ] {
+            if value.as_ref().is_some_and(|item| item.trim().is_empty()) {
+                return Err(ApplicationEventError::EmptyMetadataField { field });
+            }
         }
         Ok(())
     }

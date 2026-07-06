@@ -1,10 +1,10 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata, ApplicationEvent,
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
-    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
-    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
-    ApplicationProtocolLog, ApplicationProtocolReplayError, ApplicationProtocolStreamState,
-    AttachToRunReplay,
+    ApplicationEventStreamState, ApplicationEventVisibility, ApplicationProtocolCapabilities,
+    ApplicationProtocolError, ApplicationProtocolEvent, ApplicationProtocolEventKind,
+    ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolReplayError,
+    ApplicationProtocolStreamState, AttachToRunReplay,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -29,11 +29,43 @@ fn metadata() -> ApplicationEventMetadata {
         run_id: "run-1".to_string(),
         response_id: "response-1".to_string(),
         turn_id: Some("turn-1".to_string()),
+        cursor: None,
+        graph_id: None,
+        node_id: None,
+        operation_id: None,
         sequence: 7,
         release_id: "release-1".to_string(),
         policy_snapshot_id: "policy-1".to_string(),
         occurred_at_unix_ms: 1_700_000,
+        visibility: ApplicationEventVisibility::Client,
     }
+}
+
+#[test]
+fn application_event_metadata_carries_authoritative_stream_fields() {
+    let event = ApplicationEvent::new(
+        ApplicationEventKind::RunStarted,
+        ApplicationEventMetadata {
+            cursor: Some("run-1:7".to_owned()),
+            graph_id: Some("graph-1".to_owned()),
+            node_id: Some("node-1".to_owned()),
+            operation_id: Some("operation-1".to_owned()),
+            visibility: ApplicationEventVisibility::Operator,
+            ..metadata()
+        },
+        json!({"status": "running"}),
+    )
+    .expect("event with authoritative metadata is valid");
+
+    assert_eq!(event.metadata.cursor.as_deref(), Some("run-1:7"));
+    assert_eq!(event.metadata.graph_id.as_deref(), Some("graph-1"));
+    assert_eq!(event.metadata.node_id.as_deref(), Some("node-1"));
+    assert_eq!(event.metadata.operation_id.as_deref(), Some("operation-1"));
+    assert_eq!(
+        event.metadata.visibility,
+        ApplicationEventVisibility::Operator
+    );
+    assert_eq!(metadata().visibility, ApplicationEventVisibility::Client);
 }
 
 #[test]
@@ -193,6 +225,10 @@ fn application_events_reject_empty_required_metadata_fields() {
         turn_id: Some(" ".to_owned()),
         ..metadata()
     };
+    let empty_cursor = ApplicationEventMetadata {
+        cursor: Some("\t".to_owned()),
+        ..metadata()
+    };
 
     assert_eq!(
         ApplicationEvent::new(
@@ -219,6 +255,14 @@ fn application_events_reject_empty_required_metadata_fields() {
             json!({"status": "running"}),
         ),
         Err(ApplicationEventError::EmptyMetadataField { field: "turn_id" })
+    );
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            empty_cursor,
+            json!({"status": "running"}),
+        ),
+        Err(ApplicationEventError::EmptyMetadataField { field: "cursor" })
     );
 }
 

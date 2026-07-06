@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
+    ApplicationEventVisibility,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -10,7 +11,7 @@ use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[test]
 fn rust_application_event_stream_matches_shared_tck_cases() -> Result<(), String> {
@@ -47,6 +48,16 @@ fn run_case(case: &Value) -> Result<(), String> {
             turn_id: optional_str(operation, "turnId")
                 .or_else(|| optional_str(case, "turnId"))
                 .map(str::to_owned),
+            cursor: optional_str(operation, "cursor").map(str::to_owned),
+            graph_id: optional_str(operation, "graphId")
+                .or_else(|| optional_str(operation, "graph_id"))
+                .map(str::to_owned),
+            node_id: optional_str(operation, "nodeId")
+                .or_else(|| optional_str(operation, "node_id"))
+                .map(str::to_owned),
+            operation_id: optional_str(operation, "operationId")
+                .or_else(|| optional_str(operation, "operation_id"))
+                .map(str::to_owned),
             sequence: (index + 1) as u64,
             release_id: optional_str(case, "releaseId")
                 .unwrap_or("release-1")
@@ -55,6 +66,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .unwrap_or("policy-1")
                 .to_owned(),
             occurred_at_unix_ms: optional_u64(operation, "occurredAtUnixMs").unwrap_or(1_700_000),
+            visibility: match optional_str(operation, "visibility").unwrap_or("client") {
+                "client" => ApplicationEventVisibility::Client,
+                "operator" => ApplicationEventVisibility::Operator,
+                "internal" => ApplicationEventVisibility::Internal,
+                "audit_only" => ApplicationEventVisibility::AuditOnly,
+                other => return Err(format!("{case_name}: unknown event visibility {other}")),
+            },
         };
 
         match op {

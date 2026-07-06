@@ -1214,6 +1214,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-server` invocation-created run events now persist the same authoritative metadata
   envelope, including replay cursor and visibility, so accepted/background run attach and callback
   replay surfaces do not require metadata to be duplicated in payloads.
+- `graphblocks-runtime-core::application_event::ApplicationEventMetadata` now mirrors the
+  authoritative event-stream fields from the async/callback amendment: cursor, graph id, node id,
+  operation id, and typed client/operator/internal/audit-only visibility.
 
 ### Package ownership
 
