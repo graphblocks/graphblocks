@@ -980,6 +980,182 @@ def stdlib_registry() -> RuntimeRegistry:
             return {"value": config["default"], "selected": "default"}
         raise KeyError("control.select@1 found no present case")
 
+    def async_start_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation_id = _required_async_string(config, "operationId", "operation_id", "operationId")
+        run_id = _required_async_string(config, "runId", "run_id", "runId")
+        node_id = _required_async_string(config, "nodeId", "node_id", "nodeId")
+        attempt_id = _required_async_string(config, "attemptId", "attempt_id", "attemptId")
+        kind = _required_async_string(config, "kind", "kind", "kind")
+        resume_token_hash = _required_async_string(
+            config,
+            "resumeTokenHash",
+            "resume_token_hash",
+            "resumeTokenHash",
+        )
+        idempotency_key = _required_async_string(
+            config,
+            "idempotencyKey",
+            "idempotency_key",
+            "idempotencyKey",
+        )
+        expected_schema = _required_async_string(config, "expectedSchema", "expected_schema", "expectedSchema")
+        created_at_unix_ms = _required_async_u64(config, "createdAtUnixMs", "created_at_unix_ms", "createdAtUnixMs")
+        operation: dict[str, Any] = {
+            "operation_id": operation_id,
+            "run_id": run_id,
+            "node_id": node_id,
+            "attempt_id": attempt_id,
+            "kind": kind,
+            "provider_operation_id": None,
+            "state": "created",
+            "resume_token_hash": resume_token_hash,
+            "idempotency_key": idempotency_key,
+            "expected_schema": expected_schema,
+            "created_at_unix_ms": created_at_unix_ms,
+            "submitted_at_unix_ms": None,
+            "expires_at_unix_ms": None,
+            "infinite_wait_policy": None,
+            "completed_at_unix_ms": None,
+        }
+        provider_operation_id = _optional_async_string(
+            config,
+            "providerOperationId",
+            "provider_operation_id",
+            "providerOperationId",
+        )
+        if provider_operation_id is not None:
+            operation["provider_operation_id"] = provider_operation_id
+            operation["submitted_at_unix_ms"] = _required_async_u64(
+                config,
+                "submittedAtUnixMs",
+                "submitted_at_unix_ms",
+                "submittedAtUnixMs",
+            )
+            operation["state"] = "submitted"
+        expires_at_unix_ms = _optional_async_u64(config, "expiresAtUnixMs", "expires_at_unix_ms", "expiresAtUnixMs")
+        if expires_at_unix_ms is None:
+            timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+            if timeout_ms is not None:
+                expires_at_unix_ms = created_at_unix_ms + timeout_ms
+        infinite_wait_policy = _optional_async_string(
+            config,
+            "infiniteWaitPolicy",
+            "infinite_wait_policy",
+            "infiniteWaitPolicy",
+        )
+        if infinite_wait_policy is not None:
+            operation["infinite_wait_policy"] = infinite_wait_policy
+        if expires_at_unix_ms is not None:
+            operation["expires_at_unix_ms"] = expires_at_unix_ms
+            operation["state"] = "waiting_callback"
+        elif infinite_wait_policy is not None:
+            operation["state"] = "waiting_callback"
+        if "subject" in inputs:
+            operation["subject"] = inputs["subject"]
+        return {"operation": operation}
+
+    def async_await_callback(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation = _required_async_operation_input(inputs, "async.await_callback@1")
+        if operation.get("state") != "waiting_callback":
+            raise RuntimeError(
+                f"async.await_callback@1 operation must be waiting_callback, got {operation.get('state')!r}"
+            )
+        on_timeout = str(config.get("onTimeout", config.get("on_timeout", "fail")))
+        if on_timeout not in {"fail", "cancel", "expire"}:
+            raise ValueError("async.await_callback@1 onTimeout must be one of fail, cancel, or expire")
+        wait: dict[str, Any] = {
+            "state": "waiting_callback",
+            "operation": operation,
+            "checkpoint": bool(config.get("checkpoint", True)),
+            "onTimeout": on_timeout,
+        }
+        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+        if timeout_ms is not None:
+            wait["timeoutMs"] = timeout_ms
+        infinite_wait_policy = _optional_async_string(
+            config,
+            "infiniteWaitPolicy",
+            "infinite_wait_policy",
+            "infiniteWaitPolicy",
+        )
+        if infinite_wait_policy is not None:
+            wait["infiniteWaitPolicy"] = infinite_wait_policy
+        return {"wait": wait}
+
+    def async_poll_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation = dict(_required_async_operation_input(inputs, "async.poll_operation@1"))
+        interval_ms = _optional_duration_ms(config, ("intervalMs", "interval_ms", "interval"), "interval") or 30_000
+        max_interval_ms = (
+            _optional_duration_ms(config, ("maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"), "maxInterval")
+            or interval_ms
+        )
+        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+        infinite_wait_policy = _optional_async_string(
+            config,
+            "infiniteWaitPolicy",
+            "infinite_wait_policy",
+            "infiniteWaitPolicy",
+        )
+        if timeout_ms is None and infinite_wait_policy is None:
+            raise ValueError("async.poll_operation@1 requires timeoutMs")
+        operation["state"] = "polling"
+        poll = {
+            "state": "polling",
+            "operation": operation,
+            "intervalMs": interval_ms,
+            "maxIntervalMs": max_interval_ms,
+        }
+        if timeout_ms is not None:
+            poll["timeoutMs"] = timeout_ms
+        if infinite_wait_policy is not None:
+            poll["infiniteWaitPolicy"] = infinite_wait_policy
+        return {"poll": poll}
+
+    def async_complete_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation = _required_async_operation_input(inputs, "async.complete_operation@1")
+        return {
+            "result": _async_operation_result(
+                str(operation["operation_id"]),
+                "completed",
+                output=inputs.get("output"),
+                completed_at_unix_ms=None,
+            )
+        }
+
+    def async_cancel_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation = _required_async_operation_input(inputs, "async.cancel_operation@1")
+        completed_at_unix_ms = _optional_async_u64(
+            config,
+            "cancelledAtUnixMs",
+            "cancelled_at_unix_ms",
+            "cancelledAtUnixMs",
+        )
+        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.cancel_operation@1")
+        return {
+            "result": _async_operation_result(
+                str(operation["operation_id"]),
+                "cancelled",
+                completed_at_unix_ms=completed_at_unix_ms,
+            )
+        }
+
+    def async_expire_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        operation = _required_async_operation_input(inputs, "async.expire_operation@1")
+        completed_at_unix_ms = _optional_async_u64(
+            config,
+            "expiredAtUnixMs",
+            "expired_at_unix_ms",
+            "expiredAtUnixMs",
+        )
+        _validate_async_terminal_timestamp(operation, completed_at_unix_ms, "async.expire_operation@1")
+        return {
+            "result": _async_operation_result(
+                str(operation["operation_id"]),
+                "expired",
+                completed_at_unix_ms=completed_at_unix_ms,
+            )
+        }
+
     def _config_value(config: Mapping[str, Any], camel_key: str, snake_key: str) -> tuple[bool, Any]:
         if camel_key in config:
             return True, config[camel_key]
@@ -1049,6 +1225,99 @@ def stdlib_registry() -> RuntimeRegistry:
             return None
         return _string_collection(value, f"scope {camel_key}")
 
+    def _required_async_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            raise TypeError(f"async.start_operation@1 config.{label} is required")
+        if not isinstance(value, str) or not value.strip():
+            raise TypeError(f"async.start_operation@1 config.{label} must be a non-empty string")
+        return value
+
+    def _optional_async_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str | None:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found or value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise TypeError(f"async operation config.{label} must be a non-empty string")
+        return value
+
+    def _required_async_u64(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> int:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            raise TypeError(f"async.start_operation@1 config.{label} is required")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise TypeError(f"async operation config.{label} must be a non-negative integer")
+        return value
+
+    def _optional_async_u64(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> int | None:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found or value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise TypeError(f"async operation config.{label} must be a non-negative integer")
+        return value
+
+    def _optional_duration_ms(config: Mapping[str, Any], keys: tuple[str, ...], label: str) -> int | None:
+        value = None
+        for key in keys:
+            if key in config:
+                value = config[key]
+                break
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError(f"async operation config.{label} must be a positive duration")
+        if isinstance(value, int):
+            if value <= 0:
+                raise ValueError(f"async operation config.{label} must be a positive duration")
+            return value
+        seconds = parse_duration_seconds(value)
+        if seconds is None or seconds <= 0:
+            raise ValueError(f"async operation config.{label} must be a positive duration")
+        return int(seconds * 1000)
+
+    def _required_async_operation_input(inputs: Mapping[str, Any], block_label: str) -> dict[str, Any]:
+        operation = inputs.get("operation")
+        if not isinstance(operation, dict):
+            raise TypeError(f"{block_label} requires operation input")
+        if not isinstance(operation.get("operation_id"), str) or not str(operation.get("operation_id")).strip():
+            raise TypeError(f"{block_label} input operation.operation_id must be a non-empty string")
+        return operation
+
+    def _validate_async_terminal_timestamp(
+        operation: Mapping[str, Any],
+        completed_at_unix_ms: int | None,
+        block_label: str,
+    ) -> None:
+        if completed_at_unix_ms is None:
+            return
+        if completed_at_unix_ms == 0:
+            raise ValueError(f"{block_label} terminal timestamp must be positive")
+        submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
+        if isinstance(submitted_at_unix_ms, int) and not isinstance(submitted_at_unix_ms, bool):
+            if completed_at_unix_ms < submitted_at_unix_ms:
+                raise ValueError(f"{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms")
+
+    def _async_operation_result(
+        operation_id: str,
+        status: str,
+        *,
+        output: Any = None,
+        completed_at_unix_ms: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "operation_id": operation_id,
+            "status": status,
+            "output": output,
+            "artifacts": [],
+            "diagnostics": [],
+            "metrics": [],
+            "checks": [],
+            "usage": [],
+            "external_effects": [],
+            "completed_at_unix_ms": completed_at_unix_ms,
+        }
+
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)
     registry.register("model.generate@1", scripted_generate)
@@ -1058,4 +1327,10 @@ def stdlib_registry() -> RuntimeRegistry:
     registry.register("conversation.policy_stop_turn@1", policy_stop_turn)
     registry.register("control.map@2", control_map)
     registry.register("control.select@1", control_select)
+    registry.register("async.start_operation@1", async_start_operation)
+    registry.register("async.await_callback@1", async_await_callback)
+    registry.register("async.poll_operation@1", async_poll_operation)
+    registry.register("async.complete_operation@1", async_complete_operation)
+    registry.register("async.cancel_operation@1", async_cancel_operation)
+    registry.register("async.expire_operation@1", async_expire_operation)
     return registry

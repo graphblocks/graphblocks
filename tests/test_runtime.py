@@ -654,3 +654,128 @@ def test_runtime_can_persist_execution_journal_with_factory(tmp_path) -> None:
         "node_succeeded",
         "run_succeeded",
     ]
+
+
+def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-start-await"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "operation": "graphblocks.ai/AsyncOperation@1",
+                    "wait": "graphblocks.ai/AsyncWait@1",
+                }
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeoutMs": 1_800_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "$output.operation"},
+                },
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeout": "30m",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "inputs": {"operation": "startCI.operation"},
+                    "outputs": {"wait": "$output.wait"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs["operation"]["state"] == "waiting_callback"
+    assert result.outputs["operation"]["expires_at_unix_ms"] == 1_801_000
+    assert result.outputs["wait"]["timeoutMs"] == 1_800_000
+    assert result.outputs["wait"]["operation"]["operation_id"] == "op-ci-1"
+
+
+def test_stdlib_async_terminal_blocks_reject_invalid_terminal_timestamps() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-invalid-terminal-timestamp"},
+        "spec": {
+            "interface": {
+                "outputs": {"cancelled": "graphblocks.ai/AsyncOperationResult@1"}
+            },
+            "nodes": {
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-cancel",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCancel",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-op-cancel",
+                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "idempotencyKey": "idem-op-cancel",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 2_000,
+                        "timeoutMs": 1_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "cancel.operation"},
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {"cancelledAtUnixMs": 1_000},
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "cancel"
+    assert "async.cancel_operation@1 terminal timestamp" in failed[0].payload["error"]

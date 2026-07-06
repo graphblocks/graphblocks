@@ -671,6 +671,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   wait policy is declared. Terminal stdlib projections now reject zero `cancelledAtUnixMs` or
   `expiredAtUnixMs` values and timestamps that regress before `submitted_at_unix_ms`, matching the
   durable operation-store timestamp invariant.
+- Python `graphblocks-core`'s in-process stdlib registry now mirrors those async operation block
+  projections for authoring and local tests, including callback wait projection, poll projection,
+  terminal result projection, duration-string parsing, and the same terminal timestamp guard for
+  cancel/expire results.
 - Python `graphblocks-core` now exposes immutable callback schema facades for `EventFilter`,
   `CallbackSubscription`, and `CallbackDelivery`, covering subscription scope/status/failure-policy
   validation, terminal-event filter projection, delivery idempotency metadata, and terminal delivery
