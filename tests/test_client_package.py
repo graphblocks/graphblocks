@@ -1032,7 +1032,10 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
         client.health()
 
 
-@pytest.mark.parametrize("method_name", ("cancel_run", "run_status", "run_events", "run_stream", "attach_to_run"))
+@pytest.mark.parametrize(
+    "method_name",
+    ("cancel_run", "run_status", "run_events", "run_stream", "attach_to_run", "detach_from_run"),
+)
 @pytest.mark.parametrize("run_id", (True, " "))
 def test_client_package_rejects_malformed_http_run_id_arguments(
     monkeypatch,
@@ -1051,7 +1054,10 @@ def test_client_package_rejects_malformed_http_run_id_arguments(
     )
 
     with pytest.raises(ValueError, match="GraphBlocks HTTP run_id must be a non-empty string"):
-        getattr(client, method_name)(run_id)
+        if method_name == "detach_from_run":
+            getattr(client, method_name)(run_id, client_id="client-1")
+        else:
+            getattr(client, method_name)(run_id)
 
 
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
@@ -1537,6 +1543,89 @@ def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None
     assert [event.kind for event in snapshot.events] == ["RunSucceeded"]
     assert snapshot.events[0].payload["outputs"] == {"prompt": "Client attach ok"}
     assert snapshot.event_stream.accept(snapshot.events[0]) == snapshot.events[0]
+
+
+def test_client_package_detaches_from_run_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-detach"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client detach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-detach-http-1",
+                    "responseId": "response-detach-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-detach-http-1/detach"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {
+            "clientId": "client-1",
+            "reason": "tab_closed",
+        }
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.detach_from_run("run-detach-http-1", client_id="client-1", reason="tab_closed")
+
+    assert response == {
+        "ok": True,
+        "runId": "run-detach-http-1",
+        "clientId": "client-1",
+        "reason": "tab_closed",
+        "status": "detached",
+        "lastCursor": "run-detach-http-1:2",
+    }
+    assert [event["kind"] for event in app._events_by_run_id["run-detach-http-1"]] == ["RunStarted", "RunSucceeded"]
 
 
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:

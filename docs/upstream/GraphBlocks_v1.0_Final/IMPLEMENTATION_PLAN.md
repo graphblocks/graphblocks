@@ -945,6 +945,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` now exposes an `AttachToRun` HTTP helper that posts the last replay cursor
   and declared surface capabilities, returning replayed events through the same
   `ApplicationEvent` parser used by event-stream helpers.
+- `graphblocks-client` now exposes a `DetachFromRun` HTTP helper that records client detachment
+  with an optional reason while preserving the authoritative run event stream.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

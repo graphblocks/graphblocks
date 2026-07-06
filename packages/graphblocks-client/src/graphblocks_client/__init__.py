@@ -963,6 +963,32 @@ class HttpGraphBlocksClient:
             event_stream=stream_state,
         )
 
+    def detach_from_run(
+        self,
+        run_id: str,
+        *,
+        client_id: object,
+        reason: object | None = None,
+    ) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
+        body: dict[str, object] = {"clientId": _http_non_empty_string("client_id", client_id)}
+        if reason is not None:
+            body["reason"] = _http_non_empty_string("reason", reason)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/detach",
+            data=json.dumps(body, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        return _read_json_response(response, "GraphBlocks detach response")
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
