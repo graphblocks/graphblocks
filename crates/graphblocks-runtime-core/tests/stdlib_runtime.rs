@@ -924,7 +924,13 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
                 },
                 "complete": {
                     "block": "async.complete_operation@1",
-                    "config": {"completedAtUnixMs": 1_900},
+                    "config": {
+                        "completedAtUnixMs": 1_900,
+                        "diagnostics": [{"severity": "info", "message": "checks complete"}],
+                        "metrics": [{"name": "duration_ms", "value": 840}],
+                        "checks": [{"name": "unit", "status": "passed"}],
+                        "usage": [{"kind": "ci_minutes", "amount": 2}]
+                    },
                     "inputs": {
                         "operation": "startComplete.operation",
                         "output": "$input.payload"
@@ -987,6 +993,22 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
         1_900
     );
     assert_eq!(
+        result["outputs"]["completed"]["diagnostics"],
+        json!([{"severity": "info", "message": "checks complete"}])
+    );
+    assert_eq!(
+        result["outputs"]["completed"]["metrics"],
+        json!([{"name": "duration_ms", "value": 840}])
+    );
+    assert_eq!(
+        result["outputs"]["completed"]["checks"],
+        json!([{"name": "unit", "status": "passed"}])
+    );
+    assert_eq!(
+        result["outputs"]["completed"]["usage"],
+        json!([{"kind": "ci_minutes", "amount": 2}])
+    );
+    assert_eq!(
         result["outputs"]["completed"]["output"],
         json!({"status": "completed"})
     );
@@ -1007,6 +1029,62 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
     );
     assert_eq!(result["outputs"]["expired"]["operation_id"], "op-expire");
     assert_eq!(result["outputs"]["expired"]["status"], "expired");
+    Ok(())
+}
+
+#[test]
+fn rust_stdlib_async_terminal_blocks_reject_invalid_projection_entries() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "rust-stdlib-async-invalid-result-projection"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "completed": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startComplete": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-complete", "node-complete"),
+                    "outputs": {"operation": "complete.operation"}
+                },
+                "complete": {
+                    "block": "async.complete_operation@1",
+                    "config": {
+                        "completedAtUnixMs": 1_900,
+                        "diagnostics": ["not-a-diagnostic-object"]
+                    },
+                    "inputs": {"operation": "startComplete.operation"},
+                    "outputs": {"result": "$output.completed"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    let node_failed = result["journal"]
+        .as_array()
+        .and_then(|journal| {
+            journal.iter().find(|record| {
+                record.pointer("/kind").and_then(Value::as_str) == Some("node_failed")
+            })
+        })
+        .ok_or_else(|| "missing node_failed journal record".to_string())?;
+    assert_eq!(
+        node_failed.pointer("/payload/code").and_then(Value::as_str),
+        Some("async.complete_operation.invalid_config")
+    );
+    let message = node_failed
+        .pointer("/payload/message")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing node_failed message".to_string())?;
+    assert!(
+        message.contains("config.diagnostics[0] must be an object"),
+        "unexpected message: {message}",
+    );
     Ok(())
 }
 
@@ -1516,8 +1594,8 @@ fn rust_stdlib_async_expire_operation_rejects_invalid_terminal_timestamp() -> Re
 }
 
 #[test]
-fn rust_stdlib_async_terminal_effects_reject_provider_identity_without_committed_effect(
-) -> Result<(), String> {
+fn rust_stdlib_async_terminal_effects_reject_provider_identity_without_committed_effect()
+-> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",

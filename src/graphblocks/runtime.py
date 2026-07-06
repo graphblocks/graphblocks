@@ -1148,6 +1148,7 @@ def stdlib_registry() -> RuntimeRegistry:
                 str(operation["operation_id"]),
                 "completed",
                 output=inputs.get("output"),
+                result_projections=_async_result_projections(config, "async.complete_operation@1"),
                 external_effects=_async_external_effects(config, "async.complete_operation@1"),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
@@ -1167,6 +1168,7 @@ def stdlib_registry() -> RuntimeRegistry:
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "cancelled",
+                result_projections=_async_result_projections(config, "async.cancel_operation@1"),
                 external_effects=_async_external_effects(config, "async.cancel_operation@1"),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
@@ -1186,6 +1188,7 @@ def stdlib_registry() -> RuntimeRegistry:
             "result": _async_operation_result(
                 str(operation["operation_id"]),
                 "expired",
+                result_projections=_async_result_projections(config, "async.expire_operation@1"),
                 external_effects=_async_external_effects(config, "async.expire_operation@1"),
                 completed_at_unix_ms=completed_at_unix_ms,
             )
@@ -1352,21 +1355,46 @@ def stdlib_registry() -> RuntimeRegistry:
         status: str,
         *,
         output: Any = None,
+        result_projections: Mapping[str, list[dict[str, Any]]] | None = None,
         external_effects: list[dict[str, Any]] | None = None,
         completed_at_unix_ms: int | None,
     ) -> dict[str, Any]:
+        projections = result_projections or {}
         return {
             "operation_id": operation_id,
             "status": status,
             "output": output,
             "artifacts": [],
-            "diagnostics": [],
-            "metrics": [],
-            "checks": [],
-            "usage": [],
+            "diagnostics": projections.get("diagnostics", []),
+            "metrics": projections.get("metrics", []),
+            "checks": projections.get("checks", []),
+            "usage": projections.get("usage", []),
             "external_effects": [] if external_effects is None else external_effects,
             "completed_at_unix_ms": completed_at_unix_ms,
         }
+
+    def _async_result_projections(config: Mapping[str, Any], block_label: str) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "diagnostics": _async_result_projection(config, "diagnostics", block_label),
+            "metrics": _async_result_projection(config, "metrics", block_label),
+            "checks": _async_result_projection(config, "checks", block_label),
+            "usage": _async_result_projection(config, "usage", block_label),
+        }
+
+    def _async_result_projection(config: Mapping[str, Any], field: str, block_label: str) -> list[dict[str, Any]]:
+        raw_items = config.get(field, [])
+        if raw_items is None:
+            return []
+        if isinstance(raw_items, Mapping) or isinstance(raw_items, (str, bytes, bytearray, memoryview)):
+            raise TypeError(f"{block_label} config.{field} must be a sequence")
+        if not isinstance(raw_items, list | tuple):
+            raise TypeError(f"{block_label} config.{field} must be a sequence")
+        items = []
+        for index, raw_item in enumerate(raw_items):
+            if not isinstance(raw_item, Mapping):
+                raise TypeError(f"{block_label} config.{field}[{index}] must be a mapping")
+            items.append(dict(raw_item))
+        return items
 
     def _async_external_effects(config: Mapping[str, Any], block_label: str) -> list[dict[str, Any]]:
         raw_effects = config.get("externalEffects", config.get("external_effects", []))

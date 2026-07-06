@@ -838,16 +838,14 @@ fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Va
         "async.complete_operation@1",
         "async.complete_operation.invalid_config",
     )?;
-    let external_effects =
-        parse_async_external_effects(config, "async.complete_operation@1")?;
+    let external_effects = parse_async_external_effects(config, "async.complete_operation@1")?;
+    let mut result = AsyncOperationResult::completed(operation_id)
+        .with_output(output)
+        .with_external_effects(external_effects);
+    apply_async_result_projections(config, "async.complete_operation@1", &mut result)?;
 
     Ok(json!({
-        "result": async_operation_result_json(
-            AsyncOperationResult::completed(operation_id)
-                .with_output(output)
-                .with_external_effects(external_effects),
-            completed_at_unix_ms,
-        )?,
+        "result": async_operation_result_json(result, completed_at_unix_ms)?,
     }))
 }
 
@@ -867,14 +865,13 @@ fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Valu
         "async.cancel_operation@1",
         "async.cancel_operation.invalid_config",
     )?;
-    let external_effects =
-        parse_async_external_effects(config, "async.cancel_operation@1")?;
+    let external_effects = parse_async_external_effects(config, "async.cancel_operation@1")?;
+    let mut result =
+        AsyncOperationResult::cancelled(operation_id).with_external_effects(external_effects);
+    apply_async_result_projections(config, "async.cancel_operation@1", &mut result)?;
 
     Ok(json!({
-        "result": async_operation_result_json(
-            AsyncOperationResult::cancelled(operation_id).with_external_effects(external_effects),
-            completed_at_unix_ms,
-        )?,
+        "result": async_operation_result_json(result, completed_at_unix_ms)?,
     }))
 }
 
@@ -894,14 +891,13 @@ fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Valu
         "async.expire_operation@1",
         "async.expire_operation.invalid_config",
     )?;
-    let external_effects =
-        parse_async_external_effects(config, "async.expire_operation@1")?;
+    let external_effects = parse_async_external_effects(config, "async.expire_operation@1")?;
+    let mut result =
+        AsyncOperationResult::expired(operation_id).with_external_effects(external_effects);
+    apply_async_result_projections(config, "async.expire_operation@1", &mut result)?;
 
     Ok(json!({
-        "result": async_operation_result_json(
-            AsyncOperationResult::expired(operation_id).with_external_effects(external_effects),
-            completed_at_unix_ms,
-        )?,
+        "result": async_operation_result_json(result, completed_at_unix_ms)?,
     }))
 }
 
@@ -2370,6 +2366,50 @@ fn parse_tool_effect_outcome(outcome: &str) -> Result<ToolEffectOutcome, &str> {
         "unknown" => Ok(ToolEffectOutcome::Unknown),
         _ => Err(outcome),
     }
+}
+
+fn apply_async_result_projections(
+    config: &serde_json::Map<String, Value>,
+    block_label: &str,
+    result: &mut AsyncOperationResult,
+) -> Result<(), BlockError> {
+    result.diagnostics = parse_async_result_projection(config, "diagnostics", block_label)?;
+    result.metrics = parse_async_result_projection(config, "metrics", block_label)?;
+    result.checks = parse_async_result_projection(config, "checks", block_label)?;
+    result.usage = parse_async_result_projection(config, "usage", block_label)?;
+    Ok(())
+}
+
+fn parse_async_result_projection(
+    config: &serde_json::Map<String, Value>,
+    field: &str,
+    block_label: &str,
+) -> Result<Vec<Value>, BlockError> {
+    let Some(raw_items) = config.get(field) else {
+        return Ok(Vec::new());
+    };
+    if raw_items.is_null() {
+        return Ok(Vec::new());
+    }
+    let Some(raw_items) = raw_items.as_array() else {
+        return Err(BlockError::new(
+            format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+            ErrorCategory::Configuration,
+            format!("{block_label} config.{field} must be an array"),
+            false,
+        ));
+    };
+    for (index, raw_item) in raw_items.iter().enumerate() {
+        if !raw_item.is_object() {
+            return Err(BlockError::new(
+                format!("{}.invalid_config", block_label.trim_end_matches("@1")),
+                ErrorCategory::Configuration,
+                format!("{block_label} config.{field}[{index}] must be an object"),
+                false,
+            ));
+        }
+    }
+    Ok(raw_items.clone())
 }
 
 fn async_operation_result_json(

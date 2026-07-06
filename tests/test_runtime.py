@@ -966,7 +966,13 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
                 },
                 "complete": {
                     "block": "async.complete_operation@1",
-                    "config": {"completedAtUnixMs": 1_900},
+                    "config": {
+                        "completedAtUnixMs": 1_900,
+                        "diagnostics": [{"severity": "info", "message": "checks complete"}],
+                        "metrics": [{"name": "duration_ms", "value": 840}],
+                        "checks": [{"name": "unit", "status": "passed"}],
+                        "usage": [{"kind": "ci_minutes", "amount": 2}],
+                    },
                     "inputs": {
                         "operation": "startComplete.operation",
                         "output": "$input.payload",
@@ -1009,6 +1015,10 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
     assert result.outputs["completed"]["status"] == "completed"
     assert result.outputs["completed"]["output"] == {"status": "completed"}
     assert result.outputs["completed"]["completed_at_unix_ms"] == 1_900
+    assert result.outputs["completed"]["diagnostics"] == [{"severity": "info", "message": "checks complete"}]
+    assert result.outputs["completed"]["metrics"] == [{"name": "duration_ms", "value": 840}]
+    assert result.outputs["completed"]["checks"] == [{"name": "unit", "status": "passed"}]
+    assert result.outputs["completed"]["usage"] == [{"kind": "ci_minutes", "amount": 2}]
     assert result.outputs["cancelled"]["status"] == "cancelled"
     assert result.outputs["cancelled"]["external_effects"] == [
         {
@@ -1085,6 +1095,63 @@ def test_stdlib_async_terminal_effects_reject_provider_identity_without_committe
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "cancel"
     assert "provider identity but no committed external effect" in failed[0].payload["error"]
+
+
+def test_stdlib_async_terminal_blocks_reject_invalid_projection_entries() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "python-stdlib-async-invalid-result-projection"},
+        "spec": {
+            "interface": {
+                "outputs": {"completed": "graphblocks.ai/AsyncOperationResult@1"}
+            },
+            "nodes": {
+                "startComplete": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-complete",
+                        "runId": "run-coding-1",
+                        "nodeId": "startComplete",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-op-complete",
+                        "resumeTokenHash": "sha256:resume-token-op-complete",
+                        "idempotencyKey": "idem-op-complete",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 2_000,
+                        "timeoutMs": 1_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                    "outputs": {"operation": "complete.operation"},
+                },
+                "complete": {
+                    "block": "async.complete_operation@1",
+                    "config": {
+                        "completedAtUnixMs": 1_900,
+                        "diagnostics": ["not-a-diagnostic-object"],
+                    },
+                    "inputs": {"operation": "startComplete.operation"},
+                    "outputs": {"result": "$output.completed"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "complete"
+    assert "config.diagnostics[0] must be a mapping" in failed[0].payload["error"]
 
 
 def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
