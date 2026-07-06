@@ -940,6 +940,23 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def authentication_failed(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="authentication_failed",
+            received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
+        )
+
+    @classmethod
     def payload_too_large(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -1558,6 +1575,19 @@ class GraphBlocksServerApp:
                 )
             )
             if not auth_decision.allowed:
+                if route.operation == "submit_async_callback":
+                    try:
+                        submission = ServerAsyncCallbackSubmission.from_request(
+                            operation_id=route_match.path_params.get("operation_id", ""),
+                            request=request,
+                        )
+                        rejection = ServerAsyncCallbackRejection.authentication_failed(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
                 return ServerResponse.json(
                     401,
                     {

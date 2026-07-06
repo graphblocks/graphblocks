@@ -1485,6 +1485,49 @@ def test_server_app_rejects_async_callback_when_required_authentication_is_uncon
     assert app.callback_submissions("op-ci-auth-required") == ()
 
 
+def test_server_app_records_async_callback_authentication_failure_rejection() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-auth-failed",
+            headers={
+                "Authorization": "Bearer wrong-token",
+                "GraphBlocks-Idempotency-Key": "idem-callback-auth-failed",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-auth-failed",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.invalid_bearer_token"],
+    }
+    assert app.callback_submissions("op-ci-auth-failed") == ()
+    assert app.async_callback_rejections("op-ci-auth-failed") == (
+        {
+            "operationId": "op-ci-auth-failed",
+            "callbackId": "cb-auth-failed",
+            "idempotencyKey": "idem-callback-auth-failed",
+            **_callback_rejection_metadata({"status": "completed"}, verified_by="unauthenticated"),
+            "attemptId": "attempt-1",
+            "reason": "authentication_failed",
+            "receivedAt": "2026-07-03T00:00:00Z",
+        },
+    )
+
+
 def test_server_app_validates_async_callback_authentication_requirement_flag() -> None:
     with pytest.raises(ValueError, match="server require_async_callback_authentication must be a boolean"):
         GraphBlocksServerApp(require_async_callback_authentication="yes")  # type: ignore[arg-type]

@@ -981,7 +981,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   payloads, while preserving the existing attempt-count API for callers that only need delivery
   progress.
   Deployments can configure the server callback route to require an installed authentication hook
-  before `SubmitAsyncCallback` will parse, validate, or store a callback receipt.
+  before `SubmitAsyncCallback` will parse, validate, or store a callback receipt. When an installed
+  authentication hook rejects a parseable async callback submission, the server now records an
+  `authentication_failed` rejection projection with the same operation, callback, idempotency,
+  digest, policy snapshot, and fence metadata used by other rejected receipts, while preserving the
+  existing `401` response and avoiding accepted callback storage.
 - `graphblocks-runtime-core` now rejects async-operation cancel and expire terminal transitions
   whose timestamps are zero or precede the operation submission timestamp. This keeps local
   cancellation/expiry controls from writing impossible terminal state while preserving the existing
