@@ -2573,6 +2573,38 @@ fn webhook_envelope_signing_adds_required_headers_and_verifies() {
 }
 
 #[test]
+fn webhook_envelope_signing_includes_operation_id_when_present() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let mut event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    event.metadata.operation_id = Some("op-ci-1".to_owned());
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+
+    let signed = signing
+        .sign_delivery(&delivery, &event, 2_000)
+        .expect("delivery signs");
+
+    assert_eq!(
+        signed
+            .body
+            .get("operation_id")
+            .and_then(|value| value.as_str()),
+        Some("op-ci-1")
+    );
+    signing
+        .verify_signed_delivery(&signed, 2_050)
+        .expect("fresh signature verifies");
+}
+
+#[test]
 fn webhook_signature_verification_rejects_stale_or_tampered_payloads() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

@@ -1662,7 +1662,7 @@ impl WebhookSigningConfig {
         delivered_at_unix_ms: u64,
         max_payload_bytes: Option<usize>,
     ) -> Result<SignedWebhookDelivery, WebhookSignatureError> {
-        let body = json!({
+        let mut body = json!({
             "delivery_id": &delivery.delivery_id,
             "subscription_id": &delivery.subscription_id,
             "event_id": &delivery.event_id,
@@ -1676,6 +1676,11 @@ impl WebhookSigningConfig {
             "delivered_at_unix_ms": delivered_at_unix_ms,
             "protocol_version": &event.metadata.protocol_version,
         });
+        if let Some(operation_id) = &event.metadata.operation_id {
+            body.as_object_mut()
+                .expect("webhook envelope body is an object")
+                .insert("operation_id".to_owned(), json!(operation_id));
+        }
         let body_size_bytes = canonical_body_size_bytes(&body);
         if let Some(max_payload_bytes) = max_payload_bytes {
             if body_size_bytes > max_payload_bytes {
