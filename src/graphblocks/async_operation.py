@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import math
 from typing import Literal
 
+from .canonical import canonical_hash
 from .tools import ToolEffectOutcome, VALID_TOOL_EFFECT_OUTCOMES
 
 
@@ -559,6 +560,8 @@ class ExternalCallbackReceived:
                 self.payload,
             ),
         )
+        if canonical_hash(_thaw_json_value(self.payload)) != self.payload_digest:
+            raise ValueError("external callback received payload_digest must match payload")
         object.__setattr__(
             self,
             "artifacts",

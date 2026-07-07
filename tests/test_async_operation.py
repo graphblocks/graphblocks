@@ -345,7 +345,7 @@ def test_external_callback_received_schema_freezes_payload_and_artifacts() -> No
         attempt_id="attempt-1",
         idempotency_key="idem-callback-1",
         payload=payload,
-        payload_digest="sha256:" + "b" * 64,
+        payload_digest=graphblocks.canonical_hash(payload),
         received_at="2026-07-02T00:10:00Z",
         verified_by="hmac-sha256:callback-endpoint-1",
         policy_snapshot_id="policy-1",
@@ -370,7 +370,7 @@ def test_external_callback_received_schema_freezes_payload_and_artifacts() -> No
         "provider_operation_id": "gha-run-1",
         "idempotency_key": "idem-callback-1",
         "payload": {"status": "completed", "checks": ["lint"]},
-        "payload_digest": "sha256:" + "b" * 64,
+        "payload_digest": graphblocks.canonical_hash({"status": "completed", "checks": ["lint"]}),
         "artifacts": [{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}],
         "received_at": "2026-07-02T00:10:00Z",
         "verified_by": "hmac-sha256:callback-endpoint-1",
@@ -388,7 +388,7 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             attempt_id="attempt-1",
             idempotency_key="idem-callback-1",
             payload={"status": "completed"},
-            payload_digest="sha256:" + "b" * 64,
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
             received_at="2026-07-02T00:10:00Z",
             verified_by="hmac-sha256:callback-endpoint-1",
             policy_snapshot_id="policy-1",
@@ -409,6 +409,21 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             policy_snapshot_id="policy-1",
         )
 
+    with raises_value_error("external callback received payload_digest must match payload"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "failed"},
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
     with raises_value_error("external callback received received_at must be an ISO datetime"):
         graphblocks.ExternalCallbackReceived(
             callback_id="cb-1",
@@ -418,7 +433,7 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             attempt_id="attempt-1",
             idempotency_key="idem-callback-1",
             payload={"status": "completed"},
-            payload_digest="sha256:" + "b" * 64,
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
             received_at="not-a-date",
             verified_by="hmac-sha256:callback-endpoint-1",
             policy_snapshot_id="policy-1",
@@ -448,7 +463,7 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             attempt_id="attempt-1",
             idempotency_key="idem-callback-1",
             payload={"status": "completed"},
-            payload_digest="sha256:" + "b" * 64,
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
             received_at="2026-07-02T00:10:00Z",
             verified_by="hmac-sha256:callback-endpoint-1",
             policy_snapshot_id="policy-1",

@@ -663,7 +663,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python `graphblocks-core` now also exposes an immutable `ExternalCallbackReceived` schema facade
   with callback/run/node/attempt identity, provider operation identity, idempotency key, canonical
   payload digest, verified principal, policy snapshot, artifact references, and JSON projection
-  coverage.
+  coverage. Callback receipts recompute the canonical payload hash and reject mismatched
+  `payload_digest` values before a receipt can represent durable journal input.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
