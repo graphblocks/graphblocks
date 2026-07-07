@@ -131,6 +131,9 @@ graphblocks-cli
   - Rust `InMemoryRunStore` and `SqliteRunStore` now expose the same caller-selected run-id
     semantics as the Python facade, rejecting blank/duplicate ids and skipping generated-id
     collisions so durable replay handles stay stable across reference implementations.
+  - The Rust stdlib runtime, PyO3 binding, Python runtime wrapper, and `graphblocks run --runtime
+    native --run-id` path now accept caller-selected run ids through a canonical runtime options
+    payload. Native SQLite run/journal evidence remains a separate store-backed runtime slice.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
 - state patch와 CAS

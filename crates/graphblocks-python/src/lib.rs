@@ -10,9 +10,9 @@ use graphblocks_protocol::{
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
     ApplicationCommandKind, ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata,
-    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
-    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
-    ApplicationProtocolLog, ApplicationProtocolStreamState,
+    ApplicationEventStreamState, ApplicationEventVisibility, ApplicationProtocolCapabilities,
+    ApplicationProtocolError, ApplicationProtocolEvent, ApplicationProtocolEventKind,
+    ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::audit::{
     AuditEvent, ToolEffectAuditContext, ToolEffectPrecondition, ToolEffectPreconditionContext,
@@ -5511,6 +5511,14 @@ fn parse_application_event_metadata(
         response_id: required_alias_string(object, "responseId", "response_id", label)?.to_owned(),
         turn_id: optional_nullable_alias_string(object, "turnId", "turn_id", label)?
             .map(str::to_owned),
+        cursor: optional_nullable_alias_string(object, "cursor", "cursor", label)?
+            .map(str::to_owned),
+        graph_id: optional_nullable_alias_string(object, "graphId", "graph_id", label)?
+            .map(str::to_owned),
+        node_id: optional_nullable_alias_string(object, "nodeId", "node_id", label)?
+            .map(str::to_owned),
+        operation_id: optional_nullable_alias_string(object, "operationId", "operation_id", label)?
+            .map(str::to_owned),
         sequence: required_u64(object, "sequence", label)?,
         release_id: required_alias_string(object, "releaseId", "release_id", label)?.to_owned(),
         policy_snapshot_id: required_alias_string(
@@ -5526,6 +5534,10 @@ fn parse_application_event_metadata(
             "occurred_at_unix_ms",
             label,
         )?,
+        visibility: optional_nullable_alias_string(object, "visibility", "visibility", label)?
+            .unwrap_or("client")
+            .parse::<ApplicationEventVisibility>()
+            .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?,
     })
 }
 
@@ -5559,10 +5571,15 @@ fn serialize_application_event_metadata(metadata: &ApplicationEventMetadata) -> 
         "runId": metadata.run_id.as_str(),
         "responseId": metadata.response_id.as_str(),
         "turnId": metadata.turn_id.as_deref(),
+        "cursor": metadata.cursor.as_deref(),
+        "graphId": metadata.graph_id.as_deref(),
+        "nodeId": metadata.node_id.as_deref(),
+        "operationId": metadata.operation_id.as_deref(),
         "sequence": metadata.sequence,
         "releaseId": metadata.release_id.as_str(),
         "policySnapshotId": metadata.policy_snapshot_id.as_str(),
         "occurredAtUnixMs": metadata.occurred_at_unix_ms,
+        "visibility": metadata.visibility.as_str(),
     })
 }
 
@@ -6341,6 +6358,20 @@ fn run_test_graph_json(
 fn run_stdlib_graph_json(graph_json: &str, inputs_json: &str) -> PyResult<String> {
     graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json(graph_json, inputs_json)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn run_stdlib_graph_with_options_json(
+    graph_json: &str,
+    inputs_json: &str,
+    options_json: &str,
+) -> PyResult<String> {
+    graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_with_options_json(
+        graph_json,
+        inputs_json,
+        options_json,
+    )
+    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 #[pyfunction]
@@ -8967,6 +8998,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(evaluate_tool_result_stream_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        run_stdlib_graph_with_options_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -9025,9 +9060,9 @@ mod tests {
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
-        validate_worker_protocol_message_json,
+        record_tool_effect_precondition_json, run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, validate_remote_payload_json,
+        validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
 
     fn native_audit_fixture() -> Result<(Value, Value, Value), String> {
@@ -14117,6 +14152,48 @@ mod tests {
         assert_eq!(
             completed_nodes,
             vec!["begin", "render", "generate", "commit"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_with_options_json_uses_requested_run_id() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-requested-run-id"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        });
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let result_json = run_stdlib_graph_with_options_json(
+            &graph_json,
+            r#"{"message":{"text":"ok"}}"#,
+            r#"{"runId":"run-native-requested-1"}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("runId").and_then(Value::as_str),
+            Some("run-native-requested-1")
+        );
+        assert_eq!(
+            result
+                .get("outputs")
+                .and_then(|outputs| outputs.get("prompt"))
+                .and_then(Value::as_str),
+            Some("Native ok")
         );
 
         Ok(())

@@ -147,6 +147,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def run_stdlib_graph_with_options_json(graph_json: str, inputs_json: str, options_json: str) -> str:
+        calls.append(("run_stdlib_options", (graph_json, inputs_json, options_json)))
+        options = json.loads(options_json)
+        return json.dumps(
+            {
+                "runId": options["runId"],
+                "status": "succeeded",
+                "outputs": {"answer": "ok"},
+            }
+        )
+
     def run_test_graph_json(graph_json: str, inputs_json: str, node_outputs_json: str) -> str:
         calls.append(("run_test", (graph_json, inputs_json, node_outputs_json)))
         return json.dumps({"runId": "run-test-1", "status": "succeeded", "outputs": {"fixture": True}})
@@ -520,6 +531,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         record_tool_effect_audit_event_json=record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json=record_tool_effect_precondition_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
         run_test_graph_json=run_test_graph_json,
         validate_remote_payload_json=validate_remote_payload_json,
         validate_worker_advertisement_json=validate_worker_advertisement_json,
@@ -546,6 +558,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     )
     compiled = runtime.compile_graph({"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}])
     stdlib = runtime.run_stdlib_graph({"kind": "Graph"}, {"message": {"text": "hi"}})
+    stdlib_requested = runtime.run_stdlib_graph(
+        {"kind": "Graph"},
+        {"message": {"text": "hi"}},
+        run_id="run-requested-native-1",
+    )
     test_run = runtime.run_test_graph({"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}})
     finalized = runtime.finalize_tool_call(
         {
@@ -829,6 +846,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     }
     assert compiled["ok"] is True
     assert stdlib["outputs"] == {"answer": "ok"}
+    assert stdlib_requested["runId"] == "run-requested-native-1"
+    assert stdlib_requested["outputs"] == {"answer": "ok"}
     assert test_run["outputs"] == {"fixture": True}
     assert finalized == {
         "toolCallId": "call-1",
@@ -1142,6 +1161,14 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         ("run_stdlib", ('{"kind":"Graph"}', '{"message":{"text":"hi"}}')),
+        (
+            "run_stdlib_options",
+            (
+                '{"kind":"Graph"}',
+                '{"message":{"text":"hi"}}',
+                '{"runId":"run-requested-native-1"}',
+            ),
+        ),
         ("run_test", ('{"kind":"Graph"}', '{"message":"hi"}', '{"node":{"value":"ok"}}')),
         (
             "finalize_tool",

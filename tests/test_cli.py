@@ -285,6 +285,81 @@ def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeyp
     assert calls == [(graph, {"message": {"text": "ok"}})]
 
 
+def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, capsys, monkeypatch) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-native-run-id"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Native {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+
+    def run_stdlib_graph_with_options_json(
+        graph_json: str,
+        inputs_json: str,
+        options_json: str,
+    ) -> str:
+        graph_payload = json.loads(graph_json)
+        inputs_payload = json.loads(inputs_json)
+        options_payload = json.loads(options_json)
+        calls.append((graph_payload, inputs_payload, options_payload))
+        return json.dumps(
+            {
+                "runId": options_payload["runId"],
+                "status": "succeeded",
+                "outputs": {"prompt": "Native requested"},
+                "journal": [{"kind": "run_succeeded"}],
+            }
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            native_extension_available=lambda: True,
+            run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
+        ),
+    )
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "run",
+                str(path),
+                "--runtime",
+                "native",
+                "--run-id",
+                "run-native-requested-1",
+                "--input-json",
+                '{"message":{"text":"ok"}}',
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runId"] == "run-native-requested-1"
+    assert payload["outputs"] == {"prompt": "Native requested"}
+    assert calls == [
+        (
+            graph,
+            {"message": {"text": "ok"}},
+            {"runId": "run-native-requested-1"},
+        )
+    ]
+
+
 def test_run_cli_reports_unavailable_native_runtime_bridge(tmp_path, capsys, monkeypatch) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

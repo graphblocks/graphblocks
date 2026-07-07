@@ -43,6 +43,7 @@ try:
         record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json,
         run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json,
         run_test_graph_json,
         validate_remote_payload_json,
         validate_worker_advertisement_json,
@@ -248,6 +249,13 @@ except ImportError as error:
 
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         require_native_extension()
+
+    def run_stdlib_graph_with_options_json(
+        graph_json: str,
+        inputs_json: str,
+        options_json: str,
+    ) -> str:
+        require_native_extension()
 else:
 
     def native_extension_available() -> bool:
@@ -292,7 +300,21 @@ def compile_graph(document: dict[str, object], block_catalog: object | None = No
     )
 
 
-def run_stdlib_graph(graph: dict[str, object], inputs: dict[str, object]) -> dict[str, object]:
+def run_stdlib_graph(
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    *,
+    run_id: str | None = None,
+) -> dict[str, object]:
+    if run_id is not None:
+        return _json_object_result(
+            run_stdlib_graph_with_options_json(
+                _canonical_json(graph),
+                _canonical_json(inputs),
+                _canonical_json({"runId": run_id}),
+            ),
+            "native stdlib runtime result",
+        )
     return _json_object_result(
         run_stdlib_graph_json(_canonical_json(graph), _canonical_json(inputs)),
         "native stdlib runtime result",
@@ -768,6 +790,7 @@ __all__ = [
     "require_native_extension",
     "run_stdlib_graph",
     "run_stdlib_graph_json",
+    "run_stdlib_graph_with_options_json",
     "run_test_graph",
     "run_test_graph_json",
     "validate_remote_payload",

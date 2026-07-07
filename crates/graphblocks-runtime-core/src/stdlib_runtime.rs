@@ -8,8 +8,7 @@ use serde_json::{Value, json};
 
 use crate::async_operation::{
     AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
-    AsyncOperationState, CallbackArtifactRef,
-    ExternalEffectRecord,
+    AsyncOperationState, CallbackArtifactRef, ExternalEffectRecord,
 };
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
@@ -124,10 +123,43 @@ pub fn run_stdlib_graph_json(
     graph_json: &str,
     inputs_json: &str,
 ) -> Result<String, StdlibRuntimeError> {
+    run_stdlib_graph_with_options_json(graph_json, inputs_json, "{}")
+}
+
+pub fn run_stdlib_graph_with_options_json(
+    graph_json: &str,
+    inputs_json: &str,
+    options_json: &str,
+) -> Result<String, StdlibRuntimeError> {
     let graph = parse_json_argument(graph_json, "graph document")?;
     let inputs = parse_json_argument(inputs_json, "runtime inputs")?;
+    let options = parse_json_argument(options_json, "runtime options")?;
+    let Some(options) = options.as_object() else {
+        return Err(StdlibRuntimeError::invalid(
+            "runtime options JSON must be an object",
+        ));
+    };
+    let run_id = options
+        .get("runId")
+        .or_else(|| options.get("run_id"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            let Some(run_id) = value.as_str() else {
+                return Err(StdlibRuntimeError::invalid(
+                    "runtime options field runId must be a string",
+                ));
+            };
+            if run_id.trim().is_empty() {
+                return Err(StdlibRuntimeError::invalid(
+                    "runtime options field runId must not be empty",
+                ));
+            }
+            Ok(run_id)
+        })
+        .transpose()?
+        .unwrap_or("run-000001");
     let bridge_plan = build_runtime_bridge_plan(&graph)?;
-    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs)?;
+    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
         outputs_by_node: BTreeMap::new(),
@@ -250,11 +282,11 @@ fn build_runtime_bridge_plan(graph: &Value) -> Result<RuntimeBridgePlan, StdlibR
 fn runtime_with_inputs(
     scheduled_nodes: Vec<ScheduledNode>,
     inputs: &Value,
+    run_id: &str,
 ) -> Result<InProcessTestRuntime, StdlibRuntimeError> {
-    let mut runtime =
-        InProcessTestRuntime::new("run-000001", scheduled_nodes).map_err(|error| {
-            StdlibRuntimeError::invalid(format!("failed to create test runtime: {error:?}"))
-        })?;
+    let mut runtime = InProcessTestRuntime::new(run_id, scheduled_nodes).map_err(|error| {
+        StdlibRuntimeError::invalid(format!("failed to create test runtime: {error:?}"))
+    })?;
     if let Some(input_object) = inputs.as_object() {
         for (input_name, value) in input_object {
             runtime = runtime.with_initial_value(PortRef::new("$input", input_name), value.clone());
@@ -594,30 +626,29 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
         )?;
         operation = operation.submitted(provider_operation_id, submitted_at_unix_ms);
     }
-    let expires_at_unix_ms =
-        if let Some(expires_at_unix_ms) =
-            optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
-        {
-            Some(expires_at_unix_ms)
-        } else {
-            optional_alias_duration_ms(
-                config,
-                &["timeoutMs", "timeout_ms", "timeout"],
-                "async.start_operation.invalid_config",
-                "async.start_operation@1 timeout must be a positive duration",
-            )?
-            .map(|timeout_ms| {
-                created_at_unix_ms.checked_add(timeout_ms).ok_or_else(|| {
-                    BlockError::new(
-                        "async.start_operation.invalid_config",
-                        ErrorCategory::Configuration,
-                        "async.start_operation@1 timeout exceeds timestamp range",
-                        false,
-                    )
-                })
+    let expires_at_unix_ms = if let Some(expires_at_unix_ms) =
+        optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
+    {
+        Some(expires_at_unix_ms)
+    } else {
+        optional_alias_duration_ms(
+            config,
+            &["timeoutMs", "timeout_ms", "timeout"],
+            "async.start_operation.invalid_config",
+            "async.start_operation@1 timeout must be a positive duration",
+        )?
+        .map(|timeout_ms| {
+            created_at_unix_ms.checked_add(timeout_ms).ok_or_else(|| {
+                BlockError::new(
+                    "async.start_operation.invalid_config",
+                    ErrorCategory::Configuration,
+                    "async.start_operation@1 timeout exceeds timestamp range",
+                    false,
+                )
             })
-            .transpose()?
-        };
+        })
+        .transpose()?
+    };
     let infinite_wait_policy = optional_infinite_wait_policy(
         config,
         "async.start_operation.invalid_config",
@@ -766,11 +797,16 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
     .unwrap_or(30_000);
     let max_interval_ms = optional_alias_duration_ms(
         config,
-        &["maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"],
+        &[
+            "maxIntervalMs",
+            "max_interval_ms",
+            "maxInterval",
+            "max_interval",
+        ],
         "async.poll_operation.invalid_config",
         "async.poll_operation@1 maxInterval must be a positive duration",
     )?
-        .unwrap_or(interval_ms);
+    .unwrap_or(interval_ms);
     if max_interval_ms < interval_ms {
         return Err(BlockError::new(
             "async.poll_operation.invalid_config",
@@ -791,14 +827,12 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
         "async.poll_operation@1",
     )?;
     if timeout_ms.is_none() && infinite_wait_policy.is_none() {
-        return Err(
-            BlockError::new(
-                "async.poll_operation.missing_timeout",
-                ErrorCategory::Configuration,
-                "async.poll_operation@1 requires timeoutMs",
-                false,
-            )
-        );
+        return Err(BlockError::new(
+            "async.poll_operation.missing_timeout",
+            ErrorCategory::Configuration,
+            "async.poll_operation@1 requires timeoutMs",
+            false,
+        ));
     }
     let mut polling_operation = operation.clone();
     polling_operation["state"] = json!("polling");
@@ -1956,14 +1990,17 @@ fn optional_infinite_wait_policy<'a>(
         .or_else(|| object.get("infinite_wait_policy"))
         .filter(|value| !value.is_null())
         .map(|value| {
-            value.as_str().filter(|text| !text.trim().is_empty()).ok_or_else(|| {
-                BlockError::new(
-                    code,
-                    ErrorCategory::Configuration,
-                    format!("{block_label} infiniteWaitPolicy must be a non-empty string"),
-                    false,
-                )
-            })
+            value
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| {
+                    BlockError::new(
+                        code,
+                        ErrorCategory::Configuration,
+                        format!("{block_label} infiniteWaitPolicy must be a non-empty string"),
+                        false,
+                    )
+                })
         })
         .transpose()
 }
@@ -2638,4 +2675,54 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
         "idempotency_key": effect.idempotency_key,
         "provider_effect_id": effect.provider_effect_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::run_stdlib_graph_with_options_json;
+
+    #[test]
+    fn stdlib_runtime_options_can_select_run_id() {
+        let graph_json = r#"{
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "stdlib-run-id"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        }"#;
+        let result_json = run_stdlib_graph_with_options_json(
+            graph_json,
+            r#"{"message":{"text":"ok"}}"#,
+            r#"{"runId":"run-native-requested-1"}"#,
+        )
+        .expect("stdlib runtime should execute");
+        let result: Value = serde_json::from_str(&result_json).expect("result is JSON");
+
+        assert_eq!(result["runId"], "run-native-requested-1");
+        assert_eq!(result["outputs"]["prompt"], "Native ok");
+        for record in result["journal"].as_array().expect("journal is array") {
+            assert_eq!(record["runId"], "run-native-requested-1");
+        }
+    }
+
+    #[test]
+    fn stdlib_runtime_options_reject_blank_run_id() {
+        let error = run_stdlib_graph_with_options_json("{}", "{}", r#"{"runId":" "}"#)
+            .expect_err("blank run id should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "runtime options field runId must not be empty"
+        );
+    }
 }
