@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 use crate::policy::{
     EnforcementPoint, PolicyDecision, PolicyEffect, PolicyRequest, PrincipalRef, ResourceRef,
+    parse_policy_datetime_millis,
 };
 use crate::tool::{
     ResolvedTool, ToolApproval, ToolIdempotency, ToolResolutionError, canonical_effect_names,
@@ -111,6 +112,11 @@ pub enum ToolAdmissionError {
         decision_id: String,
         expected: String,
         actual: String,
+    },
+    PolicyDecisionExpired {
+        decision_id: String,
+        valid_until: String,
+        admitted_at_unix_ms: u64,
     },
     PolicyDenied {
         decision_id: String,
@@ -313,6 +319,15 @@ impl ToolAdmission {
                 actual: request.policy_decision.input_digest.clone(),
             });
         }
+        if let Some(valid_until) = &request.policy_decision.valid_until
+            && policy_decision_expired(valid_until, request.admitted_at_unix_ms)
+        {
+            return Err(ToolAdmissionError::PolicyDecisionExpired {
+                decision_id: request.policy_decision.decision_id.clone(),
+                valid_until: valid_until.clone(),
+                admitted_at_unix_ms: request.admitted_at_unix_ms,
+            });
+        }
         match request.policy_decision.effect {
             PolicyEffect::Allow | PolicyEffect::AllowWithObligations => {}
             PolicyEffect::Deny => {
@@ -391,6 +406,11 @@ impl ToolAdmission {
             idempotency_key: request.idempotency_key,
         })
     }
+}
+
+fn policy_decision_expired(valid_until: &str, admitted_at_unix_ms: u64) -> bool {
+    parse_policy_datetime_millis(valid_until)
+        .is_none_or(|valid_until| valid_until <= i128::from(admitted_at_unix_ms))
 }
 
 fn output_policy_state_is_stopped(output_policy_state: Option<&Value>) -> bool {

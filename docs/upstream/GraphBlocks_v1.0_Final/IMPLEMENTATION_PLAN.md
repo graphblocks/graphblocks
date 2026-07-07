@@ -1385,6 +1385,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   (`application_tools`, graph, principal, tenant/conversation/data policy, deployment, and budget)
   before resolving visible tools, matching the scoped-capability contract and Python facade
   validation.
+- Rust tool admission now rejects expired `before_tool_or_effect` policy decisions before applying
+  allow/deny effects, so stale policy approvals cannot admit a tool side effect after their
+  `valid_until` boundary.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach

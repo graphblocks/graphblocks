@@ -612,6 +612,38 @@ fn admission_rejects_policy_decision_for_different_input_digest() {
 }
 
 #[test]
+fn admission_rejects_expired_policy_decision() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.binding.approval = ToolApproval::Never;
+    resolved_tool.binding.idempotency = ToolIdempotency::Optional;
+    resolved_tool.binding_digest = resolved_tool.binding.digest();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let mut policy_decision = allow_tool_policy_decision();
+    policy_decision.valid_until = Some("1970-01-01T00:00:01Z".to_owned());
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: None,
+            admitted_at_unix_ms: 1_000,
+        }),
+        Err(ToolAdmissionError::PolicyDecisionExpired {
+            decision_id: "decision-allow-tool".to_owned(),
+            valid_until: "1970-01-01T00:00:01Z".to_owned(),
+            admitted_at_unix_ms: 1_000,
+        })
+    );
+}
+
+#[test]
 fn admission_rejects_empty_principal_and_blank_policy_digest() {
     let mut resolved_tool = resolved_process_tool();
     resolved_tool.binding.approval = ToolApproval::Never;
