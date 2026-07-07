@@ -2773,6 +2773,54 @@ def test_server_async_callback_from_request_preserves_artifacts() -> None:
     ]
 
 
+def test_server_async_callback_from_request_accepts_camel_case_artifacts() -> None:
+    request = ServerRequest(
+        method="POST",
+        path="/callbacks/op-ci-1",
+        headers={"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callback_id": "cb-1",
+                "payload": {"status": "completed"},
+                "artifacts": [
+                    {
+                        "artifactId": "artifact-ci-log",
+                        "uri": "blob://ci/log",
+                        "mediaType": "application/json",
+                        "sizeBytes": 128,
+                    }
+                ],
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-02T00:00:00Z",
+    )
+
+    submission = ServerAsyncCallbackSubmission.from_request(
+        operation_id="op-ci-1",
+        request=request,
+        verified_by="callback-relay",
+    )
+
+    assert submission.artifacts == (
+        {
+            "artifact_id": "artifact-ci-log",
+            "uri": "blob://ci/log",
+            "media_type": "application/json",
+            "size_bytes": 128,
+        },
+    )
+    assert submission.response_payload()["artifacts"] == [
+        {
+            "artifact_id": "artifact-ci-log",
+            "uri": "blob://ci/log",
+            "media_type": "application/json",
+            "size_bytes": 128,
+        }
+    ]
+
+
 def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
     with pytest.raises(ValueError, match="server async callback artifacts must be a sequence"):
         ServerAsyncCallbackSubmission(

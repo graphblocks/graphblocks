@@ -717,10 +717,22 @@ class ServerAsyncCallbackSubmission:
         if isinstance(self.artifacts, (str, bytes, bytearray, memoryview)) or isinstance(self.artifacts, Mapping):
             raise ValueError("server async callback artifacts must be a sequence")
         try:
-            artifacts = tuple(
-                _freeze_json_value("server async callback", "artifacts", artifact)
-                for artifact in self.artifacts
-            )
+            artifacts = []
+            for artifact in self.artifacts:
+                artifact_value = artifact
+                if isinstance(artifact, Mapping):
+                    artifact_value = dict(artifact)
+                    for source_key, target_key in (
+                        ("artifactId", "artifact_id"),
+                        ("mediaType", "media_type"),
+                        ("sizeBytes", "size_bytes"),
+                    ):
+                        if source_key in artifact_value:
+                            if target_key in artifact_value and artifact_value[target_key] != artifact_value[source_key]:
+                                raise ValueError("server async callback artifacts must not mix conflicting field aliases")
+                            artifact_value[target_key] = artifact_value.pop(source_key)
+                artifacts.append(_freeze_json_value("server async callback", "artifacts", artifact_value))
+            artifacts = tuple(artifacts)
         except TypeError:
             raise ValueError("server async callback artifacts must be a sequence") from None
         artifact_ids: set[str] = set()

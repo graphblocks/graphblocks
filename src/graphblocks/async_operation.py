@@ -562,10 +562,24 @@ class ExternalCallbackReceived:
         )
         if canonical_hash(_thaw_json_value(self.payload)) != self.payload_digest:
             raise ValueError("external callback received payload_digest must match payload")
-        artifact_refs = tuple(
-            _freeze_json_value("external callback received", "artifacts", artifact)
-            for artifact in _external_callback_artifact_sequence(self.artifacts)
-        )
+        artifact_refs = []
+        for artifact in _external_callback_artifact_sequence(self.artifacts):
+            artifact_value = artifact
+            if isinstance(artifact, Mapping):
+                artifact_value = dict(artifact)
+                for source_key, target_key in (
+                    ("artifactId", "artifact_id"),
+                    ("mediaType", "media_type"),
+                    ("sizeBytes", "size_bytes"),
+                ):
+                    if source_key in artifact_value:
+                        if target_key in artifact_value and artifact_value[target_key] != artifact_value[source_key]:
+                            raise ValueError(
+                                "external callback received artifacts must not mix conflicting field aliases"
+                            )
+                        artifact_value[target_key] = artifact_value.pop(source_key)
+            artifact_refs.append(_freeze_json_value("external callback received", "artifacts", artifact_value))
+        artifact_refs = tuple(artifact_refs)
         artifact_ids: set[str] = set()
         for artifact in artifact_refs:
             if not isinstance(artifact, Mapping):

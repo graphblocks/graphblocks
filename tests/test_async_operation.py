@@ -378,6 +378,47 @@ def test_external_callback_received_schema_freezes_payload_and_artifacts() -> No
     }
 
 
+def test_external_callback_received_accepts_camel_case_artifacts() -> None:
+    receipt = graphblocks.ExternalCallbackReceived(
+        callback_id="cb-1",
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        idempotency_key="idem-callback-1",
+        payload={"status": "completed"},
+        payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+        received_at="2026-07-02T00:10:00Z",
+        verified_by="hmac-sha256:callback-endpoint-1",
+        policy_snapshot_id="policy-1",
+        artifacts=[
+            {
+                "artifactId": "artifact-ci-log",
+                "uri": "blob://ci/log",
+                "mediaType": "application/json",
+                "sizeBytes": 128,
+            }
+        ],
+    )
+
+    assert receipt.artifacts == (
+        {
+            "artifact_id": "artifact-ci-log",
+            "uri": "blob://ci/log",
+            "media_type": "application/json",
+            "size_bytes": 128,
+        },
+    )
+    assert receipt.to_json()["artifacts"] == [
+        {
+            "artifact_id": "artifact-ci-log",
+            "uri": "blob://ci/log",
+            "media_type": "application/json",
+            "size_bytes": 128,
+        }
+    ]
+
+
 def test_external_callback_received_rejects_invalid_identity_digest_and_json() -> None:
     with raises_value_error("external callback received callback_id must not be empty"):
         graphblocks.ExternalCallbackReceived(
