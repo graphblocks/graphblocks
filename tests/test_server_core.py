@@ -2724,6 +2724,87 @@ def test_server_async_callback_submission_deep_freezes_nested_payload() -> None:
         submission.payload["checks"][0]["status"] = "failed"  # type: ignore[index]
 
 
+def test_server_async_callback_submission_preserves_artifacts() -> None:
+    artifacts = [{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}]
+    submission = ServerAsyncCallbackSubmission(
+        operation_id="op-ci-1",
+        callback_id="cb-1",
+        idempotency_key="idem-callback-1",
+        payload={"status": "completed"},
+        artifacts=artifacts,
+    )
+
+    artifacts[0]["uri"] = "blob://ci/mutated"
+
+    assert submission.artifacts == ({"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"},)
+    with pytest.raises(TypeError):
+        submission.artifacts[0]["uri"] = "blob://ci/caller-mutation"
+    assert submission.response_payload()["artifacts"] == [
+        {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}
+    ]
+
+
+def test_server_async_callback_from_request_preserves_artifacts() -> None:
+    request = ServerRequest(
+        method="POST",
+        path="/callbacks/op-ci-1",
+        headers={"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callback_id": "cb-1",
+                "payload": {"status": "completed"},
+                "artifacts": [{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}],
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-02T00:00:00Z",
+    )
+
+    submission = ServerAsyncCallbackSubmission.from_request(
+        operation_id="op-ci-1",
+        request=request,
+        verified_by="callback-relay",
+    )
+
+    assert submission.artifacts == ({"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"},)
+    assert submission.response_payload()["artifacts"] == [
+        {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}
+    ]
+
+
+def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
+    with pytest.raises(ValueError, match="server async callback artifacts must be a sequence"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            artifacts={"artifact_id": "artifact-ci-log"},  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="server async callback artifacts entries must be JSON objects"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            artifacts=["artifact-ci-log"],  # type: ignore[list-item]
+        )
+
+    with pytest.raises(ValueError, match="server async callback artifacts must not contain duplicate artifact_id"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            artifacts=[
+                {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log-1"},
+                {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log-2"},
+            ],
+        )
+
+
 def test_server_async_callback_submission_rejects_payload_digest_mismatch() -> None:
     with pytest.raises(ValueError, match="server async callback payload_digest must match payload"):
         ServerAsyncCallbackSubmission(

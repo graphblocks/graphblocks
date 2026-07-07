@@ -1046,8 +1046,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
   idempotency comparisons. Accepted callback submission projections now also record the canonical
-  payload digest, verifying principal, and policy snapshot id, and duplicate acknowledgements
-  return the same receipt metadata instead of reducing the callback to an idempotency key.
+  payload digest, verifying principal, policy snapshot id, and callback artifact references, and
+  duplicate acknowledgements return the same receipt metadata instead of reducing the callback to an
+  idempotency key. Callback artifact references are immutable JSON objects and are included in
+  idempotency conflict detection.
   The Rust `graphblocks-runtime-core` async operation journal now records the same payload digest,
   verifying principal, and policy snapshot metadata on `ExternalCallbackRejected` events, including
   idempotency-conflict rejections for mutated callback replays.

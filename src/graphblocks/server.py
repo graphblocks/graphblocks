@@ -686,6 +686,7 @@ class ServerAsyncCallbackSubmission:
     node_id: str | None = None
     attempt_id: str | None = None
     provider_operation_id: str | None = None
+    artifacts: tuple[object, ...] = field(default_factory=tuple)
     received_at: str = ""
     verified_by: str = "unauthenticated"
     policy_snapshot_id: str = "local"
@@ -713,6 +714,27 @@ class ServerAsyncCallbackSubmission:
             "payload",
             _freeze_json_value("server async callback", "payload", self.payload),
         )
+        if isinstance(self.artifacts, (str, bytes, bytearray, memoryview)) or isinstance(self.artifacts, Mapping):
+            raise ValueError("server async callback artifacts must be a sequence")
+        try:
+            artifacts = tuple(
+                _freeze_json_value("server async callback", "artifacts", artifact)
+                for artifact in self.artifacts
+            )
+        except TypeError:
+            raise ValueError("server async callback artifacts must be a sequence") from None
+        artifact_ids: set[str] = set()
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping):
+                raise ValueError("server async callback artifacts entries must be JSON objects")
+            artifact_id = artifact.get("artifact_id")
+            if artifact_id is not None:
+                if not isinstance(artifact_id, str) or not artifact_id.strip():
+                    raise ValueError("server async callback artifacts artifact_id must be a non-empty string")
+                if artifact_id in artifact_ids:
+                    raise ValueError("server async callback artifacts must not contain duplicate artifact_id")
+                artifact_ids.add(artifact_id)
+        object.__setattr__(self, "artifacts", artifacts)
         if self.payload_digest == "":
             object.__setattr__(
                 self,
@@ -814,6 +836,7 @@ class ServerAsyncCallbackSubmission:
                 "provider_operation_id",
                 "providerOperationId",
             ),
+            artifacts=body.get("artifacts", ()),
             received_at=request.requested_at or _utc_now_iso(),
             verified_by=verified_by,
             policy_snapshot_id=_validate_non_empty_string(
@@ -824,7 +847,7 @@ class ServerAsyncCallbackSubmission:
         )
 
     def response_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "ok": True,
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
@@ -834,9 +857,12 @@ class ServerAsyncCallbackSubmission:
             "policySnapshotId": self.policy_snapshot_id,
             "status": "accepted",
         }
+        if self.artifacts:
+            payload["artifacts"] = [_thaw_json_value(artifact) for artifact in self.artifacts]
+        return payload
 
     def duplicate_response_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "ok": True,
             "operationId": self.operation_id,
             "callbackId": self.callback_id,
@@ -847,6 +873,9 @@ class ServerAsyncCallbackSubmission:
             "status": "duplicate",
             "duplicate": True,
         }
+        if self.artifacts:
+            payload["artifacts"] = [_thaw_json_value(artifact) for artifact in self.artifacts]
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -2071,6 +2100,7 @@ class GraphBlocksServerApp:
                         if (
                             previous.callback_id != submission.callback_id
                             or dict(previous.payload) != dict(submission.payload)
+                            or previous.artifacts != submission.artifacts
                             or previous.run_id != submission.run_id
                             or previous.node_id != submission.node_id
                             or previous.attempt_id != submission.attempt_id
@@ -2221,6 +2251,7 @@ class GraphBlocksServerApp:
                                 "provider_operation_id",
                                 "providerOperationId",
                             ),
+                            artifacts=body.get("artifacts", ()),
                             received_at=request.requested_at or _utc_now_iso(),
                             verified_by=(
                                 auth_decision.principal.principal_id
