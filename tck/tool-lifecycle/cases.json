@@ -62,6 +62,26 @@
     }
   },
   {
+    "name": "expired_policy_decision_denies_tool_admission",
+    "kind": "admission_expired_policy_decision",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "policyValidUntil": "1970-01-01T00:00:01Z",
+    "admittedAt": "1970-01-01T00:00:01Z",
+    "admittedAtUnixMs": 1000,
+    "expected": {
+      "admitted": false,
+      "policyExpiredBeforeApproval": true,
+      "errorContains": "expired"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",

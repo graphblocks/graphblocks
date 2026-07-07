@@ -1391,6 +1391,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python tool admission now applies the same `PolicyDecision.valid_until` freshness gate as the
   Rust runtime before allowing a tool call, keeping the authoring/schema facade aligned with the
   normative admission semantics.
+- The shared tool-lifecycle TCK now covers expired `before_tool_or_effect` policy decisions in
+  both the Rust runtime runner and Python conformance runner, proving that stale decisions are
+  rejected before approval or side-effect admission.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach

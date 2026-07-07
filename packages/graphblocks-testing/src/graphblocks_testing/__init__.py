@@ -1919,6 +1919,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "incremental_arguments",
             "admission_invalid_arguments",
             "admission_policy_stopped_response",
+            "admission_expired_policy_decision",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -8003,7 +8004,11 @@ class TckRunner:
                 "callStatus": observed_status,
                 "arguments": observed_arguments,
             }
-        elif kind in {"admission_invalid_arguments", "admission_policy_stopped_response"}:
+        elif kind in {
+            "admission_invalid_arguments",
+            "admission_policy_stopped_response",
+            "admission_expired_policy_decision",
+        }:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
             catalog = ToolCatalog(
@@ -8048,6 +8053,12 @@ class TckRunner:
                 reason_codes=("allow-process",),
                 policy_refs=("allow-process",),
                 evaluated_at="2026-06-23T00:00:01Z",
+                valid_until=(
+                    str(fixture["policyValidUntil"])
+                    if kind == "admission_expired_policy_decision"
+                    and fixture.get("policyValidUntil") is not None
+                    else None
+                ),
                 input_digest="sha256:before-tool",
             )
             output_policy_state = fixture.get("outputPolicyState")
@@ -8064,7 +8075,7 @@ class TckRunner:
                     approval=None,
                     principal_id="user-1",
                     idempotency_key="idem-1",
-                    admitted_at="2026-06-23T00:00:02Z",
+                    admitted_at=str(fixture.get("admittedAt", "2026-06-23T00:00:02Z")),
                     now=1200,
                 )
                 observed = {
@@ -8072,6 +8083,7 @@ class TckRunner:
                     "error": None,
                     "schemaRejectedBeforeApproval": False,
                     "policyStoppedBeforeApproval": False,
+                    "policyExpiredBeforeApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -8083,6 +8095,9 @@ class TckRunner:
                     ),
                     "policyStoppedBeforeApproval": (
                         "policy stopped" in message and "requires approval" not in message
+                    ),
+                    "policyExpiredBeforeApproval": (
+                        "expired" in message and "requires approval" not in message
                     ),
                 }
         elif kind == "approval_argument_mutation":
