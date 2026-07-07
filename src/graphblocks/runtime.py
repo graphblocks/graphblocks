@@ -186,13 +186,28 @@ class SQLiteExecutionJournal:
         )
         self.connection.commit()
 
+    def _columns(self) -> set[str]:
+        return {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(journal_records)").fetchall()
+        }
+
+    def _sequence_column(self) -> str:
+        columns = self._columns()
+        if "sequence" in columns:
+            return "sequence"
+        if "run_sequence" in columns:
+            return "run_sequence"
+        raise JournalStateError("journal_records must include sequence or run_sequence")
+
     @property
     def terminal_kind(self) -> JournalKind | None:
+        sequence_column = self._sequence_column()
         row = self.connection.execute(
-            """
+            f"""
             SELECT kind FROM journal_records
             WHERE run_id = ? AND terminal = 1
-            ORDER BY sequence DESC
+            ORDER BY {sequence_column} DESC
             LIMIT 1
             """,
             (self.run_id,),
@@ -201,16 +216,21 @@ class SQLiteExecutionJournal:
 
     @property
     def records(self) -> list[JournalRecord]:
+        sequence_column = self._sequence_column()
         rows = self.connection.execute(
-            """
-            SELECT sequence, kind, payload_json FROM journal_records
+            f"""
+            SELECT {sequence_column} AS sequence, kind, payload_json FROM journal_records
             WHERE run_id = ?
-            ORDER BY sequence
+            ORDER BY {sequence_column}
             """,
             (self.run_id,),
         ).fetchall()
         return [
-            JournalRecord(int(row["sequence"]), row["kind"], json.loads(str(row["payload_json"])))
+            JournalRecord(
+                int(row["sequence"]),
+                row["kind"],
+                json.loads(str(row["payload_json"])) if row["payload_json"] is not None else {},
+            )
             for row in rows
         ]
 
@@ -218,18 +238,41 @@ class SQLiteExecutionJournal:
         terminal_kind = self.terminal_kind
         if terminal_kind is not None:
             raise JournalStateError(f"cannot append {kind} after terminal {terminal_kind}")
+        sequence_column = self._sequence_column()
         row = self.connection.execute(
-            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM journal_records WHERE run_id = ?",
+            f"SELECT COALESCE(MAX({sequence_column}), 0) + 1 FROM journal_records WHERE run_id = ?",
             (self.run_id,),
         ).fetchone()
         sequence = int(row[0])
-        self.connection.execute(
-            """
-            INSERT INTO journal_records (run_id, sequence, kind, payload_json, terminal)
-            VALUES (?, ?, ?, ?, 0)
-            """,
-            (self.run_id, sequence, kind, json.dumps(payload, sort_keys=True, separators=(",", ":"))),
-        )
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        columns = self._columns()
+        if "record_id" in columns:
+            self.connection.execute(
+                """
+                INSERT INTO journal_records (
+                  run_id,
+                  run_sequence,
+                  record_id,
+                  kind,
+                  causation_id,
+                  node_id,
+                  attempt_id,
+                  lease_epoch,
+                  payload_json,
+                  terminal
+                )
+                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 0)
+                """,
+                (self.run_id, sequence, f"{self.run_id}:{sequence}", kind, payload_json),
+            )
+        else:
+            self.connection.execute(
+                """
+                INSERT INTO journal_records (run_id, sequence, kind, payload_json, terminal)
+                VALUES (?, ?, ?, ?, 0)
+                """,
+                (self.run_id, sequence, kind, payload_json),
+            )
         self.connection.commit()
         return JournalRecord(sequence, kind, dict(payload))
 
@@ -238,11 +281,12 @@ class SQLiteExecutionJournal:
         if terminal_kind is not None:
             raise JournalStateError(f"terminal already recorded as {terminal_kind}")
         record = self.append(kind, payload)
+        sequence_column = self._sequence_column()
         self.connection.execute(
-            """
+            f"""
             UPDATE journal_records
             SET terminal = 1
-            WHERE run_id = ? AND sequence = ?
+            WHERE run_id = ? AND {sequence_column} = ?
             """,
             (self.run_id, record.sequence),
         )

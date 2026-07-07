@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import tarfile
 from types import SimpleNamespace
@@ -587,6 +588,122 @@ def test_observe_journal_cli_reads_sqlite_execution_journal_as_json(tmp_path, ca
                 "sequence": 4,
                 "kind": "run_succeeded",
                 "payload": {"outputs": {"prompt": "hello"}},
+            },
+        ],
+    }
+
+
+def test_observe_journal_cli_reads_rust_sqlite_execution_journal_as_json(tmp_path, capsys) -> None:
+    journal_path = tmp_path / "rust-journal.sqlite3"
+    connection = sqlite3.connect(journal_path)
+    connection.execute(
+        """
+        CREATE TABLE journal_records (
+            run_id TEXT NOT NULL,
+            run_sequence INTEGER NOT NULL,
+            record_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            causation_id TEXT,
+            node_id TEXT,
+            attempt_id TEXT,
+            lease_epoch INTEGER,
+            payload_json TEXT,
+            terminal INTEGER NOT NULL,
+            PRIMARY KEY (run_id, run_sequence)
+        )
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO journal_records (
+            run_id,
+            run_sequence,
+            record_id,
+            kind,
+            causation_id,
+            node_id,
+            attempt_id,
+            lease_epoch,
+            payload_json,
+            terminal
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "run-native-evidence-1",
+                1,
+                "run-native-evidence-1:1",
+                "run_started",
+                None,
+                None,
+                None,
+                None,
+                '{"graphHash":"sha256:native"}',
+                0,
+            ),
+            (
+                "run-native-evidence-1",
+                2,
+                "run-native-evidence-1:2",
+                "node_completed",
+                None,
+                "render",
+                "attempt-1",
+                None,
+                '{"outputs":["prompt"]}',
+                0,
+            ),
+            (
+                "run-native-evidence-1",
+                3,
+                "run-native-evidence-1:3",
+                "run_succeeded",
+                None,
+                None,
+                None,
+                None,
+                '{"outputs":{"prompt":"Native ok"}}',
+                1,
+            ),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    assert (
+        main(
+            [
+                "observe",
+                "journal",
+                "run-native-evidence-1",
+                "--store",
+                str(journal_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "runId": "run-native-evidence-1",
+        "terminalKind": "run_succeeded",
+        "records": [
+            {
+                "sequence": 1,
+                "kind": "run_started",
+                "payload": {"graphHash": "sha256:native"},
+            },
+            {
+                "sequence": 2,
+                "kind": "node_completed",
+                "payload": {"outputs": ["prompt"]},
+            },
+            {
+                "sequence": 3,
+                "kind": "run_succeeded",
+                "payload": {"outputs": {"prompt": "Native ok"}},
             },
         ],
     }

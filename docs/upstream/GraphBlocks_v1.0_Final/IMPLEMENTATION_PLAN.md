@@ -138,6 +138,8 @@ graphblocks-cli
     records for MVP evidence checks.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
+    The Python observer understands both the Python `sequence` journal schema and the Rust
+    `run_sequence`/`record_id` schema emitted by native runtime evidence.
 - state patch와 CAS
 - finite sequence map/batch/task group
 - Python binding과 Python in-process/worker adapter
