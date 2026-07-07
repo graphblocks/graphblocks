@@ -59,6 +59,24 @@
     }
   },
   {
+    "name": "resolved_tool_mismatch_denies_tool_admission",
+    "kind": "admission_resolved_tool_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "callResolvedToolId": "resolved-tool-other",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "resolvedToolMismatchBeforeSchema": true,
+      "errorContains": "resolved tool"
+    }
+  },
+  {
     "name": "policy_stopped_response_denies_tool_admission",
     "kind": "admission_policy_stopped_response",
     "toolName": "process.run",

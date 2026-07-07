@@ -1396,6 +1396,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   rejected before approval or side-effect admission.
 - Missing input schemas are covered by the shared tool-lifecycle TCK, proving that schema
   registration is mandatory before tool admission.
+- Resolved-tool mismatches are covered by the shared tool-lifecycle TCK before schema or approval
+  gates, proving that calls cannot be admitted against a different scoped capability.
 - Expired resolved tools are covered by the same TCK path, proving that scoped tool capabilities
   cannot be admitted after their resolution window closes.
 - The same shared tool-lifecycle TCK now covers policy input digest mismatches, proving that a
