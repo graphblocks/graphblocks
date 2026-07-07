@@ -103,6 +103,22 @@ fn catalog_rejects_invalid_tool_definition_schema_ids() {
             error: SchemaIdError::MissingVersion,
         }),
     );
+    assert_eq!(
+        ToolCatalog::new(
+            [ToolDefinition::new(
+                "knowledge.search",
+                "Search internal documentation.",
+                "schemas/KnowledgeSearchRequest@1",
+            )
+            .with_output_schema("schemas/KnowledgeSearchResult")],
+            [],
+        ),
+        Err(ToolResolutionError::InvalidToolSchemaId {
+            tool_name: "knowledge.search".to_owned(),
+            schema_id: "schemas/KnowledgeSearchResult".to_owned(),
+            error: SchemaIdError::MissingVersion,
+        }),
+    );
 }
 
 #[test]
@@ -247,6 +263,38 @@ fn tool_binding_validates_identity_fields() {
         ),
         Err(ToolResolutionError::EmptyToolBindingField {
             field: "binding_id",
+        })
+    );
+}
+
+#[test]
+fn tool_resolution_scope_rejects_empty_selector_items() {
+    let catalog = ToolCatalog::new(
+        [search_definition()],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog is valid");
+
+    assert_eq!(
+        catalog.resolve(
+            ToolResolutionScope::new().with_application_tools(["knowledge.search", " "]),
+            "policy-snapshot-1",
+        ),
+        Err(ToolResolutionError::EmptyToolResolutionScopeItem {
+            field: "application_tools",
+        })
+    );
+    assert_eq!(
+        catalog.resolve(
+            ToolResolutionScope::new().with_budget_tools(["knowledge.search", ""]),
+            "policy-snapshot-1",
+        ),
+        Err(ToolResolutionError::EmptyToolResolutionScopeItem {
+            field: "budget_tools",
         })
     );
 }

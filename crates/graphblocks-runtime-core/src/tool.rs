@@ -623,6 +623,9 @@ pub enum ToolResolutionError {
         schema_id: String,
         error: SchemaIdError,
     },
+    EmptyToolResolutionScopeItem {
+        field: &'static str,
+    },
     ToolBindingMissing {
         tool_name: String,
     },
@@ -715,6 +718,27 @@ impl ToolResolutionScope {
     {
         self.budget_tools = Some(tools.into_iter().map(Into::into).collect());
         self
+    }
+
+    pub fn validate(&self) -> Result<(), ToolResolutionError> {
+        for (field, tools) in [
+            ("application_tools", &self.application_tools),
+            ("graph_tools", &self.graph_tools),
+            ("principal_tools", &self.principal_tools),
+            ("tenant_policy_tools", &self.tenant_policy_tools),
+            ("conversation_policy_tools", &self.conversation_policy_tools),
+            ("data_classification_tools", &self.data_classification_tools),
+            ("deployment_tools", &self.deployment_tools),
+            ("budget_tools", &self.budget_tools),
+        ] {
+            if tools
+                .as_ref()
+                .is_some_and(|tools| tools.iter().any(|tool| tool.trim().is_empty()))
+            {
+                return Err(ToolResolutionError::EmptyToolResolutionScopeItem { field });
+            }
+        }
+        Ok(())
     }
 
     fn allows(&self, tool_name: &str) -> bool {
@@ -810,6 +834,7 @@ impl ToolCatalog {
         scope: ToolResolutionScope,
         effective_policy_snapshot_id: impl Into<String>,
     ) -> Result<Vec<ResolvedTool>, ToolResolutionError> {
+        scope.validate()?;
         let policy_snapshot = effective_policy_snapshot_id.into();
         let mut resolved = Vec::new();
         for (tool_name, definition) in &self.definitions {

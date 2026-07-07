@@ -1381,6 +1381,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projections. Rust signed webhook callback envelopes include that release identity before
   payload-limit checks and HMAC signing, aligning callback delivery with the authoritative
   replayable event stream contract.
+- Rust tool resolution now rejects empty entries in every scoped-capability dimension
+  (`application_tools`, graph, principal, tenant/conversation/data policy, deployment, and budget)
+  before resolving visible tools, matching the scoped-capability contract and Python facade
+  validation.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach
