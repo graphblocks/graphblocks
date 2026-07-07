@@ -1347,7 +1347,7 @@ def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None
             headers={"Authorization": "Bearer token-1"},
             query={},
             cookies={},
-            body=json.dumps({"reason": "operator_hold_again"}).encode("utf-8"),
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
             requested_at="2026-07-02T00:00:02Z",
         )
     )
