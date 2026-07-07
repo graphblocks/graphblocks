@@ -733,6 +733,10 @@ class ServerAsyncCallbackSubmission:
             uri = artifact.get("uri")
             if not isinstance(uri, str) or not uri.strip():
                 raise ValueError("server async callback artifacts uri must be a non-empty string")
+            for field_name in ("media_type", "checksum"):
+                value = artifact.get(field_name)
+                if value is not None and (not isinstance(value, str) or not value.strip()):
+                    raise ValueError(f"server async callback artifacts {field_name} must be a non-empty string")
             if artifact_id in artifact_ids:
                 raise ValueError("server async callback artifacts must not contain duplicate artifact_id")
             artifact_ids.add(artifact_id)

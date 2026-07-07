@@ -2801,6 +2801,24 @@ def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
             artifacts=[{"artifact_id": "artifact-ci-log"}],
         )
 
+    with pytest.raises(ValueError, match="server async callback artifacts media_type must be a non-empty string"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            artifacts=[{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "media_type": " "}],
+        )
+
+    with pytest.raises(ValueError, match="server async callback artifacts checksum must be a non-empty string"):
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            artifacts=[{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "checksum": ""}],
+        )
+
     with pytest.raises(ValueError, match="server async callback artifacts must not contain duplicate artifact_id"):
         ServerAsyncCallbackSubmission(
             operation_id="op-ci-1",
