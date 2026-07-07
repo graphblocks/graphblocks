@@ -3188,13 +3188,17 @@ class GraphBlocksServerApp:
         events: tuple[dict[str, object], ...],
     ) -> list[dict[str, object]] | ServerResponse:
         replay_after_sequence = 0
-        sequence_by_cursor = {
-            f"{subscription.run_id}:{sequence}": sequence
-            for event in events
-            if isinstance((metadata := event.get("metadata")), Mapping)
-            and isinstance((sequence := metadata.get("sequence")), int)
-            and not isinstance(sequence, bool)
-        }
+        sequence_by_cursor: dict[str, int] = {}
+        for event in events:
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                raise ValueError("server event subscription sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("server event subscription sequence must be non-negative")
+            sequence_by_cursor[f"{subscription.run_id}:{sequence}"] = sequence
         if subscription.replay_from_cursor is not None:
             _validate_run_cursor(
                 "server event subscription",
@@ -3230,7 +3234,11 @@ class GraphBlocksServerApp:
             if not isinstance(metadata, Mapping):
                 continue
             sequence = metadata.get("sequence")
-            if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence <= replay_after_sequence:
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                raise ValueError("server event subscription sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("server event subscription sequence must be non-negative")
+            if sequence <= replay_after_sequence:
                 continue
             if self._event_matches_subscription_filter(event, subscription.event_filter):
                 replayed_events.append(_response_json_object(event))

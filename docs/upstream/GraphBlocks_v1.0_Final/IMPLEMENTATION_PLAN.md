@@ -1166,9 +1166,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   snapshots and are thawed back to plain JSON for response payloads.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription replay cursors must belong to the subscribed run before retention
-  lookup and must use a non-negative integer sequence. Subscription and callback registration
-  projections validate the spec failure policy literals before storage, and ordered delivery
-  requests are rejected unless the target kind can preserve run ordering. Mandatory delivery
+  lookup and must use a non-negative integer sequence. Retained event `sequence` metadata must also
+  be a non-boolean non-negative integer before subscription replay projection. Subscription and
+  callback registration projections validate the spec failure policy literals before storage, and
+  ordered delivery requests are rejected unless the target kind can preserve run ordering. Mandatory delivery
   projections cannot use best-effort failure handling unless an explicit dead-letter configuration
   is supplied, and projections that explicitly select `retry_then_dead_letter` must declare a
   dead-letter or fallback behavior before storage. Route validation rejects callback delivery
@@ -1197,8 +1198,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
   and does not rewrite the stored projection. Callback registrations share the same route-level
-  ordered delivery, mandatory failure-policy, non-authoritative projection, and creation timestamp
-  validation as run-scoped subscriptions; `pause_run_on_failure` and `fail_run_on_failure` are
+  ordered delivery, mandatory failure-policy, non-authoritative projection, retained event
+  sequence validation during replay, and creation timestamp validation as run-scoped subscriptions;
+  `pause_run_on_failure` and `fail_run_on_failure` are
   treated as mandatory failure policies and require configured dead-letter or fallback behavior via
   `deadLetterPolicy`/`deadLetterRef` or `fallbackPolicy`/`fallbackRef` fields.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,

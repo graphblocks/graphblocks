@@ -4986,6 +4986,40 @@ def test_server_app_subscription_replay_excludes_terminal_events_from_broad_filt
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-progress"]
 
 
+def test_server_app_rejects_subscription_replay_with_malformed_sequence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-bool-sequence-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-progress", "sequence": True},
+            "payload": {"visibility": "client"},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-bool-sequence-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-bool-sequence",
+                    "eventFilter": {"types": ["JobProgress"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription sequence must be an integer",
+    }
+
+
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
