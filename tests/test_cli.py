@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import yaml
 
 from graphblocks.cli import main
+from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
 
 
@@ -174,6 +175,64 @@ def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
 
     assert main(["run", str(path), "--input-json", '{"message":{"text":"hi"}}']) == 0
     assert '"prompt": "Echo hi"' in capsys.readouterr().out
+
+
+def test_run_cli_persists_sqlite_run_and_journal_stores(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-run-persisted"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Persisted {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    graph_path = tmp_path / "graph.yaml"
+    run_store_path = tmp_path / "runs.sqlite3"
+    journal_store_path = tmp_path / "journal.sqlite3"
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "run",
+                str(graph_path),
+                "--input-json",
+                '{"message":{"text":"hello"}}',
+                "--run-store",
+                str(run_store_path),
+                "--journal-store",
+                str(journal_store_path),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runId"] == "run-000001"
+    assert payload["status"] == "succeeded"
+    assert payload["outputs"] == {"prompt": "Persisted hello"}
+    stored_runs = SQLiteRunStore(run_store_path)
+    stored_run = stored_runs.get_run(payload["runId"])
+    stored_runs.close()
+    stored_journal = SQLiteExecutionJournal(journal_store_path, payload["runId"])
+
+    assert stored_run.status == "succeeded"
+    assert stored_run.inputs == {"message": {"text": "hello"}}
+    assert stored_journal.terminal_kind == "run_succeeded"
+    assert [record.kind for record in stored_journal.records] == [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded",
+    ]
+    stored_journal.close()
 
 
 def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeypatch) -> None:

@@ -54,7 +54,7 @@ from .policy import (
     run_policy_tests,
 )
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
-from .runtime import InProcessRuntime, stdlib_registry
+from .runtime import InProcessRuntime, SQLiteExecutionJournal, stdlib_registry
 from .run_store import SQLiteRunStore
 from .schema import SchemaManifest, SchemaManifestError
 
@@ -139,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         default="python",
         help="runtime backend to use; native delegates to graphblocks-runtime's Rust PyO3 bridge",
     )
+    run_parser.add_argument("--run-store", type=Path, help="persist run metadata to a SQLite run store")
+    run_parser.add_argument("--journal-store", type=Path, help="persist execution journal records to SQLite")
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -358,6 +360,9 @@ def main(argv: list[str] | None = None) -> int:
             print("--input-json must decode to a JSON object")
             return 1
         if args.runtime == "native":
+            if args.run_store is not None or args.journal_store is not None:
+                print("--run-store and --journal-store are only supported with --runtime python")
+                return 1
             try:
                 import graphblocks_runtime
             except ImportError as error:
@@ -383,7 +388,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result_payload, indent=2, sort_keys=True))
             return 0 if result_payload.get("status") == "succeeded" else 1
 
-        result = InProcessRuntime(stdlib_registry()).run(graph_documents[0], inputs)
+        run_store = SQLiteRunStore(args.run_store) if args.run_store is not None else None
+        journal_factory = (
+            (lambda run_id: SQLiteExecutionJournal(args.journal_store, run_id))
+            if args.journal_store is not None
+            else None
+        )
+        result = InProcessRuntime(
+            stdlib_registry(),
+            run_store=run_store,
+            journal_factory=journal_factory,
+        ).run(graph_documents[0], inputs)
         print(
             json.dumps(
                 {
@@ -396,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        if hasattr(result.journal, "close"):
+            result.journal.close()
+        if run_store is not None:
+            run_store.close()
         return 0 if result.status == "succeeded" else 1
     if args.command == "migrate":
         documents = [migrate_document(document) for document in load_documents(args.path)]

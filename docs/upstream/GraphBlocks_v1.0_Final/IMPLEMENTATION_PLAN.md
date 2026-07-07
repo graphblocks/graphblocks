@@ -122,6 +122,9 @@ graphblocks-cli
 - RunStore와 ExecutionJournal의 in-memory/SQLite reference backend
   - SQLite `ExecutionJournal` replay rejects blank record identity, kind, and metadata fields before
     records can re-enter scheduler recovery.
+  - `graphblocks run` can persist the local Python runtime's `RunStore` and `ExecutionJournal`
+    evidence to caller-selected SQLite stores, so the scripted conversation vertical slice can be
+    rerun with durable run status and replayable journal records during MVP acceptance checks.
 - state patch와 CAS
 - finite sequence map/batch/task group
 - Python binding과 Python in-process/worker adapter
