@@ -136,6 +136,8 @@ graphblocks-cli
     payload. The same native options path accepts SQLite `runStorePath` and `journalStorePath`
     values and persists the completed Rust-native run record plus replayable execution journal
     records for MVP evidence checks.
+  - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
+    evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
     The Python observer understands both the Python `sequence` journal schema and the Rust

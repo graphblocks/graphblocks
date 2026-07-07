@@ -553,6 +553,82 @@ def test_observe_run_cli_reads_sqlite_run_store_as_json(tmp_path, capsys) -> Non
     }
 
 
+def test_observe_run_cli_reads_rust_sqlite_run_store_as_json(tmp_path, capsys) -> None:
+    store_path = tmp_path / "rust-runs.sqlite3"
+    connection = sqlite3.connect(store_path)
+    connection.execute(
+        """
+        CREATE TABLE runs (
+            sequence INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE,
+            graph_hash TEXT NOT NULL,
+            invocation_mode TEXT NOT NULL DEFAULT 'sync',
+            inputs_json TEXT NOT NULL,
+            deployment_provenance_json TEXT NOT NULL,
+            model_visible_tools_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            state_revision INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO runs (
+            sequence,
+            run_id,
+            graph_hash,
+            invocation_mode,
+            inputs_json,
+            deployment_provenance_json,
+            model_visible_tools_json,
+            status,
+            state_json,
+            state_revision
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            1,
+            "run-native-evidence-1",
+            "sha256:native",
+            "sync",
+            '{"message":{"text":"hello"}}',
+            "{}",
+            "[]",
+            "completed",
+            '{"render":{"done":true}}',
+            0,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    assert (
+        main(
+            [
+                "observe",
+                "run",
+                "run-native-evidence-1",
+                "--store",
+                str(store_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "runId": "run-native-evidence-1",
+        "graphHash": "sha256:native",
+        "status": "completed",
+        "stateRevision": 0,
+        "inputs": {"message": {"text": "hello"}},
+        "state": {"render": {"done": True}},
+    }
+
+
 def test_observe_journal_cli_reads_sqlite_execution_journal_as_json(tmp_path, capsys) -> None:
     journal_path = tmp_path / "journal.sqlite3"
     journal = SQLiteExecutionJournal(journal_path, "run-000001")
