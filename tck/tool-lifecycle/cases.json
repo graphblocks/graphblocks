@@ -101,6 +101,27 @@
     }
   },
   {
+    "name": "policy_denied_decision_denies_tool_admission",
+    "kind": "admission_policy_denied",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "decisionId": "decision-deny-tool",
+    "reasonCodes": [
+      "process_not_allowed"
+    ],
+    "expected": {
+      "admitted": false,
+      "policyDeniedBeforeApproval": true,
+      "errorContains": "denied"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",
