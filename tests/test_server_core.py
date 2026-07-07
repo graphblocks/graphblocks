@@ -3754,6 +3754,39 @@ def test_server_app_rejects_run_status_without_event_timestamps() -> None:
     }
 
 
+def test_server_app_rejects_run_status_with_malformed_event_sequence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-status-bool-sequence-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-status-bool-sequence-1"},
+            "metadata": {
+                "runId": "run-status-bool-sequence-1",
+                "sequence": True,
+                "cursor": "run-status-bool-sequence-1:1",
+                "releaseId": "release-status-bool-sequence-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-status-bool-sequence-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server run status sequence must be an integer",
+    }
+
+
 def test_server_app_terminal_run_status_overrides_stale_control_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-status-terminal-control-1"] = (

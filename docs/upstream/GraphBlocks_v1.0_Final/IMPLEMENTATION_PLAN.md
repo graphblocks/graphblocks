@@ -1124,10 +1124,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback receipts do not appear resumable after cancellation, expiry, failure, or policy stop.
   Runtime run status snapshots now reject terminal projections that still expose wait reasons or
   active operations, and reject duplicate active operation ids instead of silently collapsing them.
-  Retained run events must include ISO-valid `occurredAt` metadata before they can be projected
-  through `GetRunStatus` or `ListRuns`, preventing empty `startedAt`/`updatedAt` snapshots from
-  becoming client-visible status. Run-control pauses project operator, budget, policy, and
-  callback-delivery wait reasons.
+  Retained run events must include non-boolean integer `sequence` metadata and ISO-valid
+  `occurredAt` metadata before they can be projected through `GetRunStatus` or `ListRuns`,
+  preventing invalid replay cursors or empty `startedAt`/`updatedAt` snapshots from becoming
+  client-visible status. Run-control pauses project operator, budget, policy, and callback-delivery
+  wait reasons.
 - Stored server application events are immutable snapshots; `/events`, attach/replay, subscription
   replay, and websocket snapshot responses thaw them back to plain JSON payloads. The
   `GET /runs/{run_id}/events` route honors a `cursor` query parameter for retained event replay,
@@ -1207,8 +1208,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `pauseKind` values `operator`, `budget`, `policy`, and `callback_delivery` to project the
   corresponding wait reason.
   Runtime run status snapshots reject zero `started_at` or `updated_at` timestamps and retained
-  events without ISO-valid `occurredAt` metadata before exposing status to attach/replay,
-  `GetRunStatus`, or `ListRuns` callers.
+  events without non-boolean integer `sequence` or ISO-valid `occurredAt` metadata before exposing
+  status to attach/replay, `GetRunStatus`, or `ListRuns` callers.
   Non-terminal controls cannot reopen terminal runs, and `ResumeRun` is admitted only when the
   current server projection is paused or waiting. Repeating the latest control state, including
   non-terminal pause/resume projections, is idempotent only when the reason matches and does not

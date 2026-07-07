@@ -2728,7 +2728,11 @@ class GraphBlocksServerApp:
             if not isinstance(metadata, Mapping):
                 raise ValueError("server run status metadata must be an object")
             sequence = metadata.get("sequence")
-            if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                raise ValueError("server run status sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("server run status sequence must be non-negative")
+            if sequence > last_sequence:
                 last_sequence = sequence
             raw_occurred_at = metadata.get("occurredAt")
             if not isinstance(raw_occurred_at, str) or not raw_occurred_at:
