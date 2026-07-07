@@ -5550,7 +5550,20 @@ fn parse_application_event(value: &Value, label: &str) -> PyResult<ApplicationEv
             .ok_or_else(|| PyValueError::new_err(format!("{label}.metadata is required")))?,
         &format!("{label}.metadata"),
     )?;
-    let payload = object.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let mut payload = object.get("payload").cloned().unwrap_or_else(|| json!({}));
+    if matches!(
+        kind,
+        ApplicationEventKind::AssistantIncomplete | ApplicationEventKind::AssistantRetracted
+    ) && let Some(payload_object) = payload.as_object_mut()
+        && !payload_object.contains_key("draft_disposition")
+    {
+        let draft_disposition = match kind {
+            ApplicationEventKind::AssistantIncomplete => "mark_incomplete",
+            ApplicationEventKind::AssistantRetracted => "retract",
+            _ => unreachable!(),
+        };
+        payload_object.insert("draft_disposition".to_owned(), json!(draft_disposition));
+    }
     let event = if kind.is_tool_event() {
         ApplicationEvent::tool(
             kind,

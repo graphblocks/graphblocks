@@ -223,6 +223,10 @@ Message
   metadata check before accepting `AssistantIncomplete` or `AssistantRetracted` events. The Python
   stream-state facade now rejects post-cutoff draft terminal events whose delivered boundary,
   terminal reason, draft disposition, or policy decision id differs from the stored `OutputCutoff`.
+- The PyO3 application-event facade canonicalizes shorthand `AssistantIncomplete` and
+  `AssistantRetracted` payloads by adding the implied draft disposition before replaying them
+  through the Rust stream state, preserving the runtime invariant while keeping projection fixtures
+  stable.
 - tool admission validates response-scoped output policy state before applying it; an output-policy
   state object that names a different `response_id` is rejected instead of stopping or authorizing
   another response's tool call. The Python authoring facade mirrors this validation when building
