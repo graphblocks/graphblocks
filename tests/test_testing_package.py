@@ -1577,6 +1577,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "capability_negotiation_rejects_blank_protocol_version",
         "protocol_log_suppresses_duplicates_and_replays_after_cursor",
         "protocol_log_rejects_events_from_another_run",
+        "protocol_log_rejects_mutated_duplicate_event_ids",
         "protocol_stream_cutoff_discards_late_output",
     )
     assert by_suite["approval-review"].case_ids == (
