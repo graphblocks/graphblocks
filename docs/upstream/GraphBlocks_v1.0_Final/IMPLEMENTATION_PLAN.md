@@ -95,8 +95,9 @@ graphblocks-cli
   `graphblocks-schema` now exposes the schema-owned `TypedValue` primitive and canonical JSON
   helper, while `graphblocks-types` is a compatibility re-export that no longer depends on the
   compiler crate for typed-value canonicalization. Python `TypedValue` construction now rejects
-  non-JSON and non-canonical numeric values before they can enter schema envelopes, and stores a
-  canonical JSON copy so caller-owned mutable payloads cannot change the envelope after creation.
+  non-JSON, Python-only JSON-like shapes, and non-canonical numeric values before they can enter
+  schema envelopes, and stores a canonical JSON copy so caller-owned mutable payloads cannot change
+  the envelope after creation.
 - `graphblocks-testing` can load and run the typed-value schema fixture through the shared schema
   TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
   relying on package-local tests only. TCK suite manifests now surface auxiliary suite fixtures such

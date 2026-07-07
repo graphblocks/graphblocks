@@ -64,6 +64,14 @@ def test_typed_value_rejects_non_json_values_at_construction() -> None:
         TypedValue.from_value({"schema": "schemas/Message@1", "value": object()})
 
 
+def test_typed_value_rejects_python_only_json_like_values() -> None:
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", ("not", "a", "json", "array"))
+
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", {1: "not a json object key"})
+
+
 def test_typed_value_copies_payload_and_canonical_value() -> None:
     payload = {"z": 1, "a": [True]}
     value = TypedValue.new("schemas/Message@1", payload)

@@ -74,6 +74,22 @@ class TypedValue:
     value: object
 
     def __post_init__(self) -> None:
+        stack: list[object] = [self.value]
+        while stack:
+            current = stack.pop()
+            if current is None or isinstance(current, (str, bool, int, float)):
+                continue
+            if isinstance(current, list):
+                stack.extend(current)
+                continue
+            if isinstance(current, dict):
+                for key, nested in current.items():
+                    if not isinstance(key, str):
+                        raise ValueError("typed value value must be canonical JSON")
+                    stack.append(nested)
+                continue
+            raise ValueError("typed value value must be canonical JSON")
+
         try:
             canonical_value = json.loads(canonical_dumps(self.value))
         except (TypeError, ValueError) as error:
