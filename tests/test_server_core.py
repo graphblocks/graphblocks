@@ -4010,6 +4010,34 @@ def test_server_app_attaches_to_run_after_cursor() -> None:
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
 
 
+def test_server_app_rejects_attach_replay_with_malformed_sequence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-attach-bool-sequence-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": True},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-attach-bool-sequence-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({}).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "attach request sequence must be an integer",
+    }
+
+
 def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

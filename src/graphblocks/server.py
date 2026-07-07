@@ -3060,7 +3060,9 @@ class GraphBlocksServerApp:
                 continue
             sequence = metadata.get("sequence")
             if not isinstance(sequence, int) or isinstance(sequence, bool):
-                continue
+                raise ValueError("attach request sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("attach request sequence must be non-negative")
             cursor = f"{run_id}:{sequence}"
             sequence_by_cursor[cursor] = sequence
             if sequence > last_sequence:
@@ -3093,7 +3095,11 @@ class GraphBlocksServerApp:
             if not isinstance(metadata, Mapping):
                 continue
             sequence = metadata.get("sequence")
-            if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > replay_after_sequence:
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                raise ValueError("attach request sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("attach request sequence must be non-negative")
+            if sequence > replay_after_sequence:
                 replayed_events.append(_response_json_object(event))
 
         last_cursor_value = f"{run_id}:{last_sequence}"
