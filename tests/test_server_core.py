@@ -1912,6 +1912,7 @@ def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> N
                 {
                     "callback_id": "cb-2",
                     "attempt_id": "attempt-1",
+                    "providerOperationId": "provider-ci-retry-1",
                     "payload": {"status": "failed"},
                 }
             ).encode("utf-8"),
@@ -1938,6 +1939,7 @@ def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> N
             "verifiedBy": "callback-relay",
             "policySnapshotId": "local",
             "attemptId": "attempt-1",
+            "providerOperationId": "provider-ci-retry-1",
             "reason": "idempotency_conflict",
             "receivedAt": "2026-07-02T00:00:01Z",
         },

@@ -1033,9 +1033,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback ingress rejects run-scoped receipts when the authoritative run projection is already
   terminal, so late callbacks cannot appear resumable or create new stored resume receipts; the
   server now records a separate `ServerAsyncCallbackRejection` projection with callback,
-  idempotency, payload digest, verifying principal, policy snapshot, run/node/attempt, terminal
-  status when applicable, artifact ids, reason, and receipt timestamp even for terminal-run
-  rejections that never become accepted callback receipts. This supports payload-too-large,
+  idempotency, payload digest, verifying principal, policy snapshot, run/node/attempt,
+  provider-operation identity, terminal status when applicable, artifact ids, reason, and receipt
+  timestamp even for terminal-run rejections that never become accepted callback receipts. This supports payload-too-large,
   unknown-run, missing-fence,
   terminal-run, stale-attempt, node-mismatch, scope-mismatch, and idempotency-conflict rejection
   audit and inspection.

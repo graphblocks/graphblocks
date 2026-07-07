@@ -924,6 +924,7 @@ class ServerAsyncCallbackRejection:
     run_id: str | None = None
     node_id: str | None = None
     attempt_id: str | None = None
+    provider_operation_id: str | None = None
     status: str | None = None
     artifact_ids: tuple[str, ...] = field(default_factory=tuple)
 
@@ -949,7 +950,7 @@ class ServerAsyncCallbackRejection:
                     getattr(self, field_name),
                 ),
             )
-        for field_name in ("run_id", "node_id", "attempt_id", "status"):
+        for field_name in ("run_id", "node_id", "attempt_id", "provider_operation_id", "status"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(
@@ -972,6 +973,7 @@ class ServerAsyncCallbackRejection:
             "payload_digest": submission.payload_digest,
             "verified_by": submission.verified_by,
             "policy_snapshot_id": submission.policy_snapshot_id,
+            "provider_operation_id": submission.provider_operation_id,
             "artifact_ids": tuple(
                 artifact["artifact_id"]
                 for artifact in submission.artifacts
@@ -1200,6 +1202,8 @@ class ServerAsyncCallbackRejection:
             value["nodeId"] = self.node_id
         if self.attempt_id is not None:
             value["attemptId"] = self.attempt_id
+        if self.provider_operation_id is not None:
+            value["providerOperationId"] = self.provider_operation_id
         if self.status is not None:
             value["status"] = self.status
         if self.artifact_ids:
