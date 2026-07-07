@@ -813,7 +813,7 @@ class ServerAsyncCallbackSubmission:
         body = json.loads(request.body.decode("utf-8") or "{}")
         if not isinstance(body, Mapping):
             raise ValueError("server async callback body must be a JSON object")
-        declared_operation_id = body.get("operation_id", body.get("operationId"))
+        declared_operation_id = _callback_alias_value(body, "operation_id", "operationId")
         if declared_operation_id is not None:
             declared_operation_id = _validate_non_empty_string(
                 "server async callback",
@@ -828,12 +828,11 @@ class ServerAsyncCallbackSubmission:
             if declared_operation_id != endpoint_operation_id:
                 raise ValueError("server async callback operation_id must match callback endpoint operation_id")
         headers = request.headers
-        idempotency_key = body.get(
+        idempotency_key = _callback_alias_value(
+            body,
             "idempotency_key",
-            body.get(
-                "idempotencyKey",
-                headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
-            ),
+            "idempotencyKey",
+            headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
         )
         payload = body.get("payload")
         if payload is None:
@@ -843,7 +842,7 @@ class ServerAsyncCallbackSubmission:
             callback_id=_validate_non_empty_string(
                 "server async callback",
                 "callback_id",
-                body.get("callback_id", body.get("callbackId", "")),
+                _callback_alias_value(body, "callback_id", "callbackId", ""),
             ),
             idempotency_key=_validate_non_empty_string(
                 "server async callback",
@@ -866,7 +865,7 @@ class ServerAsyncCallbackSubmission:
             policy_snapshot_id=_validate_non_empty_string(
                 "server async callback",
                 "policy_snapshot_id",
-                body.get("policy_snapshot_id", body.get("policySnapshotId", "local")),
+                _callback_alias_value(body, "policy_snapshot_id", "policySnapshotId", "local"),
             ),
         )
 
@@ -1460,12 +1459,21 @@ class ServerCallbackRegistration:
         }
 
 
-def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
+def _callback_alias_value(
+    body: Mapping[str, object],
+    snake: str,
+    camel: str,
+    default: object | None = None,
+) -> object | None:
     snake_present = snake in body
     camel_present = camel in body
     if snake_present and camel_present and body[snake] != body[camel]:
         raise ValueError(f"server async callback {snake} aliases must not conflict")
-    value = body.get(snake, body.get(camel))
+    return body.get(snake, body.get(camel, default))
+
+
+def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
+    value = _callback_alias_value(body, snake, camel)
     if value is None:
         return None
     return _validate_non_empty_string("server async callback", snake, value)
@@ -2267,19 +2275,18 @@ class GraphBlocksServerApp:
                         if payload is None:
                             raise ValueError("server async callback payload is required")
                         headers = request.headers
-                        idempotency_key = body.get(
+                        idempotency_key = _callback_alias_value(
+                            body,
                             "idempotency_key",
-                            body.get(
-                                "idempotencyKey",
-                                headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
-                            ),
+                            "idempotencyKey",
+                            headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
                         )
                         submission = ServerAsyncCallbackSubmission(
                             operation_id=route_match.path_params.get("operation_id", ""),
                             callback_id=_validate_non_empty_string(
                                 "server async callback",
                                 "callback_id",
-                                body.get("callback_id", body.get("callbackId", "")),
+                                _callback_alias_value(body, "callback_id", "callbackId", ""),
                             ),
                             idempotency_key=_validate_non_empty_string(
                                 "server async callback",
@@ -2306,7 +2313,7 @@ class GraphBlocksServerApp:
                             policy_snapshot_id=_validate_non_empty_string(
                                 "server async callback",
                                 "policy_snapshot_id",
-                                body.get("policy_snapshot_id", body.get("policySnapshotId", "local")),
+                                _callback_alias_value(body, "policy_snapshot_id", "policySnapshotId", "local"),
                             ),
                         )
                         rejection = ServerAsyncCallbackRejection.operation_id_mismatch(submission)
