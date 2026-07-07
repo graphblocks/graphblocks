@@ -1338,6 +1338,24 @@ def admit_tool_call(
         raise ToolAdmissionError(
             f"policy decision {policy_decision.decision_id} input digest does not match the before-tool policy request"
         )
+    if policy_decision.valid_until is not None:
+        try:
+            admitted_at_time = _parse_iso_datetime(
+                admitted_at,
+                owner="tool admission",
+                field="admitted_at",
+            )
+            policy_valid_until = _parse_iso_datetime(
+                policy_decision.valid_until,
+                owner="policy decision",
+                field="valid_until",
+            )
+        except ValueError as error:
+            raise ToolAdmissionError(str(error)) from error
+        if policy_valid_until <= admitted_at_time:
+            raise ToolAdmissionError(
+                f"policy decision {policy_decision.decision_id} expired at {policy_decision.valid_until}"
+            )
     if policy_decision.effect == "deny":
         reason = ", ".join(policy_decision.reason_codes) or "deny"
         raise ToolAdmissionError(

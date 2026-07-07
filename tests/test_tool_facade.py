@@ -1604,6 +1604,34 @@ def test_tool_admission_rejects_policy_decision_for_different_input_digest() -> 
     )
 
 
+def test_tool_admission_rejects_expired_policy_decision() -> None:
+    base_resolved = _resolved_process_tool()
+    binding = replace(base_resolved.binding, approval="never", idempotency="optional")
+    resolved = replace(
+        base_resolved,
+        binding=binding,
+        binding_digest=binding.digest(),
+    )
+    call = _process_call(resolved)
+    expired_decision = replace(_allow_tool_policy_decision(), valid_until="2026-06-23T00:00:00Z")
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=expired_decision,
+            expected_policy_input_digest=expired_decision.input_digest,
+            principal_id="user-1",
+            admitted_at="2026-06-23T00:00:00Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == (
+        "policy decision decision-allow-tool expired at 2026-06-23T00:00:00Z"
+    )
+
+
 def test_tool_admission_rejects_empty_principal_id() -> None:
     base_resolved = _resolved_process_tool()
     binding = replace(base_resolved.binding, approval="never", idempotency="optional")

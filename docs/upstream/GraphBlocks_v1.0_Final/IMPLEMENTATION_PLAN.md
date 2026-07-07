@@ -1388,6 +1388,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust tool admission now rejects expired `before_tool_or_effect` policy decisions before applying
   allow/deny effects, so stale policy approvals cannot admit a tool side effect after their
   `valid_until` boundary.
+- Python tool admission now applies the same `PolicyDecision.valid_until` freshness gate as the
+  Rust runtime before allowing a tool call, keeping the authoring/schema facade aligned with the
+  normative admission semantics.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach
