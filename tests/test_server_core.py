@@ -1946,6 +1946,9 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
         node_id = body.get("node_id", body.get("nodeId"))
         if node_id is not None:
             expected_rejection["nodeId"] = node_id
+        provider_operation_id = body.get("provider_operation_id", body.get("providerOperationId"))
+        if provider_operation_id is not None:
+            expected_rejection["providerOperationId"] = provider_operation_id
         assert app.async_callback_rejections(operation_id) == (expected_rejection,)
 
 
@@ -4428,6 +4431,42 @@ def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
     assert app.detachments("run-detach-invalid-time-1") == ()
 
 
+def test_server_app_rejects_detach_when_retained_event_sequence_is_malformed() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-detach-bool-sequence-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-detach-bool-sequence-1"},
+            "metadata": {
+                "runId": "run-detach-bool-sequence-1",
+                "sequence": True,
+                "cursor": "run-detach-bool-sequence-1:1",
+                "releaseId": "release-detach-bool-sequence-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-bool-sequence-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"clientId": "client-1"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "detach request sequence must be an integer",
+    }
+    assert app.detachments("run-detach-bool-sequence-1") == ()
+
+
 def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -4802,7 +4841,9 @@ def test_server_app_subscription_replay_filters_visibility_node_operation_and_se
 
 
 def test_server_app_subscription_replay_filters_top_level_node_and_operation_fields() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1", roles=("operator",))})
+    )
     app._events_by_run_id["run-subscribe-top-level-filter-1"] = (
         {
             "kind": "JobProgress",
@@ -4832,6 +4873,7 @@ def test_server_app_subscription_replay_filters_top_level_node_and_operation_fie
                     "subscriptionId": "sub-filter-top-level-1",
                     "eventFilter": {
                         "types": ["JobProgress"],
+                        "visibility": ["operator"],
                         "nodeIds": ["runChecks"],
                         "operationIds": ["op-ci-1"],
                     },

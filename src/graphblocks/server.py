@@ -3151,7 +3151,7 @@ class GraphBlocksServerApp:
             if reason_value is not None
             else None
         )
-        last_sequence = self._last_event_sequence(events)
+        last_sequence = self._last_event_sequence(events, owner="detach request")
         last_cursor = f"{run_id}:{last_sequence}"
         record = _freeze_json_value("detach record", "record", {
             "clientId": client_id,
@@ -3188,13 +3188,17 @@ class GraphBlocksServerApp:
             },
         )
 
-    def _last_event_sequence(self, events: tuple[dict[str, object], ...]) -> int:
+    def _last_event_sequence(self, events: tuple[dict[str, object], ...], *, owner: str = "server event") -> int:
         last_sequence = 0
         for event in events:
             metadata = event.get("metadata")
             if isinstance(metadata, Mapping):
                 sequence = metadata.get("sequence")
-                if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
+                if not isinstance(sequence, int) or isinstance(sequence, bool):
+                    raise ValueError(f"{owner} sequence must be an integer")
+                if sequence < 0:
+                    raise ValueError(f"{owner} sequence must be non-negative")
+                if sequence > last_sequence:
                     last_sequence = sequence
         return last_sequence
 
