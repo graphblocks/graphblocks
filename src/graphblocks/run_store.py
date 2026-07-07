@@ -638,21 +638,46 @@ def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
 def _parse_model_visible_tools_json(value: str) -> tuple[ModelVisibleToolRef, ...]:
     parsed = json.loads(value)
     if not isinstance(parsed, list):
-        return ()
+        raise ValueError("run model visible tools must be a list")
     tools: list[ModelVisibleToolRef] = []
-    for item in parsed:
+    for index, item in enumerate(parsed):
         if not isinstance(item, dict):
-            continue
+            raise ValueError("run model visible tools items must be objects")
+        allowed_for_principal = item.get("allowed_for_principal")
+        if not isinstance(allowed_for_principal, bool):
+            raise ValueError("run model visible tools allowed_for_principal must be a boolean")
         tools.append(
             ModelVisibleToolRef(
-                tool_name=str(item["tool_name"]),
-                resolved_tool_id=str(item["resolved_tool_id"]),
-                definition_digest=str(item["definition_digest"]),
-                binding_digest=str(item["binding_digest"]),
-                effective_policy_snapshot_id=str(item["effective_policy_snapshot_id"]),
-                allowed_for_principal=bool(item["allowed_for_principal"]),
+                tool_name=_validate_non_empty_string(
+                    "run model visible tools",
+                    f"{index}.tool_name",
+                    item.get("tool_name"),
+                ),
+                resolved_tool_id=_validate_non_empty_string(
+                    "run model visible tools",
+                    f"{index}.resolved_tool_id",
+                    item.get("resolved_tool_id"),
+                ),
+                definition_digest=_validate_non_empty_string(
+                    "run model visible tools",
+                    f"{index}.definition_digest",
+                    item.get("definition_digest"),
+                ),
+                binding_digest=_validate_non_empty_string(
+                    "run model visible tools",
+                    f"{index}.binding_digest",
+                    item.get("binding_digest"),
+                ),
+                effective_policy_snapshot_id=_validate_non_empty_string(
+                    "run model visible tools",
+                    f"{index}.effective_policy_snapshot_id",
+                    item.get("effective_policy_snapshot_id"),
+                ),
+                allowed_for_principal=allowed_for_principal,
                 valid_until=(
-                    str(item["valid_until"]) if item.get("valid_until") is not None else None
+                    _validate_non_empty_string("run model visible tools", f"{index}.valid_until", item["valid_until"])
+                    if item.get("valid_until") is not None
+                    else None
                 ),
             )
         )

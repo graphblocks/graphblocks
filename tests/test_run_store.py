@@ -357,6 +357,24 @@ def test_sqlite_run_store_rejects_malformed_deployment_provenance_on_replay(tmp_
         store.get_run(record.run_id)
 
 
+def test_sqlite_run_store_rejects_malformed_model_visible_tools_on_replay(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(database)
+    record = store.create_run(
+        "sha256:test",
+        {},
+        model_visible_tools=(_model_visible_tool("knowledge.search", "resolved-search", True),),
+    )
+    store.connection.execute(
+        "UPDATE runs SET model_visible_tools_json = ? WHERE run_id = ?",
+        ("{}", record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="run model visible tools must be a list"):
+        store.get_run(record.run_id)
+
+
 def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_path) -> None:
     store = SQLiteRunStore(tmp_path / "runs.sqlite3")
     record = store.create_run("sha256:test", {})
