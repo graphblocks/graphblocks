@@ -343,6 +343,20 @@ def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) ->
     assert second.get_run(background.run_id).invocation_mode == "background"
 
 
+def test_sqlite_run_store_rejects_malformed_deployment_provenance_on_replay(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(database)
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
+        ("[]", record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="run deployment provenance mapping must be an object"):
+        store.get_run(record.run_id)
+
+
 def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_path) -> None:
     store = SQLiteRunStore(tmp_path / "runs.sqlite3")
     record = store.create_run("sha256:test", {})

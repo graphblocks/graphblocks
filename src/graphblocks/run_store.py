@@ -631,7 +631,7 @@ def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
 def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
-        return RunDeploymentProvenance()
+        raise ValueError("run deployment provenance mapping must be an object")
     return RunDeploymentProvenance.from_mapping(parsed)
 
 
