@@ -1509,6 +1509,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The upstream conformance-profile catalog is now tested for byte-for-byte semantic parity with the
   shipped `src/graphblocks/data/conformance-profiles.yaml` profile set, preventing documentation
   copies from dropping inherited TCK suites or async/background production evidence.
+- The upstream package catalog is now tested for semantic parity with the shipped
+  `src/graphblocks/data/package-catalog.yaml` install catalog, so optional integration packages,
+  foundation package ownership, and MVP metapackage dependencies cannot drift between docs and the
+  packaged source of truth.
 
 ### Package ownership
 

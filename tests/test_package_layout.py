@@ -4,6 +4,7 @@ from pathlib import Path
 import tomllib
 
 import pytest
+import yaml
 
 from graphblocks.packages import (
     PackageLock,
@@ -114,6 +115,14 @@ def test_graphblocks_metapackage_is_dependency_only() -> None:
     ]
     assert (package_root / "METAPACKAGE.md").exists()
     assert not (package_root / "src" / "graphblocks").exists()
+
+
+def test_upstream_package_catalog_matches_shipped_catalog() -> None:
+    upstream_path = ROOT / "docs" / "upstream" / "GraphBlocks_v1.0_Final" / "catalog" / "package-catalog.yaml"
+    upstream = yaml.safe_load(upstream_path.read_text(encoding="utf-8"))
+    shipped = load_package_catalog()
+
+    assert upstream == shipped
 
 
 def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:

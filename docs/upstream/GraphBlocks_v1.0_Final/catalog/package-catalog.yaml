@@ -169,6 +169,21 @@ packages:
   - OCR engines
   implementationPhase: 1
   stability: foundation
+- distribution: graphblocks-pdf
+  import: graphblocks_pdf
+  layer: document_parser_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - PDF parser descriptor
+  - lazy pypdf text extraction adapter
+  - page-level ParsedDocument conversion
+  forbiddenDependencies:
+  - default parser SDK import
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-rag
   import: graphblocks_rag
   layer: domain
@@ -185,6 +200,23 @@ packages:
   - vector DB clients
   implementationPhase: 1
   stability: foundation
+- distribution: graphblocks-qdrant
+  import: graphblocks_qdrant
+  layer: retrieval_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-rag
+  responsibility:
+  - Qdrant search request contract
+  - Qdrant scored point to SearchHit mapping
+  - vector store payload interoperability
+  forbiddenDependencies:
+  - qdrant-client
+  - HTTP clients
+  - gRPC clients
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-conversation
   import: graphblocks_conversation
   layer: domain
@@ -295,6 +327,28 @@ packages:
   - health endpoints
   implementationPhase: 3
   stability: first-party-extension
+- distribution: graphblocks-callbacks
+  import: graphblocks_callbacks
+  layer: callback_projection
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - webhook delivery envelope projection
+  - callback signing helper contracts
+  - retry and dead-letter projection helpers
+  - receiver verification boundary helpers
+  forbiddenDependencies:
+  - httpx
+  - requests
+  - aiohttp
+  - urllib3
+  - websockets
+  - fastapi
+  - starlette
+  implementationPhase: 4
+  stability: foundation-extension
 - distribution: graphblocks-worker
   import: graphblocks_worker
   layer: runtime
@@ -366,7 +420,10 @@ packages:
   - graphblocks-core
   responsibility:
   - canonical observation model
+  - output policy and tool execution telemetry records
   - capture/redaction
+  - low-cardinality metric linting
+  - diagnostic bundle projection
   - semantic mapping
   implementationPhase: 3
   stability: first-party-extension
@@ -378,7 +435,8 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - OTLP exporters
+  - generation/output policy/tool execution span projections
+  - OTLP exporter contracts
   - collector templates
   implementationPhase: 3
   stability: first-party-extension
@@ -390,7 +448,8 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - telemetry/prompt/evaluation/dataset adapters
+  - generation/output policy/tool execution event projections
+  - prompt/evaluation/dataset adapters
   implementationPhase: 3
   stability: first-party-extension
 - distribution: graphblocks-audit
@@ -477,8 +536,9 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - prometheus_metrics_export
+  - generation/output policy/tool execution metric projections
   - recording_and_alert_rules
+  - metric cardinality lint integration
   implementationPhase: 3
   stability: first-party-extension
 - distribution: graphblocks-dashboards
@@ -489,7 +549,7 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - dashboard_templates
+  - generation and policy/tool dashboard templates
   - slo_rules
   - runbook_templates
   implementationPhase: 3
@@ -580,6 +640,51 @@ packages:
   - ToolBinding execution bridge for OpenAPI calls
   implementationPhase: 2
   stability: integration
+- distribution: graphblocks-openai
+  import: graphblocks_openai
+  layer: model_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - OpenAI-compatible chat completion request contract
+  - OpenAI-compatible response and stream delta normalization
+  - OpenAI usage ledger record conversion
+  - tool definition projection for model-visible function tools
+  forbiddenDependencies:
+  - openai SDK
+  - HTTP clients
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-scripted
+  import: graphblocks_scripted
+  layer: model_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - deterministic scripted model provider
+  - exact prompt response contracts for tests and examples
+  - chunked scripted streaming deltas
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-haystack
+  import: graphblocks_haystack
+  layer: framework_bridge
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - Haystack component and pipeline block descriptors
+  - Haystack ChatMessage adapters
+  - explicit descriptor diagnostics for dynamic sockets
+  forbiddenDependencies:
+  - haystack framework
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-policy-opa
   import: graphblocks_policy_opa
   layer: governance_adapter
@@ -627,6 +732,182 @@ packages:
   - provider reconciliation
   implementationPhase: integration-defined
   stability: adapter
+- distribution: graphblocks-voice
+  import: graphblocks_voice
+  layer: voice
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - DuplexSession contract
+  - VAD authority and interruption classifier
+  - playback ledger
+  - provider realtime request projection
+  forbiddenDependencies:
+  - WebRTC SDK
+  - provider realtime SDK
+  - VAD model runtime
+  implementationPhase: 7
+  stability: experimental-extension
+- distribution: graphblocks-webrtc
+  import: graphblocks_webrtc
+  layer: voice_transport_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - WebRTC session description and ICE candidate contracts
+  - WebRTC signaling contract projection
+  - core VoiceTransport projection
+  forbiddenDependencies:
+  - aiortc
+  - webrtcvad
+  - av
+  - pylibsrtp
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-websocket-media
+  import: graphblocks_websocket_media
+  layer: voice_transport_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - WebSocket media endpoint contract
+  - sequenced audio and transcript message contracts
+  - core VoiceTransport projection
+  forbiddenDependencies:
+  - websockets
+  - aiohttp
+  - wsproto
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-openai-realtime
+  import: graphblocks_openai_realtime
+  layer: voice_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - OpenAI Realtime session payload projection
+  - WebRTC unified call and ephemeral client secret request contracts
+  - WebSocket connection and client event contracts
+  forbiddenDependencies:
+  - openai
+  - websockets
+  - aiortc
+  - httpx
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-silero-vad
+  import: graphblocks_silero_vad
+  layer: voice_vad_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - Silero VAD probability frame contract
+  - runtime-free VAD authority configuration
+  - core AudioFrame and VadDecision projection
+  forbiddenDependencies:
+  - torch
+  - onnxruntime
+  - torchaudio
+  - silero
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-durable
+  import: graphblocks_durable
+  layer: durable_stream
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - source cursors and watermarks
+  - replayable durable source batches
+  - event-time window panes and late data rejection
+  - idempotent sink commit contracts
+  forbiddenDependencies:
+  - Kafka SDK
+  - NATS SDK
+  - cloud queue SDK
+  implementationPhase: 7
+  stability: experimental-extension
+- distribution: graphblocks-kafka
+  import: graphblocks_kafka
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - Kafka record to durable SourceEvent projection
+  - consumer group offset cursor mapping
+  - idempotent sink commit record projection
+  forbiddenDependencies:
+  - confluent-kafka
+  - kafka-python
+  - aiokafka
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-nats
+  import: graphblocks_nats
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - NATS JetStream message to durable SourceEvent projection
+  - durable consumer sequence cursor mapping
+  - idempotent publish message projection
+  forbiddenDependencies:
+  - nats-py
+  - pynats
+  - asyncio-nats
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-sqs
+  import: graphblocks_sqs
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - SQS message to durable SourceEvent projection
+  - adapter receive sequence cursor mapping
+  - FIFO idempotent send message projection
+  forbiddenDependencies:
+  - boto3
+  - botocore
+  - aiobotocore
+  - aioboto3
+  implementationPhase: integration-defined
+  stability: integration
+- distribution: graphblocks-pubsub
+  import: graphblocks_pubsub
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - Pub/Sub message to durable SourceEvent projection
+  - subscription receive sequence cursor mapping
+  - publish message projection with ordering key support
+  forbiddenDependencies:
+  - google-cloud-pubsub
+  - google-api-core
+  - grpcio
+  implementationPhase: integration-defined
+  stability: integration
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>
