@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,17 @@ def test_typed_value_preserves_schema_id_and_round_trips_canonical_json() -> Non
 def test_typed_value_rejects_invalid_schema_id() -> None:
     with pytest.raises(SchemaIdError, match="include a major version"):
         TypedValue.new("schemas/Message", {})
+
+
+def test_typed_value_rejects_non_json_values_at_construction() -> None:
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", object())
+
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Score@1", math.nan)
+
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.from_value({"schema": "schemas/Message@1", "value": object()})
 
 
 def test_python_typed_value_matches_shared_tck_cases() -> None:

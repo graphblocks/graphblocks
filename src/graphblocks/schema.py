@@ -73,6 +73,12 @@ class TypedValue:
     schema_id: SchemaId
     value: object
 
+    def __post_init__(self) -> None:
+        try:
+            canonical_dumps(self.value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("typed value value must be canonical JSON") from error
+
     @classmethod
     def new(cls, schema_id: str | SchemaId, value: object) -> TypedValue:
         if not isinstance(schema_id, SchemaId):
