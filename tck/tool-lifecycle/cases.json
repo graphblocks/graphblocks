@@ -200,6 +200,29 @@
     }
   },
   {
+    "name": "expired_approval_denies_tool_admission",
+    "kind": "admission_expired_approval",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "approvalId": "approval-1",
+    "requestedAtUnixMs": 1000,
+    "decidedAtUnixMs": 1050,
+    "expiresAtUnixMs": 1100,
+    "admittedAtUnixMs": 1200,
+    "idempotencyKey": "idem-1",
+    "expected": {
+      "admitted": false,
+      "expiredApprovalRejectedBeforeIdempotency": true,
+      "errorContains": "not valid"
+    }
+  },
+  {
     "name": "required_idempotency_key_missing_denies_tool_admission",
     "kind": "admission_missing_required_idempotency_key",
     "toolName": "process.run",

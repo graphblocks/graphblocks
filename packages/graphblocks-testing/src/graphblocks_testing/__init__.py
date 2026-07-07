@@ -1926,6 +1926,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_policy_denied",
             "admission_policy_deferred",
             "admission_missing_approval",
+            "admission_expired_approval",
             "admission_missing_required_idempotency_key",
             "admission_blank_idempotency_key",
             "approval_argument_mutation",
@@ -8022,6 +8023,7 @@ class TckRunner:
             "admission_policy_denied",
             "admission_policy_deferred",
             "admission_missing_approval",
+            "admission_expired_approval",
             "admission_missing_required_idempotency_key",
             "admission_blank_idempotency_key",
         }:
@@ -8125,16 +8127,21 @@ class TckRunner:
             if kind in {
                 "admission_missing_required_idempotency_key",
                 "admission_blank_idempotency_key",
+                "admission_expired_approval",
             }:
                 request = ToolApprovalRequest.for_call(
                     str(fixture.get("approvalId", "approval-1")),
                     resolved_tool,
                     call,
                     principal_id="user-1",
-                    requested_at=1000,
-                    expires_at=2000,
+                    requested_at=int(fixture.get("requestedAtUnixMs", 1000)),
+                    expires_at=int(fixture.get("expiresAtUnixMs", 2000)),
                 )
-                approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1100)
+                approval = ToolApprovalRecord.approve(
+                    request,
+                    approver_id="admin-1",
+                    decided_at=int(fixture.get("decidedAtUnixMs", 1100)),
+                )
             try:
                 admit_tool_call(
                     call,
@@ -8151,11 +8158,16 @@ class TckRunner:
                         None
                         if kind == "admission_missing_required_idempotency_key"
                         else str(fixture.get("idempotencyKey", " "))
-                        if kind in {"admission_blank_idempotency_key", "admission_missing_approval"}
+                        if kind
+                        in {
+                            "admission_blank_idempotency_key",
+                            "admission_missing_approval",
+                            "admission_expired_approval",
+                        }
                         else "idem-1"
                     ),
                     admitted_at=str(fixture.get("admittedAt", "2026-06-23T00:00:02Z")),
-                    now=1200,
+                    now=int(fixture.get("admittedAtUnixMs", 1200)),
                 )
                 observed = {
                     "admitted": True,
@@ -8169,6 +8181,7 @@ class TckRunner:
                     "policyDeniedBeforeApproval": False,
                     "policyDeferredBeforeApproval": False,
                     "approvalRequiredBeforeIdempotency": False,
+                    "expiredApprovalRejectedBeforeIdempotency": False,
                     "idempotencyRejectedAfterApproval": False,
                     "blankIdempotencyRejectedAfterApproval": False,
                 }
@@ -8205,6 +8218,9 @@ class TckRunner:
                     ),
                     "approvalRequiredBeforeIdempotency": (
                         "requires approval" in message and "idempotency" not in message
+                    ),
+                    "expiredApprovalRejectedBeforeIdempotency": (
+                        "not valid" in message and "idempotency" not in message
                     ),
                     "idempotencyRejectedAfterApproval": (
                         "idempotency" in message and "requires approval" not in message

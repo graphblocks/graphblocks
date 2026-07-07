@@ -44,6 +44,7 @@ fn run_case(case: &Value) -> Result<(), String> {
         "admission_policy_denied" => run_policy_denied_case(case_name, case),
         "admission_policy_deferred" => run_policy_deferred_case(case_name, case),
         "admission_missing_approval" => run_missing_approval_case(case_name, case),
+        "admission_expired_approval" => run_expired_approval_case(case_name, case),
         "admission_missing_required_idempotency_key" => {
             run_missing_required_idempotency_key_case(case_name, case)
         }
@@ -605,6 +606,69 @@ fn run_missing_approval_case(case_name: &str, case: &Value) -> Result<(), String
     assert_eq!(
         matches!(result, Err(ToolAdmissionError::ApprovalRequired { .. })),
         required_bool(expected, "approvalRequiredBeforeIdempotency")?,
+        "{case_name}",
+    );
+    assert!(
+        error_text.contains(required_map_str(expected, "errorContains")?),
+        "{case_name}: expected {error_text:?} to contain configured text",
+    );
+    Ok(())
+}
+
+fn run_expired_approval_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let expected = expected(case, case_name)?;
+    let schema_id = required_str(case, "schemaId")?;
+    let tool_name = required_str(case, "toolName")?;
+    let resolved_tool = resolved_process_tool(tool_name, schema_id)?;
+    let schemas = process_schema_registry(schema_id)?;
+    let call = tool_call_from_arguments(
+        tool_name,
+        &resolved_tool.resolved_tool_id,
+        case.get("arguments")
+            .cloned()
+            .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing arguments"))?,
+    )?;
+    let approval_request = ToolApprovalRequest::for_call(
+        required_str(case, "approvalId")?,
+        &resolved_tool,
+        &call,
+        "user-1",
+        required_u64(case, "requestedAtUnixMs")?,
+        required_u64(case, "expiresAtUnixMs")?,
+    )
+    .map_err(|error| format!("tool-lifecycle TCK case {case_name} failed: {error:?}"))?;
+    let approval = ToolApprovalRecord::approve(
+        approval_request,
+        "admin-1",
+        required_u64(case, "decidedAtUnixMs")?,
+    );
+    let policy_decision = allow_tool_policy_decision();
+    let result = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
+        approval: Some(&approval),
+        principal_id: "user-1",
+        idempotency_key: Some(required_str(case, "idempotencyKey")?.to_owned()),
+        admitted_at_unix_ms: required_u64(case, "admittedAtUnixMs")?,
+    });
+    let error_text = result
+        .as_ref()
+        .err()
+        .map(admission_error_text)
+        .unwrap_or_default();
+
+    assert_eq!(
+        result.is_ok(),
+        required_bool(expected, "admitted")?,
+        "{case_name}",
+    );
+    assert_eq!(
+        matches!(result, Err(ToolAdmissionError::ApprovalInvalid { .. })),
+        required_bool(expected, "expiredApprovalRejectedBeforeIdempotency")?,
         "{case_name}",
     );
     assert!(
