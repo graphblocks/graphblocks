@@ -2863,11 +2863,26 @@ class GraphBlocksServerApp:
                     },
                 )
             status = pause_states[pause_kind]
+        reason = payload.get("reason")
+        if reason is not None:
+            reason = _validate_non_empty_string("run control request", "reason", reason)
         existing = self._run_controls_by_run_id.get(run_id, ())
         if existing:
             latest_control = existing[-1]
             current_status = latest_control.get("status")
             if isinstance(current_status, str) and status == current_status:
+                existing_reason = latest_control.get("reason")
+                if reason != existing_reason:
+                    response: dict[str, object] = {
+                        "ok": False,
+                        "runId": run_id,
+                        "status": current_status,
+                        "reason": existing_reason,
+                        "error": "run control duplicate command conflicts with existing reason",
+                    }
+                    if reason is not None:
+                        response["requestedReason"] = reason
+                    return ServerResponse.json(409, response)
                 return ServerResponse.json(
                     200,
                     {
@@ -2889,9 +2904,6 @@ class GraphBlocksServerApp:
                         "error": f"run {run_id} is terminal with state {current_status}",
                     },
                 )
-        reason = payload.get("reason")
-        if reason is not None:
-            reason = _validate_non_empty_string("run control request", "reason", reason)
         record = _freeze_json_value("run control record", "record", {
             "operation": operation,
             "status": status,

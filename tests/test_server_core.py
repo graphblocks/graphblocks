@@ -1044,6 +1044,70 @@ def test_server_app_rejects_run_control_with_invalid_timestamp() -> None:
     assert app.run_controls("run-control-invalid-time-1") == ()
 
 
+def test_server_app_rejects_run_control_duplicate_with_conflicting_reason() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-control-duplicate-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-control-duplicate-1"},
+            "metadata": {
+                "runId": "run-control-duplicate-1",
+                "sequence": 1,
+                "cursor": "run-control-duplicate-1:1",
+                "releaseId": "release-control-duplicate-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-duplicate-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-duplicate-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+    conflict = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-duplicate-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "different_hold"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:03Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert conflict.status_code == 409
+    assert json.loads(conflict.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-control-duplicate-1",
+        "status": "paused_operator",
+        "reason": "operator_hold",
+        "requestedReason": "different_hold",
+        "error": "run control duplicate command conflicts with existing reason",
+    }
+    assert len(app.run_controls("run-control-duplicate-1")) == 1
+
+
 def test_server_app_projects_typed_pause_wait_reason() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-pause-kind-1"] = (
