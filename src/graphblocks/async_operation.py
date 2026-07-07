@@ -234,9 +234,13 @@ class AsyncOperation:
     infinite_wait_policy: str | None = None
     submitted_at: str | None = None
     expires_at: str | None = None
+    callback_received_at: str | None = None
     completed_at: str | None = None
 
     def __post_init__(self) -> None:
+        if self.state == "callback_received" and self.callback_received_at is None and self.completed_at is not None:
+            object.__setattr__(self, "callback_received_at", self.completed_at)
+            object.__setattr__(self, "completed_at", None)
         for field_name in (
             "operation_id",
             "run_id",
@@ -265,6 +269,7 @@ class AsyncOperation:
             "infinite_wait_policy",
             "submitted_at",
             "expires_at",
+            "callback_received_at",
             "completed_at",
         ):
             value = getattr(self, field_name)
@@ -292,8 +297,10 @@ class AsyncOperation:
             raise ValueError(f"async operation {self.state} state requires submitted_at")
         if self.state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is None:
             raise ValueError("async operation terminal state requires completed_at")
-        if self.state == "callback_received" and self.completed_at is None:
-            raise ValueError("async operation callback_received state requires completed_at")
+        if self.state in {"callback_received", "resuming"} and self.callback_received_at is None:
+            raise ValueError("async operation callback_received state requires callback_received_at")
+        if self.state in {"completed", "failed"} and self.callback_ref is not None and self.callback_received_at is None:
+            raise ValueError(f"async operation {self.state} state requires callback_received_at")
         if self.state in {"waiting_callback", "callback_received"} and self.callback_ref is None:
             raise ValueError(f"async operation {self.state} state requires callback_ref")
         if self.state == "polling" and self.polling_ref is None:
@@ -320,6 +327,11 @@ class AsyncOperation:
             if self.completed_at is None
             else _parse_iso_datetime("async operation", "completed_at", self.completed_at)
         )
+        callback_received_at = (
+            None
+            if self.callback_received_at is None
+            else _parse_iso_datetime("async operation", "callback_received_at", self.callback_received_at)
+        )
         expires_at = (
             None
             if self.expires_at is None
@@ -331,15 +343,19 @@ class AsyncOperation:
             raise ValueError("async operation completed_at must not be before created_at")
         if submitted_at is not None and completed_at is not None and completed_at < submitted_at:
             raise ValueError("async operation completed_at must not be before submitted_at")
+        if submitted_at is not None and callback_received_at is not None and callback_received_at < submitted_at:
+            raise ValueError("async operation callback_received_at must not be before submitted_at")
+        if completed_at is not None and callback_received_at is not None and completed_at < callback_received_at:
+            raise ValueError("async operation terminal completed_at must not be before callback receipt")
         if expires_at is not None and expires_at <= created_at:
             raise ValueError("async operation expires_at must be after created_at")
         if submitted_at is not None and expires_at is not None and expires_at <= submitted_at:
             raise ValueError("async operation expires_at must be after submitted_at")
         if (
             self.state == "callback_received"
-            and completed_at is not None
+            and callback_received_at is not None
             and expires_at is not None
-            and completed_at > expires_at
+            and callback_received_at > expires_at
         ):
             raise ValueError("async operation callback receipt must not be after expires_at")
         if (
@@ -418,8 +434,16 @@ class AsyncOperation:
         if state not in ASYNC_OPERATION_ALLOWED_TRANSITIONS.get(self.state, frozenset()):
             raise ValueError(f"async operation cannot transition from {self.state} to {state}")
         completed_at = changes.get("completed_at")
-        if state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is not None and isinstance(completed_at, str):
-            receipt_at = _parse_iso_datetime("async operation", "completed_at", self.completed_at)
+        if (
+            state in TERMINAL_ASYNC_OPERATION_STATES
+            and self.callback_received_at is not None
+            and isinstance(completed_at, str)
+        ):
+            receipt_at = _parse_iso_datetime(
+                "async operation",
+                "callback_received_at",
+                self.callback_received_at,
+            )
             terminal_at = _parse_iso_datetime("async operation", "completed_at", completed_at)
             if terminal_at < receipt_at:
                 raise ValueError("async operation terminal completed_at must not be before callback receipt")
@@ -446,10 +470,17 @@ class AsyncOperation:
             raise ValueError("async operation callback wait requires expires_at or explicit infinite_wait_policy")
         return self._replace_state("waiting_callback")
 
-    def mark_callback_received(self, *, completed_at: str | None = None) -> AsyncOperation:
-        if completed_at is None:
-            raise ValueError("async operation callback_received state requires completed_at")
-        return self._replace_state("callback_received", completed_at=completed_at)
+    def mark_callback_received(
+        self,
+        *,
+        callback_received_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> AsyncOperation:
+        if callback_received_at is None:
+            callback_received_at = completed_at
+        if callback_received_at is None:
+            raise ValueError("async operation callback_received state requires callback_received_at")
+        return self._replace_state("callback_received", callback_received_at=callback_received_at)
 
     def start_polling(self) -> AsyncOperation:
         if self.polling_ref is None:
@@ -491,6 +522,7 @@ class AsyncOperation:
             "created_at": self.created_at,
             "submitted_at": self.submitted_at,
             "expires_at": self.expires_at,
+            "callback_received_at": self.callback_received_at,
             "completed_at": self.completed_at,
         }
 

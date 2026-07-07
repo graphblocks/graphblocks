@@ -690,7 +690,7 @@ def test_async_operation_records_callback_wait_metadata_and_state_transitions() 
         submitted_at="2026-07-02T00:00:01Z",
     )
     waiting = submitted.wait_for_callback()
-    received = waiting.mark_callback_received(completed_at="2026-07-02T00:10:00Z")
+    received = waiting.mark_callback_received(callback_received_at="2026-07-02T00:10:00Z")
     resuming = received.mark_resuming()
     completed = resuming.complete(completed_at="2026-07-02T00:10:05Z")
 
@@ -699,9 +699,13 @@ def test_async_operation_records_callback_wait_metadata_and_state_transitions() 
     assert submitted.provider_operation_id == "gha-run-1"
     assert waiting.state == graphblocks.AsyncOperationState.WAITING_CALLBACK
     assert received.state == graphblocks.AsyncOperationState.CALLBACK_RECEIVED
+    assert received.callback_received_at == "2026-07-02T00:10:00Z"
+    assert received.completed_at is None
     assert resuming.state == graphblocks.AsyncOperationState.RESUMING
     assert completed.state == graphblocks.AsyncOperationState.COMPLETED
+    assert completed.callback_received_at == "2026-07-02T00:10:00Z"
     assert completed.completed_at == "2026-07-02T00:10:05Z"
+    assert completed.to_json()["callback_received_at"] == "2026-07-02T00:10:00Z"
     assert completed.to_json()["callback_ref"] == "cbep-ci-1"
 
 
@@ -1133,7 +1137,7 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             created_at="2026-07-02T00:00:00Z",
         ).mark_submitted(submitted_at="2026-07-01T23:59:59Z")
 
-    with raises_value_error("async operation completed_at must not be before submitted_at"):
+    with raises_value_error("async operation callback_received_at must not be before submitted_at"):
         graphblocks.AsyncOperation.created(
             operation_id="op-ci-1",
             run_id="run-1",
@@ -1333,7 +1337,7 @@ def test_async_operation_rejects_terminal_failure_after_expiry() -> None:
 
 
 def test_async_operation_requires_callback_receipt_timestamp() -> None:
-    with raises_value_error("async operation callback_received state requires completed_at"):
+    with raises_value_error("async operation callback_received state requires callback_received_at"):
         graphblocks.AsyncOperation.created(
             operation_id="op-ci-1",
             run_id="run-1",

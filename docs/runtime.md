@@ -41,6 +41,11 @@ is the replayable source of truth; callback subscriptions are delivery
 projections. External callbacks are authenticated resume signals for async
 operations, not the authoritative record of run correctness.
 
+Async operation state records `callback_received_at` separately from
+`completed_at`. A callback receipt can move an operation into
+`callback_received` and then `resuming`; `completed_at` is reserved for terminal
+operation states such as `completed`, `failed`, `cancelled`, or `expired`.
+
 ## Production Boundaries
 
 Remote workers, deployments, and release bundles add more checks: worker
