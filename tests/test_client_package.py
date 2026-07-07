@@ -231,7 +231,12 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
             cursor="cursor-3",
             occurred_at_unix_ms=1_765_843_202_000,
         ),
-        payload={"response_id": "response-1", "last_client_delivered_sequence": 1},
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+        },
     )
     late = graphblocks_client.ApplicationProtocolEvent.new(
         "AssistantDraftDelta",
@@ -1511,7 +1516,14 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
         "operationId": "op-ci-client-1",
         "callbackId": "cb-client-1",
         "idempotencyKey": "idem-client-callback-1",
+        "payloadDigest": "sha256:4b7f8e395f509529dbf2eba914e46745cbe72791078d1b9c198d01daab24c9ae",
+        "verifiedBy": "callback-relay",
+        "policySnapshotId": "local",
         "status": "accepted",
+        "runId": "run-client-callback-1",
+        "nodeId": "waitCI",
+        "attemptId": "attempt-1",
+        "providerOperationId": "provider-ci-1",
     }
 
 
@@ -1943,7 +1955,7 @@ def test_client_package_subscribes_to_run_events_over_http_transport(monkeypatch
     assert snapshot.stream["status"] == "active"
     assert snapshot.stream["failurePolicy"] == "best_effort"
     assert snapshot.stream["lastCursor"] == "run-subscribe-http-1:2"
-    assert snapshot.stream["eventFilter"] == {"types": ["RunSucceeded"]}
+    assert snapshot.stream["eventFilter"] == {"types": ["RunSucceeded"], "visibility": ["client"]}
     assert [event.kind for event in snapshot.events] == ["RunSucceeded"]
     assert snapshot.events[0].payload["outputs"] == {"prompt": "Client subscribe ok"}
 
