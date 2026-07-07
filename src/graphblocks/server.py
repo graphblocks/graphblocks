@@ -1461,6 +1461,10 @@ class ServerCallbackRegistration:
 
 
 def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
+    snake_present = snake in body
+    camel_present = camel in body
+    if snake_present and camel_present and body[snake] != body[camel]:
+        raise ValueError(f"server async callback {snake} aliases must not conflict")
     value = body.get(snake, body.get(camel))
     if value is None:
         return None

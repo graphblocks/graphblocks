@@ -1050,6 +1050,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback bodies may supply `payload_digest`/`payloadDigest`; ingress validates the declared
   digest against the canonical callback payload before accepting the receipt or projecting a
   route-bound operation-id mismatch rejection.
+  Optional callback top-level aliases such as `payload_digest`/`payloadDigest`,
+  `run_id`/`runId`, `node_id`/`nodeId`, and `attempt_id`/`attemptId` are accepted only when both
+  spellings agree, preventing ambiguous callback identity, fencing, and digest metadata.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
   idempotency comparisons. Accepted callback submission projections now also record the canonical
