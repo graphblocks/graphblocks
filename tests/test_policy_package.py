@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 
 import graphblocks
+import yaml
 from graphblocks.output_policy import (
     PendingToolCallsDisposition,
     VALID_DELIVERY_MODES,
@@ -32,6 +33,40 @@ from graphblocks.policy import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_standard_policy_profiles_include_assistant_output_streaming_profile() -> None:
+    profile_set = yaml.safe_load(
+        (
+            ROOT
+            / "docs"
+            / "upstream"
+            / "GraphBlocks_v1.0_Final"
+            / "profiles"
+            / "policy-profiles.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    profile = profile_set["spec"]["profiles"]["assistant-output-standard"]
+
+    assert profile["outputStreaming"]["delivery"] == {
+        "mode": "bounded_holdback",
+        "holdbackMaxTokens": 48,
+        "holdbackMaxDuration": "250ms",
+        "flushBoundaries": ["sentence", "paragraph", "tool_call"],
+    }
+    assert profile["outputStreaming"]["evaluation"]["enforcementPoints"] == [
+        "on_generation_chunk",
+        "before_client_delivery",
+        "before_output_commit",
+    ]
+    assert profile["outputStreaming"]["onViolation"] == {
+        "disposition": "abort_response",
+        "providerCancellation": {"mode": "request"},
+        "pendingToolCalls": {"disposition": "deny"},
+        "deliveredDraft": {"disposition": "retract"},
+        "durableResult": {"disposition": "none"},
+        "replacement": {"kind": "message_ref", "ref": "messages/output-policy-blocked"},
+    }
 
 
 def test_policy_package_exposes_static_evaluator_and_output_gate_contract(monkeypatch) -> None:

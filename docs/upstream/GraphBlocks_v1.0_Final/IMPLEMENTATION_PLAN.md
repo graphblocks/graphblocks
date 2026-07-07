@@ -1513,6 +1513,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `src/graphblocks/data/package-catalog.yaml` install catalog, so optional integration packages,
   foundation package ownership, and MVP metapackage dependencies cannot drift between docs and the
   packaged source of truth.
+- The standard policy profile set now includes the amendment's `assistant-output-standard`
+  bounded-holdback output streaming profile, with generation, client-delivery, and output-commit
+  enforcement points plus abort-response violation handling for pending tool calls and delivered
+  drafts.
 
 ### Package ownership
 

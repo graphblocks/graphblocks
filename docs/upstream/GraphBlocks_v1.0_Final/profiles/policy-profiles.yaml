@@ -5,6 +5,42 @@ metadata:
   version: 1.0.0
 spec:
   profiles:
+    assistant-output-standard:
+      description: Bounded-holdback assistant output streaming policy with mandatory
+        generation, client-delivery, and durable-commit enforcement points.
+      outputStreaming:
+        delivery:
+          mode: bounded_holdback
+          holdbackMaxTokens: 48
+          holdbackMaxDuration: 250ms
+          flushBoundaries:
+          - sentence
+          - paragraph
+          - tool_call
+        evaluation:
+          enforcementPoints:
+          - on_generation_chunk
+          - before_client_delivery
+          - before_output_commit
+          evaluators:
+          - policy.rules
+          - content.classifier
+          - pii.detector
+          maximumUnevaluatedTokens: 32
+          maximumEvaluationInterval: 150ms
+        onViolation:
+          disposition: abort_response
+          providerCancellation:
+            mode: request
+          pendingToolCalls:
+            disposition: deny
+          deliveredDraft:
+            disposition: retract
+          durableResult:
+            disposition: none
+          replacement:
+            kind: message_ref
+            ref: messages/output-policy-blocked
     interactive-finish-current-turn:
       description: Stop admission for the next turn, but complete the already admitted
         turn within a bounded continuation permit and completion reserve.
