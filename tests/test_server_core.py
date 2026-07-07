@@ -1314,6 +1314,43 @@ def test_server_app_treats_repeated_terminal_control_as_idempotent() -> None:
     assert [control["status"] for control in app.run_controls("run-terminal-idempotent-1")] == ["cancelled"]
 
 
+def test_server_app_rejects_resume_without_paused_or_waiting_state() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-resume-active-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-resume-active-1"},
+            "metadata": {
+                "runId": "run-resume-active-1",
+                "sequence": 1,
+                "cursor": "run-resume-active-1:1",
+                "releaseId": "release-resume-active-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-resume-active-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-resume-active-1",
+        "state": "running",
+        "error": "run run-resume-active-1 is not paused or waiting and cannot be resumed",
+    }
+    assert app.run_controls("run-resume-active-1") == ()
+
+
 def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-non-terminal-idempotent-1"] = (

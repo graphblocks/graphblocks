@@ -1202,7 +1202,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   corresponding wait reason.
   Runtime run status snapshots reject zero `started_at` or `updated_at` timestamps before exposing
   status to attach/replay and `GetRunStatus` callers.
-  Non-terminal controls cannot reopen terminal runs. Repeating the latest control state, including
+  Non-terminal controls cannot reopen terminal runs, and `ResumeRun` is admitted only when the
+  current server projection is paused or waiting. Repeating the latest control state, including
   non-terminal pause/resume projections, is idempotent only when the reason matches and does not
   append another projection; a same-state duplicate with a different reason is rejected as a conflict.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by

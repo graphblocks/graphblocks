@@ -2904,6 +2904,36 @@ class GraphBlocksServerApp:
                         "error": f"run {run_id} is terminal with state {current_status}",
                     },
                 )
+        if operation == "resume_run":
+            current_run_state = "running"
+            if existing:
+                latest_status = existing[-1].get("status")
+                if isinstance(latest_status, str):
+                    current_run_state = latest_status
+            else:
+                for submissions in self._callbacks_by_operation_id.values():
+                    if submissions and submissions[-1].run_id == run_id:
+                        current_run_state = "waiting_callback"
+                        break
+            if current_run_state not in {
+                "waiting_input",
+                "waiting_approval",
+                "waiting_review",
+                "waiting_callback",
+                "paused_budget",
+                "paused_policy",
+                "paused_operator",
+                "paused_callback_delivery",
+            }:
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "state": current_run_state,
+                        "error": f"run {run_id} is not paused or waiting and cannot be resumed",
+                    },
+                )
         record = _freeze_json_value("run control record", "record", {
             "operation": operation,
             "status": status,
