@@ -1398,6 +1398,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   decision for a different `before_tool_or_effect` request cannot be replayed into admission.
 - The tool-lifecycle TCK also covers explicit policy deny decisions, proving that runtime policy
   refusal stops admission before approval fallback or side-effect execution.
+- Deferred policy decisions are covered by the same tool-lifecycle TCK path, so an unresolved
+  `before_tool_or_effect` decision cannot be interpreted as runtime admission.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach

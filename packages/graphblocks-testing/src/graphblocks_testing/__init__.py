@@ -1922,6 +1922,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_expired_policy_decision",
             "admission_policy_input_digest_mismatch",
             "admission_policy_denied",
+            "admission_policy_deferred",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -8012,6 +8013,7 @@ class TckRunner:
             "admission_expired_policy_decision",
             "admission_policy_input_digest_mismatch",
             "admission_policy_denied",
+            "admission_policy_deferred",
         }:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
@@ -8083,6 +8085,19 @@ class TckRunner:
                     effect="deny",
                     reason_codes=reason_codes,
                 )
+            if kind == "admission_policy_deferred":
+                raw_reason_codes = fixture.get("reasonCodes", ())
+                reason_codes = (
+                    tuple(str(reason_code) for reason_code in raw_reason_codes)
+                    if isinstance(raw_reason_codes, list)
+                    else ()
+                )
+                policy_decision = replace(
+                    policy_decision,
+                    decision_id=str(fixture.get("decisionId", "decision-defer-tool")),
+                    effect="defer",
+                    reason_codes=reason_codes,
+                )
             output_policy_state = fixture.get("outputPolicyState")
             if not isinstance(output_policy_state, Mapping):
                 output_policy_state = None
@@ -8110,6 +8125,7 @@ class TckRunner:
                     "policyExpiredBeforeApproval": False,
                     "policyDigestRejectedBeforeApproval": False,
                     "policyDeniedBeforeApproval": False,
+                    "policyDeferredBeforeApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -8130,6 +8146,9 @@ class TckRunner:
                     ),
                     "policyDeniedBeforeApproval": (
                         "denied" in message and "requires approval" not in message
+                    ),
+                    "policyDeferredBeforeApproval": (
+                        "deferred" in message and "requires approval" not in message
                     ),
                 }
         elif kind == "approval_argument_mutation":

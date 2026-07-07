@@ -122,6 +122,27 @@
     }
   },
   {
+    "name": "policy_deferred_decision_denies_tool_admission",
+    "kind": "admission_policy_deferred",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "decisionId": "decision-defer-tool",
+    "reasonCodes": [
+      "operator_review_required"
+    ],
+    "expected": {
+      "admitted": false,
+      "policyDeferredBeforeApproval": true,
+      "errorContains": "deferred"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",

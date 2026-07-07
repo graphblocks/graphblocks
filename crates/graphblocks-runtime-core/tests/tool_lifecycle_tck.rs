@@ -38,6 +38,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             run_policy_input_digest_mismatch_case(case_name, case)
         }
         "admission_policy_denied" => run_policy_denied_case(case_name, case),
+        "admission_policy_deferred" => run_policy_deferred_case(case_name, case),
         "approval_argument_mutation" => run_approval_mutation_case(case_name, case),
         other => Err(format!(
             "tool-lifecycle TCK case {case_name} has unknown kind {other}"
@@ -387,6 +388,68 @@ fn run_policy_denied_case(case_name: &str, case: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn run_policy_deferred_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let expected = expected(case, case_name)?;
+    let schema_id = required_str(case, "schemaId")?;
+    let tool_name = required_str(case, "toolName")?;
+    let resolved_tool = resolved_process_tool(tool_name, schema_id)?;
+    let schemas = process_schema_registry(schema_id)?;
+    let call = tool_call_from_arguments(
+        tool_name,
+        &resolved_tool.resolved_tool_id,
+        case.get("arguments")
+            .cloned()
+            .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing arguments"))?,
+    )?;
+    let mut policy_decision = allow_tool_policy_decision();
+    policy_decision.decision_id = required_str(case, "decisionId")?.to_owned();
+    policy_decision.effect = PolicyEffect::Defer;
+    policy_decision.reason_codes = case
+        .get("reasonCodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing reasonCodes"))?
+        .iter()
+        .map(|item| {
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                format!("tool-lifecycle TCK case {case_name} has non-string reasonCode")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
+        approval: None,
+        principal_id: "user-1",
+        idempotency_key: Some("idem-1".to_owned()),
+        admitted_at_unix_ms: 1_200,
+    });
+    let error_text = result
+        .as_ref()
+        .err()
+        .map(admission_error_text)
+        .unwrap_or_default();
+
+    assert_eq!(
+        result.is_ok(),
+        required_bool(expected, "admitted")?,
+        "{case_name}",
+    );
+    assert_eq!(
+        matches!(result, Err(ToolAdmissionError::PolicyDeferred { .. })),
+        required_bool(expected, "policyDeferredBeforeApproval")?,
+        "{case_name}",
+    );
+    assert!(
+        error_text.contains(required_map_str(expected, "errorContains")?),
+        "{case_name}: expected {error_text:?} to contain configured text",
+    );
+    Ok(())
+}
+
 fn run_approval_mutation_case(case_name: &str, case: &Value) -> Result<(), String> {
     let expected = expected(case, case_name)?;
     let schema_id = required_str(case, "schemaId")?;
@@ -531,6 +594,7 @@ fn admission_error_text(error: &ToolAdmissionError) -> &'static str {
         ToolAdmissionError::PolicyDecisionExpired { .. } => "expired",
         ToolAdmissionError::PolicyInputDigestMismatch { .. } => "input digest",
         ToolAdmissionError::PolicyDenied { .. } => "denied",
+        ToolAdmissionError::PolicyDeferred { .. } => "deferred",
         ToolAdmissionError::ResponsePolicyStopped { .. } => "policy stopped",
         _ => "admission failed",
     }
