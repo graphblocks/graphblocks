@@ -2394,7 +2394,9 @@ class GraphBlocksServerApp:
                         continue
                     sequence = metadata.get("sequence")
                     if not isinstance(sequence, int) or isinstance(sequence, bool):
-                        continue
+                        raise ValueError("application events sequence must be an integer")
+                    if sequence < 0:
+                        raise ValueError("application events sequence must be non-negative")
                     event_cursor = f"{run_id}:{sequence}"
                     sequence_by_cursor[event_cursor] = sequence
                     if sequence > last_sequence:
@@ -2440,6 +2442,7 @@ class GraphBlocksServerApp:
                         if isinstance((metadata := event.get("metadata")), Mapping)
                         and isinstance((sequence := metadata.get("sequence")), int)
                         and not isinstance(sequence, bool)
+                        and sequence >= 0
                         and sequence > replay_after_sequence
                     ],
                 },

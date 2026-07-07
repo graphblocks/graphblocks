@@ -3627,6 +3627,33 @@ def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:
     }
 
 
+def test_server_app_rejects_stored_event_replay_with_malformed_sequence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-events-bool-sequence-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": True},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-bool-sequence-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "application events sequence must be an integer",
+    }
+
+
 def test_server_app_reports_stored_event_cursor_expired() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-events-cursor-expired-1"] = (
