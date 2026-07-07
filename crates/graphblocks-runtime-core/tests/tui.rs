@@ -33,6 +33,7 @@ fn protocol_event(
             event_id: event_id.to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-coding-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: None,
             sequence,

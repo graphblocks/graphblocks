@@ -387,6 +387,7 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
             event_id="event-1",
             protocol_version="graphblocks.app.v1",
             run_id="run-1",
+            release_id="release-1",
             turn_id="turn-1",
             sequence=4,
             cursor="cursor-4",
@@ -400,6 +401,7 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
     assert command.metadata.idempotency_key == "idem-1"
     assert command.payload == {"tool_call_id": "tool-call-1"}
     assert event.kind == "AssistantDraftDelta"
+    assert event.metadata.release_id == "release-1"
     assert event.metadata.cursor == "cursor-4"
     assert event.payload == {"delta": "hello"}
     with pytest.raises(TypeError):
@@ -593,6 +595,18 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             event_id="event-1",
             protocol_version="graphblocks.app.v1",
             run_id=" ",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event release_id must not be empty",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            release_id=" ",
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )

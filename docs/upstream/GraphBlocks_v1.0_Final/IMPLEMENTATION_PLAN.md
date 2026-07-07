@@ -1377,6 +1377,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust signed webhook callback envelopes now include optional `operation_id` metadata when present
   on the source application-protocol event. The field is inserted before payload-limit evaluation
   and HMAC signing, so async operation identity participates in webhook delivery verification.
+- Application-protocol event metadata now carries `release_id` in both Rust and Python TCK
+  projections. Rust signed webhook callback envelopes include that release identity before
+  payload-limit checks and HMAC signing, aligning callback delivery with the authoritative
+  replayable event stream contract.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach

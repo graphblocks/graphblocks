@@ -1667,6 +1667,7 @@ impl WebhookSigningConfig {
             "subscription_id": &delivery.subscription_id,
             "event_id": &delivery.event_id,
             "run_id": &delivery.run_id,
+            "release_id": &event.metadata.release_id,
             "sequence": delivery.sequence,
             "cursor": &delivery.cursor,
             "type": event.kind.as_str(),

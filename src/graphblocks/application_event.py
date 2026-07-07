@@ -473,12 +473,13 @@ class ApplicationProtocolEventMetadata:
     run_id: str
     sequence: int
     occurred_at_unix_ms: int
+    release_id: str = "local"
     turn_id: str | None = None
     operation_id: str | None = None
     cursor: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("event_id", "protocol_version", "run_id"):
+        for field_name in ("event_id", "protocol_version", "run_id", "release_id"):
             label = "id" if field_name == "event_id" else field_name
             _validate_non_empty_string(
                 ApplicationProtocolError,

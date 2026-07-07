@@ -1473,6 +1473,7 @@ fn protocol_event_metadata(
         event_id: event_id.to_owned(),
         protocol_version: "graphblocks.app.v1".to_owned(),
         run_id: "run-1".to_owned(),
+        release_id: "release-1".to_owned(),
         turn_id: Some("turn-1".to_owned()),
         operation_id: None,
         sequence,
@@ -1761,6 +1762,19 @@ fn application_protocol_events_reject_empty_required_metadata() {
             json!({}),
         ),
         Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" })
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                release_id: " ".to_owned(),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "release_id",
+        })
     );
     assert_eq!(
         ApplicationProtocolEvent::new(

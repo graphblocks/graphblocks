@@ -1155,6 +1155,7 @@ pub struct ApplicationProtocolEventMetadata {
     pub event_id: String,
     pub protocol_version: String,
     pub run_id: String,
+    pub release_id: String,
     pub turn_id: Option<String>,
     pub operation_id: Option<String>,
     pub sequence: u64,
@@ -1310,6 +1311,7 @@ impl ApplicationProtocolEvent {
         for (field, value) in [
             ("protocol_version", metadata.protocol_version.as_str()),
             ("run_id", metadata.run_id.as_str()),
+            ("release_id", metadata.release_id.as_str()),
         ] {
             if value.trim().is_empty() {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });

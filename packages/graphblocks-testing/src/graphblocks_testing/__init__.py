@@ -3807,6 +3807,7 @@ class TckRunner:
                                 raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
                             ),
                             run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                            release_id=str(raw_metadata.get("releaseId", raw_metadata.get("release_id", ""))),
                             turn_id=(
                                 str(raw_metadata["turnId"])
                                 if raw_metadata.get("turnId") is not None
@@ -3850,6 +3851,7 @@ class TckRunner:
                             "eventId": event.metadata.event_id,
                             "protocolVersion": event.metadata.protocol_version,
                             "runId": event.metadata.run_id,
+                            "releaseId": event.metadata.release_id,
                             "turnId": event.metadata.turn_id,
                             "operationId": event.metadata.operation_id,
                             "sequence": event.metadata.sequence,
@@ -3884,6 +3886,7 @@ class TckRunner:
                                     raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
                                 ),
                                 run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                                release_id=str(raw_metadata.get("releaseId", raw_metadata.get("release_id", ""))),
                                 turn_id=(
                                     str(raw_metadata["turnId"])
                                     if raw_metadata.get("turnId") is not None
@@ -3990,6 +3993,7 @@ class TckRunner:
                                     raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
                                 ),
                                 run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                                release_id=str(raw_metadata.get("releaseId", raw_metadata.get("release_id", ""))),
                                 turn_id=(
                                     str(raw_metadata["turnId"])
                                     if raw_metadata.get("turnId") is not None

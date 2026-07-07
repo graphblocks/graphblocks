@@ -276,6 +276,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                     protocol_version: required_str(&case["metadata"], "protocolVersion")?
                         .to_owned(),
                     run_id: required_str(&case["metadata"], "runId")?.to_owned(),
+                    release_id: required_str(&case["metadata"], "releaseId")?.to_owned(),
                     turn_id: metadata
                         .get("turnId")
                         .and_then(Value::as_str)
@@ -314,6 +315,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "eventId": event.metadata.event_id,
                 "protocolVersion": event.metadata.protocol_version,
                 "runId": event.metadata.run_id,
+                "releaseId": event.metadata.release_id,
                 "turnId": event.metadata.turn_id,
                 "operationId": event.metadata.operation_id,
                 "sequence": event.metadata.sequence,
@@ -350,6 +352,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         protocol_version: required_str(&operation["metadata"], "protocolVersion")?
                             .to_owned(),
                         run_id: required_str(&operation["metadata"], "runId")?.to_owned(),
+                        release_id: required_str(&operation["metadata"], "releaseId")?.to_owned(),
                         turn_id: metadata
                             .get("turnId")
                             .and_then(Value::as_str)
@@ -455,6 +458,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         protocol_version: required_str(&operation["metadata"], "protocolVersion")?
                             .to_owned(),
                         run_id: required_str(&operation["metadata"], "runId")?.to_owned(),
+                        release_id: required_str(&operation["metadata"], "releaseId")?.to_owned(),
                         turn_id: metadata
                             .get("turnId")
                             .and_then(Value::as_str)

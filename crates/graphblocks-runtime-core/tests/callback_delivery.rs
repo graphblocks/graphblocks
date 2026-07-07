@@ -49,6 +49,7 @@ fn protocol_event(
             event_id: event_id.to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: None,
             sequence,
@@ -258,6 +259,7 @@ fn subscription_filter_matches_operation_metadata_without_payload_duplication() 
             event_id: "event-callback-1".to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: Some("op-ci-1".to_owned()),
             sequence: 1,
@@ -273,6 +275,7 @@ fn subscription_filter_matches_operation_metadata_without_payload_duplication() 
             event_id: "event-callback-2".to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: Some("op-other".to_owned()),
             sequence: 2,
@@ -2312,6 +2315,7 @@ fn webhook_delivery_worker_returns_mandatory_terminal_run_actions() {
             event_id: "event-oversized-action".to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: None,
             sequence: 11,
@@ -2605,6 +2609,38 @@ fn webhook_envelope_signing_includes_operation_id_when_present() {
 }
 
 #[test]
+fn webhook_envelope_signing_includes_release_id() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let mut event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    event.metadata.release_id = "release-2026-07-08".to_owned();
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+
+    let signed = signing
+        .sign_delivery(&delivery, &event, 2_000)
+        .expect("delivery signs");
+
+    assert_eq!(
+        signed
+            .body
+            .get("release_id")
+            .and_then(|value| value.as_str()),
+        Some("release-2026-07-08")
+    );
+    signing
+        .verify_signed_delivery(&signed, 2_050)
+        .expect("fresh signature verifies");
+}
+
+#[test]
 fn webhook_signature_verification_rejects_stale_or_tampered_payloads() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(
@@ -2653,6 +2689,7 @@ fn webhook_target_rejects_oversized_signed_payload_before_delivery() {
             event_id: "event-oversized".to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: None,
             sequence: 11,
@@ -2703,6 +2740,7 @@ fn webhook_delivery_worker_persists_oversized_payload_failure() {
             event_id: "event-oversized".to_owned(),
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-1".to_owned(),
+            release_id: "release-1".to_owned(),
             turn_id: None,
             operation_id: None,
             sequence: 11,
