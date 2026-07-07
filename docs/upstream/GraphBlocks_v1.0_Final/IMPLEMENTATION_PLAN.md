@@ -148,6 +148,8 @@ graphblocks-cli
     `tck-...` run ids and reporting native journal kinds in observed conformance evidence. Runtime
     cases without `nativeNodeOutputs` fall back to the local reference runtime with explicit
     fallback metadata so shared semantic failure fixtures remain runnable under the native profile.
+    The `graphblocks-tck run runtime ... --profile native --json` CLI path reports the same native
+    or fallback evidence for shared runtime TCK acceptance checks.
   - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
     evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one

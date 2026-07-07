@@ -1711,6 +1711,34 @@ def test_testing_package_cli_runs_policy_tck_suite(monkeypatch, capsys) -> None:
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_runtime_tck_native_profile_with_fallback_metadata(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "runtime", str(ROOT / "tck" / "runtime" / "cases.json"), "--profile", "native", "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["profile"] == "native"
+    assert {result["kind"] for result in payload["results"]} == {"runtime"}
+    observed = {result["case_id"]: result["observed"] for result in payload["results"]}
+    assert observed["prompt_render_output"]["runtime"] in {"native", "local"}
+    assert observed["prompt_render_output"]["runtime"] == "native" or observed["prompt_render_output"][
+        "native_fallback_reason"
+    ] == "native_runtime_unavailable"
+    assert observed["control_map_renders_each_item"] == {
+        "native_fallback_reason": "missing_native_node_outputs",
+        "outputs": {"values": ["Item 1: alpha", "Item 2: beta"]},
+        "runtime": "local",
+        "status": "succeeded",
+        "terminal_kind": "run_succeeded",
+    }
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_application_event_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
