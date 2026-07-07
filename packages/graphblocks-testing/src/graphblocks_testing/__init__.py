@@ -1920,6 +1920,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_invalid_arguments",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
+            "admission_policy_input_digest_mismatch",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -8008,6 +8009,7 @@ class TckRunner:
             "admission_invalid_arguments",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
+            "admission_policy_input_digest_mismatch",
         }:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
@@ -8061,6 +8063,11 @@ class TckRunner:
                 ),
                 input_digest="sha256:before-tool",
             )
+            if kind == "admission_policy_input_digest_mismatch":
+                policy_decision = replace(
+                    policy_decision,
+                    input_digest=str(fixture.get("actualPolicyInputDigest", "sha256:stale-before-tool")),
+                )
             output_policy_state = fixture.get("outputPolicyState")
             if not isinstance(output_policy_state, Mapping):
                 output_policy_state = None
@@ -8070,7 +8077,9 @@ class TckRunner:
                     resolved_tool,
                     schemas,
                     policy_decision=policy_decision,
-                    expected_policy_input_digest=policy_decision.input_digest,
+                    expected_policy_input_digest=str(
+                        fixture.get("expectedPolicyInputDigest", policy_decision.input_digest)
+                    ),
                     output_policy_state=output_policy_state,
                     approval=None,
                     principal_id="user-1",
@@ -8084,6 +8093,7 @@ class TckRunner:
                     "schemaRejectedBeforeApproval": False,
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
+                    "policyDigestRejectedBeforeApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -8098,6 +8108,9 @@ class TckRunner:
                     ),
                     "policyExpiredBeforeApproval": (
                         "expired" in message and "requires approval" not in message
+                    ),
+                    "policyDigestRejectedBeforeApproval": (
+                        "input digest" in message and "requires approval" not in message
                     ),
                 }
         elif kind == "approval_argument_mutation":

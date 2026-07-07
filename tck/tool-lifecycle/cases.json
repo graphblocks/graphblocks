@@ -82,6 +82,25 @@
     }
   },
   {
+    "name": "policy_input_digest_mismatch_denies_tool_admission",
+    "kind": "admission_policy_input_digest_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expectedPolicyInputDigest": "sha256:before-tool",
+    "actualPolicyInputDigest": "sha256:stale-before-tool",
+    "expected": {
+      "admitted": false,
+      "policyDigestRejectedBeforeApproval": true,
+      "errorContains": "input digest"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",
