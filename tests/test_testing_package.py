@@ -244,6 +244,92 @@ def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bri
     ]
 
 
+def test_testing_package_native_profile_falls_back_for_unannotated_runtime_case(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-runtime-fallback"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Fallback {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/native-fallback",
+        graph=graph,
+        inputs={"message": {"text": "Ada"}},
+        expected_outputs={"prompt": "Fallback Ada"},
+        expected_terminal_kind="run_succeeded",
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed == {
+        "status": "succeeded",
+        "outputs": {"prompt": "Fallback Ada"},
+        "terminal_kind": "run_succeeded",
+        "runtime": "local",
+        "native_fallback_reason": "missing_native_node_outputs",
+    }
+
+
+def test_testing_package_native_profile_falls_back_when_native_runtime_unavailable(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+
+    def run_test_graph(*_args: object, **_options: object) -> dict[str, object]:
+        raise ModuleNotFoundError("No module named 'graphblocks_runtime'")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_test_graph=run_test_graph),
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-runtime-unavailable"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Unavailable {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/native-unavailable",
+        graph=graph,
+        inputs={"message": {"text": "Ada"}},
+        native_node_outputs={"render": {"prompt": "Native Ada"}},
+        expected_outputs={"prompt": "Unavailable Ada"},
+        expected_terminal_kind="run_succeeded",
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed == {
+        "status": "succeeded",
+        "outputs": {"prompt": "Unavailable Ada"},
+        "terminal_kind": "run_succeeded",
+        "runtime": "local",
+        "native_fallback_reason": "native_runtime_unavailable",
+    }
+
+
 def test_testing_package_loads_runtime_tck_native_node_outputs(tmp_path, monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

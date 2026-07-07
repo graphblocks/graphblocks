@@ -37,6 +37,11 @@
         "text": "ok"
       }
     },
+    "nativeNodeOutputs": {
+      "render": {
+        "prompt": "Test ok"
+      }
+    },
     "expected": {
       "status": "succeeded",
       "terminal_kind": "run_succeeded",

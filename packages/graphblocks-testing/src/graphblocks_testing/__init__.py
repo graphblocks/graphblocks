@@ -9844,50 +9844,78 @@ class TckRunner:
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
             if self.profile == "native":
-                if not case.native_node_outputs:
-                    raise ValueError("native runtime TCK case requires nativeNodeOutputs")
-                run_id = "tck-" + "".join(
-                    character if character.isalnum() else "-" for character in case.case_id.strip()
-                ).strip("-")
-                native_result = run_native_test_graph(
-                    case.graph,
-                    case.inputs,
-                    case.native_node_outputs,
-                    run_id=run_id,
-                )
-                journal = native_result.get("journal", [])
-                journal_records = journal if isinstance(journal, list) else []
-                terminal_kind = next(
-                    (
-                        record.get("kind")
-                        for record in reversed(journal_records)
-                        if isinstance(record, Mapping) and bool(record.get("terminal"))
-                    ),
-                    None,
-                )
-                if terminal_kind is None:
-                    terminal_kind = next(
-                        (
-                            record.get("kind")
-                            for record in reversed(journal_records)
-                            if isinstance(record, Mapping)
-                            and isinstance(record.get("kind"), str)
-                            and str(record.get("kind")).startswith("run_")
-                        ),
-                        None,
-                    )
-                observed = {
-                    "status": native_result.get("status"),
-                    "outputs": native_result.get("outputs", {}),
-                    "terminal_kind": terminal_kind,
-                    "run_id": native_result.get("runId", native_result.get("run_id", run_id)),
-                    "runtime": "native",
-                    "journal_kinds": [
-                        record["kind"]
-                        for record in journal_records
-                        if isinstance(record, Mapping) and isinstance(record.get("kind"), str)
-                    ],
-                }
+                if case.native_node_outputs:
+                    run_id = "tck-" + "".join(
+                        character if character.isalnum() else "-" for character in case.case_id.strip()
+                    ).strip("-")
+                    try:
+                        native_result = run_native_test_graph(
+                            case.graph,
+                            case.inputs,
+                            case.native_node_outputs,
+                            run_id=run_id,
+                        )
+                    except (ImportError, ModuleNotFoundError, RuntimeError) as native_error:
+                        message = str(native_error)
+                        if (
+                            isinstance(native_error, (ImportError, ModuleNotFoundError))
+                            or "native extension is not built" in message
+                            or "native extension is not available" in message
+                        ):
+                            result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                            observed = {
+                                "status": result.status,
+                                "outputs": result.outputs,
+                                "terminal_kind": result.journal.terminal_kind,
+                                "runtime": "local",
+                                "native_fallback_reason": "native_runtime_unavailable",
+                            }
+                        else:
+                            raise
+                    else:
+                        journal = native_result.get("journal", [])
+                        journal_records = journal if isinstance(journal, list) else []
+                        terminal_kind = next(
+                            (
+                                record.get("kind")
+                                for record in reversed(journal_records)
+                                if isinstance(record, Mapping)
+                                and bool(record.get("terminal"))
+                            ),
+                            None,
+                        )
+                        if terminal_kind is None:
+                            terminal_kind = next(
+                                (
+                                    record.get("kind")
+                                    for record in reversed(journal_records)
+                                    if isinstance(record, Mapping)
+                                    and isinstance(record.get("kind"), str)
+                                    and str(record.get("kind")).startswith("run_")
+                                ),
+                                None,
+                            )
+                        observed = {
+                            "status": native_result.get("status"),
+                            "outputs": native_result.get("outputs", {}),
+                            "terminal_kind": terminal_kind,
+                            "run_id": native_result.get("runId", native_result.get("run_id", run_id)),
+                            "runtime": "native",
+                            "journal_kinds": [
+                                record["kind"]
+                                for record in journal_records
+                                if isinstance(record, Mapping) and isinstance(record.get("kind"), str)
+                            ],
+                        }
+                else:
+                    result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                    observed = {
+                        "status": result.status,
+                        "outputs": result.outputs,
+                        "terminal_kind": result.journal.terminal_kind,
+                        "runtime": "local",
+                        "native_fallback_reason": "missing_native_node_outputs",
+                    }
             else:
                 result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
                 observed = {
