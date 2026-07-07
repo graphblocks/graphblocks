@@ -915,6 +915,7 @@ class ServerAsyncCallbackRejection:
     node_id: str | None = None
     attempt_id: str | None = None
     status: str | None = None
+    artifact_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         for field_name in ("operation_id", "callback_id", "idempotency_key", "reason", "received_at"):
@@ -946,6 +947,14 @@ class ServerAsyncCallbackRejection:
                     field_name,
                     _validate_non_empty_string("server async callback rejection", field_name, value),
                 )
+        object.__setattr__(
+            self,
+            "artifact_ids",
+            tuple(
+                _validate_non_empty_string("server async callback rejection", "artifact_ids", artifact_id)
+                for artifact_id in self.artifact_ids
+            ),
+        )
 
     @staticmethod
     def _receipt_metadata(submission: ServerAsyncCallbackSubmission) -> dict[str, object]:
@@ -953,6 +962,11 @@ class ServerAsyncCallbackRejection:
             "payload_digest": submission.payload_digest,
             "verified_by": submission.verified_by,
             "policy_snapshot_id": submission.policy_snapshot_id,
+            "artifact_ids": tuple(
+                artifact["artifact_id"]
+                for artifact in submission.artifacts
+                if isinstance(artifact, Mapping) and isinstance(artifact.get("artifact_id"), str)
+            ),
         }
 
     @classmethod
@@ -1178,6 +1192,8 @@ class ServerAsyncCallbackRejection:
             value["attemptId"] = self.attempt_id
         if self.status is not None:
             value["status"] = self.status
+        if self.artifact_ids:
+            value["artifactIds"] = list(self.artifact_ids)
         return value
 
 

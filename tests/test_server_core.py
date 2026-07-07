@@ -1940,6 +1940,64 @@ def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> N
     )
 
 
+def test_server_app_rejection_records_callback_artifact_ids() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-1",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                    "artifacts": [{"artifact_id": "artifact-ci-log-1", "uri": "blob://ci/log-1"}],
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    conflict = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-1",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                    "artifacts": [{"artifact_id": "artifact-ci-log-2", "uri": "blob://ci/log-2"}],
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert conflict.status_code == 409
+    assert app.async_callback_rejections("op-ci-1") == (
+        {
+            "operationId": "op-ci-1",
+            "callbackId": "cb-1",
+            "idempotencyKey": "idem-callback-1",
+            "payloadDigest": graphblocks.canonical_hash({"status": "completed"}),
+            "verifiedBy": "callback-relay",
+            "policySnapshotId": "local",
+            "attemptId": "attempt-1",
+            "artifactIds": ["artifact-ci-log-2"],
+            "reason": "idempotency_conflict",
+            "receivedAt": "2026-07-02T00:00:01Z",
+        },
+    )
+
+
 def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-1"] = (
