@@ -42,6 +42,23 @@
     }
   },
   {
+    "name": "missing_schema_denies_tool_admission",
+    "kind": "admission_missing_schema",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "schemaMissingBeforeApproval": true,
+      "errorContains": "schema"
+    }
+  },
+  {
     "name": "policy_stopped_response_denies_tool_admission",
     "kind": "admission_policy_stopped_response",
     "toolName": "process.run",

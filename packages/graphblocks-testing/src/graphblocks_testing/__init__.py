@@ -1918,6 +1918,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if case_kind not in {
             "incremental_arguments",
             "admission_invalid_arguments",
+            "admission_missing_schema",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8015,6 +8016,7 @@ class TckRunner:
             }
         elif kind in {
             "admission_invalid_arguments",
+            "admission_missing_schema",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8053,15 +8055,19 @@ class TckRunner:
                     resolved_tool,
                     valid_until=str(fixture.get("resolvedToolValidUntil", "1970-01-01T00:00:01Z")),
                 )
-            schemas = ToolSchemaRegistry(
-                (
-                    JsonSchema(
-                        schema_id,
-                        JsonSchemaNode.object().required_property(
-                            "cmd",
-                            JsonSchemaNode.array(JsonSchemaNode.string()),
+            schemas = (
+                ToolSchemaRegistry(())
+                if kind == "admission_missing_schema"
+                else ToolSchemaRegistry(
+                    (
+                        JsonSchema(
+                            schema_id,
+                            JsonSchemaNode.object().required_property(
+                                "cmd",
+                                JsonSchemaNode.array(JsonSchemaNode.string()),
+                            ),
                         ),
-                    ),
+                    )
                 )
             )
             draft = ToolCallDraft.proposed("response-1", "call-1", tool_name)
@@ -8173,6 +8179,7 @@ class TckRunner:
                     "admitted": True,
                     "error": None,
                     "schemaRejectedBeforeApproval": False,
+                    "schemaMissingBeforeApproval": False,
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
                     "resolvedToolExpiredBeforeApproval": False,
@@ -8192,6 +8199,11 @@ class TckRunner:
                     "error": message,
                     "schemaRejectedBeforeApproval": (
                         "arguments invalid" in message and "requires approval" not in message
+                    ),
+                    "schemaMissingBeforeApproval": (
+                        "schema" in message
+                        and "not registered" in message
+                        and "requires approval" not in message
                     ),
                     "policyStoppedBeforeApproval": (
                         "policy stopped" in message and "requires approval" not in message
