@@ -21,7 +21,18 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
-dependencies = []
+dependencies = [
+  "graphblocks-core~=1.0",
+  "graphblocks-runtime~=1.0",
+  "graphblocks-stdlib~=1.0",
+  "graphblocks-documents~=1.0",
+  "graphblocks-rag~=1.0",
+  "graphblocks-conversation~=1.0",
+  "graphblocks-policy~=1.0",
+  "graphblocks-budget~=1.0",
+  "graphblocks-usage~=1.0",
+  "graphblocks-cli~=1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/graphblocks/graphblocks"

@@ -112,6 +112,10 @@ graphblocks-cli
 - Package manifest audit now normalizes PEP 508 direct-reference dependencies before applying
   blocked dependency policy, so `name @ URL` and optional extra direct references cannot bypass the
   license/vulnerability gate.
+- The `graphblocks` Python metapackage manifest now carries the default foundation dependency
+  closure (`graphblocks-core`, runtime, stdlib, documents, RAG, conversation, policy, budget,
+  usage, and CLI) instead of remaining an empty placeholder, so package doctor checks can verify
+  the installable MVP bundle against the catalog.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 
