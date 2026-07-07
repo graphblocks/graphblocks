@@ -71,6 +71,8 @@ spec:
     - usage
     - budget-race
     - exhaustion
+    acceptanceApplications:
+    - verified-rtl-workspace-trial
   - id: GB-C4-PRODUCTION
     status: normative-profile
     extends:
@@ -106,6 +108,8 @@ spec:
     - task-budget-delegation
     tck:
     - orchestration
+    acceptanceApplications:
+    - bounded-research-orchestrator
   - id: GB-X2-VOICE
     status: experimental-extension
     extends:
@@ -117,6 +121,8 @@ spec:
     - playback-ledger
     tck:
     - voice
+    acceptanceApplications:
+    - realtime-voice-agent
   - id: GB-X3-DURABLE-STREAM
     status: experimental-extension
     extends:

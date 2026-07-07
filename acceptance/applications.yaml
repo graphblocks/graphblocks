@@ -16,6 +16,17 @@ spec:
     - callback journal-before-resume check
     - signed webhook delivery check
     description: Background coding agent task with accepted invocation, replayable run events, async CI callback resume, signed callback subscription, review, and CAS commit.
+  - id: bounded-research-orchestrator
+    profiles:
+    - GB-X1-ORCHESTRATION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/06-bounded-research-orchestrator.yaml
+    gates:
+    - graphblocks validate
+    - graphblocks plan --expand
+    - bounded task plan check
+    - task budget delegation check
+    - replan patch CAS check
+    description: Bounded research orchestration with worker pool resolution, task plan validation, per-task checkpointing, budget pressure handling, replanning, and independent verification.
   - id: direct-file-analysis
     profiles:
     - GB-C2-AI-APPLICATION
@@ -66,6 +77,16 @@ spec:
     - conversation CAS check
     - draft retract commit check
     description: Multi-turn chatbot with attachment handling, regenerate and branch, CAS, draft/retract/commit, and quota profiles.
+  - id: realtime-voice-agent
+    profiles:
+    - GB-X2-VOICE
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/10-realtime-voice-extension.yaml
+    gates:
+    - graphblocks validate
+    - duplex session contract check
+    - interruption authority check
+    - playback ledger check
+    description: Realtime duplex voice agent with provider turn-detection authority, local VAD metrics, adaptive interruption, playout acknowledgements, and voice-session telemetry.
   - id: telemetry-outage-correctness
     profiles:
     - GB-C4-PRODUCTION
@@ -76,3 +97,13 @@ spec:
     - Langfuse projection check
     - telemetry outage correctness check
     description: OTel and Langfuse projection while audit, usage, budget, and recovery remain correct when telemetry is unavailable.
+  - id: verified-rtl-workspace-trial
+    profiles:
+    - GB-C3-GOVERNED-RUNTIME
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml
+    gates:
+    - graphblocks validate
+    - budget lease reservation check
+    - review invalidation check
+    - governed trial commit gate
+    description: Verified workspace trial using budgeted EDA leases, sandboxed candidate evaluation, review invalidation, gate evaluation, and compare-and-swap changeset commit.

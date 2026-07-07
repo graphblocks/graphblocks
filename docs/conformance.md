@@ -46,6 +46,13 @@ Profile inventory checks use the implemented profile catalog:
 graphblocks-tck check tck --profiles src/graphblocks/data/conformance-profiles.yaml --profile GB-C3-GOVERNED-RUNTIME
 ```
 
+## Acceptance Applications
+
+Profile claims can also require acceptance applications. The manifest in
+`acceptance/applications.yaml` maps each required application to a shipped
+example, profile, and gate list. Examples that serve as profile evidence should
+be declared there instead of remaining only illustrative YAML.
+
 ## Claiming Support
 
 When adding a feature, update or add the narrowest applicable TCK fixture. A

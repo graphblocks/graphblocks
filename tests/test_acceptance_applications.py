@@ -36,14 +36,41 @@ def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch
     assert coverage.ok
     assert coverage.issue_contracts() == []
     assert manifest.application_ids() == (
+        "bounded-research-orchestrator",
         "coding-agent-background-callbacks",
         "direct-file-analysis",
         "document-ingestion",
         "enterprise-rag",
         "kubernetes-canary",
         "multi-turn-chat",
+        "realtime-voice-agent",
         "telemetry-outage-correctness",
+        "verified-rtl-workspace-trial",
     )
+
+
+def test_profiled_examples_are_declared_acceptance_applications(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+
+    scenario_paths = {
+        application.scenario_path for application in manifest.applications
+    }
+
+    assert scenario_paths >= {
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/02-document-ingestion.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/03-policy-governed-chat.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/05-authority-backed-advisory.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/06-bounded-research-orchestrator.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/10-realtime-voice-extension.yaml",
+        "docs/upstream/GraphBlocks_v1.0_Final/examples/11-coding-agent-background-callbacks.yaml",
+    }
 
 
 def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
@@ -313,6 +340,7 @@ def test_x1_conformance_profile_includes_orchestration_tck_coverage(monkeypatch)
 
     assert coverage.ok
     assert "orchestration" in coverage.claim.tck_suites
+    assert "bounded-research-orchestrator" in coverage.claim.acceptance_applications
     assert coverage.missing_suites == ()
 
 
@@ -330,6 +358,7 @@ def test_x2_conformance_profile_includes_voice_tck_coverage(monkeypatch) -> None
 
     assert coverage.ok
     assert "voice" in coverage.claim.tck_suites
+    assert "realtime-voice-agent" in coverage.claim.acceptance_applications
     assert coverage.missing_suites == ()
 
 
