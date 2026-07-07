@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -1799,6 +1799,7 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "background_run_event_stream",
             "callback_delivery_projection",
             "async_callback_resume_guards",
+            "async_callback_cancel_race",
             "external_operation_reconciliation",
         }:
             raise ValueError(f"durable TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -7059,6 +7060,54 @@ class TckRunner:
                     "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
                     "coordinatorFailoverResumesOnce": int(raw_resume.get("successfulResumeCount", raw_resume.get("successful_resume_count", 0))) == 1,
+                }
+            elif kind == "async_callback_cancel_race":
+                raw_journal = fixture.get("journal", ())
+                raw_race = fixture.get("race", {})
+                if not isinstance(raw_journal, Sequence) or isinstance(raw_journal, (str, bytes)):
+                    raise ValueError("durable async_callback_cancel_race case requires journal")
+                if not isinstance(raw_race, Mapping):
+                    raise ValueError("durable async_callback_cancel_race case requires race")
+                journal_entries = [entry for entry in raw_journal if isinstance(entry, Mapping)]
+                cancel_entries = [
+                    entry
+                    for entry in journal_entries
+                    if str(entry.get("kind", "")).lower() in {"cancelrun", "run_cancelled", "cancelled"}
+                ]
+                callback_entries = [
+                    entry
+                    for entry in journal_entries
+                    if str(entry.get("kind", "")).lower()
+                    in {"externalcallbackreceived", "external_callback_received"}
+                ]
+                cancel_sequence = min(
+                    (int(entry.get("sequence", 0)) for entry in cancel_entries),
+                    default=0,
+                )
+                callback_sequence = min(
+                    (int(entry.get("sequence", 0)) for entry in callback_entries),
+                    default=0,
+                )
+                fences = {
+                    str(entry.get("ownershipFence", entry.get("ownership_fence", "")))
+                    for entry in journal_entries
+                    if entry.get("ownershipFence", entry.get("ownership_fence")) is not None
+                }
+                observed = {
+                    "journalOrderingDecidesRace": (
+                        str(raw_race.get("winner", "")) == "cancel"
+                        and cancel_sequence > 0
+                        and callback_sequence > cancel_sequence
+                    ),
+                    "callbackReceiptRecorded": bool(raw_race.get("callbackReceiptRecorded", raw_race.get("callback_receipt_recorded", False)))
+                    and bool(callback_entries),
+                    "cancelWinsBlocksResume": (
+                        str(raw_race.get("winner", "")) == "cancel"
+                        and not bool(raw_race.get("resumeAttempted", raw_race.get("resume_attempted", True)))
+                    ),
+                    "lateCallbackCommitsResult": bool(raw_race.get("resultCommitted", raw_race.get("result_committed", True))),
+                    "lateUsageReconciled": bool(raw_race.get("usageReconciled", raw_race.get("usage_reconciled", False))),
+                    "ownershipFenceStable": len(fences) == 1 and "" not in fences,
                 }
             elif kind == "external_operation_reconciliation":
                 raw_operation = fixture.get("operation", {})

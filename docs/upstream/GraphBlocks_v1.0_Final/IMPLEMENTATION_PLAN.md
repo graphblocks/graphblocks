@@ -1462,6 +1462,9 @@ resume, and resume without ownership fencing.
 - webhook 409 duplicate can mark delivery acknowledged.
 - callback signature/schema failure does not resume run.
 - callback after timeout, cancellation, or newer retry attempt does not resume stale work.
+- The shared durable TCK now includes a callback/cancel race fixture where the cancellation journal
+  entry wins before `ExternalCallbackReceived`; the callback may be recorded and late usage
+  reconciled, but it cannot resume the run or commit a result under the same ownership fence.
 - callback receipt is journaled before resume.
 - coordinator failover resumes once.
 - budget exhaustion during wait records callback but pauses resume.

@@ -1168,7 +1168,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 8
+    assert [case.kind for case in cases] == ["durable"] * 13
     assert report.ok
     assert {case.case_id for case in cases} == {
         "source_cursor_replay_and_commit_advances",
@@ -1179,9 +1179,15 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "tool_terminal_record_projects_tool_result",
         "tool_terminal_rejects_expired_committed_effect",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+        "background_run_detach_replay_and_cursor_expiry",
+        "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
+        "async_callback_resume_auth_schema_stale_and_budget_guards",
+        "callback_cancel_race_cancel_wins_and_blocks_resume",
+        "external_operation_late_side_effect_usage_reconciliation",
     }
     assert any(result.observed.get("replayOffsets") == [11, 12] for result in report.results)
     assert any(result.observed.get("lateDurableResultError") == "response_policy_stopped" for result in report.results)
+    assert any(result.observed.get("cancelWinsBlocksResume") is True for result in report.results)
     assert "load_durable_tck_cases" in graphblocks_testing.__all__
 
 
@@ -1620,6 +1626,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_detach_replay_and_cursor_expiry",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
+        "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
     )
     assert by_suite["orchestration"].case_ids == (
