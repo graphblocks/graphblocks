@@ -178,6 +178,10 @@ impl TypedValue {
         canonical_json(&self.canonical_value())
     }
 
+    pub fn to_canonical_json(&self) -> String {
+        self.canonical_json()
+    }
+
     pub fn into_value(self) -> Value {
         self.value
     }

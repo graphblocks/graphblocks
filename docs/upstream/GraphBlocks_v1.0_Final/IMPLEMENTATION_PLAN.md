@@ -93,7 +93,8 @@ graphblocks-cli
 - Typed value schema envelopes now use the shared `tck/schema/typed-values.json` fixture from both
   Python `graphblocks-core`, Rust `graphblocks-schema`, and Rust `graphblocks-types`;
   `graphblocks-schema` now exposes the schema-owned `TypedValue` primitive and canonical JSON
-  helper, while `graphblocks-types` continues to assert compatibility with the same fixture.
+  helper, while `graphblocks-types` is a compatibility re-export that no longer depends on the
+  compiler crate for typed-value canonicalization.
 - `graphblocks-testing` can load and run the typed-value schema fixture through the shared schema
   TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
   relying on package-local tests only. TCK suite manifests now surface auxiliary suite fixtures such

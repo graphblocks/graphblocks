@@ -55,6 +55,7 @@ def test_schema_and_types_crates_are_workspace_members() -> None:
     )
     assert types_crate["package"]["name"] == "graphblocks-types"
     assert types_crate["dependencies"]["graphblocks-schema"]["path"] == "../graphblocks-schema"
+    assert "graphblocks-compiler" not in types_crate["dependencies"]
 
 
 def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
