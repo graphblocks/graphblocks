@@ -2998,6 +2998,31 @@ def test_server_async_callback_from_request_rejects_body_header_idempotency_conf
         )
 
 
+def test_server_async_callback_from_request_rejects_conflicting_idempotency_headers() -> None:
+    with pytest.raises(ValueError, match="server async callback idempotency_key header values must not conflict"):
+        ServerAsyncCallbackSubmission.from_request(
+            operation_id="op-ci-1",
+            request=ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={
+                    "GraphBlocks-Idempotency-Key": "idem-graphblocks",
+                    "Idempotency-Key": "idem-legacy",
+                },
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": "cb-1",
+                        "payload": {"status": "completed"},
+                    }
+                ).encode("utf-8"),
+                requested_at="2026-07-02T00:00:00Z",
+            ),
+            verified_by="callback-relay",
+        )
+
+
 def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
     with pytest.raises(ValueError, match="server async callback artifacts must be a sequence"):
         ServerAsyncCallbackSubmission(

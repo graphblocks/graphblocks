@@ -1474,7 +1474,15 @@ def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str
 
 
 def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, str]) -> object:
-    header_value = headers.get("graphblocks-idempotency-key", headers.get("idempotency-key"))
+    graphblocks_header_value = headers.get("graphblocks-idempotency-key")
+    legacy_header_value = headers.get("idempotency-key")
+    if (
+        graphblocks_header_value is not None
+        and legacy_header_value is not None
+        and graphblocks_header_value != legacy_header_value
+    ):
+        raise ValueError("server async callback idempotency_key header values must not conflict")
+    header_value = graphblocks_header_value if graphblocks_header_value is not None else legacy_header_value
     body_value = _callback_alias_value(body, "idempotency_key", "idempotencyKey")
     if body_value is not None and header_value is not None and body_value != header_value:
         raise ValueError("server async callback idempotency_key body/header values must not conflict")
