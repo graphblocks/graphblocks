@@ -1400,6 +1400,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   gates, proving that calls cannot be admitted against a different scoped capability.
 - Tool-name mismatches are covered by the same TCK path, proving that a call cannot swap the
   model-visible tool contract while reusing a resolved capability id.
+- Argument-digest mismatches are covered by the same TCK path, proving that changed tool
+  arguments cannot reuse stale canonical hashes to reach schema, policy, approval, or effect gates.
 - Expired resolved tools are covered by the same TCK path, proving that scoped tool capabilities
   cannot be admitted after their resolution window closes.
 - The same shared tool-lifecycle TCK now covers policy input digest mismatches, proving that a

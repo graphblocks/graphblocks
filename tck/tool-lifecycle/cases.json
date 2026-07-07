@@ -95,6 +95,24 @@
     }
   },
   {
+    "name": "arguments_digest_mismatch_denies_tool_admission",
+    "kind": "admission_arguments_digest_mismatch",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "argumentsDigest": "sha256:stale",
+    "expected": {
+      "admitted": false,
+      "argumentsDigestRejectedBeforeSchema": true,
+      "errorContains": "digest"
+    }
+  },
+  {
     "name": "policy_stopped_response_denies_tool_admission",
     "kind": "admission_policy_stopped_response",
     "toolName": "process.run",

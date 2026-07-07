@@ -1921,6 +1921,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_missing_schema",
             "admission_resolved_tool_mismatch",
             "admission_tool_name_mismatch",
+            "admission_arguments_digest_mismatch",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8021,6 +8022,7 @@ class TckRunner:
             "admission_missing_schema",
             "admission_resolved_tool_mismatch",
             "admission_tool_name_mismatch",
+            "admission_arguments_digest_mismatch",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8084,6 +8086,12 @@ class TckRunner:
                 str(fixture.get("callResolvedToolId", resolved_tool.resolved_tool_id)),
                 created_at="2026-06-23T00:00:00Z",
             )
+            if kind == "admission_arguments_digest_mismatch":
+                object.__setattr__(
+                    call,
+                    "arguments_digest",
+                    str(fixture.get("argumentsDigest", "sha256:stale")),
+                )
             policy_decision = PolicyDecision(
                 decision_id="decision-allow-tool",
                 effect="allow",
@@ -8190,6 +8198,7 @@ class TckRunner:
                     "schemaMissingBeforeApproval": False,
                     "resolvedToolMismatchBeforeSchema": False,
                     "toolNameMismatchBeforeSchema": False,
+                    "argumentsDigestRejectedBeforeSchema": False,
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
                     "resolvedToolExpiredBeforeApproval": False,
@@ -8220,6 +8229,9 @@ class TckRunner:
                     ),
                     "toolNameMismatchBeforeSchema": (
                         "name" in message and "requires approval" not in message
+                    ),
+                    "argumentsDigestRejectedBeforeSchema": (
+                        "digest" in message and "requires approval" not in message
                     ),
                     "policyStoppedBeforeApproval": (
                         "policy stopped" in message and "requires approval" not in message
