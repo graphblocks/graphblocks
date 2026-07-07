@@ -46,6 +46,11 @@ Async operation state records `callback_received_at` separately from
 `callback_received` and then `resuming`; `completed_at` is reserved for terminal
 operation states such as `completed`, `failed`, `cancelled`, or `expired`.
 
+Callback dead-letter records preserve original delivery identity and a
+consecutive attempt history starting at attempt `1`. Redrive uses that history
+to choose the next pending delivery attempt without creating a duplicate
+application event.
+
 ## Production Boundaries
 
 Remote workers, deployments, and release bundles add more checks: worker

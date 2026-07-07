@@ -777,6 +777,8 @@ class CallbackDeadLetterRecord:
             "attempt_history",
             tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
         )
+        if self.attempt_history != tuple(range(1, len(self.attempt_history) + 1)):
+            raise ValueError("dead-letter record attempt_history must be consecutive from attempt 1")
         if self.delivery.attempt not in self.attempt_history:
             raise ValueError("dead-letter record attempt_history must include delivery attempt")
         parsed_dead_lettered_at = _parse_field_timestamp("dead_lettered_at", self.dead_lettered_at)
