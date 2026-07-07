@@ -5929,6 +5929,57 @@ def test_server_app_rejects_malformed_ack_cursor() -> None:
     assert app.event_acks("run-ack-cursor-format-1", "sub-ack-cursor-format") == ()
 
 
+def test_server_app_rejects_ack_when_retained_event_sequence_is_malformed() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-bool-sequence-1"] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": "evt-terminal",
+                "runId": "run-ack-bool-sequence-1",
+                "sequence": 2,
+            },
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-bool-sequence-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-bool-sequence",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app._events_by_run_id["run-ack-bool-sequence-1"][0]["metadata"]["sequence"] = True  # type: ignore[index]
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-bool-sequence-1/subscriptions/sub-ack-bool-sequence/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "evt-terminal"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "ack request sequence must be an integer",
+    }
+    assert app.event_acks("run-ack-bool-sequence-1", "sub-ack-bool-sequence") == ()
+
+
 def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

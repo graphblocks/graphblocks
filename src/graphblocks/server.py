@@ -3368,11 +3368,11 @@ class GraphBlocksServerApp:
         metadata = matched_event.get("metadata")
         assert isinstance(metadata, Mapping)
         matched_sequence = metadata.get("sequence")
-        matched_cursor = (
-            f"{run_id}:{matched_sequence}"
-            if isinstance(matched_sequence, int) and not isinstance(matched_sequence, bool)
-            else None
-        )
+        if not isinstance(matched_sequence, int) or isinstance(matched_sequence, bool):
+            raise ValueError("ack request sequence must be an integer")
+        if matched_sequence < 0:
+            raise ValueError("ack request sequence must be non-negative")
+        matched_cursor = f"{run_id}:{matched_sequence}"
         matched_event_id = metadata.get("eventId")
         if (
             event_id_text is not None
@@ -3451,7 +3451,11 @@ class GraphBlocksServerApp:
             if not isinstance(metadata, Mapping):
                 continue
             sequence = metadata.get("sequence")
-            event_cursor = f"{run_id}:{sequence}" if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                raise ValueError("ack request sequence must be an integer")
+            if sequence < 0:
+                raise ValueError("ack request sequence must be non-negative")
+            event_cursor = f"{run_id}:{sequence}"
             metadata_event_id = metadata.get("eventId")
             if event_id is not None and metadata_event_id == event_id:
                 return event
