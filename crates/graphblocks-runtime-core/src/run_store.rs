@@ -196,7 +196,11 @@ pub struct ProductionRunProvenanceDiagnostic {
 impl ProductionRunProvenanceDiagnostic {
     pub fn for_provenance(provenance: &RunDeploymentProvenance) -> Vec<Self> {
         let mut diagnostics = Vec::new();
-        if provenance.release_digest.as_deref().is_none_or(str::is_empty) {
+        if provenance
+            .release_digest
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
             diagnostics.push(Self {
                 code: "GB7101",
                 field: "release_digest",
@@ -263,6 +267,9 @@ impl RunOwnershipLease {
 pub enum RunStoreError {
     EmptyField {
         field: &'static str,
+    },
+    AlreadyExists {
+        run_id: String,
     },
     NotFound {
         run_id: String,
@@ -555,10 +562,7 @@ impl RunWaitReason {
         Self::message(RunWaitReasonKind::Operator, message)
     }
 
-    fn message(
-        kind: RunWaitReasonKind,
-        message: impl Into<String>,
-    ) -> Result<Self, RunStoreError> {
+    fn message(kind: RunWaitReasonKind, message: impl Into<String>) -> Result<Self, RunStoreError> {
         let message = message.into();
         if message.trim().is_empty() {
             return Err(RunStoreError::EmptyField { field: "message" });
@@ -573,7 +577,10 @@ impl RunWaitReason {
 
     pub fn protocol_value(&self) -> Value {
         let mut value = Map::new();
-        value.insert("kind".to_owned(), Value::String(self.kind.as_str().to_owned()));
+        value.insert(
+            "kind".to_owned(),
+            Value::String(self.kind.as_str().to_owned()),
+        );
         if let Some(node_id) = &self.node_id {
             value.insert("nodeId".to_owned(), Value::String(node_id.clone()));
         }
@@ -759,10 +766,11 @@ impl RunStatusSnapshot {
                     reason: "waiting_callback requires callback wait reason",
                 });
             }
-            if callback_operation_ids
-                .iter()
-                .any(|operation_id| !active_operations.iter().any(|active| active == operation_id))
-            {
+            if callback_operation_ids.iter().any(|operation_id| {
+                !active_operations
+                    .iter()
+                    .any(|active| active == operation_id)
+            }) {
                 return Err(RunStoreError::InvalidRunStatusSnapshot {
                     run_id: run.run_id.clone(),
                     reason: "waiting_callback operation must be active",
@@ -799,7 +807,9 @@ impl RunStatusSnapshot {
                 "paused_operator requires operator wait reason",
             )),
             _ => None,
-        } && !waiting_on.iter().any(|wait_reason| wait_reason.kind == kind)
+        } && !waiting_on
+            .iter()
+            .any(|wait_reason| wait_reason.kind == kind)
         {
             return Err(RunStoreError::InvalidRunStatusSnapshot {
                 run_id: run.run_id.clone(),
@@ -1320,6 +1330,22 @@ impl InMemoryRunStore {
         self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
     }
 
+    pub fn create_run_with_run_id(
+        &mut self,
+        run_id: impl Into<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            Some(run_id.into()),
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            RunDeploymentProvenance::new(),
+            Vec::new(),
+        )
+    }
+
     pub fn create_run_with_invocation_mode(
         &mut self,
         graph_hash: impl Into<String>,
@@ -1374,9 +1400,48 @@ impl InMemoryRunStore {
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> RunRecord {
-        let sequence = self.next_sequence;
-        self.next_sequence += 1;
-        let run_id = format!("run-{sequence:06}");
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            None,
+            graph_hash,
+            inputs,
+            invocation_mode,
+            deployment_provenance,
+            model_visible_tools,
+        )
+        .expect("generated run ids must be valid")
+    }
+
+    fn create_run_with_optional_run_id_invocation_provenance_and_mode(
+        &mut self,
+        requested_run_id: Option<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
+        let (sequence, run_id) = if let Some(run_id) = requested_run_id {
+            let run_id = run_id.trim().to_owned();
+            if run_id.is_empty() {
+                return Err(RunStoreError::EmptyField { field: "run_id" });
+            }
+            if self.runs.contains_key(&run_id) {
+                return Err(RunStoreError::AlreadyExists { run_id });
+            }
+            let sequence = self.next_sequence;
+            self.next_sequence += 1;
+            (sequence, run_id)
+        } else {
+            let mut sequence = self.next_sequence;
+            loop {
+                let run_id = format!("run-{sequence:06}");
+                if !self.runs.contains_key(&run_id) {
+                    self.next_sequence = sequence + 1;
+                    break (sequence, run_id);
+                }
+                sequence += 1;
+            }
+        };
         let record = RunRecord {
             run_id: run_id.clone(),
             sequence,
@@ -1390,7 +1455,7 @@ impl InMemoryRunStore {
             state_revision: 0,
         };
         self.runs.insert(run_id, record.clone());
-        record
+        Ok(record)
     }
 
     pub fn get_run(&self, run_id: impl AsRef<str>) -> Result<RunRecord, RunStoreError> {
@@ -1659,6 +1724,22 @@ impl SqliteRunStore {
         self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
     }
 
+    pub fn create_run_with_run_id(
+        &mut self,
+        run_id: impl Into<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            Some(run_id.into()),
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            RunDeploymentProvenance::new(),
+            Vec::new(),
+        )
+    }
+
     pub fn create_run_with_invocation_mode(
         &mut self,
         graph_hash: impl Into<String>,
@@ -1713,6 +1794,25 @@ impl SqliteRunStore {
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            None,
+            graph_hash,
+            inputs,
+            invocation_mode,
+            deployment_provenance,
+            model_visible_tools,
+        )
+    }
+
+    fn create_run_with_optional_run_id_invocation_provenance_and_mode(
+        &mut self,
+        requested_run_id: Option<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
         let transaction = self.connection.transaction().map_err(storage_error)?;
         let next_sequence = transaction
             .query_row(
@@ -1721,8 +1821,43 @@ impl SqliteRunStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(storage_error)?;
-        let sequence = sqlite_i64_to_u64(next_sequence, "run sequence")?;
-        let run_id = format!("run-{sequence:06}");
+        let mut sequence = sqlite_i64_to_u64(next_sequence, "run sequence")?;
+        let run_id = if let Some(run_id) = requested_run_id {
+            let run_id = run_id.trim().to_owned();
+            if run_id.is_empty() {
+                return Err(RunStoreError::EmptyField { field: "run_id" });
+            }
+            let exists = transaction
+                .query_row(
+                    "SELECT 1 FROM runs WHERE run_id = ?",
+                    params![&run_id],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(storage_error)?
+                .is_some();
+            if exists {
+                return Err(RunStoreError::AlreadyExists { run_id });
+            }
+            run_id
+        } else {
+            loop {
+                let candidate = format!("run-{sequence:06}");
+                let exists = transaction
+                    .query_row(
+                        "SELECT 1 FROM runs WHERE run_id = ?",
+                        params![&candidate],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(storage_error)?
+                    .is_some();
+                if !exists {
+                    break candidate;
+                }
+                sequence += 1;
+            }
+        };
         let record = RunRecord {
             run_id,
             sequence,

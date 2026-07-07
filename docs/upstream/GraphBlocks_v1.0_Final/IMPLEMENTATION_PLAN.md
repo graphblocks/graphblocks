@@ -128,6 +128,9 @@ graphblocks-cli
   - Local Python run stores and `graphblocks run --run-id` now preserve caller-selected run ids
     across generated run records and persisted journals, giving acceptance scripts stable handles
     for replay, status, and evidence correlation.
+  - Rust `InMemoryRunStore` and `SqliteRunStore` now expose the same caller-selected run-id
+    semantics as the Python facade, rejecting blank/duplicate ids and skipping generated-id
+    collisions so durable replay handles stay stable across reference implementations.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
 - state patch와 CAS

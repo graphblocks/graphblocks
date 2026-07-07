@@ -33,6 +33,31 @@ fn run_store_allocates_monotonic_run_snapshots() -> Result<(), RunStoreError> {
 }
 
 #[test]
+fn run_store_accepts_requested_run_ids_and_skips_generated_collisions() -> Result<(), RunStoreError>
+{
+    let mut store = InMemoryRunStore::new();
+
+    let requested = store.create_run_with_run_id("run-000002", "sha256:requested", json!({}))?;
+    let generated = store.create_run("sha256:generated", json!({}));
+
+    assert_eq!(requested.run_id, "run-000002");
+    assert_eq!(requested.sequence, 1);
+    assert_eq!(generated.run_id, "run-000003");
+    assert_eq!(generated.sequence, 3);
+    assert_eq!(
+        store.create_run_with_run_id(" ", "sha256:blank", json!({})),
+        Err(RunStoreError::EmptyField { field: "run_id" })
+    );
+    assert_eq!(
+        store.create_run_with_run_id("run-000002", "sha256:duplicate", json!({})),
+        Err(RunStoreError::AlreadyExists {
+            run_id: "run-000002".to_owned(),
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_store_records_invocation_mode_and_builds_accepted_handle() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
 
@@ -215,12 +240,10 @@ fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), Ru
 
 #[test]
 fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_states()
-    -> Result<(), RunStoreError>
-{
+-> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
     let approval_record = store.create_run("sha256:approval", json!({}));
-    let waiting_approval =
-        store.set_status(&approval_record.run_id, RunStatus::WaitingApproval)?;
+    let waiting_approval = store.set_status(&approval_record.run_id, RunStatus::WaitingApproval)?;
 
     assert_eq!(
         RunStatusSnapshot::from_run(
@@ -252,11 +275,16 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
 
     assert_eq!(snapshot.state, RunStatus::PausedBudget);
     assert_eq!(snapshot.waiting_on.len(), 1);
-    assert_eq!(snapshot.waiting_on[0].message.as_deref(), Some("quota_exhausted"));
+    assert_eq!(
+        snapshot.waiting_on[0].message.as_deref(),
+        Some("quota_exhausted")
+    );
 
     let callback_delivery_record = store.create_run("sha256:callback-delivery", json!({}));
-    let paused_callback_delivery =
-        store.set_status(&callback_delivery_record.run_id, RunStatus::PausedCallbackDelivery)?;
+    let paused_callback_delivery = store.set_status(
+        &callback_delivery_record.run_id,
+        RunStatus::PausedCallbackDelivery,
+    )?;
     assert_eq!(
         RunStatusSnapshot::from_run(
             &paused_callback_delivery,
@@ -282,10 +310,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
         vec![],
     )?;
     assert_eq!(snapshot.state, RunStatus::PausedCallbackDelivery);
-    assert_eq!(
-        snapshot.waiting_on[0].message.as_deref(),
-        Some("del_001")
-    );
+    assert_eq!(snapshot.waiting_on[0].message.as_deref(), Some("del_001"));
     Ok(())
 }
 
@@ -816,10 +841,7 @@ fn run_invocation_diagnostics_report_zero_durable_replay_durations() {
 
     assert_eq!(zero_retention_diagnostics.len(), 1);
     assert_eq!(zero_retention_diagnostics[0].code, "GB6013");
-    assert_eq!(
-        zero_retention_diagnostics[0].field,
-        "event_retention_ms"
-    );
+    assert_eq!(zero_retention_diagnostics[0].field, "event_retention_ms");
     assert!(
         zero_retention_diagnostics[0]
             .message
@@ -878,8 +900,8 @@ fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
 }
 
 #[test]
-fn sqlite_run_store_rejects_malformed_deployment_provenance_shape_on_replay()
--> Result<(), String> {
+fn sqlite_run_store_rejects_malformed_deployment_provenance_shape_on_replay() -> Result<(), String>
+{
     let mut path = std::env::temp_dir();
     path.push(format!(
         "graphblocks-sqlite-run-store-{}-bad-provenance-shape.sqlite3",
@@ -898,8 +920,7 @@ fn sqlite_run_store_rejects_malformed_deployment_provenance_shape_on_replay()
             .map_err(|error| format!("{error:?}"))?;
     }
     {
-        let connection =
-            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
         connection
             .execute(
                 "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
@@ -922,8 +943,8 @@ fn sqlite_run_store_rejects_malformed_deployment_provenance_shape_on_replay()
 }
 
 #[test]
-fn sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay()
--> Result<(), String> {
+fn sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay() -> Result<(), String>
+{
     let mut path = std::env::temp_dir();
     path.push(format!(
         "graphblocks-sqlite-run-store-{}-bad-provenance-field.sqlite3",
@@ -942,8 +963,7 @@ fn sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay()
             .map_err(|error| format!("{error:?}"))?;
     }
     {
-        let connection =
-            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
         connection
             .execute(
                 "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
@@ -1353,6 +1373,59 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
 }
 
 #[test]
+fn sqlite_run_store_persists_requested_run_ids_and_skips_generated_collisions() -> Result<(), String>
+{
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-store-{}-requested-id.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let requested = store
+            .create_run_with_run_id("run-000002", "sha256:requested", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+        let generated = store
+            .create_run("sha256:generated", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+
+        assert_eq!(requested.run_id, "run-000002");
+        assert_eq!(generated.run_id, "run-000003");
+        assert_eq!(
+            store.create_run_with_run_id(" ", "sha256:blank", json!({})),
+            Err(RunStoreError::EmptyField { field: "run_id" })
+        );
+        assert_eq!(
+            store.create_run_with_run_id("run-000002", "sha256:duplicate", json!({})),
+            Err(RunStoreError::AlreadyExists {
+                run_id: "run-000002".to_owned(),
+            })
+        );
+    }
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store
+            .get_run("run-000002")
+            .map_err(|error| format!("{error:?}"))?
+            .graph_hash,
+        "sha256:requested"
+    );
+    assert_eq!(
+        store
+            .get_run("run-000003")
+            .map_err(|error| format!("{error:?}"))?
+            .graph_hash,
+        "sha256:generated"
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn sqlite_run_store_rejects_malformed_model_visible_tool_expiry_on_replay() -> Result<(), String> {
     let mut path = std::env::temp_dir();
     path.push(format!(
@@ -1368,13 +1441,16 @@ fn sqlite_run_store_rejects_malformed_model_visible_tool_expiry_on_replay() -> R
                 "sha256:one",
                 json!({}),
                 RunDeploymentProvenance::new(),
-                vec![model_visible_tool("knowledge.search", "resolved-search", true)],
+                vec![model_visible_tool(
+                    "knowledge.search",
+                    "resolved-search",
+                    true,
+                )],
             )
             .map_err(|error| format!("{error:?}"))?;
     }
     {
-        let connection =
-            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
         connection
             .execute(
                 "UPDATE runs SET model_visible_tools_json = ? WHERE run_id = ?",
