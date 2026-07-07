@@ -198,14 +198,14 @@ def run_native_test_graph(
 ) -> dict[str, object]:
     from graphblocks_runtime import run_test_graph
 
-    return run_test_graph(
-        graph,
-        inputs,
-        node_outputs,
-        run_id=run_id,
-        run_store_path=run_store_path,
-        journal_store_path=journal_store_path,
-    )
+    options: dict[str, object] = {}
+    if run_id is not None:
+        options["run_id"] = run_id
+    if run_store_path is not None:
+        options["run_store_path"] = run_store_path
+    if journal_store_path is not None:
+        options["journal_store_path"] = journal_store_path
+    return run_test_graph(graph, inputs, node_outputs, **options)
 
 
 TckCaseKind = Literal[
@@ -286,6 +286,7 @@ class TckCase:
     kind: TckCaseKind
     graph: dict[str, object] = field(default_factory=dict)
     inputs: dict[str, object] = field(default_factory=dict)
+    native_node_outputs: dict[str, object] = field(default_factory=dict)
     expected_hash: str | None = None
     expected_error_codes: tuple[str, ...] = field(default_factory=tuple)
     expected_warning_codes: tuple[str, ...] = field(default_factory=tuple)
@@ -361,6 +362,7 @@ class TckCase:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
+        object.__setattr__(self, "native_node_outputs", dict(self.native_node_outputs))
         object.__setattr__(self, "expected_error_codes", tuple(self.expected_error_codes))
         object.__setattr__(self, "expected_warning_codes", tuple(self.expected_warning_codes))
         object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
@@ -481,6 +483,7 @@ class TckCase:
         case_id: str,
         graph: dict[str, object],
         inputs: dict[str, object],
+        native_node_outputs: dict[str, object] | None = None,
         expected_outputs: dict[str, object] | None = None,
         expected_status: str = "succeeded",
         expected_terminal_kind: str | None = None,
@@ -490,6 +493,7 @@ class TckCase:
             kind="runtime",
             graph=graph,
             inputs=inputs,
+            native_node_outputs={} if native_node_outputs is None else native_node_outputs,
             expected_outputs=expected_outputs,
             expected_status=expected_status,
             expected_terminal_kind=expected_terminal_kind,
@@ -1474,6 +1478,9 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         inputs = raw_case.get("inputs", {})
         if not isinstance(inputs, dict):
             raise ValueError(f"runtime TCK case {case_id} inputs must be a mapping")
+        native_node_outputs = _first_mapping_value(raw_case, "native_node_outputs", "nativeNodeOutputs", default={})
+        if not isinstance(native_node_outputs, dict):
+            raise ValueError(f"runtime TCK case {case_id} nativeNodeOutputs must be a mapping")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"runtime TCK case {case_id} requires expected result")
@@ -1510,6 +1517,7 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
                 case_id=case_id,
                 graph=graph,
                 inputs=inputs,
+                native_node_outputs=native_node_outputs,
                 expected_outputs=expected_outputs,
                 expected_status=expected_status,
                 expected_terminal_kind=expected_terminal_kind,
@@ -9835,12 +9843,58 @@ class TckRunner:
 
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
-            result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
-            observed = {
-                "status": result.status,
-                "outputs": result.outputs,
-                "terminal_kind": result.journal.terminal_kind,
-            }
+            if self.profile == "native":
+                if not case.native_node_outputs:
+                    raise ValueError("native runtime TCK case requires nativeNodeOutputs")
+                run_id = "tck-" + "".join(
+                    character if character.isalnum() else "-" for character in case.case_id.strip()
+                ).strip("-")
+                native_result = run_native_test_graph(
+                    case.graph,
+                    case.inputs,
+                    case.native_node_outputs,
+                    run_id=run_id,
+                )
+                journal = native_result.get("journal", [])
+                journal_records = journal if isinstance(journal, list) else []
+                terminal_kind = next(
+                    (
+                        record.get("kind")
+                        for record in reversed(journal_records)
+                        if isinstance(record, Mapping) and bool(record.get("terminal"))
+                    ),
+                    None,
+                )
+                if terminal_kind is None:
+                    terminal_kind = next(
+                        (
+                            record.get("kind")
+                            for record in reversed(journal_records)
+                            if isinstance(record, Mapping)
+                            and isinstance(record.get("kind"), str)
+                            and str(record.get("kind")).startswith("run_")
+                        ),
+                        None,
+                    )
+                observed = {
+                    "status": native_result.get("status"),
+                    "outputs": native_result.get("outputs", {}),
+                    "terminal_kind": terminal_kind,
+                    "run_id": native_result.get("runId", native_result.get("run_id", run_id)),
+                    "runtime": "native",
+                    "journal_kinds": [
+                        record["kind"]
+                        for record in journal_records
+                        if isinstance(record, Mapping) and isinstance(record.get("kind"), str)
+                    ],
+                }
+            else:
+                result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                observed = {
+                    "status": result.status,
+                    "outputs": result.outputs,
+                    "terminal_kind": result.journal.terminal_kind,
+                }
         except Exception as error:  # pragma: no cover - exercised by conformance fixtures.
             observed = {"status": "error", "error": type(error).__name__, "message": str(error)}
         diagnostics: list[dict[str, str]] = []

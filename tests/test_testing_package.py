@@ -171,6 +171,121 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
     assert "load_runtime_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_native_profile_runs_runtime_tck_case_through_native_bridge(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]] = []
+
+    def run_test_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        node_outputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        calls.append((graph, inputs, node_outputs, options))
+        return {
+            "runId": options["run_id"],
+            "status": "succeeded",
+            "outputs": {"prompt": "Native Ada"},
+            "journal": [
+                {"kind": "run_started", "runId": options["run_id"]},
+                {"kind": "node_started", "runId": options["run_id"], "nodeId": "render"},
+                {"kind": "node_completed", "runId": options["run_id"], "nodeId": "render"},
+                {"kind": "run_succeeded", "runId": options["run_id"], "terminal": True},
+            ],
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_test_graph=run_test_graph),
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-runtime-tck"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/native-profile",
+        graph=graph,
+        inputs={"message": {"text": "Ada"}},
+        native_node_outputs={"render": {"prompt": "Native Ada"}},
+        expected_outputs={"prompt": "Native Ada"},
+        expected_terminal_kind="run_succeeded",
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed == {
+        "status": "succeeded",
+        "outputs": {"prompt": "Native Ada"},
+        "terminal_kind": "run_succeeded",
+        "run_id": "tck-runtime-native-profile",
+        "runtime": "native",
+        "journal_kinds": ["run_started", "node_started", "node_completed", "run_succeeded"],
+    }
+    assert calls == [
+        (
+            graph,
+            {"message": {"text": "Ada"}},
+            {"render": {"prompt": "Native Ada"}},
+            {"run_id": "tck-runtime-native-profile"},
+        )
+    ]
+
+
+def test_testing_package_loads_runtime_tck_native_node_outputs(tmp_path, monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    cases_path = tmp_path / "runtime-native-cases.json"
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-runtime-loader"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "runtime/native-loader",
+                    "document": graph,
+                    "inputs": {"message": {"text": "Ada"}},
+                    "nativeNodeOutputs": {"render": {"prompt": "Native Ada"}},
+                    "expected": {
+                        "status": "succeeded",
+                        "outputs": {"prompt": "Native Ada"},
+                        "terminalKind": "run_succeeded",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cases = graphblocks_testing.load_runtime_tck_cases(cases_path)
+
+    assert cases[0].native_node_outputs == {"render": {"prompt": "Native Ada"}}
+
+
 def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

@@ -143,6 +143,9 @@ graphblocks-cli
     caller-selected `run_id`, `run_store_path`, and `journal_store_path` options for deterministic
     native test/TCK evidence, and the PyO3 bridge preserves the requested id in the top-level
     result, persisted run store, and every execution-journal record.
+  - `graphblocks-testing.TckRunner(profile="native")` can execute runtime TCK cases through the
+    Rust native test bridge when fixtures provide `nativeNodeOutputs`, using deterministic
+    `tck-...` run ids and reporting native journal kinds in observed conformance evidence.
   - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
     evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
