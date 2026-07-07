@@ -3722,6 +3722,38 @@ def test_server_app_reports_run_status_from_authoritative_events() -> None:
     }
 
 
+def test_server_app_rejects_run_status_without_event_timestamps() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-status-missing-time-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-status-missing-time-1"},
+            "metadata": {
+                "runId": "run-status-missing-time-1",
+                "sequence": 1,
+                "cursor": "run-status-missing-time-1:1",
+                "releaseId": "release-status-missing-time-1",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-status-missing-time-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server run status occurredAt must be an ISO datetime",
+    }
+
+
 def test_server_app_terminal_run_status_overrides_stale_control_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-status-terminal-control-1"] = (

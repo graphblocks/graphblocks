@@ -1731,16 +1731,20 @@ class GraphBlocksServerApp:
         if route.operation == "health":
             return ServerResponse.json(200, self.health.to_payload())
         if route.operation == "list_runs":
-            return ServerResponse.json(
-                200,
-                {
-                    "ok": True,
-                    "runs": [
-                        self._run_status_payload(run_id, events, include_ok=False)
-                        for run_id, events in sorted(self._events_by_run_id.items())
-                    ],
-                },
-            )
+            try:
+                runs = [
+                    self._run_status_payload(run_id, events, include_ok=False)
+                    for run_id, events in sorted(self._events_by_run_id.items())
+                ]
+            except (TypeError, ValueError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+            return ServerResponse.json(200, {"ok": True, "runs": runs})
         if route.operation in {"cancel_run", "pause_run", "resume_run", "expire_run"}:
             try:
                 run_id = route_match.path_params.get("run_id", "")
@@ -1782,7 +1786,16 @@ class GraphBlocksServerApp:
                         "error": f"run status not found for run {run_id!r}",
                     },
                 )
-            return ServerResponse.json(200, self._run_status_payload(run_id, events))
+            try:
+                return ServerResponse.json(200, self._run_status_payload(run_id, events))
+            except (TypeError, ValueError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "attach_to_run":
             try:
                 run_id = route_match.path_params.get("run_id", "")
@@ -2713,15 +2726,17 @@ class GraphBlocksServerApp:
         for index, event in enumerate(events):
             metadata = event.get("metadata")
             if not isinstance(metadata, Mapping):
-                continue
+                raise ValueError("server run status metadata must be an object")
             sequence = metadata.get("sequence")
             if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
                 last_sequence = sequence
-            occurred_at = metadata.get("occurredAt")
-            if isinstance(occurred_at, str) and occurred_at:
-                if index == 0:
-                    started_at = occurred_at
-                updated_at = occurred_at
+            raw_occurred_at = metadata.get("occurredAt")
+            if not isinstance(raw_occurred_at, str) or not raw_occurred_at:
+                raise ValueError("server run status occurredAt must be an ISO datetime")
+            occurred_at = _validate_iso_datetime("server run status", "occurredAt", raw_occurred_at)
+            if index == 0:
+                started_at = occurred_at
+            updated_at = occurred_at
             event_release_id = metadata.get("releaseId")
             if isinstance(event_release_id, str) and event_release_id:
                 release_id = event_release_id
