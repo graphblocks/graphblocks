@@ -43,6 +43,9 @@ fn run_case(case: &Value) -> Result<(), String> {
         }
         "admission_policy_denied" => run_policy_denied_case(case_name, case),
         "admission_policy_deferred" => run_policy_deferred_case(case_name, case),
+        "admission_missing_required_idempotency_key" => {
+            run_missing_required_idempotency_key_case(case_name, case)
+        }
         "approval_argument_mutation" => run_approval_mutation_case(case_name, case),
         other => Err(format!(
             "tool-lifecycle TCK case {case_name} has unknown kind {other}"
@@ -560,6 +563,68 @@ fn run_policy_deferred_case(case_name: &str, case: &Value) -> Result<(), String>
     Ok(())
 }
 
+fn run_missing_required_idempotency_key_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let expected = expected(case, case_name)?;
+    let schema_id = required_str(case, "schemaId")?;
+    let tool_name = required_str(case, "toolName")?;
+    let resolved_tool = resolved_process_tool(tool_name, schema_id)?;
+    let schemas = process_schema_registry(schema_id)?;
+    let call = tool_call_from_arguments(
+        tool_name,
+        &resolved_tool.resolved_tool_id,
+        case.get("arguments")
+            .cloned()
+            .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing arguments"))?,
+    )?;
+    let approval_request = ToolApprovalRequest::for_call(
+        required_str(case, "approvalId")?,
+        &resolved_tool,
+        &call,
+        "user-1",
+        1_000,
+        2_000,
+    )
+    .map_err(|error| format!("tool-lifecycle TCK case {case_name} failed: {error:?}"))?;
+    let approval = ToolApprovalRecord::approve(approval_request, "admin-1", 1_100);
+    let policy_decision = allow_tool_policy_decision();
+    let result = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
+        approval: Some(&approval),
+        principal_id: "user-1",
+        idempotency_key: None,
+        admitted_at_unix_ms: 1_200,
+    });
+    let error_text = result
+        .as_ref()
+        .err()
+        .map(admission_error_text)
+        .unwrap_or_default();
+
+    assert_eq!(
+        result.is_ok(),
+        required_bool(expected, "admitted")?,
+        "{case_name}",
+    );
+    assert_eq!(
+        matches!(
+            result,
+            Err(ToolAdmissionError::IdempotencyKeyRequired { .. })
+        ),
+        required_bool(expected, "idempotencyRejectedAfterApproval")?,
+        "{case_name}",
+    );
+    assert!(
+        error_text.contains(required_map_str(expected, "errorContains")?),
+        "{case_name}: expected {error_text:?} to contain configured text",
+    );
+    Ok(())
+}
+
 fn run_approval_mutation_case(case_name: &str, case: &Value) -> Result<(), String> {
     let expected = expected(case, case_name)?;
     let schema_id = required_str(case, "schemaId")?;
@@ -718,6 +783,7 @@ fn admission_error_text(error: &ToolAdmissionError) -> &'static str {
         | ToolAdmissionError::RequiredArgumentMissing { .. } => "arguments invalid",
         ToolAdmissionError::ApprovalInvalid { .. } => "not valid",
         ToolAdmissionError::ApprovalRequired { .. } => "requires approval",
+        ToolAdmissionError::IdempotencyKeyRequired { .. } => "idempotency",
         ToolAdmissionError::PolicyDecisionExpired { .. } => "expired",
         ToolAdmissionError::PolicyDecisionMissingInputDigest { .. } => "input digest",
         ToolAdmissionError::PolicyInputDigestMismatch { .. } => "input digest",

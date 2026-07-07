@@ -1925,6 +1925,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
+            "admission_missing_required_idempotency_key",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -8018,6 +8019,7 @@ class TckRunner:
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
+            "admission_missing_required_idempotency_key",
         }:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
@@ -8115,6 +8117,17 @@ class TckRunner:
             output_policy_state = fixture.get("outputPolicyState")
             if not isinstance(output_policy_state, Mapping):
                 output_policy_state = None
+            approval = None
+            if kind == "admission_missing_required_idempotency_key":
+                request = ToolApprovalRequest.for_call(
+                    str(fixture.get("approvalId", "approval-1")),
+                    resolved_tool,
+                    call,
+                    principal_id="user-1",
+                    requested_at=1000,
+                    expires_at=2000,
+                )
+                approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1100)
             try:
                 admit_tool_call(
                     call,
@@ -8125,9 +8138,13 @@ class TckRunner:
                         fixture.get("expectedPolicyInputDigest", policy_decision.input_digest)
                     ),
                     output_policy_state=output_policy_state,
-                    approval=None,
+                    approval=approval,
                     principal_id="user-1",
-                    idempotency_key="idem-1",
+                    idempotency_key=(
+                        None
+                        if kind == "admission_missing_required_idempotency_key"
+                        else "idem-1"
+                    ),
                     admitted_at=str(fixture.get("admittedAt", "2026-06-23T00:00:02Z")),
                     now=1200,
                 )
@@ -8142,6 +8159,7 @@ class TckRunner:
                     "policyDigestMissingBeforeApproval": False,
                     "policyDeniedBeforeApproval": False,
                     "policyDeferredBeforeApproval": False,
+                    "idempotencyRejectedAfterApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -8173,6 +8191,9 @@ class TckRunner:
                     ),
                     "policyDeferredBeforeApproval": (
                         "deferred" in message and "requires approval" not in message
+                    ),
+                    "idempotencyRejectedAfterApproval": (
+                        "idempotency" in message and "requires approval" not in message
                     ),
                 }
         elif kind == "approval_argument_mutation":
