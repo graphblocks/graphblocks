@@ -120,6 +120,8 @@ def _validate_invocation_mode(owner: str, value: object) -> RunInvocationMode:
     if not isinstance(value, str):
         raise ValueError(f"{owner} invocation_mode must be a string")
     if value not in VALID_RUN_INVOCATION_MODES:
+        if owner == "run":
+            raise ValueError(f"invalid run invocation mode {value}")
         raise ValueError(f"invalid {owner} invocation_mode {value}")
     return value  # type: ignore[return-value]
 

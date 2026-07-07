@@ -449,6 +449,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `RunRecord`; the Python run-store facade validates and persists the mode through SQLite migration,
   and the server builds accepted/background run handles with event stream, websocket, cancel route,
   and initial cursor fields.
+- Python run-store creation now reports invalid public invocation modes using the application
+  protocol term `invocation mode`, while lower-level record validation still identifies the stored
+  `invocation_mode` field.
 - Python run-store records now recursively validate inputs, state, and patches as JSON values,
   rejecting arbitrary objects and non-finite numbers before durable replay or SQLite persistence.
 - Rust SQLite run-store replay now rejects malformed model-visible tool provenance fields such as
