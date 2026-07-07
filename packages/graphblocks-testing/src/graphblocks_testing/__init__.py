@@ -1925,6 +1925,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
+            "admission_missing_approval",
             "admission_missing_required_idempotency_key",
             "admission_blank_idempotency_key",
             "approval_argument_mutation",
@@ -8020,6 +8021,7 @@ class TckRunner:
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
+            "admission_missing_approval",
             "admission_missing_required_idempotency_key",
             "admission_blank_idempotency_key",
         }:
@@ -8149,7 +8151,7 @@ class TckRunner:
                         None
                         if kind == "admission_missing_required_idempotency_key"
                         else str(fixture.get("idempotencyKey", " "))
-                        if kind == "admission_blank_idempotency_key"
+                        if kind in {"admission_blank_idempotency_key", "admission_missing_approval"}
                         else "idem-1"
                     ),
                     admitted_at=str(fixture.get("admittedAt", "2026-06-23T00:00:02Z")),
@@ -8166,6 +8168,7 @@ class TckRunner:
                     "policyDigestMissingBeforeApproval": False,
                     "policyDeniedBeforeApproval": False,
                     "policyDeferredBeforeApproval": False,
+                    "approvalRequiredBeforeIdempotency": False,
                     "idempotencyRejectedAfterApproval": False,
                     "blankIdempotencyRejectedAfterApproval": False,
                 }
@@ -8199,6 +8202,9 @@ class TckRunner:
                     ),
                     "policyDeferredBeforeApproval": (
                         "deferred" in message and "requires approval" not in message
+                    ),
+                    "approvalRequiredBeforeIdempotency": (
+                        "requires approval" in message and "idempotency" not in message
                     ),
                     "idempotencyRejectedAfterApproval": (
                         "idempotency" in message and "requires approval" not in message

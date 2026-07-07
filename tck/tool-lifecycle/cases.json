@@ -182,6 +182,24 @@
     }
   },
   {
+    "name": "missing_approval_denies_tool_admission",
+    "kind": "admission_missing_approval",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "idempotencyKey": "idem-1",
+    "expected": {
+      "admitted": false,
+      "approvalRequiredBeforeIdempotency": true,
+      "errorContains": "approval"
+    }
+  },
+  {
     "name": "required_idempotency_key_missing_denies_tool_admission",
     "kind": "admission_missing_required_idempotency_key",
     "toolName": "process.run",

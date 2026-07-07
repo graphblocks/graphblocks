@@ -1404,6 +1404,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   refusal stops admission before approval fallback or side-effect execution.
 - Deferred policy decisions are covered by the same tool-lifecycle TCK path, so an unresolved
   `before_tool_or_effect` decision cannot be interpreted as runtime admission.
+- Required approval is covered by the shared tool-lifecycle TCK before idempotency or execution
+  gates, preserving the approval-bound-to-call contract for effectful tools.
 - Required idempotency keys are covered by the shared tool-lifecycle TCK after approval succeeds,
   proving that state-changing tools still cannot admit without retry-safe operation identity.
 - Blank idempotency keys are covered in the same TCK suite, so whitespace-only operation identity
