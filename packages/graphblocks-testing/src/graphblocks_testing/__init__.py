@@ -1920,6 +1920,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_invalid_arguments",
             "admission_missing_schema",
             "admission_resolved_tool_mismatch",
+            "admission_tool_name_mismatch",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8019,6 +8020,7 @@ class TckRunner:
             "admission_invalid_arguments",
             "admission_missing_schema",
             "admission_resolved_tool_mismatch",
+            "admission_tool_name_mismatch",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_expired_resolved_tool",
@@ -8072,7 +8074,11 @@ class TckRunner:
                     )
                 )
             )
-            draft = ToolCallDraft.proposed("response-1", "call-1", tool_name)
+            draft = ToolCallDraft.proposed(
+                "response-1",
+                "call-1",
+                str(fixture.get("callToolName", tool_name)),
+            )
             draft = draft.append_argument_fragment(json.dumps(fixture.get("arguments", {}), sort_keys=True))
             call = draft.complete_arguments().into_tool_call(
                 str(fixture.get("callResolvedToolId", resolved_tool.resolved_tool_id)),
@@ -8183,6 +8189,7 @@ class TckRunner:
                     "schemaRejectedBeforeApproval": False,
                     "schemaMissingBeforeApproval": False,
                     "resolvedToolMismatchBeforeSchema": False,
+                    "toolNameMismatchBeforeSchema": False,
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
                     "resolvedToolExpiredBeforeApproval": False,
@@ -8210,6 +8217,9 @@ class TckRunner:
                     ),
                     "resolvedToolMismatchBeforeSchema": (
                         "resolved tool" in message and "requires approval" not in message
+                    ),
+                    "toolNameMismatchBeforeSchema": (
+                        "name" in message and "requires approval" not in message
                     ),
                     "policyStoppedBeforeApproval": (
                         "policy stopped" in message and "requires approval" not in message

@@ -1313,13 +1313,14 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-lifecycle"] * 16
+    assert [case.kind for case in cases] == ["tool-lifecycle"] * 17
     assert report.ok
     assert {case.case_id for case in cases} == {
         "incremental_arguments_do_not_finalize_call",
         "invalid_arguments_denied_before_policy_admission",
         "missing_schema_denies_tool_admission",
         "resolved_tool_mismatch_denies_tool_admission",
+        "tool_name_mismatch_denies_tool_admission",
         "policy_stopped_response_denies_tool_admission",
         "expired_policy_decision_denies_tool_admission",
         "expired_resolved_tool_denies_tool_admission",
@@ -1337,6 +1338,7 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     assert any(result.observed.get("schemaRejectedBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("schemaMissingBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("resolvedToolMismatchBeforeSchema") is True for result in report.results)
+    assert any(result.observed.get("toolNameMismatchBeforeSchema") is True for result in report.results)
     assert any(result.observed.get("policyStoppedBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("policyExpiredBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("resolvedToolExpiredBeforeApproval") is True for result in report.results)
@@ -1629,6 +1631,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "invalid_arguments_denied_before_policy_admission",
         "missing_schema_denies_tool_admission",
         "resolved_tool_mismatch_denies_tool_admission",
+        "tool_name_mismatch_denies_tool_admission",
         "policy_stopped_response_denies_tool_admission",
         "expired_policy_decision_denies_tool_admission",
         "expired_resolved_tool_denies_tool_admission",

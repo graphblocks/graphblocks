@@ -1398,6 +1398,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   registration is mandatory before tool admission.
 - Resolved-tool mismatches are covered by the shared tool-lifecycle TCK before schema or approval
   gates, proving that calls cannot be admitted against a different scoped capability.
+- Tool-name mismatches are covered by the same TCK path, proving that a call cannot swap the
+  model-visible tool contract while reusing a resolved capability id.
 - Expired resolved tools are covered by the same TCK path, proving that scoped tool capabilities
   cannot be admitted after their resolution window closes.
 - The same shared tool-lifecycle TCK now covers policy input digest mismatches, proving that a

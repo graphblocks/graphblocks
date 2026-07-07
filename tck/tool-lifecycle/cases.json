@@ -77,6 +77,24 @@
     }
   },
   {
+    "name": "tool_name_mismatch_denies_tool_admission",
+    "kind": "admission_tool_name_mismatch",
+    "toolName": "process.run",
+    "callToolName": "knowledge.search",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "expected": {
+      "admitted": false,
+      "toolNameMismatchBeforeSchema": true,
+      "errorContains": "name"
+    }
+  },
+  {
     "name": "policy_stopped_response_denies_tool_admission",
     "kind": "admission_policy_stopped_response",
     "toolName": "process.run",
