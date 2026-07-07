@@ -163,6 +163,7 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
         "tools_resolve_rejects_non_string_definition_tag",
     }
     assert any(case.expected_terminal_kind == "run_failed" for case in cases)
+    assert sum(1 for case in cases if case.native_node_outputs) == 4
     assert report.ok
     assert {result.observed["terminal_kind"] for result in report.results} == {
         "run_failed",
@@ -1725,17 +1726,17 @@ def test_testing_package_cli_runs_runtime_tck_native_profile_with_fallback_metad
     assert payload["profile"] == "native"
     assert {result["kind"] for result in payload["results"]} == {"runtime"}
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
-    assert observed["prompt_render_output"]["runtime"] in {"native", "local"}
-    assert observed["prompt_render_output"]["runtime"] == "native" or observed["prompt_render_output"][
-        "native_fallback_reason"
-    ] == "native_runtime_unavailable"
-    assert observed["control_map_renders_each_item"] == {
-        "native_fallback_reason": "missing_native_node_outputs",
-        "outputs": {"values": ["Item 1: alpha", "Item 2: beta"]},
-        "runtime": "local",
-        "status": "succeeded",
-        "terminal_kind": "run_succeeded",
-    }
+    for case_id in (
+        "prompt_render_output",
+        "control_map_renders_each_item",
+        "control_select_treats_null_as_present",
+        "tools_resolve_feeds_scripted_agent",
+    ):
+        assert observed[case_id]["runtime"] in {"native", "local"}
+        assert observed[case_id]["runtime"] == "native" or observed[case_id][
+            "native_fallback_reason"
+        ] == "native_runtime_unavailable"
+    assert observed["policy_stopped_turn_rejects_commit"]["native_fallback_reason"] == "missing_native_node_outputs"
     assert payload["contentDigest"].startswith("sha256:")
 
 
