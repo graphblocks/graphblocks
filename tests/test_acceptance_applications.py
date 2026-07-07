@@ -213,6 +213,12 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
     assert "ConformanceProfileSet" in graphblocks_testing.__all__
 
 
+def test_upstream_conformance_profile_catalog_matches_shipped_catalog() -> None:
+    assert _load_yaml(
+        ROOT / "docs" / "upstream" / "GraphBlocks_v1.0_Final" / "catalog" / "conformance-profiles.yaml"
+    ) == _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+
+
 def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     profile_set = graphblocks_testing.ConformanceProfileSet.from_document(

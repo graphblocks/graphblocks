@@ -28,8 +28,13 @@ spec:
     - local-flow
     - python-binding
     tck:
+    - application-events
+    - retry
     - runtime
     - sequence
+    - tool-execution
+    - tool-lifecycle
+    - tool-result
   - id: GB-C2-AI-APPLICATION
     status: normative-profile
     extends:
@@ -39,6 +44,11 @@ spec:
     - rag
     - conversation
     - application-protocol
+    tck:
+    - application-protocol
+    - conversation
+    - documents
+    - rag
     acceptanceApplications:
     - direct-file-analysis
     - document-ingestion
@@ -56,7 +66,9 @@ spec:
     - exhaustion-policy
     - approval-review-gate
     tck:
+    - approval-review
     - policy
+    - usage
     - budget-race
     - exhaustion
   - id: GB-C4-PRODUCTION
@@ -92,6 +104,8 @@ spec:
     - task-plan-patch
     - model-worker-pool
     - task-budget-delegation
+    tck:
+    - orchestration
   - id: GB-X2-VOICE
     status: experimental-extension
     extends:
@@ -101,6 +115,8 @@ spec:
     - vad-authority
     - interruption
     - playback-ledger
+    tck:
+    - voice
   - id: GB-X3-DURABLE-STREAM
     status: experimental-extension
     extends:
@@ -110,3 +126,5 @@ spec:
     - watermarks
     - checkpoint-barriers
     - sink-commit
+    tck:
+    - durable

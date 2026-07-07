@@ -1506,6 +1506,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `coding-agent-background-callbacks` acceptance application, so accepted invocation, cursor replay,
   callback journal-before-resume, and signed callback delivery cannot be omitted from production
   claims.
+- The upstream conformance-profile catalog is now tested for byte-for-byte semantic parity with the
+  shipped `src/graphblocks/data/conformance-profiles.yaml` profile set, preventing documentation
+  copies from dropping inherited TCK suites or async/background production evidence.
 
 ### Package ownership
 
