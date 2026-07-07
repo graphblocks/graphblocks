@@ -465,6 +465,46 @@ def test_observe_run_cli_reads_sqlite_run_store_as_json(tmp_path, capsys) -> Non
     }
 
 
+def test_observe_journal_cli_reads_sqlite_execution_journal_as_json(tmp_path, capsys) -> None:
+    journal_path = tmp_path / "journal.sqlite3"
+    journal = SQLiteExecutionJournal(journal_path, "run-000001")
+    journal.append("run_started", {"graphHash": "sha256:graph"})
+    journal.append("node_started", {"node": "render", "block": "prompt.render@1", "attempt": 1})
+    journal.append("node_succeeded", {"node": "render", "outputs": ["prompt"]})
+    journal.append_terminal("run_succeeded", {"outputs": {"prompt": "hello"}})
+    journal.close()
+
+    assert main(["observe", "journal", "run-000001", "--store", str(journal_path), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "runId": "run-000001",
+        "terminalKind": "run_succeeded",
+        "records": [
+            {
+                "sequence": 1,
+                "kind": "run_started",
+                "payload": {"graphHash": "sha256:graph"},
+            },
+            {
+                "sequence": 2,
+                "kind": "node_started",
+                "payload": {"node": "render", "block": "prompt.render@1", "attempt": 1},
+            },
+            {
+                "sequence": 3,
+                "kind": "node_succeeded",
+                "payload": {"node": "render", "outputs": ["prompt"]},
+            },
+            {
+                "sequence": 4,
+                "kind": "run_succeeded",
+                "payload": {"outputs": {"prompt": "hello"}},
+            },
+        ],
+    }
+
+
 def test_observe_run_cli_reports_missing_run(tmp_path, capsys) -> None:
     store_path = tmp_path / "runs.sqlite3"
     SQLiteRunStore(store_path).close()

@@ -211,6 +211,13 @@ def main(argv: list[str] | None = None) -> int:
     observe_run_parser.add_argument("run_id")
     observe_run_parser.add_argument("--store", required=True, type=Path, help="SQLite run store path")
     observe_run_parser.add_argument("--json", action="store_true", help="emit JSON")
+    observe_journal_parser = observe_subparsers.add_parser(
+        "journal",
+        help="inspect one run execution journal from a SQLite journal store",
+    )
+    observe_journal_parser.add_argument("run_id")
+    observe_journal_parser.add_argument("--store", required=True, type=Path, help="SQLite execution journal path")
+    observe_journal_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     release_parser = subparsers.add_parser("release", help="verify immutable graph releases")
     release_subparsers = release_parser.add_subparsers(dest="release_command")
@@ -600,6 +607,26 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, indent=2, sort_keys=True))
             else:
                 print(f"{record.run_id} {record.status} {record.graph_hash} stateRevision={record.state_revision}")
+            return 0
+        if args.observe_command == "journal":
+            journal = SQLiteExecutionJournal(args.store, args.run_id)
+            records = [record.to_dict() for record in journal.records]
+            terminal_kind = journal.terminal_kind
+            journal.close()
+            if not records:
+                print(f"journal not found: {args.run_id}")
+                return 1
+            payload = {
+                "runId": args.run_id,
+                "terminalKind": terminal_kind,
+                "records": records,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"{args.run_id} terminal={terminal_kind or 'none'} records={len(records)}")
+                for record in records:
+                    print(f"{record['sequence']} {record['kind']}")
             return 0
         observe_parser.print_help()
         return 0
