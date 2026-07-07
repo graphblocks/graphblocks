@@ -478,7 +478,25 @@ def _callback_url_is_unsafe(url: object) -> bool:
     try:
         address = ip_address(normalized_host)
     except ValueError:
-        return False
+        numeric_ipv4 = None
+        if normalized_host.startswith("0x"):
+            try:
+                numeric_ipv4 = int(normalized_host[2:], 16)
+            except ValueError:
+                numeric_ipv4 = None
+        elif normalized_host.isascii() and normalized_host.isdecimal():
+            numeric_ipv4 = int(normalized_host)
+        if numeric_ipv4 is None or not 0 <= numeric_ipv4 <= 0xFFFFFFFF:
+            return False
+        address = ip_address(numeric_ipv4)
+        return (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        )
     return (
         address.is_loopback
         or address.is_private

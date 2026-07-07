@@ -1565,5 +1565,41 @@
       "graph_hash": "sha256:bd254b7a63a2f083bf2435e82e29a9f91a9743368508e7cf68a295e62feb6432",
       "error_codes": ["GB6010"]
     }
+  },
+  {
+    "name": "numeric_loopback_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "numeric-loopback-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-loopback",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://2130706433/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:25d58192412d0fd9ae5918395a726311bbc6f096ae757a7a4448c70d19e9d6ad",
+      "error_codes": ["GB6011"]
+    }
   }
 ]

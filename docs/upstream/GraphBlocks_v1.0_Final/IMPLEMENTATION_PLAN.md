@@ -952,7 +952,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   webhook URLs are rejected as a typed unsafe endpoint case so diagnostics can identify the
   unsupported userinfo component instead of collapsing it into a generic malformed URL. Compiler
   diagnostics now also flag decimal and hex numeric IPv4 callback hosts that resolve to forbidden
-  internal addresses, matching runtime webhook egress validation.
+  internal addresses, matching runtime webhook egress validation; decimal loopback host rejection
+  is now pinned in the shared compiler TCK.
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`, with shared compiler TCK coverage.
