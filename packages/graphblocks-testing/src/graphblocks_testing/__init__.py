@@ -681,12 +681,47 @@ class TckReport:
     def ok(self) -> bool:
         return all(result.status == "passed" for result in self.results)
 
-    def report_contract(self) -> dict[str, object]:
+    def native_evidence_contract(self) -> dict[str, object]:
+        native_case_count = 0
+        fallback_reasons: dict[str, int] = {}
+        run_store_paths: set[str] = set()
+        journal_store_paths: set[str] = set()
+        for result in self.results:
+            runtime = result.observed.get("runtime")
+            if runtime == "native":
+                native_case_count += 1
+            reason = result.observed.get("native_fallback_reason")
+            if isinstance(reason, str) and reason:
+                fallback_reasons[reason] = fallback_reasons.get(reason, 0) + 1
+            run_store_path = result.observed.get("run_store_path")
+            if isinstance(run_store_path, str) and run_store_path:
+                run_store_paths.add(run_store_path)
+            journal_store_path = result.observed.get("journal_store_path")
+            if isinstance(journal_store_path, str) and journal_store_path:
+                journal_store_paths.add(journal_store_path)
         return {
+            "native_case_count": native_case_count,
+            "fallback_case_count": sum(fallback_reasons.values()),
+            "fallback_reasons": dict(sorted(fallback_reasons.items())),
+            "run_store_paths": sorted(run_store_paths),
+            "journal_store_paths": sorted(journal_store_paths),
+        }
+
+    def report_contract(self) -> dict[str, object]:
+        contract: dict[str, object] = {
             "profile": self.profile,
             "ok": self.ok,
             "results": [result.result_contract() for result in self.results],
         }
+        native_evidence = self.native_evidence_contract()
+        if (
+            native_evidence["native_case_count"]
+            or native_evidence["fallback_case_count"]
+            or native_evidence["run_store_paths"]
+            or native_evidence["journal_store_paths"]
+        ):
+            contract["native_evidence"] = native_evidence
+        return contract
 
     def content_digest(self) -> str:
         return canonical_hash(self.report_contract())

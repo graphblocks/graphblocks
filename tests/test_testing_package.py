@@ -1806,6 +1806,23 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
         "run_id": "tck-prompt-render-output",
         "run_store_path": str(evidence_dir / "tck-prompt-render-output-runs.sqlite3"),
     }
+    assert payload["native_evidence"] == {
+        "fallback_case_count": 3,
+        "fallback_reasons": {"missing_native_node_outputs": 3},
+        "journal_store_paths": [
+            str(evidence_dir / "tck-control-map-renders-each-item-journal.sqlite3"),
+            str(evidence_dir / "tck-control-select-treats-null-as-present-journal.sqlite3"),
+            str(evidence_dir / "tck-prompt-render-output-journal.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-feeds-scripted-agent-journal.sqlite3"),
+        ],
+        "native_case_count": 4,
+        "run_store_paths": [
+            str(evidence_dir / "tck-control-map-renders-each-item-runs.sqlite3"),
+            str(evidence_dir / "tck-control-select-treats-null-as-present-runs.sqlite3"),
+            str(evidence_dir / "tck-prompt-render-output-runs.sqlite3"),
+            str(evidence_dir / "tck-tools-resolve-feeds-scripted-agent-runs.sqlite3"),
+        ],
+    }
 
 
 def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, monkeypatch, capsys) -> None:
