@@ -665,8 +665,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   payload digest, verified principal, policy snapshot, artifact references, and JSON projection
   coverage. Callback receipts recompute the canonical payload hash and reject mismatched
   `payload_digest` values before a receipt can represent durable journal input. Callback artifact
-  references must be JSON objects, and duplicate `artifact_id` values are rejected at receipt
-  construction.
+  references must be JSON objects with non-empty `artifact_id` and `uri` fields, and duplicate
+  `artifact_id` values are rejected at receipt construction.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
@@ -1048,8 +1048,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency comparisons. Accepted callback submission projections now also record the canonical
   payload digest, verifying principal, policy snapshot id, and callback artifact references, and
   duplicate acknowledgements return the same receipt metadata instead of reducing the callback to an
-  idempotency key. Callback artifact references are immutable JSON objects and are included in
-  idempotency conflict detection.
+  idempotency key. Callback artifact references are immutable JSON objects with non-empty
+  `artifact_id` and `uri` fields, and are included in idempotency conflict detection.
   The Rust `graphblocks-runtime-core` async operation journal now records the same payload digest,
   verifying principal, and policy snapshot metadata on `ExternalCallbackRejected` events, including
   idempotency-conflict rejections for mutated callback replays.

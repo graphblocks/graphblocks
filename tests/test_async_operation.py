@@ -486,6 +486,22 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             artifacts=["artifact-ci-log"],  # type: ignore[list-item]
         )
 
+    with raises_value_error("external callback received artifacts uri must be a non-empty string"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+            artifacts=[{"artifact_id": "artifact-ci-log"}],
+        )
+
     with raises_value_error("external callback received artifacts must not contain duplicate artifact_id"):
         graphblocks.ExternalCallbackReceived(
             callback_id="cb-1",

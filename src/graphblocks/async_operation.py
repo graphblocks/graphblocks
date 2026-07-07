@@ -571,12 +571,14 @@ class ExternalCallbackReceived:
             if not isinstance(artifact, Mapping):
                 raise ValueError("external callback received artifacts entries must be JSON objects")
             artifact_id = artifact.get("artifact_id")
-            if artifact_id is not None:
-                if not isinstance(artifact_id, str) or not artifact_id.strip():
-                    raise ValueError("external callback received artifacts artifact_id must be a non-empty string")
-                if artifact_id in artifact_ids:
-                    raise ValueError("external callback received artifacts must not contain duplicate artifact_id")
-                artifact_ids.add(artifact_id)
+            if not isinstance(artifact_id, str) or not artifact_id.strip():
+                raise ValueError("external callback received artifacts artifact_id must be a non-empty string")
+            uri = artifact.get("uri")
+            if not isinstance(uri, str) or not uri.strip():
+                raise ValueError("external callback received artifacts uri must be a non-empty string")
+            if artifact_id in artifact_ids:
+                raise ValueError("external callback received artifacts must not contain duplicate artifact_id")
+            artifact_ids.add(artifact_id)
         object.__setattr__(self, "artifacts", artifact_refs)
         object.__setattr__(
             self,
