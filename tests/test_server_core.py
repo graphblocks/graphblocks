@@ -2867,6 +2867,24 @@ def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
             artifacts=[{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "checksum": ""}],
         )
 
+    invalid_sizes = (
+        {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "size_bytes": True},
+        {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "size_bytes": -1},
+        {"artifactId": "artifact-ci-log", "uri": "blob://ci/log", "sizeBytes": "128"},
+    )
+    for artifact in invalid_sizes:
+        with pytest.raises(
+            ValueError,
+            match="server async callback artifacts size_bytes must be a non-negative integer",
+        ):
+            ServerAsyncCallbackSubmission(
+                operation_id="op-ci-1",
+                callback_id="cb-1",
+                idempotency_key="idem-callback-1",
+                payload={"status": "completed"},
+                artifacts=[artifact],
+            )
+
     with pytest.raises(ValueError, match="server async callback artifacts must not contain duplicate artifact_id"):
         ServerAsyncCallbackSubmission(
             operation_id="op-ci-1",

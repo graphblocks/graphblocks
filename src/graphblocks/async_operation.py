@@ -596,6 +596,13 @@ class ExternalCallbackReceived:
                     raise ValueError(
                         f"external callback received artifacts {field_name} must be a non-empty string"
                     )
+            size_bytes = artifact.get("size_bytes")
+            if size_bytes is not None and (
+                isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0
+            ):
+                raise ValueError(
+                    "external callback received artifacts size_bytes must be a non-negative integer"
+                )
             if artifact_id in artifact_ids:
                 raise ValueError("external callback received artifacts must not contain duplicate artifact_id")
             artifact_ids.add(artifact_id)

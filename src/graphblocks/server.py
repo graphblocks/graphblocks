@@ -749,6 +749,11 @@ class ServerAsyncCallbackSubmission:
                 value = artifact.get(field_name)
                 if value is not None and (not isinstance(value, str) or not value.strip()):
                     raise ValueError(f"server async callback artifacts {field_name} must be a non-empty string")
+            size_bytes = artifact.get("size_bytes")
+            if size_bytes is not None and (
+                isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0
+            ):
+                raise ValueError("server async callback artifacts size_bytes must be a non-negative integer")
             if artifact_id in artifact_ids:
                 raise ValueError("server async callback artifacts must not contain duplicate artifact_id")
             artifact_ids.add(artifact_id)
