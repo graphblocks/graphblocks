@@ -1047,6 +1047,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   receipt or shift audit records into a body-controlled operation bucket.
   The server route enforces a configurable inline callback payload limit, defaulting to the
   specification's `262144` bytes, before accepting or storing a callback receipt.
+  Callback bodies may supply `payload_digest`/`payloadDigest`; ingress validates the declared
+  digest against the canonical callback payload before accepting the receipt or projecting a
+  route-bound operation-id mismatch rejection.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
   idempotency comparisons. Accepted callback submission projections now also record the canonical

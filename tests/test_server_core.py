@@ -2879,6 +2879,54 @@ def test_server_async_callback_from_request_accepts_camel_case_artifacts() -> No
     ]
 
 
+def test_server_async_callback_from_request_validates_payload_digest() -> None:
+    payload = {"status": "completed"}
+    request = ServerRequest(
+        method="POST",
+        path="/callbacks/op-ci-1",
+        headers={"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callback_id": "cb-1",
+                "payload": payload,
+                "payloadDigest": graphblocks.canonical_hash(payload),
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-02T00:00:00Z",
+    )
+
+    submission = ServerAsyncCallbackSubmission.from_request(
+        operation_id="op-ci-1",
+        request=request,
+        verified_by="callback-relay",
+    )
+
+    assert submission.payload_digest == graphblocks.canonical_hash(payload)
+
+    with pytest.raises(ValueError, match="server async callback payload_digest must match payload"):
+        ServerAsyncCallbackSubmission.from_request(
+            operation_id="op-ci-1",
+            request=ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": "cb-1",
+                        "payload": payload,
+                        "payloadDigest": graphblocks.canonical_hash({"status": "failed"}),
+                    }
+                ).encode("utf-8"),
+                requested_at="2026-07-02T00:00:00Z",
+            ),
+            verified_by="callback-relay",
+        )
+
+
 def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
     with pytest.raises(ValueError, match="server async callback artifacts must be a sequence"):
         ServerAsyncCallbackSubmission(
