@@ -1926,6 +1926,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_policy_denied",
             "admission_policy_deferred",
             "admission_missing_required_idempotency_key",
+            "admission_blank_idempotency_key",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -8020,6 +8021,7 @@ class TckRunner:
             "admission_policy_denied",
             "admission_policy_deferred",
             "admission_missing_required_idempotency_key",
+            "admission_blank_idempotency_key",
         }:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
@@ -8118,7 +8120,10 @@ class TckRunner:
             if not isinstance(output_policy_state, Mapping):
                 output_policy_state = None
             approval = None
-            if kind == "admission_missing_required_idempotency_key":
+            if kind in {
+                "admission_missing_required_idempotency_key",
+                "admission_blank_idempotency_key",
+            }:
                 request = ToolApprovalRequest.for_call(
                     str(fixture.get("approvalId", "approval-1")),
                     resolved_tool,
@@ -8143,6 +8148,8 @@ class TckRunner:
                     idempotency_key=(
                         None
                         if kind == "admission_missing_required_idempotency_key"
+                        else str(fixture.get("idempotencyKey", " "))
+                        if kind == "admission_blank_idempotency_key"
                         else "idem-1"
                     ),
                     admitted_at=str(fixture.get("admittedAt", "2026-06-23T00:00:02Z")),
@@ -8160,6 +8167,7 @@ class TckRunner:
                     "policyDeniedBeforeApproval": False,
                     "policyDeferredBeforeApproval": False,
                     "idempotencyRejectedAfterApproval": False,
+                    "blankIdempotencyRejectedAfterApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -8193,6 +8201,9 @@ class TckRunner:
                         "deferred" in message and "requires approval" not in message
                     ),
                     "idempotencyRejectedAfterApproval": (
+                        "idempotency" in message and "requires approval" not in message
+                    ),
+                    "blankIdempotencyRejectedAfterApproval": (
                         "idempotency" in message and "requires approval" not in message
                     ),
                 }

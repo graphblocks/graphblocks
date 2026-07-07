@@ -1313,7 +1313,7 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-lifecycle"] * 11
+    assert [case.kind for case in cases] == ["tool-lifecycle"] * 12
     assert report.ok
     assert {case.case_id for case in cases} == {
         "incremental_arguments_do_not_finalize_call",
@@ -1326,6 +1326,7 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
         "policy_denied_decision_denies_tool_admission",
         "policy_deferred_decision_denies_tool_admission",
         "required_idempotency_key_missing_denies_tool_admission",
+        "blank_idempotency_key_denies_tool_admission",
         "approval_invalid_after_argument_mutation",
     }
     assert any(not result.observed.get("finalizedBeforeComplete", True) for result in report.results)
@@ -1342,6 +1343,9 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     assert any(result.observed.get("policyDeniedBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("policyDeferredBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("idempotencyRejectedAfterApproval") is True for result in report.results)
+    assert any(
+        result.observed.get("blankIdempotencyRejectedAfterApproval") is True for result in report.results
+    )
     assert any(result.observed.get("mutatedApprovalValid") is False for result in report.results)
     assert "load_tool_lifecycle_tck_cases" in graphblocks_testing.__all__
 
@@ -1621,6 +1625,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "policy_denied_decision_denies_tool_admission",
         "policy_deferred_decision_denies_tool_admission",
         "required_idempotency_key_missing_denies_tool_admission",
+        "blank_idempotency_key_denies_tool_admission",
         "approval_invalid_after_argument_mutation",
     )
     assert by_suite["tool-result"].case_ids == (

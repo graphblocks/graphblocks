@@ -200,6 +200,25 @@
     }
   },
   {
+    "name": "blank_idempotency_key_denies_tool_admission",
+    "kind": "admission_blank_idempotency_key",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "approvalId": "approval-1",
+    "idempotencyKey": " ",
+    "expected": {
+      "admitted": false,
+      "blankIdempotencyRejectedAfterApproval": true,
+      "errorContains": "idempotency"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",
