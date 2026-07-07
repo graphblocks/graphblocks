@@ -368,9 +368,6 @@ def main(argv: list[str] | None = None) -> int:
             print("--input-json must decode to a JSON object")
             return 1
         if args.runtime == "native":
-            if args.run_store is not None or args.journal_store is not None:
-                print("--run-store and --journal-store are only supported with --runtime python")
-                return 1
             try:
                 import graphblocks_runtime
             except ImportError as error:
@@ -383,11 +380,18 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 graph_json = json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True)
                 inputs_json = json.dumps(inputs, separators=(",", ":"), sort_keys=True)
-                if args.run_id is not None:
+                if args.run_id is not None or args.run_store is not None or args.journal_store is not None:
+                    runtime_options: dict[str, object] = {}
+                    if args.run_id is not None:
+                        runtime_options["runId"] = args.run_id
+                    if args.run_store is not None:
+                        runtime_options["runStorePath"] = str(args.run_store)
+                    if args.journal_store is not None:
+                        runtime_options["journalStorePath"] = str(args.journal_store)
                     result_json = graphblocks_runtime.run_stdlib_graph_with_options_json(
                         graph_json,
                         inputs_json,
-                        json.dumps({"runId": args.run_id}, separators=(",", ":"), sort_keys=True),
+                        json.dumps(runtime_options, separators=(",", ":"), sort_keys=True),
                     )
                 else:
                     result_json = graphblocks_runtime.run_stdlib_graph_json(

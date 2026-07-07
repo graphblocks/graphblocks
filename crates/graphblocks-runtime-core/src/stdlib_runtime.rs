@@ -10,8 +10,10 @@ use crate::async_operation::{
     AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
     AsyncOperationState, CallbackArtifactRef, ExternalEffectRecord,
 };
+use crate::journal::{JournalMetadata, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
+use crate::run_store::{RunStatus, SqliteRunStore};
 use crate::scheduler::{ScheduledNode, StartedNode};
 use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
 use crate::tool::{
@@ -158,6 +160,9 @@ pub fn run_stdlib_graph_with_options_json(
         })
         .transpose()?
         .unwrap_or("run-000001");
+    let run_store_path = optional_options_string(options, "runStorePath", "run_store_path")?;
+    let journal_store_path =
+        optional_options_string(options, "journalStorePath", "journal_store_path")?;
     let bridge_plan = build_runtime_bridge_plan(&graph)?;
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
     let mut executor = StdlibExecutor {
@@ -172,6 +177,13 @@ pub fn run_stdlib_graph_with_options_json(
         &inputs,
         &executor.outputs_by_node,
         result.status,
+    )?;
+    persist_runtime_evidence(
+        &result,
+        &bridge_plan.graph_hash,
+        &inputs,
+        run_store_path,
+        journal_store_path,
     )?;
     serialize_runtime_result(result, bridge_plan.graph_hash, output_values)
 }
@@ -293,6 +305,102 @@ fn runtime_with_inputs(
         }
     }
     Ok(runtime)
+}
+
+fn optional_options_string<'a>(
+    options: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+) -> Result<Option<&'a str>, StdlibRuntimeError> {
+    options
+        .get(primary)
+        .or_else(|| options.get(alternate))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            let Some(text) = value.as_str() else {
+                return Err(StdlibRuntimeError::invalid(format!(
+                    "runtime options field {primary} must be a string"
+                )));
+            };
+            if text.trim().is_empty() {
+                return Err(StdlibRuntimeError::invalid(format!(
+                    "runtime options field {primary} must not be empty"
+                )));
+            }
+            Ok(text)
+        })
+        .transpose()
+}
+
+fn persist_runtime_evidence(
+    result: &TestRunResult,
+    graph_hash: &str,
+    inputs: &Value,
+    run_store_path: Option<&str>,
+    journal_store_path: Option<&str>,
+) -> Result<(), StdlibRuntimeError> {
+    if let Some(run_store_path) = run_store_path {
+        let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
+            StdlibRuntimeError::runtime(format!("failed to open SQLite run store: {error:?}"))
+        })?;
+        store
+            .create_run_with_run_id(&result.run_id, graph_hash, inputs.clone())
+            .map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to persist native runtime run record: {error:?}"
+                ))
+            })?;
+        store
+            .set_status(&result.run_id, RunStatus::Running)
+            .map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to persist native runtime run status: {error:?}"
+                ))
+            })?;
+        let status = match result.status {
+            TestRunStatus::Succeeded => RunStatus::Completed,
+            TestRunStatus::Failed => RunStatus::Failed,
+            TestRunStatus::Cancelled => RunStatus::Cancelled,
+        };
+        store.set_status(&result.run_id, status).map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to persist native runtime terminal status: {error:?}"
+            ))
+        })?;
+    }
+
+    if let Some(journal_store_path) = journal_store_path {
+        let mut journal = SqliteExecutionJournal::open(journal_store_path, &result.run_id)
+            .map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to open SQLite execution journal: {error:?}"
+                ))
+            })?;
+        for record in result.journal.records() {
+            let metadata = JournalMetadata {
+                causation_id: record.causation_id.clone(),
+                node_id: record.node_id.clone(),
+                attempt_id: record.attempt_id.clone(),
+                lease_epoch: record.lease_epoch,
+            };
+            let append_result = if record.terminal {
+                journal.append_terminal_with_metadata(
+                    record.kind.clone(),
+                    metadata,
+                    record.payload.clone(),
+                )
+            } else {
+                journal.append_with_metadata(record.kind.clone(), metadata, record.payload.clone())
+            };
+            append_result.map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to persist native runtime journal record: {error:?}"
+                ))
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_output_values(
@@ -2679,9 +2787,24 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use crate::journal::SqliteExecutionJournal;
+    use crate::run_store::{RunStatus, SqliteRunStore};
     use serde_json::Value;
 
     use super::run_stdlib_graph_with_options_json;
+
+    fn unique_sqlite_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "graphblocks-stdlib-{label}-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn stdlib_runtime_options_can_select_run_id() {
@@ -2724,5 +2847,76 @@ mod tests {
             error.to_string(),
             "runtime options field runId must not be empty"
         );
+    }
+
+    #[test]
+    fn stdlib_runtime_options_persist_sqlite_run_and_journal_evidence() {
+        let run_store_path = unique_sqlite_path("run-store");
+        let journal_store_path = unique_sqlite_path("journal-store");
+        let graph_json = r#"{
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "stdlib-run-evidence"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        }"#;
+        let options = serde_json::json!({
+            "runId": "run-native-evidence-1",
+            "runStorePath": run_store_path.to_string_lossy(),
+            "journalStorePath": journal_store_path.to_string_lossy(),
+        });
+        let result_json = run_stdlib_graph_with_options_json(
+            graph_json,
+            r#"{"message":{"text":"ok"}}"#,
+            &serde_json::to_string(&options).expect("options serialize"),
+        )
+        .expect("stdlib runtime should execute");
+        let result: Value = serde_json::from_str(&result_json).expect("result is JSON");
+
+        assert_eq!(result["runId"], "run-native-evidence-1");
+        assert_eq!(result["status"], "succeeded");
+
+        let store = SqliteRunStore::open(&run_store_path).expect("run store reopens");
+        let run = store
+            .get_run("run-native-evidence-1")
+            .expect("run record is persisted");
+        assert_eq!(run.status, RunStatus::Completed);
+        assert_eq!(run.inputs["message"]["text"], "ok");
+
+        let journal = SqliteExecutionJournal::open(&journal_store_path, "run-native-evidence-1")
+            .expect("journal reopens");
+        let records = journal.records().expect("journal records load");
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "run_started",
+                "node_started",
+                "node_completed",
+                "run_succeeded"
+            ]
+        );
+        assert_eq!(
+            journal.terminal_kind().expect("terminal loads").as_deref(),
+            Some("run_succeeded")
+        );
+        assert!(
+            records
+                .iter()
+                .all(|record| record.run_id == "run-native-evidence-1")
+        );
+
+        let _ = std::fs::remove_file(run_store_path);
+        let _ = std::fs::remove_file(journal_store_path);
     }
 }

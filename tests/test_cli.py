@@ -330,6 +330,8 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
         ),
     )
     path = tmp_path / "graph.yaml"
+    run_store_path = tmp_path / "native-runs.sqlite3"
+    journal_store_path = tmp_path / "native-journal.sqlite3"
     path.write_text(yaml.safe_dump(graph), encoding="utf-8")
 
     assert (
@@ -341,6 +343,10 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
                 "native",
                 "--run-id",
                 "run-native-requested-1",
+                "--run-store",
+                str(run_store_path),
+                "--journal-store",
+                str(journal_store_path),
                 "--input-json",
                 '{"message":{"text":"ok"}}',
             ]
@@ -355,7 +361,11 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
         (
             graph,
             {"message": {"text": "ok"}},
-            {"runId": "run-native-requested-1"},
+            {
+                "journalStorePath": str(journal_store_path),
+                "runId": "run-native-requested-1",
+                "runStorePath": str(run_store_path),
+            },
         )
     ]
 

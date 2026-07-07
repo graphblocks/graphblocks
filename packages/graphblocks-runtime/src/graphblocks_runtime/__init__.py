@@ -305,13 +305,22 @@ def run_stdlib_graph(
     inputs: dict[str, object],
     *,
     run_id: str | None = None,
+    run_store_path: str | None = None,
+    journal_store_path: str | None = None,
 ) -> dict[str, object]:
-    if run_id is not None:
+    if run_id is not None or run_store_path is not None or journal_store_path is not None:
+        options: dict[str, object] = {}
+        if run_id is not None:
+            options["runId"] = run_id
+        if run_store_path is not None:
+            options["runStorePath"] = run_store_path
+        if journal_store_path is not None:
+            options["journalStorePath"] = journal_store_path
         return _json_object_result(
             run_stdlib_graph_with_options_json(
                 _canonical_json(graph),
                 _canonical_json(inputs),
-                _canonical_json({"runId": run_id}),
+                _canonical_json(options),
             ),
             "native stdlib runtime result",
         )
