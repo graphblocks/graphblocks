@@ -1206,6 +1206,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   current server projection is paused or waiting. Repeating the latest control state, including
   non-terminal pause/resume projections, is idempotent only when the reason matches and does not
   append another projection; a same-state duplicate with a different reason is rejected as a conflict.
+  Once a resume control is projected, stale callback wait reasons are no longer exposed in
+  `waitingOn`, although active operation ids remain visible for reconciliation.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
   returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
   cursor while retaining authoritative run events for later attach/replay from that cursor.

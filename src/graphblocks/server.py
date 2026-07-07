@@ -2766,15 +2766,16 @@ class GraphBlocksServerApp:
                 submission = submissions[-1]
                 if submission.run_id != run_id:
                     continue
-                waiting: dict[str, object] = {
-                    "kind": "callback",
-                    "operationId": submission.operation_id,
-                }
-                if submission.node_id is not None:
-                    waiting["nodeId"] = submission.node_id
-                if submission.attempt_id is not None:
-                    waiting["attemptId"] = submission.attempt_id
-                waiting_on.append(waiting)
+                if state in {"running", "waiting_callback"}:
+                    waiting: dict[str, object] = {
+                        "kind": "callback",
+                        "operationId": submission.operation_id,
+                    }
+                    if submission.node_id is not None:
+                        waiting["nodeId"] = submission.node_id
+                    if submission.attempt_id is not None:
+                        waiting["attemptId"] = submission.attempt_id
+                    waiting_on.append(waiting)
                 active_operations.append(submission.operation_id)
             if waiting_on and state == "running":
                 state = "waiting_callback"

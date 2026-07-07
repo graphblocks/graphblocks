@@ -1351,6 +1351,69 @@ def test_server_app_rejects_resume_without_paused_or_waiting_state() -> None:
     assert app.run_controls("run-resume-active-1") == ()
 
 
+def test_server_app_resume_clears_waiting_callback_status_projection() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-resume-callback-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-resume-callback-1"},
+            "metadata": {
+                "runId": "run-resume-callback-1",
+                "sequence": 1,
+                "cursor": "run-resume-callback-1:1",
+                "releaseId": "release-resume-callback-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+    callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-resume-callback-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-resume-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-resume-callback-1",
+                    "run_id": "run-resume-callback-1",
+                    "node_id": "waitCI",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-resume-callback-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-resume-callback-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:03Z",
+        )
+    )
+
+    assert callback.status_code == 202
+    assert resume.status_code == 202
+    status_payload = json.loads(status.body.decode("utf-8"))
+    assert status_payload["state"] == "resuming"
+    assert status_payload["waitingOn"] == []
+    assert status_payload["activeOperations"] == ["op-resume-callback-1"]
+
+
 def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-non-terminal-idempotent-1"] = (
