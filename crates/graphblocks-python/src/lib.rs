@@ -6207,17 +6207,43 @@ fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
 fn runtime_with_inputs(
     scheduled_nodes: Vec<ScheduledNode>,
     inputs: &Value,
+    run_id: &str,
 ) -> PyResult<InProcessTestRuntime> {
-    let mut runtime =
-        InProcessTestRuntime::new("run-000001", scheduled_nodes).map_err(|error| {
-            PyValueError::new_err(format!("failed to create test runtime: {error:?}"))
-        })?;
+    let mut runtime = InProcessTestRuntime::new(run_id, scheduled_nodes).map_err(|error| {
+        PyValueError::new_err(format!("failed to create test runtime: {error:?}"))
+    })?;
     if let Some(input_object) = inputs.as_object() {
         for (input_name, value) in input_object {
             runtime = runtime.with_initial_value(PortRef::new("$input", input_name), value.clone());
         }
     }
     Ok(runtime)
+}
+
+fn test_runtime_run_id_from_options(options: &Value) -> PyResult<&str> {
+    if options.is_null() {
+        return Ok("run-000001");
+    }
+    let Some(options) = options.as_object() else {
+        return Err(PyValueError::new_err(
+            "test runtime options JSON must be an object",
+        ));
+    };
+    let run_id = options.get("runId").or_else(|| options.get("run_id"));
+    let Some(run_id) = run_id else {
+        return Ok("run-000001");
+    };
+    let Some(run_id) = run_id.as_str() else {
+        return Err(PyValueError::new_err(
+            "test runtime option runId must be a string",
+        ));
+    };
+    if run_id.trim().is_empty() {
+        return Err(PyValueError::new_err(
+            "test runtime option runId must not be empty",
+        ));
+    }
+    Ok(run_id)
 }
 
 fn collect_output_values(
@@ -6339,16 +6365,28 @@ fn run_test_graph_json(
     inputs_json: &str,
     node_outputs_json: &str,
 ) -> PyResult<String> {
+    run_test_graph_with_options_json(graph_json, inputs_json, node_outputs_json, "{}")
+}
+
+#[pyfunction]
+fn run_test_graph_with_options_json(
+    graph_json: &str,
+    inputs_json: &str,
+    node_outputs_json: &str,
+    options_json: &str,
+) -> PyResult<String> {
     let graph = parse_json_argument(graph_json, "graph document")?;
     let inputs = parse_json_argument(inputs_json, "runtime inputs")?;
     let node_outputs = parse_json_argument(node_outputs_json, "node outputs")?;
+    let options = parse_json_argument(options_json, "test runtime options")?;
+    let run_id = test_runtime_run_id_from_options(&options)?;
     let Some(node_outputs) = node_outputs.as_object() else {
         return Err(PyValueError::new_err(
             "node outputs JSON must be an object keyed by node id",
         ));
     };
     let bridge_plan = build_runtime_bridge_plan(&graph)?;
-    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs)?;
+    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
     let mut executor = JsonNodeExecutor {
         outputs_by_node: node_outputs
             .iter()
@@ -9010,6 +9048,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(capture_telemetry_content_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_result_stream_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
+    module.add_function(wrap_pyfunction!(run_test_graph_with_options_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         run_stdlib_graph_with_options_json,
@@ -9074,8 +9113,9 @@ mod tests {
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json,
-        run_stdlib_graph_with_options_json, run_test_graph_json, validate_remote_payload_json,
-        validate_worker_advertisement_json, validate_worker_protocol_message_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
+        validate_worker_protocol_message_json,
     };
 
     fn native_audit_fixture() -> Result<(Value, Value, Value), String> {
@@ -11348,6 +11388,56 @@ mod tests {
             Some("generated")
         );
         assert_eq!(completed_nodes, vec!["render", "model"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_test_graph_with_options_json_uses_requested_run_id() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-runtime-requested-id"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        });
+        let node_outputs = json!({"render": {"prompt": "rendered"}});
+
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let node_outputs_json =
+            serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
+        let result_json = run_test_graph_with_options_json(
+            &graph_json,
+            r#"{"message":"hello"}"#,
+            &node_outputs_json,
+            r#"{"runId":"run-test-requested-1"}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let journal = result
+            .get("journal")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "runtime bridge result is missing journal".to_owned())?;
+
+        assert_eq!(
+            result.get("runId").and_then(Value::as_str),
+            Some("run-test-requested-1")
+        );
+        assert!(
+            journal
+                .iter()
+                .all(|record| record.get("runId").and_then(Value::as_str)
+                    == Some("run-test-requested-1")),
+            "journal records must preserve requested run id: {journal:?}"
+        );
 
         Ok(())
     }

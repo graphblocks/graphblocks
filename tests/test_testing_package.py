@@ -48,10 +48,11 @@ def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) ->
         graph: dict[str, object],
         inputs: dict[str, object],
         node_outputs: dict[str, object],
+        **options: object,
     ) -> dict[str, object]:
-        calls.append((graph, inputs, node_outputs))
+        calls.append((graph, inputs, node_outputs, options))
         return {
-            "runId": "test-run-1",
+            "runId": options["run_id"],
             "status": "succeeded",
             "graph": graph,
             "inputs": inputs,
@@ -69,10 +70,11 @@ def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) ->
         {"kind": "Graph", "metadata": {"name": "test"}},
         {"message": "hi"},
         {"render": {"prompt": "Hello"}},
+        run_id="test-run-requested-1",
     )
 
     assert result == {
-        "runId": "test-run-1",
+        "runId": "test-run-requested-1",
         "status": "succeeded",
         "graph": {"kind": "Graph", "metadata": {"name": "test"}},
         "inputs": {"message": "hi"},
@@ -83,6 +85,7 @@ def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) ->
             {"kind": "Graph", "metadata": {"name": "test"}},
             {"message": "hi"},
             {"render": {"prompt": "Hello"}},
+            {"run_id": "test-run-requested-1"},
         )
     ]
     assert "run_native_test_graph" in graphblocks_testing.__all__

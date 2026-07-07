@@ -45,6 +45,7 @@ try:
         run_stdlib_graph_json,
         run_stdlib_graph_with_options_json,
         run_test_graph_json,
+        run_test_graph_with_options_json,
         validate_remote_payload_json,
         validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
@@ -247,6 +248,14 @@ except ImportError as error:
     def run_test_graph_json(graph_json: str, inputs_json: str, node_outputs_json: str) -> str:
         require_native_extension()
 
+    def run_test_graph_with_options_json(
+        graph_json: str,
+        inputs_json: str,
+        node_outputs_json: str,
+        options_json: str,
+    ) -> str:
+        require_native_extension()
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         require_native_extension()
 
@@ -334,7 +343,19 @@ def run_test_graph(
     graph: dict[str, object],
     inputs: dict[str, object],
     node_outputs: dict[str, object],
+    *,
+    run_id: str | None = None,
 ) -> dict[str, object]:
+    if run_id is not None:
+        return _json_object_result(
+            run_test_graph_with_options_json(
+                _canonical_json(graph),
+                _canonical_json(inputs),
+                _canonical_json(node_outputs),
+                _canonical_json({"runId": run_id}),
+            ),
+            "native test runtime result",
+        )
     return _json_object_result(
         run_test_graph_json(
             _canonical_json(graph),
@@ -802,6 +823,7 @@ __all__ = [
     "run_stdlib_graph_with_options_json",
     "run_test_graph",
     "run_test_graph_json",
+    "run_test_graph_with_options_json",
     "validate_remote_payload",
     "validate_remote_payload_json",
     "validate_worker_advertisement",

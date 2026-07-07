@@ -139,6 +139,9 @@ graphblocks-cli
   - `graphblocks-stdlib.run_native_stdlib_graph` forwards the same `run_id`, `run_store_path`, and
     `journal_store_path` options so package users can request stable native evidence handles
     without dropping to the lower-level runtime wrapper.
+  - `graphblocks-runtime.run_test_graph` and `graphblocks-testing.run_native_test_graph` accept a
+    caller-selected `run_id` for deterministic native test/TCK evidence, and the PyO3 bridge
+    preserves that id in the top-level result and every execution-journal record.
   - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
     evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one

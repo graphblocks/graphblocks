@@ -162,6 +162,18 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("run_test", (graph_json, inputs_json, node_outputs_json)))
         return json.dumps({"runId": "run-test-1", "status": "succeeded", "outputs": {"fixture": True}})
 
+    def run_test_graph_with_options_json(
+        graph_json: str,
+        inputs_json: str,
+        node_outputs_json: str,
+        options_json: str,
+    ) -> str:
+        calls.append(("run_test_options", (graph_json, inputs_json, node_outputs_json, options_json)))
+        options = json.loads(options_json)
+        return json.dumps(
+            {"runId": options["runId"], "status": "succeeded", "outputs": {"fixture": True}}
+        )
+
     def finalize_tool_call_json(draft_json: str, resolved_tool_id: str, created_at_unix_ms: int) -> str:
         calls.append(("finalize_tool", (draft_json, resolved_tool_id, created_at_unix_ms)))
         return json.dumps(
@@ -533,6 +545,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_stdlib_graph_with_options_json=run_stdlib_graph_with_options_json,
         run_test_graph_json=run_test_graph_json,
+        run_test_graph_with_options_json=run_test_graph_with_options_json,
         validate_remote_payload_json=validate_remote_payload_json,
         validate_worker_advertisement_json=validate_worker_advertisement_json,
         validate_worker_protocol_message_json=validate_worker_protocol_message_json,
@@ -566,6 +579,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         journal_store_path="/tmp/graphblocks-journal.sqlite3",
     )
     test_run = runtime.run_test_graph({"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}})
+    test_run_requested = runtime.run_test_graph(
+        {"kind": "Graph"},
+        {"message": "hi"},
+        {"node": {"value": "ok"}},
+        run_id="run-test-requested-1",
+    )
     finalized = runtime.finalize_tool_call(
         {
             "toolCallId": "call-1",
@@ -851,6 +870,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert stdlib_requested["runId"] == "run-requested-native-1"
     assert stdlib_requested["outputs"] == {"answer": "ok"}
     assert test_run["outputs"] == {"fixture": True}
+    assert test_run_requested["runId"] == "run-test-requested-1"
     assert finalized == {
         "toolCallId": "call-1",
         "resolvedToolId": "resolved-tool-1",
@@ -1172,6 +1192,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         ("run_test", ('{"kind":"Graph"}', '{"message":"hi"}', '{"node":{"value":"ok"}}')),
+        (
+            "run_test_options",
+            (
+                '{"kind":"Graph"}',
+                '{"message":"hi"}',
+                '{"node":{"value":"ok"}}',
+                '{"runId":"run-test-requested-1"}',
+            ),
+        ),
         (
             "finalize_tool",
             (
