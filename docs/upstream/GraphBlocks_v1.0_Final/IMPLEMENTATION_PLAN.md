@@ -485,6 +485,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   needed by the authoritative event stream, including async operation wait/completion events,
   external callback receipt/rejection, late callback receipt, run resume, run pause, and terminal
   run outcomes.
+- The client-facing application protocol event kind set and shared application-protocol TCK now
+  include the same async/background lifecycle and callback ingestion event names, with Python and
+  Rust protocol facades reporting the shared contract.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids

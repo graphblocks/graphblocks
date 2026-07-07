@@ -62,7 +62,21 @@
         "RunFailed",
         "RunCancelled",
         "RunPolicyStopped",
-        "RunExpired"
+        "RunExpired",
+        "AsyncOperationStarted",
+        "AsyncOperationWaitingCallback",
+        "AsyncOperationPolling",
+        "AsyncOperationCompleted",
+        "AsyncOperationFailed",
+        "AsyncOperationCancelled",
+        "AsyncOperationExpired",
+        "ExternalCallbackReceived",
+        "ExternalCallbackRejected",
+        "LateExternalCallbackReceived",
+        "RunResuming",
+        "RunPausedBudget",
+        "RunPausedPolicy",
+        "RunPausedOperator"
       ]
     }
   },

@@ -280,6 +280,20 @@ ApplicationProtocolEventKind = Literal[
     "RunCancelled",
     "RunPolicyStopped",
     "RunExpired",
+    "AsyncOperationStarted",
+    "AsyncOperationWaitingCallback",
+    "AsyncOperationPolling",
+    "AsyncOperationCompleted",
+    "AsyncOperationFailed",
+    "AsyncOperationCancelled",
+    "AsyncOperationExpired",
+    "ExternalCallbackReceived",
+    "ExternalCallbackRejected",
+    "LateExternalCallbackReceived",
+    "RunResuming",
+    "RunPausedBudget",
+    "RunPausedPolicy",
+    "RunPausedOperator",
 ]
 
 APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
@@ -312,6 +326,20 @@ APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
     "RunCancelled",
     "RunPolicyStopped",
     "RunExpired",
+    "AsyncOperationStarted",
+    "AsyncOperationWaitingCallback",
+    "AsyncOperationPolling",
+    "AsyncOperationCompleted",
+    "AsyncOperationFailed",
+    "AsyncOperationCancelled",
+    "AsyncOperationExpired",
+    "ExternalCallbackReceived",
+    "ExternalCallbackRejected",
+    "LateExternalCallbackReceived",
+    "RunResuming",
+    "RunPausedBudget",
+    "RunPausedPolicy",
+    "RunPausedOperator",
 )
 APPLICATION_PROTOCOL_TCK_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = APPLICATION_PROTOCOL_EVENT_KINDS
 

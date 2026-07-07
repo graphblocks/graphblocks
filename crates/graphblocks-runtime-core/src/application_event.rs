@@ -56,6 +56,23 @@ pub enum ApplicationEventKind {
     OutputCutoff,
     AssistantIncomplete,
     AssistantRetracted,
+    RunCompleted,
+    RunExpired,
+    RunPolicyStopped,
+    AsyncOperationStarted,
+    AsyncOperationWaitingCallback,
+    AsyncOperationPolling,
+    AsyncOperationCompleted,
+    AsyncOperationFailed,
+    AsyncOperationCancelled,
+    AsyncOperationExpired,
+    ExternalCallbackReceived,
+    ExternalCallbackRejected,
+    LateExternalCallbackReceived,
+    RunResuming,
+    RunPausedBudget,
+    RunPausedPolicy,
+    RunPausedOperator,
 }
 
 impl ApplicationEventKind {
@@ -97,6 +114,23 @@ impl ApplicationEventKind {
             Self::OutputCutoff => "OutputCutoff",
             Self::AssistantIncomplete => "AssistantIncomplete",
             Self::AssistantRetracted => "AssistantRetracted",
+            Self::RunCompleted => "RunCompleted",
+            Self::RunExpired => "RunExpired",
+            Self::RunPolicyStopped => "RunPolicyStopped",
+            Self::AsyncOperationStarted => "AsyncOperationStarted",
+            Self::AsyncOperationWaitingCallback => "AsyncOperationWaitingCallback",
+            Self::AsyncOperationPolling => "AsyncOperationPolling",
+            Self::AsyncOperationCompleted => "AsyncOperationCompleted",
+            Self::AsyncOperationFailed => "AsyncOperationFailed",
+            Self::AsyncOperationCancelled => "AsyncOperationCancelled",
+            Self::AsyncOperationExpired => "AsyncOperationExpired",
+            Self::ExternalCallbackReceived => "ExternalCallbackReceived",
+            Self::ExternalCallbackRejected => "ExternalCallbackRejected",
+            Self::LateExternalCallbackReceived => "LateExternalCallbackReceived",
+            Self::RunResuming => "RunResuming",
+            Self::RunPausedBudget => "RunPausedBudget",
+            Self::RunPausedPolicy => "RunPausedPolicy",
+            Self::RunPausedOperator => "RunPausedOperator",
         }
     }
 
@@ -192,7 +226,11 @@ pub struct ApplicationEventVisibilityParseError {
 
 impl fmt::Display for ApplicationEventVisibilityParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "unknown application event visibility {:?}", self.value)
+        write!(
+            formatter,
+            "unknown application event visibility {:?}",
+            self.value
+        )
     }
 }
 
@@ -1046,6 +1084,20 @@ pub enum ApplicationProtocolEventKind {
     RunCancelled,
     RunPolicyStopped,
     RunExpired,
+    AsyncOperationStarted,
+    AsyncOperationWaitingCallback,
+    AsyncOperationPolling,
+    AsyncOperationCompleted,
+    AsyncOperationFailed,
+    AsyncOperationCancelled,
+    AsyncOperationExpired,
+    ExternalCallbackReceived,
+    ExternalCallbackRejected,
+    LateExternalCallbackReceived,
+    RunResuming,
+    RunPausedBudget,
+    RunPausedPolicy,
+    RunPausedOperator,
 }
 
 impl ApplicationProtocolEventKind {
@@ -1080,6 +1132,20 @@ impl ApplicationProtocolEventKind {
             Self::RunCancelled => "RunCancelled",
             Self::RunPolicyStopped => "RunPolicyStopped",
             Self::RunExpired => "RunExpired",
+            Self::AsyncOperationStarted => "AsyncOperationStarted",
+            Self::AsyncOperationWaitingCallback => "AsyncOperationWaitingCallback",
+            Self::AsyncOperationPolling => "AsyncOperationPolling",
+            Self::AsyncOperationCompleted => "AsyncOperationCompleted",
+            Self::AsyncOperationFailed => "AsyncOperationFailed",
+            Self::AsyncOperationCancelled => "AsyncOperationCancelled",
+            Self::AsyncOperationExpired => "AsyncOperationExpired",
+            Self::ExternalCallbackReceived => "ExternalCallbackReceived",
+            Self::ExternalCallbackRejected => "ExternalCallbackRejected",
+            Self::LateExternalCallbackReceived => "LateExternalCallbackReceived",
+            Self::RunResuming => "RunResuming",
+            Self::RunPausedBudget => "RunPausedBudget",
+            Self::RunPausedPolicy => "RunPausedPolicy",
+            Self::RunPausedOperator => "RunPausedOperator",
         }
     }
 }
@@ -1106,14 +1172,32 @@ pub struct ApplicationProtocolEvent {
 pub enum ApplicationProtocolError {
     EmptyCommandId,
     EmptyEventId,
-    EmptyMetadataField { field: &'static str },
-    InvalidPayload { field: &'static str },
-    InvalidPayloadKey { field: String },
-    InvalidToolResultEvent { source: ToolResultEventError },
-    DuplicateEventIdConflict { event_id: String },
-    DuplicateCursorConflict { cursor: String },
-    NonMonotonicSequence { previous: u64, next: u64 },
-    ProtocolVersionMismatch { left: String, right: String },
+    EmptyMetadataField {
+        field: &'static str,
+    },
+    InvalidPayload {
+        field: &'static str,
+    },
+    InvalidPayloadKey {
+        field: String,
+    },
+    InvalidToolResultEvent {
+        source: ToolResultEventError,
+    },
+    DuplicateEventIdConflict {
+        event_id: String,
+    },
+    DuplicateCursorConflict {
+        cursor: String,
+    },
+    NonMonotonicSequence {
+        previous: u64,
+        next: u64,
+    },
+    ProtocolVersionMismatch {
+        left: String,
+        right: String,
+    },
     RunMismatch {
         expected_run_id: String,
         actual_run_id: String,
@@ -1364,7 +1448,12 @@ fn draft_terminal_event_matches_cutoff(event: &ApplicationEvent, cutoff: &Output
         ApplicationEventKind::AssistantRetracted => "retract",
         _ => return false,
     };
-    if event.payload.get("draft_disposition").and_then(Value::as_str) != Some(draft_disposition) {
+    if event
+        .payload
+        .get("draft_disposition")
+        .and_then(Value::as_str)
+        != Some(draft_disposition)
+    {
         return false;
     }
 
@@ -1402,7 +1491,10 @@ impl ApplicationProtocolStreamState {
             if response_id.trim().is_empty() || self.cutoffs.contains_key(&response_id) {
                 return None;
             }
-            let terminal_reason = event.payload.get("terminal_reason").and_then(Value::as_str)?;
+            let terminal_reason = event
+                .payload
+                .get("terminal_reason")
+                .and_then(Value::as_str)?;
             if !matches!(
                 terminal_reason,
                 "policy_denied" | "budget_exhausted" | "cancelled" | "client_disconnected"
@@ -1417,7 +1509,10 @@ impl ApplicationProtocolStreamState {
                 return None;
             }
             if !matches!(
-                event.payload.get("durable_result").and_then(Value::as_str)?,
+                event
+                    .payload
+                    .get("durable_result")
+                    .and_then(Value::as_str)?,
                 "none" | "incomplete" | "partial"
             ) {
                 return None;

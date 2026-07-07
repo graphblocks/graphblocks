@@ -78,6 +78,24 @@ fn event_kind(value: &str) -> Result<ApplicationProtocolEventKind, String> {
         "RunCancelled" => Ok(ApplicationProtocolEventKind::RunCancelled),
         "RunPolicyStopped" => Ok(ApplicationProtocolEventKind::RunPolicyStopped),
         "RunExpired" => Ok(ApplicationProtocolEventKind::RunExpired),
+        "AsyncOperationStarted" => Ok(ApplicationProtocolEventKind::AsyncOperationStarted),
+        "AsyncOperationWaitingCallback" => {
+            Ok(ApplicationProtocolEventKind::AsyncOperationWaitingCallback)
+        }
+        "AsyncOperationPolling" => Ok(ApplicationProtocolEventKind::AsyncOperationPolling),
+        "AsyncOperationCompleted" => Ok(ApplicationProtocolEventKind::AsyncOperationCompleted),
+        "AsyncOperationFailed" => Ok(ApplicationProtocolEventKind::AsyncOperationFailed),
+        "AsyncOperationCancelled" => Ok(ApplicationProtocolEventKind::AsyncOperationCancelled),
+        "AsyncOperationExpired" => Ok(ApplicationProtocolEventKind::AsyncOperationExpired),
+        "ExternalCallbackReceived" => Ok(ApplicationProtocolEventKind::ExternalCallbackReceived),
+        "ExternalCallbackRejected" => Ok(ApplicationProtocolEventKind::ExternalCallbackRejected),
+        "LateExternalCallbackReceived" => {
+            Ok(ApplicationProtocolEventKind::LateExternalCallbackReceived)
+        }
+        "RunResuming" => Ok(ApplicationProtocolEventKind::RunResuming),
+        "RunPausedBudget" => Ok(ApplicationProtocolEventKind::RunPausedBudget),
+        "RunPausedPolicy" => Ok(ApplicationProtocolEventKind::RunPausedPolicy),
+        "RunPausedOperator" => Ok(ApplicationProtocolEventKind::RunPausedOperator),
         other => Err(format!(
             "unsupported application protocol event kind {other:?}"
         )),
@@ -111,9 +129,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
         ApplicationProtocolError::EmptyEventId => "empty_event_id",
         ApplicationProtocolError::EmptyMetadataField { .. } => "empty_metadata_field",
         ApplicationProtocolError::InvalidToolResultEvent { .. } => "invalid_tool_result_event",
-        ApplicationProtocolError::DuplicateEventIdConflict { .. } => {
-            "duplicate_event_id_conflict"
-        }
+        ApplicationProtocolError::DuplicateEventIdConflict { .. } => "duplicate_event_id_conflict",
         ApplicationProtocolError::DuplicateCursorConflict { .. } => "duplicate_cursor_conflict",
         ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         ApplicationProtocolError::RunMismatch { .. } => "run_mismatch",
@@ -180,6 +196,20 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 ApplicationProtocolEventKind::RunCancelled.as_str(),
                 ApplicationProtocolEventKind::RunPolicyStopped.as_str(),
                 ApplicationProtocolEventKind::RunExpired.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationStarted.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationWaitingCallback.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationPolling.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationCompleted.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationFailed.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationCancelled.as_str(),
+                ApplicationProtocolEventKind::AsyncOperationExpired.as_str(),
+                ApplicationProtocolEventKind::ExternalCallbackReceived.as_str(),
+                ApplicationProtocolEventKind::ExternalCallbackRejected.as_str(),
+                ApplicationProtocolEventKind::LateExternalCallbackReceived.as_str(),
+                ApplicationProtocolEventKind::RunResuming.as_str(),
+                ApplicationProtocolEventKind::RunPausedBudget.as_str(),
+                ApplicationProtocolEventKind::RunPausedPolicy.as_str(),
+                ApplicationProtocolEventKind::RunPausedOperator.as_str(),
             ],
         })),
         "command_envelope" | "command_envelope_error" => {
@@ -332,8 +362,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 )
                 .map_err(|error| error.to_string())?;
                 let append_result = log.append(event);
-                if let Some(expected_error) = operation.get("expectError").and_then(Value::as_str)
-                {
+                if let Some(expected_error) = operation.get("expectError").and_then(Value::as_str) {
                     match append_result {
                         Ok(_) => {
                             return Err(format!(
