@@ -151,7 +151,8 @@ graphblocks-cli
     The `graphblocks-tck run runtime ... --profile native --json` CLI path reports the same native
     or fallback evidence for shared runtime TCK acceptance checks. The shared runtime TCK fixtures
     annotate their currently successful deterministic cases with `nativeNodeOutputs`, and the TCK
-    CLI accepts `--evidence-dir` to persist per-case native SQLite run/journal evidence.
+    CLI accepts `--evidence-dir` to persist per-case native SQLite run/journal evidence. `run-all`
+    namespaces that evidence by suite id, for example `runtime/tck-...-runs.sqlite3`.
   - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
     evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one

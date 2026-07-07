@@ -1808,6 +1808,67 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
     }
 
 
+def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    calls: list[dict[str, object]] = []
+
+    def run_test_graph(
+        graph: dict[str, object],
+        _inputs: dict[str, object],
+        node_outputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        calls.append(options)
+        graph_name = graph["metadata"]["name"]  # type: ignore[index]
+        if graph_name == "runtime-prompt-render":
+            outputs = {"prompt": node_outputs["render"]["prompt"]}  # type: ignore[index]
+        elif graph_name == "runtime-control-map":
+            outputs = {"values": node_outputs["map"]["values"]}  # type: ignore[index]
+        elif graph_name == "runtime-control-select":
+            outputs = {
+                "selected": node_outputs["select"]["selected"],  # type: ignore[index]
+                "value": node_outputs["select"]["value"],  # type: ignore[index]
+            }
+        else:
+            outputs = {"candidate": node_outputs["agent"]["candidate"]}  # type: ignore[index]
+        return {
+            "runId": options["run_id"],
+            "status": "succeeded",
+            "outputs": outputs,
+            "journal": [{"kind": "run_succeeded", "runId": options["run_id"], "terminal": True}],
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_test_graph=run_test_graph),
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    evidence_dir = tmp_path / "native-evidence"
+    tck_root = tmp_path / "tck"
+    runtime_dir = tck_root / "runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "cases.json").write_text((ROOT / "tck" / "runtime" / "cases.json").read_text(encoding="utf-8"), encoding="utf-8")
+
+    exit_code = graphblocks_testing.main(
+        ["run-all", str(tck_root), "--profile", "native", "--evidence-dir", str(evidence_dir), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    runtime_report = payload["reports"]["runtime"]
+    prompt_observed = {
+        result["case_id"]: result["observed"] for result in runtime_report["results"]
+    }["prompt_render_output"]
+    assert prompt_observed["run_store_path"] == str(
+        evidence_dir / "runtime" / "tck-prompt-render-output-runs.sqlite3"
+    )
+    assert prompt_observed["journal_store_path"] == str(
+        evidence_dir / "runtime" / "tck-prompt-render-output-journal.sqlite3"
+    )
+    assert calls[0]["run_store_path"] == str(evidence_dir / "runtime" / "tck-prompt-render-output-runs.sqlite3")
+
+
 def test_testing_package_cli_runs_application_event_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
