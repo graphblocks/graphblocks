@@ -71,6 +71,8 @@ def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) ->
         {"message": "hi"},
         {"render": {"prompt": "Hello"}},
         run_id="test-run-requested-1",
+        run_store_path="/tmp/graphblocks-test-run.sqlite3",
+        journal_store_path="/tmp/graphblocks-test-journal.sqlite3",
     )
 
     assert result == {
@@ -85,7 +87,11 @@ def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) ->
             {"kind": "Graph", "metadata": {"name": "test"}},
             {"message": "hi"},
             {"render": {"prompt": "Hello"}},
-            {"run_id": "test-run-requested-1"},
+            {
+                "journal_store_path": "/tmp/graphblocks-test-journal.sqlite3",
+                "run_id": "test-run-requested-1",
+                "run_store_path": "/tmp/graphblocks-test-run.sqlite3",
+            },
         )
     ]
     assert "run_native_test_graph" in graphblocks_testing.__all__

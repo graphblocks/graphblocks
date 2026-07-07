@@ -193,10 +193,19 @@ def run_native_test_graph(
     node_outputs: dict[str, object],
     *,
     run_id: str | None = None,
+    run_store_path: str | None = None,
+    journal_store_path: str | None = None,
 ) -> dict[str, object]:
     from graphblocks_runtime import run_test_graph
 
-    return run_test_graph(graph, inputs, node_outputs, run_id=run_id)
+    return run_test_graph(
+        graph,
+        inputs,
+        node_outputs,
+        run_id=run_id,
+        run_store_path=run_store_path,
+        journal_store_path=journal_store_path,
+    )
 
 
 TckCaseKind = Literal[

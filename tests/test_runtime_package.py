@@ -584,6 +584,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"message": "hi"},
         {"node": {"value": "ok"}},
         run_id="run-test-requested-1",
+        run_store_path="/tmp/graphblocks-test-run.sqlite3",
+        journal_store_path="/tmp/graphblocks-test-journal.sqlite3",
     )
     finalized = runtime.finalize_tool_call(
         {
@@ -1198,7 +1200,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 '{"kind":"Graph"}',
                 '{"message":"hi"}',
                 '{"node":{"value":"ok"}}',
-                '{"runId":"run-test-requested-1"}',
+                '{"journalStorePath":"/tmp/graphblocks-test-journal.sqlite3","runId":"run-test-requested-1","runStorePath":"/tmp/graphblocks-test-run.sqlite3"}',
             ),
         ),
         (

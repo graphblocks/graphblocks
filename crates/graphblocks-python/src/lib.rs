@@ -30,6 +30,7 @@ use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
     WorkKind,
 };
+use graphblocks_runtime_core::journal::{JournalMetadata, SqliteExecutionJournal};
 use graphblocks_runtime_core::lifecycle::{LifecycleError, NodeLifecycle, NodeStatus};
 use graphblocks_runtime_core::observability::{
     CaptureDecision, CaptureMode, CapturedContent, RedactionRule,
@@ -54,6 +55,7 @@ use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
+use graphblocks_runtime_core::run_store::{RunStatus, SqliteRunStore};
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
@@ -61,7 +63,9 @@ use graphblocks_runtime_core::task_group::{
     ChildTaskState, SiblingCancellationPolicy, TaskGroupDecision, TaskGroupFailure,
     TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
 };
-use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::test_runtime::{
+    InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus,
+};
 use graphblocks_runtime_core::timeout::{Deadline, TimeoutDecision, TimeoutPolicy};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
@@ -6246,6 +6250,102 @@ fn test_runtime_run_id_from_options(options: &Value) -> PyResult<&str> {
     Ok(run_id)
 }
 
+fn test_runtime_option_string<'a>(
+    options: &'a serde_json::Map<String, Value>,
+    camel_key: &str,
+    snake_key: &str,
+) -> PyResult<Option<&'a str>> {
+    let value = options.get(camel_key).or_else(|| options.get(snake_key));
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(text) = value.as_str() else {
+        return Err(PyValueError::new_err(format!(
+            "test runtime option {camel_key} must be a string",
+        )));
+    };
+    if text.trim().is_empty() {
+        return Err(PyValueError::new_err(format!(
+            "test runtime option {camel_key} must not be empty",
+        )));
+    }
+    Ok(Some(text))
+}
+
+fn persist_test_runtime_evidence(
+    result: &TestRunResult,
+    graph_hash: &str,
+    inputs: &Value,
+    run_store_path: Option<&str>,
+    journal_store_path: Option<&str>,
+) -> PyResult<()> {
+    if let Some(run_store_path) = run_store_path {
+        let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
+            PyRuntimeError::new_err(format!("failed to open SQLite run store: {error:?}"))
+        })?;
+        store
+            .create_run_with_run_id(&result.run_id, graph_hash, inputs.clone())
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to persist native test runtime run record: {error:?}"
+                ))
+            })?;
+        store
+            .set_status(&result.run_id, RunStatus::Running)
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to persist native test runtime run status: {error:?}"
+                ))
+            })?;
+        let status = match result.status {
+            TestRunStatus::Succeeded => RunStatus::Completed,
+            TestRunStatus::Failed => RunStatus::Failed,
+            TestRunStatus::Cancelled => RunStatus::Cancelled,
+        };
+        store.set_status(&result.run_id, status).map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "failed to persist native test runtime terminal status: {error:?}"
+            ))
+        })?;
+    }
+
+    if let Some(journal_store_path) = journal_store_path {
+        let mut journal = SqliteExecutionJournal::open(journal_store_path, &result.run_id)
+            .map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to open SQLite execution journal: {error:?}"
+                ))
+            })?;
+        for record in result.journal.records() {
+            let metadata = JournalMetadata {
+                causation_id: record.causation_id.clone(),
+                node_id: record.node_id.clone(),
+                attempt_id: record.attempt_id.clone(),
+                lease_epoch: record.lease_epoch,
+            };
+            let append_result = if record.terminal {
+                journal.append_terminal_with_metadata(
+                    record.kind.clone(),
+                    metadata,
+                    record.payload.clone(),
+                )
+            } else {
+                journal.append_with_metadata(record.kind.clone(), metadata, record.payload.clone())
+            };
+            append_result.map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to persist native test runtime journal record: {error:?}"
+                ))
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 fn collect_output_values(
     edges: &[Value],
     inputs: &Value,
@@ -6380,6 +6480,15 @@ fn run_test_graph_with_options_json(
     let node_outputs = parse_json_argument(node_outputs_json, "node outputs")?;
     let options = parse_json_argument(options_json, "test runtime options")?;
     let run_id = test_runtime_run_id_from_options(&options)?;
+    let Some(options_object) = options.as_object() else {
+        return Err(PyValueError::new_err(
+            "test runtime options JSON must be an object",
+        ));
+    };
+    let run_store_path =
+        test_runtime_option_string(options_object, "runStorePath", "run_store_path")?;
+    let journal_store_path =
+        test_runtime_option_string(options_object, "journalStorePath", "journal_store_path")?;
     let Some(node_outputs) = node_outputs.as_object() else {
         return Err(PyValueError::new_err(
             "node outputs JSON must be an object keyed by node id",
@@ -6401,6 +6510,13 @@ fn run_test_graph_with_options_json(
         &inputs,
         &executor.outputs_by_node,
         result.status,
+    )?;
+    persist_test_runtime_evidence(
+        &result,
+        &bridge_plan.graph_hash,
+        &inputs,
+        run_store_path,
+        journal_store_path,
     )?;
     serialize_runtime_result(result, bridge_plan.graph_hash, output_values)
 }
@@ -9118,6 +9234,19 @@ mod tests {
         validate_worker_protocol_message_json,
     };
 
+    fn unique_sqlite_path(label: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "graphblocks-python-{label}-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after unix epoch")
+                .as_nanos()
+        ));
+        path
+    }
+
     fn native_audit_fixture() -> Result<(Value, Value, Value), String> {
         let resolved_tool = json!({
             "resolvedToolId": "resolved-ticket-create",
@@ -11439,6 +11568,97 @@ mod tests {
             "journal records must preserve requested run id: {journal:?}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn run_test_graph_with_options_json_persists_sqlite_evidence() -> Result<(), String> {
+        let run_store_path = unique_sqlite_path("run-store");
+        let journal_store_path = unique_sqlite_path("journal-store");
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-test-runtime-evidence"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        });
+        let node_outputs = json!({"render": {"prompt": "rendered"}});
+        let options = json!({
+            "runId": "run-native-test-evidence-1",
+            "runStorePath": run_store_path.to_string_lossy(),
+            "journalStorePath": journal_store_path.to_string_lossy(),
+        });
+
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let node_outputs_json =
+            serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
+        let options_json = serde_json::to_string(&options).map_err(|error| error.to_string())?;
+        let result_json = run_test_graph_with_options_json(
+            &graph_json,
+            r#"{"message":{"text":"hello"}}"#,
+            &node_outputs_json,
+            &options_json,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result["runId"], "run-native-test-evidence-1");
+        assert_eq!(result["status"], "succeeded");
+
+        let store = graphblocks_runtime_core::run_store::SqliteRunStore::open(&run_store_path)
+            .map_err(|error| format!("run store reopens: {error:?}"))?;
+        let run = store
+            .get_run("run-native-test-evidence-1")
+            .map_err(|error| format!("run record is persisted: {error:?}"))?;
+        assert_eq!(
+            run.status,
+            graphblocks_runtime_core::run_store::RunStatus::Completed
+        );
+        assert_eq!(run.inputs["message"]["text"], "hello");
+
+        let journal = graphblocks_runtime_core::journal::SqliteExecutionJournal::open(
+            &journal_store_path,
+            "run-native-test-evidence-1",
+        )
+        .map_err(|error| format!("journal reopens: {error:?}"))?;
+        let records = journal
+            .records()
+            .map_err(|error| format!("journal records load: {error:?}"))?;
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "run_started",
+                "node_started",
+                "node_completed",
+                "run_succeeded"
+            ]
+        );
+        assert_eq!(
+            journal
+                .terminal_kind()
+                .map_err(|error| format!("terminal loads: {error:?}"))?
+                .as_deref(),
+            Some("run_succeeded")
+        );
+        assert!(
+            records
+                .iter()
+                .all(|record| record.run_id == "run-native-test-evidence-1")
+        );
+
+        let _ = std::fs::remove_file(run_store_path);
+        let _ = std::fs::remove_file(journal_store_path);
         Ok(())
     }
 
