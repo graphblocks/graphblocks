@@ -491,6 +491,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Application protocol event metadata now preserves optional `operation_id` / `operationId` for
   async operation and callback events, and the shared application-protocol TCK includes an
   `ExternalCallbackReceived` envelope case that proves the identity round-trips in Python and Rust.
+- Callback subscription `operation_ids` filters now match the protocol event metadata
+  `operation_id` in addition to legacy payload spellings, so async callback events do not need to
+  duplicate operation identity in their payload to route to subscribers.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids

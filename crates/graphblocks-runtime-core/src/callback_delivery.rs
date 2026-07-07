@@ -122,11 +122,7 @@ impl EventFilter {
     pub fn matches(&self, event: &ApplicationProtocolEvent) -> bool {
         if !self.payload_field_matches(event, &["visibility"], &self.visibility)
             || !self.payload_field_matches(event, &["node_id", "nodeId"], &self.node_ids)
-            || !self.payload_field_matches(
-                event,
-                &["operation_id", "operationId"],
-                &self.operation_ids,
-            )
+            || !self.operation_id_matches(event)
         {
             return false;
         }
@@ -177,6 +173,23 @@ impl EventFilter {
                     .and_then(Value::as_str)
                     .is_some_and(|value| allowed.contains(value))
             })
+        })
+    }
+
+    fn operation_id_matches(&self, event: &ApplicationProtocolEvent) -> bool {
+        self.operation_ids.as_ref().is_none_or(|allowed| {
+            event
+                .metadata
+                .operation_id
+                .as_deref()
+                .is_some_and(|operation_id| allowed.contains(operation_id))
+                || ["operation_id", "operationId"].iter().any(|field| {
+                    event
+                        .payload
+                        .get(*field)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| allowed.contains(value))
+                })
         })
     }
 }

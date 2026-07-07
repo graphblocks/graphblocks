@@ -250,6 +250,52 @@ fn subscription_filter_matches_camel_case_node_and_operation_payload_fields() {
 }
 
 #[test]
+fn subscription_filter_matches_operation_metadata_without_payload_duplication() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let matching = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::ExternalCallbackReceived,
+        ApplicationProtocolEventMetadata {
+            event_id: "event-callback-1".to_owned(),
+            protocol_version: "graphblocks.app.v1".to_owned(),
+            run_id: "run-1".to_owned(),
+            turn_id: None,
+            operation_id: Some("op-ci-1".to_owned()),
+            sequence: 1,
+            cursor: Some("cursor-1".to_owned()),
+            occurred_at_unix_ms: 1_001,
+        },
+        json!({"callback_id": "callback-1"}),
+    )
+    .expect("callback event is valid");
+    let wrong_operation = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::ExternalCallbackReceived,
+        ApplicationProtocolEventMetadata {
+            event_id: "event-callback-2".to_owned(),
+            protocol_version: "graphblocks.app.v1".to_owned(),
+            run_id: "run-1".to_owned(),
+            turn_id: None,
+            operation_id: Some("op-other".to_owned()),
+            sequence: 2,
+            cursor: Some("cursor-2".to_owned()),
+            occurred_at_unix_ms: 1_002,
+        },
+        json!({"callback_id": "callback-2"}),
+    )
+    .expect("callback event is valid");
+    let subscription = subscription(
+        EventFilter::new().with_operation_ids(["op-ci-1"]),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+
+    let delivery = scheduler
+        .schedule_event(&subscription, &matching)
+        .expect("operation metadata should match the subscription");
+
+    assert_eq!(delivery.event_id, "event-callback-1");
+    assert!(scheduler.schedule_event(&subscription, &wrong_operation).is_none());
+}
+
+#[test]
 fn callback_subscription_rejects_unknown_visibility_filter_literals() {
     let result = CallbackSubscription::new(
         "sub-visibility",
