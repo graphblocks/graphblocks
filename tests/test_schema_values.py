@@ -64,6 +64,23 @@ def test_typed_value_rejects_non_json_values_at_construction() -> None:
         TypedValue.from_value({"schema": "schemas/Message@1", "value": object()})
 
 
+def test_typed_value_copies_payload_and_canonical_value() -> None:
+    payload = {"z": 1, "a": [True]}
+    value = TypedValue.new("schemas/Message@1", payload)
+
+    payload["a"].append(False)
+    payload["z"] = 2
+
+    assert value.canonical_value() == {
+        "schema": "schemas/Message@1",
+        "value": {"z": 1, "a": [True]},
+    }
+    envelope = value.canonical_value()
+    envelope["value"]["a"].append(False)
+
+    assert value.to_json() == '{"schema":"schemas/Message@1","value":{"a":[true],"z":1}}'
+
+
 def test_python_typed_value_matches_shared_tck_cases() -> None:
     fixture = Path(__file__).resolve().parents[1] / "tck" / "schema" / "typed-values.json"
     cases = json.loads(fixture.read_text(encoding="utf-8"))

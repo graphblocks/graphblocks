@@ -75,9 +75,10 @@ class TypedValue:
 
     def __post_init__(self) -> None:
         try:
-            canonical_dumps(self.value)
+            canonical_value = json.loads(canonical_dumps(self.value))
         except (TypeError, ValueError) as error:
             raise ValueError("typed value value must be canonical JSON") from error
+        object.__setattr__(self, "value", canonical_value)
 
     @classmethod
     def new(cls, schema_id: str | SchemaId, value: object) -> TypedValue:
@@ -95,7 +96,7 @@ class TypedValue:
         return cls.new(schema_id, value["value"])
 
     def canonical_value(self) -> dict[str, object]:
-        return {"schema": self.schema_id.as_str(), "value": self.value}
+        return {"schema": self.schema_id.as_str(), "value": json.loads(canonical_dumps(self.value))}
 
     def to_json(self) -> str:
         return canonical_dumps(self.canonical_value())
