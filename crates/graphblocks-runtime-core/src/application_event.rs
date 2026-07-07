@@ -1156,6 +1156,7 @@ pub struct ApplicationProtocolEventMetadata {
     pub protocol_version: String,
     pub run_id: String,
     pub turn_id: Option<String>,
+    pub operation_id: Option<String>,
     pub sequence: u64,
     pub cursor: Option<String>,
     pub occurred_at_unix_ms: u64,
@@ -1316,6 +1317,7 @@ impl ApplicationProtocolEvent {
         }
         for (field, value) in [
             ("turn_id", metadata.turn_id.as_deref()),
+            ("operation_id", metadata.operation_id.as_deref()),
             ("cursor", metadata.cursor.as_deref()),
         ] {
             if value.is_some_and(|value| value.trim().is_empty()) {

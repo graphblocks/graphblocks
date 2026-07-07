@@ -280,6 +280,10 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         .get("turnId")
                         .and_then(Value::as_str)
                         .map(ToOwned::to_owned),
+                    operation_id: metadata
+                        .get("operationId")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
                     sequence: metadata
                         .get("sequence")
                         .and_then(Value::as_u64)
@@ -305,16 +309,24 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 }));
             }
             let event = event_result.map_err(|error| error.to_string())?;
-            Ok(json!({
+            let mut observed = json!({
                 "kind": event.kind.as_str(),
                 "eventId": event.metadata.event_id,
                 "protocolVersion": event.metadata.protocol_version,
                 "runId": event.metadata.run_id,
                 "turnId": event.metadata.turn_id,
+                "operationId": event.metadata.operation_id,
                 "sequence": event.metadata.sequence,
                 "cursor": event.metadata.cursor,
                 "payload": event.payload,
-            }))
+            });
+            if event.metadata.operation_id.is_none() {
+                observed
+                    .as_object_mut()
+                    .expect("observed event envelope is an object")
+                    .remove("operationId");
+            }
+            Ok(observed)
         }
         "protocol_log" => {
             let operations = case
@@ -340,6 +352,10 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         run_id: required_str(&operation["metadata"], "runId")?.to_owned(),
                         turn_id: metadata
                             .get("turnId")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        operation_id: metadata
+                            .get("operationId")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
                         sequence: metadata
@@ -441,6 +457,10 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         run_id: required_str(&operation["metadata"], "runId")?.to_owned(),
                         turn_id: metadata
                             .get("turnId")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        operation_id: metadata
+                            .get("operationId")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
                         sequence: metadata

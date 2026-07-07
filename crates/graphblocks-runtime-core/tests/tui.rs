@@ -34,6 +34,7 @@ fn protocol_event(
             protocol_version: "graphblocks.app.v1".to_owned(),
             run_id: "run-coding-1".to_owned(),
             turn_id: None,
+            operation_id: None,
             sequence,
             cursor: Some(cursor.to_owned()),
             occurred_at_unix_ms: 1_800_000 + sequence,

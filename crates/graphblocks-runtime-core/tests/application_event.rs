@@ -1474,6 +1474,7 @@ fn protocol_event_metadata(
         protocol_version: "graphblocks.app.v1".to_owned(),
         run_id: "run-1".to_owned(),
         turn_id: Some("turn-1".to_owned()),
+        operation_id: None,
         sequence,
         cursor: Some(cursor.to_owned()),
         occurred_at_unix_ms: 1_700_200 + sequence,

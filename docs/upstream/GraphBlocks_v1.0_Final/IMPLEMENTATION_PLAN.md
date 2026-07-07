@@ -488,6 +488,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The client-facing application protocol event kind set and shared application-protocol TCK now
   include the same async/background lifecycle and callback ingestion event names, with Python and
   Rust protocol facades reporting the shared contract.
+- Application protocol event metadata now preserves optional `operation_id` / `operationId` for
+  async operation and callback events, and the shared application-protocol TCK includes an
+  `ExternalCallbackReceived` envelope case that proves the identity round-trips in Python and Rust.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids

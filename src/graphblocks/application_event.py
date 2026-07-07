@@ -474,6 +474,7 @@ class ApplicationProtocolEventMetadata:
     sequence: int
     occurred_at_unix_ms: int
     turn_id: str | None = None
+    operation_id: str | None = None
     cursor: str | None = None
 
     def __post_init__(self) -> None:
@@ -484,7 +485,7 @@ class ApplicationProtocolEventMetadata:
                 f"application event {label}",
                 getattr(self, field_name),
             )
-        for field_name in ("turn_id", "cursor"):
+        for field_name in ("turn_id", "operation_id", "cursor"):
             _validate_optional_non_empty_string(
                 ApplicationProtocolError,
                 f"application event {field_name}",

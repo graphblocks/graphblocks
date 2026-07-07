@@ -668,12 +668,13 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-protocol"] * 11
+    assert [case.kind for case in cases] == ["application-protocol"] * 12
     assert report.ok
     assert {case.case_id for case in cases} == {
         "application_protocol_kind_sets_match_contract",
         "command_envelope_preserves_metadata_and_payload",
         "event_envelope_accepts_output_cutoff_event",
+        "event_envelope_preserves_async_operation_metadata",
         "command_envelope_rejects_non_object_payload",
         "event_envelope_rejects_non_object_payload",
         "capability_negotiation_intersects_commands_and_events",
@@ -684,6 +685,11 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
         "protocol_stream_cutoff_discards_late_output",
     }
     assert any("OutputCutoff" in result.observed.get("events", []) for result in report.results)
+    assert any(
+        result.case_id == "event_envelope_preserves_async_operation_metadata"
+        and result.observed.get("operationId") == "operation-ci-1"
+        for result in report.results
+    )
     assert {result.observed.get("error") for result in report.results} >= {
         "invalid_payload",
         "empty_protocol_version",
@@ -1520,6 +1526,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "application_protocol_kind_sets_match_contract",
         "command_envelope_preserves_metadata_and_payload",
         "event_envelope_accepts_output_cutoff_event",
+        "event_envelope_preserves_async_operation_metadata",
         "command_envelope_rejects_non_object_payload",
         "event_envelope_rejects_non_object_payload",
         "capability_negotiation_intersects_commands_and_events",

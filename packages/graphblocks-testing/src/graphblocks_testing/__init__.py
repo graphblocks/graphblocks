@@ -3816,6 +3816,15 @@ class TckRunner:
                                     else None
                                 )
                             ),
+                            operation_id=(
+                                str(raw_metadata["operationId"])
+                                if raw_metadata.get("operationId") is not None
+                                else (
+                                    str(raw_metadata["operation_id"])
+                                    if raw_metadata.get("operation_id") is not None
+                                    else None
+                                )
+                            ),
                             sequence=raw_metadata.get("sequence", 0),  # type: ignore[arg-type]
                             cursor=(
                                 str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
@@ -3842,10 +3851,13 @@ class TckRunner:
                             "protocolVersion": event.metadata.protocol_version,
                             "runId": event.metadata.run_id,
                             "turnId": event.metadata.turn_id,
+                            "operationId": event.metadata.operation_id,
                             "sequence": event.metadata.sequence,
                             "cursor": event.metadata.cursor,
                             "payload": dict(event.payload),
                         }
+                        if observed["operationId"] is None:
+                            del observed["operationId"]
             elif kind == "protocol_log":
                 raw_operations = fixture.get("operations", [])
                 if not isinstance(raw_operations, list):
@@ -3878,6 +3890,15 @@ class TckRunner:
                                     else (
                                         str(raw_metadata["turn_id"])
                                         if raw_metadata.get("turn_id") is not None
+                                        else None
+                                    )
+                                ),
+                                operation_id=(
+                                    str(raw_metadata["operationId"])
+                                    if raw_metadata.get("operationId") is not None
+                                    else (
+                                        str(raw_metadata["operation_id"])
+                                        if raw_metadata.get("operation_id") is not None
                                         else None
                                     )
                                 ),
@@ -3975,6 +3996,15 @@ class TckRunner:
                                     else (
                                         str(raw_metadata["turn_id"])
                                         if raw_metadata.get("turn_id") is not None
+                                        else None
+                                    )
+                                ),
+                                operation_id=(
+                                    str(raw_metadata["operationId"])
+                                    if raw_metadata.get("operationId") is not None
+                                    else (
+                                        str(raw_metadata["operation_id"])
+                                        if raw_metadata.get("operation_id") is not None
                                         else None
                                     )
                                 ),
