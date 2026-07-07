@@ -5,6 +5,17 @@ metadata:
   version: 1.0.0
 spec:
   applications:
+  - id: coding-agent-background-callbacks
+    profiles:
+    - GB-C4-PRODUCTION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/11-coding-agent-background-callbacks.yaml
+    gates:
+    - graphblocks validate
+    - accepted invocation handle check
+    - cursor replay after detach
+    - callback journal-before-resume check
+    - signed webhook delivery check
+    description: Background coding agent task with accepted invocation, replayable run events, async CI callback resume, signed callback subscription, review, and CAS commit.
   - id: direct-file-analysis
     profiles:
     - GB-C2-AI-APPLICATION

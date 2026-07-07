@@ -36,6 +36,7 @@ def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch
     assert coverage.ok
     assert coverage.issue_contracts() == []
     assert manifest.application_ids() == (
+        "coding-agent-background-callbacks",
         "direct-file-analysis",
         "document-ingestion",
         "enterprise-rag",
@@ -287,6 +288,8 @@ def test_c4_conformance_profile_includes_deployment_tck_coverage(monkeypatch) ->
 
     assert coverage.ok
     assert "deployment" in coverage.claim.tck_suites
+    assert "durable" in coverage.claim.tck_suites
+    assert "coding-agent-background-callbacks" in coverage.claim.acceptance_applications
     assert coverage.missing_suites == ()
 
 

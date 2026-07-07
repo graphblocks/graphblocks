@@ -1501,6 +1501,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   accepted background run replay, callback delivery projection, callback resume guards, cancel/
   callback race ordering, and late external-operation reconciliation, matching the Python testing
   package's interpretation of those fixtures.
+- Production conformance evidence now treats durable async/background execution as part of the MVP
+  acceptance boundary: `GB-C4-PRODUCTION` requires durable TCK coverage and the
+  `coding-agent-background-callbacks` acceptance application, so accepted invocation, cursor replay,
+  callback journal-before-resume, and signed callback delivery cannot be omitted from production
+  claims.
 
 ### Package ownership
 

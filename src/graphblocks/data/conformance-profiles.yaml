@@ -77,6 +77,10 @@ spec:
     - GB-C2-AI-APPLICATION
     - GB-C3-GOVERNED-RUNTIME
     requires:
+    - background-runs
+    - callback-subscription
+    - async-operation
+    - cursor-replay
     - immutable-release
     - worker-protocol
     - deployment-revision
@@ -85,8 +89,10 @@ spec:
     - slo
     - otel-projection
     tck:
+    - durable
     - deployment
     acceptanceApplications:
+    - coding-agent-background-callbacks
     - kubernetes-canary
     - telemetry-outage-correctness
   - id: GB-X1-ORCHESTRATION
