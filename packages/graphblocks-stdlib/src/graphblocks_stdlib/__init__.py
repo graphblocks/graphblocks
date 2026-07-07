@@ -49,10 +49,23 @@ def scripted_model_generate(
     )
 
 
-def run_native_stdlib_graph(graph: dict[str, object], inputs: dict[str, object]) -> dict[str, object]:
+def run_native_stdlib_graph(
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    *,
+    run_id: str | None = None,
+    run_store_path: str | None = None,
+    journal_store_path: str | None = None,
+) -> dict[str, object]:
     from graphblocks_runtime import run_stdlib_graph
 
-    return run_stdlib_graph(graph, inputs)
+    return run_stdlib_graph(
+        graph,
+        inputs,
+        run_id=run_id,
+        run_store_path=run_store_path,
+        journal_store_path=journal_store_path,
+    )
 
 
 __all__ = [

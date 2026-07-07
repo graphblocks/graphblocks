@@ -136,6 +136,9 @@ graphblocks-cli
     payload. The same native options path accepts SQLite `runStorePath` and `journalStorePath`
     values and persists the completed Rust-native run record plus replayable execution journal
     records for MVP evidence checks.
+  - `graphblocks-stdlib.run_native_stdlib_graph` forwards the same `run_id`, `run_store_path`, and
+    `journal_store_path` options so package users can request stable native evidence handles
+    without dropping to the lower-level runtime wrapper.
   - `graphblocks observe run` can read the Rust `SqliteRunStore` layout emitted by native runtime
     evidence, including Rust's canonical `completed` terminal status.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one

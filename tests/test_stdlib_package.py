@@ -53,10 +53,14 @@ def test_stdlib_scripted_model_uses_default_response_then_echo(monkeypatch) -> N
 
 def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-stdlib" / "src"))
-    calls: list[tuple[dict[str, object], dict[str, object]]] = []
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
 
-    def run_stdlib_graph(graph: dict[str, object], inputs: dict[str, object]) -> dict[str, object]:
-        calls.append((graph, inputs))
+    def run_stdlib_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        **options: object,
+    ) -> dict[str, object]:
+        calls.append((graph, inputs, options))
         return {"runId": "run-1", "status": "succeeded", "graph": graph, "inputs": inputs}
 
     monkeypatch.setitem(
@@ -69,6 +73,9 @@ def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> 
     result = graphblocks_stdlib.run_native_stdlib_graph(
         {"kind": "Graph", "metadata": {"name": "stdlib"}},
         {"message": {"text": "hello"}},
+        run_id="run-stdlib-1",
+        run_store_path="/tmp/stdlib-runs.sqlite3",
+        journal_store_path="/tmp/stdlib-journal.sqlite3",
     )
 
     assert result == {
@@ -81,6 +88,11 @@ def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> 
         (
             {"kind": "Graph", "metadata": {"name": "stdlib"}},
             {"message": {"text": "hello"}},
+            {
+                "run_id": "run-stdlib-1",
+                "run_store_path": "/tmp/stdlib-runs.sqlite3",
+                "journal_store_path": "/tmp/stdlib-journal.sqlite3",
+            },
         )
     ]
     assert "run_native_stdlib_graph" in graphblocks_stdlib.__all__
