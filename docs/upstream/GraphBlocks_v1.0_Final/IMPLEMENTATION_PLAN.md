@@ -1490,6 +1490,17 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
+- The PyO3 bridge now mirrors the Rust runtime-core application-protocol metadata contract
+  (`releaseId` and `operationId`) and serializes newer tool admission/resolution errors such as
+  expired policy decisions and empty resolution-scope entries, keeping native Python bindings
+  buildable against the normative Rust runtime.
+- Rust and shared usage TCK fixtures now treat provider-response replay as an exact duplicate
+  receipt: the provider response id, attempt, timestamp, amounts, and metadata must match before an
+  existing usage record is replayed instead of rejected as a conflict.
+- The Rust durable-runtime TCK runner now covers the shared async/background durable cases for
+  accepted background run replay, callback delivery projection, callback resume guards, cancel/
+  callback race ordering, and late external-operation reconciliation, matching the Python testing
+  package's interpretation of those fixtures.
 
 ### Package ownership
 

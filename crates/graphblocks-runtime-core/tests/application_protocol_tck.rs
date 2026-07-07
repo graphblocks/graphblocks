@@ -94,6 +94,7 @@ fn event_kind(value: &str) -> Result<ApplicationProtocolEventKind, String> {
         }
         "RunResuming" => Ok(ApplicationProtocolEventKind::RunResuming),
         "RunPausedBudget" => Ok(ApplicationProtocolEventKind::RunPausedBudget),
+        "RunPausedCallbackDelivery" => Ok(ApplicationProtocolEventKind::RunPausedCallbackDelivery),
         "RunPausedPolicy" => Ok(ApplicationProtocolEventKind::RunPausedPolicy),
         "RunPausedOperator" => Ok(ApplicationProtocolEventKind::RunPausedOperator),
         other => Err(format!(
@@ -208,6 +209,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 ApplicationProtocolEventKind::LateExternalCallbackReceived.as_str(),
                 ApplicationProtocolEventKind::RunResuming.as_str(),
                 ApplicationProtocolEventKind::RunPausedBudget.as_str(),
+                ApplicationProtocolEventKind::RunPausedCallbackDelivery.as_str(),
                 ApplicationProtocolEventKind::RunPausedPolicy.as_str(),
                 ApplicationProtocolEventKind::RunPausedOperator.as_str(),
             ],

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::tool_result::{ContentPart, ToolEffectOutcome, ToolResult};
@@ -9,7 +9,7 @@ use graphblocks_runtime_durable::{
     SinkCommitError, SinkCommitRequest, SourceCursor, SourceEvent, ToolTerminalStoreError,
     Watermark, WindowAccumulator, WindowPolicy,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
@@ -450,6 +450,302 @@ fn run_case(case: &Value) -> Result<(), String> {
             json!({
                 "recordError": record_error,
                 "toolTerminalCount": store.tool_terminal_count(),
+            })
+        }
+        "background_run_event_stream" => {
+            let raw_events = required_array(case, "events", name)?;
+            let raw_attach = required_object(case, "attach", name)?;
+            let empty_detach = Map::new();
+            let raw_detach = case
+                .get("detach")
+                .and_then(Value::as_object)
+                .unwrap_or(&empty_detach);
+            let empty_retention = Map::new();
+            let raw_retention = case
+                .get("retention")
+                .and_then(Value::as_object)
+                .unwrap_or(&empty_retention);
+            let last_cursor = raw_attach
+                .get("lastCursor")
+                .or_else(|| raw_attach.get("last_cursor"))
+                .and_then(Value::as_str);
+            let replay_event_ids = raw_events
+                .iter()
+                .filter_map(Value::as_object)
+                .filter(|event| {
+                    last_cursor.is_none_or(|cursor| {
+                        event
+                            .get("cursor")
+                            .and_then(Value::as_str)
+                            .is_some_and(|event_cursor| event_cursor > cursor)
+                    })
+                })
+                .filter_map(|event| {
+                    event
+                        .get("eventId")
+                        .or_else(|| event.get("event_id"))
+                        .and_then(Value::as_str)
+                })
+                .collect::<Vec<_>>();
+            let expired_cursor = raw_attach
+                .get("expiredCursor")
+                .or_else(|| raw_attach.get("expired_cursor"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let retained_from = raw_retention
+                .get("retainedFromCursor")
+                .or_else(|| raw_retention.get("retained_from_cursor"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            json!({
+                "runContinuesAfterDetach": matches!(required_str(case, "lifetime", name)?, "background" | "job")
+                    && !raw_detach
+                        .get("cancelRun")
+                        .or_else(|| raw_detach.get("cancel_run"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                "acceptedResponseReturnsRunId": required_str(case, "responseMode", name)? == "accepted"
+                    && case
+                        .get("initialResponse")
+                        .or_else(|| case.get("initial_response"))
+                        .and_then(Value::as_object)
+                        .is_some(),
+                "replayEventIds": replay_event_ids,
+                "cursorExpired": !expired_cursor.is_empty()
+                    && !retained_from.is_empty()
+                    && expired_cursor < retained_from,
+                "summaryIncluded": raw_attach
+                    .get("summaryOnExpiredCursor")
+                    .or_else(|| raw_attach.get("summary_on_expired_cursor"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "authoritativeStream": required_str(case, "sourceOfTruth", name)? == "ApplicationEventStream",
+            })
+        }
+        "callback_delivery_projection" => {
+            let deliveries = required_array(case, "deliveries", name)?;
+            let empty_redrive = Map::new();
+            let raw_redrive = case
+                .get("redrive")
+                .and_then(Value::as_object)
+                .unwrap_or(&empty_redrive);
+            let mut idempotency_keys = BTreeSet::new();
+            let mut idempotency_key_count = 0usize;
+            let mut retry_scheduled_after_5xx = false;
+            let mut duplicate_409_acknowledged = false;
+            for delivery in deliveries.iter().filter_map(Value::as_object) {
+                let receiver_status = delivery
+                    .get("receiverStatus")
+                    .or_else(|| delivery.get("receiver_status"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if receiver_status >= 500
+                    && delivery
+                        .get("nextRetryAt")
+                        .or_else(|| delivery.get("next_retry_at"))
+                        .is_some()
+                {
+                    retry_scheduled_after_5xx = true;
+                }
+                if receiver_status == 409
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "acknowledged")
+                {
+                    duplicate_409_acknowledged = true;
+                }
+                if let Some(key) = delivery
+                    .get("idempotencyKey")
+                    .or_else(|| delivery.get("idempotency_key"))
+                    .and_then(Value::as_str)
+                {
+                    idempotency_key_count += 1;
+                    idempotency_keys.insert(key.to_owned());
+                }
+            }
+            json!({
+                "retryScheduledAfter5xx": retry_scheduled_after_5xx,
+                "duplicate409Acknowledged": duplicate_409_acknowledged,
+                "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
+                "deadLetterPreservesEventId": raw_redrive
+                    .get("eventId")
+                    .or_else(|| raw_redrive.get("event_id"))
+                    == raw_redrive
+                        .get("originalEventId")
+                        .or_else(|| raw_redrive.get("original_event_id")),
+                "redriveCreatesApplicationEvent": raw_redrive
+                    .get("createsApplicationEvent")
+                    .or_else(|| raw_redrive.get("creates_application_event"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "nonMandatoryOutageBlocksRun": case
+                    .get("nonMandatoryOutageBlocksRun")
+                    .or_else(|| case.get("non_mandatory_outage_blocks_run"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            })
+        }
+        "async_callback_resume_guards" => {
+            let raw_checks = required_object(case, "checks", name)?;
+            let raw_callback = required_object(case, "callback", name)?;
+            let raw_resume = required_object(case, "resume", name)?;
+            let reevaluates = raw_resume
+                .get("reevaluates")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{name} resume requires reevaluates"))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>();
+            json!({
+                "signatureFailureRevealsOperation": raw_checks
+                    .get("signatureFailureRevealsOperation")
+                    .or_else(|| raw_checks.get("signature_failure_reveals_operation"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "schemaFailureResumesRun": raw_checks
+                    .get("schemaFailureResumesRun")
+                    .or_else(|| raw_checks.get("schema_failure_resumes_run"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "timeoutCallbackResumesExpiredOperation": raw_checks
+                    .get("timeoutCallbackResumesExpiredOperation")
+                    .or_else(|| raw_checks.get("timeout_callback_resumes_expired_operation"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "cancelledCallbackCommitsResult": raw_checks
+                    .get("cancelledCallbackCommitsResult")
+                    .or_else(|| raw_checks.get("cancelled_callback_commits_result"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "staleAttemptCanResume": raw_checks
+                    .get("staleAttemptCanResume")
+                    .or_else(|| raw_checks.get("stale_attempt_can_resume"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "receiptJournaledBeforeResume": required_u64_map(raw_callback, "journalSequence", name)?
+                    < required_u64_map(raw_resume, "resumeSequence", name)?,
+                "resumeReevaluatesPolicyBudgetRelease": reevaluates.contains("policy")
+                    && reevaluates.contains("budget")
+                    && reevaluates.contains("release"),
+                "budgetExhaustionPausesResume": raw_resume
+                    .get("budgetExhaustionState")
+                    .or_else(|| raw_resume.get("budget_exhaustion_state"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|state| state == "paused_budget"),
+                "coordinatorFailoverResumesOnce": raw_resume
+                    .get("successfulResumeCount")
+                    .or_else(|| raw_resume.get("successful_resume_count"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) == 1,
+            })
+        }
+        "async_callback_cancel_race" => {
+            let raw_journal = required_array(case, "journal", name)?;
+            let raw_race = required_object(case, "race", name)?;
+            let mut cancel_sequence = None;
+            let mut callback_sequence = None;
+            let mut fences = BTreeSet::new();
+            for entry in raw_journal.iter().filter_map(Value::as_object) {
+                if let Some(fence) = entry
+                    .get("ownershipFence")
+                    .or_else(|| entry.get("ownership_fence"))
+                    .and_then(Value::as_str)
+                {
+                    fences.insert(fence.to_owned());
+                }
+                let sequence = entry.get("sequence").and_then(Value::as_u64).unwrap_or(0);
+                match entry
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "cancelrun" | "run_cancelled" | "cancelled" => {
+                        cancel_sequence = Some(
+                            cancel_sequence
+                                .map_or(sequence, |current| std::cmp::min(current, sequence)),
+                        );
+                    }
+                    "externalcallbackreceived" | "external_callback_received" => {
+                        callback_sequence = Some(
+                            callback_sequence
+                                .map_or(sequence, |current| std::cmp::min(current, sequence)),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            json!({
+                "journalOrderingDecidesRace": raw_race
+                    .get("winner")
+                    .and_then(Value::as_str)
+                    .is_some_and(|winner| winner == "cancel")
+                    && cancel_sequence.is_some_and(|cancel| {
+                        callback_sequence.is_some_and(|callback| callback > cancel)
+                    }),
+                "callbackReceiptRecorded": raw_race
+                    .get("callbackReceiptRecorded")
+                    .or_else(|| raw_race.get("callback_receipt_recorded"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    && callback_sequence.is_some(),
+                "cancelWinsBlocksResume": raw_race
+                    .get("winner")
+                    .and_then(Value::as_str)
+                    .is_some_and(|winner| winner == "cancel")
+                    && !raw_race
+                        .get("resumeAttempted")
+                        .or_else(|| raw_race.get("resume_attempted"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                "lateCallbackCommitsResult": raw_race
+                    .get("resultCommitted")
+                    .or_else(|| raw_race.get("result_committed"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "lateUsageReconciled": raw_race
+                    .get("usageReconciled")
+                    .or_else(|| raw_race.get("usage_reconciled"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "ownershipFenceStable": fences.len() == 1 && !fences.contains(""),
+            })
+        }
+        "external_operation_reconciliation" => {
+            let raw_operation = required_object(case, "operation", name)?;
+            let raw_late_callback = case
+                .get("lateCallback")
+                .or_else(|| case.get("late_callback"))
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("{name} requires late callback"))?;
+            let raw_usage = required_object(case, "usage", name)?;
+            json!({
+                "sideEffectCommitPreserved": raw_operation
+                    .get("effectState")
+                    .or_else(|| raw_operation.get("effect_state"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|state| state == "committed"),
+                "lateCallbackCommitsResult": raw_late_callback
+                    .get("commitsResult")
+                    .or_else(|| raw_late_callback.get("commits_result"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "lateCallbackRecordedDiagnostic": raw_late_callback
+                    .get("diagnosticRecorded")
+                    .or_else(|| raw_late_callback.get("diagnostic_recorded"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "lateUsageReconciled": raw_usage
+                    .get("reconciled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                "largePayloadUsesArtifactRef": raw_late_callback
+                    .get("payloadConvertedToArtifactRef")
+                    .or_else(|| raw_late_callback.get("payload_converted_to_artifact_ref"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
         }
         other => return Err(format!("durable TCK case {name} has unknown kind {other}")),

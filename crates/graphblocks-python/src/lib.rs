@@ -4829,6 +4829,16 @@ fn serialize_tool_admission_error(error: &ToolAdmissionError) -> Value {
             "expected": expected,
             "actual": actual,
         }),
+        ToolAdmissionError::PolicyDecisionExpired {
+            decision_id,
+            valid_until,
+            admitted_at_unix_ms,
+        } => json!({
+            "code": "policy_decision_expired",
+            "decisionId": decision_id,
+            "validUntil": valid_until,
+            "admittedAtUnixMs": admitted_at_unix_ms,
+        }),
         ToolAdmissionError::PolicyDenied {
             decision_id,
             reason_codes,
@@ -5019,6 +5029,10 @@ fn serialize_tool_resolution_error(error: &ToolResolutionError) -> Value {
             "toolName": tool_name,
             "schemaId": schema_id,
             "schemaError": format!("{error:?}"),
+        }),
+        ToolResolutionError::EmptyToolResolutionScopeItem { field } => json!({
+            "code": "empty_tool_resolution_scope_item",
+            "field": field,
         }),
         ToolResolutionError::ToolBindingMissing { tool_name } => json!({
             "code": "tool_binding_missing",
@@ -5662,7 +5676,10 @@ fn parse_application_protocol_event_metadata(
         )?
         .to_owned(),
         run_id: required_alias_string(object, "runId", "run_id", label)?.to_owned(),
+        release_id: required_alias_string(object, "releaseId", "release_id", label)?.to_owned(),
         turn_id: optional_nullable_alias_string(object, "turnId", "turn_id", label)?
+            .map(str::to_owned),
+        operation_id: optional_nullable_alias_string(object, "operationId", "operation_id", label)?
             .map(str::to_owned),
         sequence: required_u64(object, "sequence", label)?,
         cursor: optional_nullable_alias_string(object, "cursor", "cursor", label)?
@@ -11912,11 +11929,13 @@ mod tests {
     #[test]
     fn evaluate_application_protocol_stream_json_drops_late_events_after_cutoff()
     -> Result<(), String> {
+        pyo3::Python::initialize();
         let metadata = |event_id: &str, sequence: u64| {
             json!({
                 "eventId": event_id,
                 "protocolVersion": "graphblocks.app.v1",
                 "runId": "run-1",
+                "releaseId": "release-1",
                 "turnId": "turn-1",
                 "sequence": sequence,
                 "cursor": format!("cursor-{sequence}"),
@@ -11943,8 +11962,13 @@ mod tests {
                     "metadata": metadata("event-cutoff", 2),
                     "payload": {
                         "response_id": "response-1",
+                        "last_generated_sequence": 1,
+                        "last_policy_accepted_sequence": 1,
                         "last_client_delivered_sequence": 1,
-                        "terminal_reason": "policy_denied"
+                        "terminal_reason": "policy_denied",
+                        "draft_disposition": "mark_incomplete",
+                        "durable_result": "none",
+                        "occurred_at_unix_ms": 1_002
                     }
                 }
             },
@@ -11967,7 +11991,9 @@ mod tests {
                     "metadata": metadata("event-incomplete", 4),
                     "payload": {
                         "response_id": "response-1",
-                        "terminal_reason": "policy_denied"
+                        "terminal_reason": "policy_denied",
+                        "draft_disposition": "mark_incomplete",
+                        "last_client_delivered_sequence": 1
                     }
                 }
             }
@@ -12003,6 +12029,7 @@ mod tests {
     #[test]
     fn evaluate_application_protocol_log_json_appends_duplicates_and_replays() -> Result<(), String>
     {
+        pyo3::Python::initialize();
         let event = |event_id: &str, sequence: u64, cursor: &str| {
             json!({
                 "kind": "JobProgress",
@@ -12010,6 +12037,7 @@ mod tests {
                     "eventId": event_id,
                     "protocolVersion": "graphblocks.app.v1",
                     "runId": "run-1",
+                    "releaseId": "release-1",
                     "turnId": "turn-1",
                     "sequence": sequence,
                     "cursor": cursor,
@@ -12057,6 +12085,7 @@ mod tests {
 
     #[test]
     fn evaluate_application_protocol_log_json_reports_non_monotonic_append() -> Result<(), String> {
+        pyo3::Python::initialize();
         let event = |event_id: &str, sequence: u64| {
             json!({
                 "kind": "JobProgress",
@@ -12064,6 +12093,7 @@ mod tests {
                     "eventId": event_id,
                     "protocolVersion": "graphblocks.app.v1",
                     "runId": "run-1",
+                    "releaseId": "release-1",
                     "turnId": "turn-1",
                     "sequence": sequence,
                     "cursor": format!("cursor-{sequence}"),
@@ -12098,6 +12128,7 @@ mod tests {
 
     #[test]
     fn evaluate_application_protocol_log_json_reports_run_mismatch() -> Result<(), String> {
+        pyo3::Python::initialize();
         let event = |event_id: &str, sequence: u64, run_id: &str| {
             json!({
                 "kind": "JobProgress",
@@ -12105,6 +12136,7 @@ mod tests {
                     "eventId": event_id,
                     "protocolVersion": "graphblocks.app.v1",
                     "runId": run_id,
+                    "releaseId": "release-1",
                     "turnId": "turn-1",
                     "sequence": sequence,
                     "cursor": format!("cursor-{sequence}"),
@@ -12746,8 +12778,7 @@ mod tests {
             "delivery_policy": {
                 "mode": "immediate_draft",
                 "on_violation": "abort_response",
-                "delivered_draft_disposition": "retract",
-                "flush_boundaries": ["sentence"]
+                "delivered_draft_disposition": "retract"
             }
         });
         let operations = json!([
@@ -13513,6 +13544,7 @@ mod tests {
                     "toolCallId": "call-b",
                     "toolName": "ticket.create",
                     "arguments": {"resource_id": "ticket-1"},
+                    "dependsOn": ["call-a"],
                     "effects": ["external_write"],
                     "cancellation": "force_terminable"
                 },

@@ -90,7 +90,7 @@
       {
         "op": "append",
         "record": {
-          "recordId": "usage-provider-duplicate",
+          "recordId": "usage-provider-1",
           "source": "provider_reported",
           "confidence": "provider_exact",
           "amounts": [
@@ -100,8 +100,8 @@
               "unit": "tokens"
             }
           ],
-          "occurredAt": "2026-06-23T00:00:01Z",
-          "occurredAtUnixMs": 1700001,
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
           "runId": "run-1",
           "attemptId": "attempt-1",
           "providerResponseId": "resp-1"

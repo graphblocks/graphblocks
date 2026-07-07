@@ -71,6 +71,7 @@ pub enum ApplicationEventKind {
     LateExternalCallbackReceived,
     RunResuming,
     RunPausedBudget,
+    RunPausedCallbackDelivery,
     RunPausedPolicy,
     RunPausedOperator,
 }
@@ -129,6 +130,7 @@ impl ApplicationEventKind {
             Self::LateExternalCallbackReceived => "LateExternalCallbackReceived",
             Self::RunResuming => "RunResuming",
             Self::RunPausedBudget => "RunPausedBudget",
+            Self::RunPausedCallbackDelivery => "RunPausedCallbackDelivery",
             Self::RunPausedPolicy => "RunPausedPolicy",
             Self::RunPausedOperator => "RunPausedOperator",
         }
@@ -1096,6 +1098,7 @@ pub enum ApplicationProtocolEventKind {
     LateExternalCallbackReceived,
     RunResuming,
     RunPausedBudget,
+    RunPausedCallbackDelivery,
     RunPausedPolicy,
     RunPausedOperator,
 }
@@ -1144,6 +1147,7 @@ impl ApplicationProtocolEventKind {
             Self::LateExternalCallbackReceived => "LateExternalCallbackReceived",
             Self::RunResuming => "RunResuming",
             Self::RunPausedBudget => "RunPausedBudget",
+            Self::RunPausedCallbackDelivery => "RunPausedCallbackDelivery",
             Self::RunPausedPolicy => "RunPausedPolicy",
             Self::RunPausedOperator => "RunPausedOperator",
         }
