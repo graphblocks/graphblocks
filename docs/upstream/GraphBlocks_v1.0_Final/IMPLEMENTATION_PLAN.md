@@ -1394,6 +1394,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The shared tool-lifecycle TCK now covers expired `before_tool_or_effect` policy decisions in
   both the Rust runtime runner and Python conformance runner, proving that stale decisions are
   rejected before approval or side-effect admission.
+- Expired resolved tools are covered by the same TCK path, proving that scoped tool capabilities
+  cannot be admitted after their resolution window closes.
 - The same shared tool-lifecycle TCK now covers policy input digest mismatches, proving that a
   decision for a different `before_tool_or_effect` request cannot be replayed into admission.
 - Missing policy input digests are covered by the shared tool-lifecycle TCK as well, keeping

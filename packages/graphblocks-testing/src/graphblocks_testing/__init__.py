@@ -1920,6 +1920,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_invalid_arguments",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
+            "admission_expired_resolved_tool",
             "admission_policy_input_digest_mismatch",
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
@@ -8012,6 +8013,7 @@ class TckRunner:
             "admission_invalid_arguments",
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
+            "admission_expired_resolved_tool",
             "admission_policy_input_digest_mismatch",
             "admission_policy_input_digest_missing",
             "admission_policy_denied",
@@ -8038,6 +8040,11 @@ class TckRunner:
                 ToolResolutionScope(),
                 effective_policy_snapshot_id="policy-snapshot-1",
             )[0]
+            if kind == "admission_expired_resolved_tool":
+                resolved_tool = replace(
+                    resolved_tool,
+                    valid_until=str(fixture.get("resolvedToolValidUntil", "1970-01-01T00:00:01Z")),
+                )
             schemas = ToolSchemaRegistry(
                 (
                     JsonSchema(
@@ -8130,6 +8137,7 @@ class TckRunner:
                     "schemaRejectedBeforeApproval": False,
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
+                    "resolvedToolExpiredBeforeApproval": False,
                     "policyDigestRejectedBeforeApproval": False,
                     "policyDigestMissingBeforeApproval": False,
                     "policyDeniedBeforeApproval": False,
@@ -8148,6 +8156,11 @@ class TckRunner:
                     ),
                     "policyExpiredBeforeApproval": (
                         "expired" in message and "requires approval" not in message
+                    ),
+                    "resolvedToolExpiredBeforeApproval": (
+                        "resolved tool" in message
+                        and "expired" in message
+                        and "requires approval" not in message
                     ),
                     "policyDigestRejectedBeforeApproval": (
                         "input digest" in message and "requires approval" not in message

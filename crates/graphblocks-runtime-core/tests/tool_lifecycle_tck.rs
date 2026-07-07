@@ -34,6 +34,7 @@ fn run_case(case: &Value) -> Result<(), String> {
         "admission_invalid_arguments" => run_invalid_admission_case(case_name, case),
         "admission_policy_stopped_response" => run_policy_stopped_admission_case(case_name, case),
         "admission_expired_policy_decision" => run_expired_policy_decision_case(case_name, case),
+        "admission_expired_resolved_tool" => run_expired_resolved_tool_case(case_name, case),
         "admission_policy_input_digest_mismatch" => {
             run_policy_input_digest_mismatch_case(case_name, case)
         }
@@ -267,6 +268,59 @@ fn run_expired_policy_decision_case(case_name: &str, case: &Value) -> Result<(),
             Err(ToolAdmissionError::PolicyDecisionExpired { .. })
         ),
         required_bool(expected, "policyExpiredBeforeApproval")?,
+        "{case_name}",
+    );
+    assert!(
+        error_text.contains(required_map_str(expected, "errorContains")?),
+        "{case_name}: expected {error_text:?} to contain configured text",
+    );
+    Ok(())
+}
+
+fn run_expired_resolved_tool_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let expected = expected(case, case_name)?;
+    let schema_id = required_str(case, "schemaId")?;
+    let tool_name = required_str(case, "toolName")?;
+    let resolved_tool = resolved_process_tool_with_valid_until(
+        tool_name,
+        schema_id,
+        Some(required_u64(case, "resolvedToolValidUntilUnixMs")?),
+    )?;
+    let schemas = process_schema_registry(schema_id)?;
+    let call = tool_call_from_arguments(
+        tool_name,
+        &resolved_tool.resolved_tool_id,
+        case.get("arguments")
+            .cloned()
+            .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing arguments"))?,
+    )?;
+    let policy_decision = allow_tool_policy_decision();
+    let result = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
+        approval: None,
+        principal_id: "user-1",
+        idempotency_key: Some("idem-1".to_owned()),
+        admitted_at_unix_ms: required_u64(case, "admittedAtUnixMs")?,
+    });
+    let error_text = result
+        .as_ref()
+        .err()
+        .map(admission_error_text)
+        .unwrap_or_default();
+
+    assert_eq!(
+        result.is_ok(),
+        required_bool(expected, "admitted")?,
+        "{case_name}",
+    );
+    assert_eq!(
+        matches!(result, Err(ToolAdmissionError::ResolvedToolExpired { .. })),
+        required_bool(expected, "resolvedToolExpiredBeforeApproval")?,
         "{case_name}",
     );
     assert!(
@@ -582,6 +636,14 @@ fn run_approval_mutation_case(case_name: &str, case: &Value) -> Result<(), Strin
 }
 
 fn resolved_process_tool(tool_name: &str, schema_id: &str) -> Result<ResolvedTool, String> {
+    resolved_process_tool_with_valid_until(tool_name, schema_id, None)
+}
+
+fn resolved_process_tool_with_valid_until(
+    tool_name: &str,
+    schema_id: &str,
+    valid_until_unix_ms: Option<u64>,
+) -> Result<ResolvedTool, String> {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(
             tool_name,
@@ -601,7 +663,16 @@ fn resolved_process_tool(tool_name: &str, schema_id: &str) -> Result<ResolvedToo
     let mut resolved = catalog
         .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
         .map_err(|error| format!("tool resolution failed: {error:?}"))?;
-    Ok(resolved.remove(0))
+    let resolved = resolved.remove(0);
+    ResolvedTool::from_definition_and_binding(
+        resolved.resolved_tool_id,
+        resolved.definition,
+        resolved.binding,
+        resolved.effective_policy_snapshot_id,
+        resolved.allowed_for_principal,
+        valid_until_unix_ms,
+    )
+    .map_err(|error| format!("tool resolution failed: {error:?}"))
 }
 
 fn process_schema_registry(schema_id: &str) -> Result<ToolSchemaRegistry, String> {
@@ -652,6 +723,7 @@ fn admission_error_text(error: &ToolAdmissionError) -> &'static str {
         ToolAdmissionError::PolicyInputDigestMismatch { .. } => "input digest",
         ToolAdmissionError::PolicyDenied { .. } => "denied",
         ToolAdmissionError::PolicyDeferred { .. } => "deferred",
+        ToolAdmissionError::ResolvedToolExpired { .. } => "expired",
         ToolAdmissionError::ResponsePolicyStopped { .. } => "policy stopped",
         _ => "admission failed",
     }
