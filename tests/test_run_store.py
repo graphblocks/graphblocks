@@ -64,6 +64,15 @@ def test_run_store_records_invocation_mode_and_preserves_it_across_mutations() -
     assert "RunInvocationMode" in graphblocks.__all__
 
 
+def test_run_store_accepts_requested_run_id() -> None:
+    store = InMemoryRunStore()
+
+    record = store.create_run("sha256:test", {}, run_id="run-requested-1")
+
+    assert record.run_id == "run-requested-1"
+    assert store.get_run("run-requested-1").graph_hash == "sha256:test"
+
+
 def test_run_records_validate_identity_status_revision_and_payload_shapes() -> None:
     with pytest.raises(ValueError, match="run deployment provenance release_digest must not be empty"):
         RunDeploymentProvenance(release_digest=" ")
@@ -101,6 +110,8 @@ def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
         store.create_run("sha256:test", [])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store inputs.payload must contain only JSON values"):
         store.create_run("sha256:test", {"payload": object()})
+    with pytest.raises(ValueError, match="run store run_id must not be empty"):
+        store.create_run("sha256:test", {}, run_id=" ")
     with pytest.raises(ValueError, match="invalid run invocation mode"):
         store.create_run("sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store patch must be an object"):
@@ -290,6 +301,31 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
         _model_visible_tool("knowledge.search", "resolved-search", True),
         _model_visible_tool("ticket.create", "resolved-ticket", False),
     )
+
+
+def test_sqlite_run_store_persists_requested_run_id(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    first = SQLiteRunStore(database)
+
+    record = first.create_run("sha256:test", {}, run_id="run-sqlite-requested-1")
+    first.set_status(record.run_id, "succeeded")
+    first.close()
+
+    second = SQLiteRunStore(database)
+    loaded = second.get_run("run-sqlite-requested-1")
+
+    assert loaded.run_id == "run-sqlite-requested-1"
+    assert loaded.status == "succeeded"
+
+
+def test_sqlite_run_store_auto_ids_skip_requested_generated_ids(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+
+    requested = store.create_run("sha256:requested", {}, run_id="run-000002")
+    generated = store.create_run("sha256:generated", {})
+
+    assert requested.run_id == "run-000002"
+    assert generated.run_id == "run-000003"
 
 
 def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) -> None:

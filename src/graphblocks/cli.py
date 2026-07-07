@@ -141,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("--run-store", type=Path, help="persist run metadata to a SQLite run store")
     run_parser.add_argument("--journal-store", type=Path, help="persist execution journal records to SQLite")
+    run_parser.add_argument("--run-id", help="caller-selected run id for deterministic local execution evidence")
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -367,8 +368,8 @@ def main(argv: list[str] | None = None) -> int:
             print("--input-json must decode to a JSON object")
             return 1
         if args.runtime == "native":
-            if args.run_store is not None or args.journal_store is not None:
-                print("--run-store and --journal-store are only supported with --runtime python")
+            if args.run_store is not None or args.journal_store is not None or args.run_id is not None:
+                print("--run-id, --run-store, and --journal-store are only supported with --runtime python")
                 return 1
             try:
                 import graphblocks_runtime
@@ -405,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
             stdlib_registry(),
             run_store=run_store,
             journal_factory=journal_factory,
-        ).run(graph_documents[0], inputs)
+        ).run(graph_documents[0], inputs, run_id=args.run_id or "run-000001")
         print(
             json.dumps(
                 {

@@ -622,6 +622,43 @@ def test_runtime_updates_supplied_sqlite_run_store_status(tmp_path) -> None:
     assert store.get_run(result.run_id).status == "succeeded"
 
 
+def test_runtime_uses_requested_run_id_for_store_and_journal(tmp_path) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "requested-runtime-run-id"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Requested {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    run_store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    journal_path = tmp_path / "journal.sqlite3"
+
+    result = InProcessRuntime(
+        stdlib_registry(),
+        run_store=run_store,
+        journal_factory=lambda run_id: SQLiteExecutionJournal(journal_path, run_id),
+    ).run(graph, {"message": {"text": "hello"}}, run_id="run-requested-runtime-1")
+    persisted_journal = SQLiteExecutionJournal(journal_path, "run-requested-runtime-1")
+
+    assert result.run_id == "run-requested-runtime-1"
+    assert run_store.get_run("run-requested-runtime-1").status == "succeeded"
+    assert persisted_journal.terminal_kind == "run_succeeded"
+    assert [record.kind for record in persisted_journal.records] == [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded",
+    ]
+
+
 def test_runtime_can_persist_execution_journal_with_factory(tmp_path) -> None:
     database = tmp_path / "journal.sqlite3"
     graph = {

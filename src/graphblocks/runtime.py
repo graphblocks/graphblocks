@@ -289,7 +289,7 @@ class InProcessRuntime:
 
         normalized = plan.normalized
         if self.run_store is not None:
-            stored = self.run_store.create_run(plan.graph_hash, inputs)
+            stored = self.run_store.create_run(plan.graph_hash, inputs, run_id=run_id)
             run_id = stored.run_id
             self.run_store.set_status(run_id, "running")
         spec = normalized.get("spec", {})

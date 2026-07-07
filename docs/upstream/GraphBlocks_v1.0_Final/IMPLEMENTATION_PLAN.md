@@ -125,6 +125,9 @@ graphblocks-cli
   - `graphblocks run` can persist the local Python runtime's `RunStore` and `ExecutionJournal`
     evidence to caller-selected SQLite stores, so the scripted conversation vertical slice can be
     rerun with durable run status and replayable journal records during MVP acceptance checks.
+  - Local Python run stores and `graphblocks run --run-id` now preserve caller-selected run ids
+    across generated run records and persisted journals, giving acceptance scripts stable handles
+    for replay, status, and evidence correlation.
   - `graphblocks observe journal` can replay persisted SQLite `ExecutionJournal` records for one
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
 - state patch와 CAS

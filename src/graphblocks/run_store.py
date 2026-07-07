@@ -237,16 +237,25 @@ class InMemoryRunStore:
         graph_hash: str,
         inputs: dict[str, Any],
         *,
+        run_id: str | None = None,
         deployment_provenance: RunDeploymentProvenance | None = None,
         invocation_mode: RunInvocationMode = "sync",
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         _validate_non_empty_string("run store", "graph_hash", graph_hash)
         inputs = _validate_json_object("run store", "inputs", inputs)
+        requested_run_id = _validate_optional_non_empty_string("run store", "run_id", run_id)
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         invocation_mode = _validate_invocation_mode("run", invocation_mode)
-        run_id = f"run-{self.next_id:06d}"
+        if requested_run_id is None:
+            while f"run-{self.next_id:06d}" in self.runs:
+                self.next_id += 1
+            run_id = f"run-{self.next_id:06d}"
+        else:
+            run_id = requested_run_id.strip()
+            if run_id in self.runs:
+                raise ValueError(f"run store run_id {run_id!r} already exists")
         self.next_id += 1
         record = RunRecord(
             run_id=run_id,
@@ -407,18 +416,37 @@ class SQLiteRunStore:
         graph_hash: str,
         inputs: dict[str, Any],
         *,
+        run_id: str | None = None,
         deployment_provenance: RunDeploymentProvenance | None = None,
         invocation_mode: RunInvocationMode = "sync",
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         _validate_non_empty_string("run store", "graph_hash", graph_hash)
         inputs = _validate_json_object("run store", "inputs", inputs)
+        requested_run_id = _validate_optional_non_empty_string("run store", "run_id", run_id)
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         invocation_mode = _validate_invocation_mode("run", invocation_mode)
         row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
         sequence = int(row[0])
-        run_id = f"run-{sequence:06d}"
+        if requested_run_id is None:
+            while True:
+                run_id = f"run-{sequence:06d}"
+                existing = self.connection.execute(
+                    "SELECT 1 FROM runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if existing is None:
+                    break
+                sequence += 1
+        else:
+            run_id = requested_run_id.strip()
+            existing = self.connection.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(f"run store run_id {run_id!r} already exists")
         record = RunRecord(
             run_id=run_id,
             graph_hash=graph_hash,

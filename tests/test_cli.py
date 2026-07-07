@@ -205,6 +205,8 @@ def test_run_cli_persists_sqlite_run_and_journal_stores(tmp_path, capsys) -> Non
                 str(graph_path),
                 "--input-json",
                 '{"message":{"text":"hello"}}',
+                "--run-id",
+                "run-cli-persisted-1",
                 "--run-store",
                 str(run_store_path),
                 "--journal-store",
@@ -215,7 +217,7 @@ def test_run_cli_persists_sqlite_run_and_journal_stores(tmp_path, capsys) -> Non
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["runId"] == "run-000001"
+    assert payload["runId"] == "run-cli-persisted-1"
     assert payload["status"] == "succeeded"
     assert payload["outputs"] == {"prompt": "Persisted hello"}
     stored_runs = SQLiteRunStore(run_store_path)
