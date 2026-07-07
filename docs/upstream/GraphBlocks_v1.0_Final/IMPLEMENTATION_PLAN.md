@@ -1517,6 +1517,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   bounded-holdback output streaming profile, with generation, client-delivery, and output-commit
   enforcement points plus abort-response violation handling for pending tool calls and delivered
   drafts.
+- The upstream bundle `SHA256SUMS` manifest is now covered by an integrity test that hashes every
+  file in `docs/upstream/GraphBlocks_v1.0_Final` except the manifest itself, so documentation,
+  catalog, profile, and example edits must refresh the bundle checksum evidence before commit.
 
 ### Package ownership
 
