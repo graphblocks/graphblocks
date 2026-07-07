@@ -1383,6 +1383,9 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
         "payloadDigest": payload_digest,
         "verifiedBy": "callback-relay",
         "policySnapshotId": "policy-callback-1",
+        "runId": "run-1",
+        "nodeId": "waitCI",
+        "attemptId": "attempt-1",
         "status": "accepted",
     }
     assert app.callback_submissions("op-ci-1") == (
@@ -1871,6 +1874,7 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
         "payloadDigest": payload_digest,
         "verifiedBy": "callback-relay",
         "policySnapshotId": "local",
+        "attemptId": "attempt-1",
         "status": "duplicate",
         "duplicate": True,
     }
@@ -2800,6 +2804,26 @@ def test_server_async_callback_submission_preserves_artifacts() -> None:
     assert submission.response_payload()["artifacts"] == [
         {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}
     ]
+
+
+def test_server_async_callback_response_projects_scope_fences() -> None:
+    submission = ServerAsyncCallbackSubmission(
+        operation_id="op-ci-1",
+        callback_id="cb-1",
+        idempotency_key="idem-callback-1",
+        payload={"status": "completed"},
+        run_id="run-1",
+        node_id="waitCI",
+        attempt_id="attempt-1",
+        provider_operation_id="provider-ci-1",
+    )
+
+    payload = submission.response_payload()
+
+    assert payload["runId"] == "run-1"
+    assert payload["nodeId"] == "waitCI"
+    assert payload["attemptId"] == "attempt-1"
+    assert payload["providerOperationId"] == "provider-ci-1"
 
 
 def test_server_async_callback_from_request_preserves_artifacts() -> None:

@@ -1063,7 +1063,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency comparisons. Accepted callback submission projections now also record the canonical
   payload digest, verifying principal, policy snapshot id, and callback artifact references, and
   duplicate acknowledgements return the same receipt metadata instead of reducing the callback to an
-  idempotency key. Callback artifact references are immutable JSON objects with non-empty
+  idempotency key. Accepted and duplicate callback acknowledgements also project run, node, attempt,
+  and provider-operation fences when present, matching the stored receipt identity. Callback artifact
+  references are immutable JSON objects with non-empty
   `artifact_id` and `uri` fields; optional `media_type` and `checksum` fields are validated when
   present, optional `size_bytes` must be a non-negative integer, camelCase aliases are normalized at
   ingress, and artifact refs are included in idempotency conflict detection.

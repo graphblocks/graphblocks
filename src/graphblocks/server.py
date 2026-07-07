@@ -876,6 +876,14 @@ class ServerAsyncCallbackSubmission:
         }
         if self.artifacts:
             payload["artifacts"] = [_thaw_json_value(artifact) for artifact in self.artifacts]
+        if self.run_id is not None:
+            payload["runId"] = self.run_id
+        if self.node_id is not None:
+            payload["nodeId"] = self.node_id
+        if self.attempt_id is not None:
+            payload["attemptId"] = self.attempt_id
+        if self.provider_operation_id is not None:
+            payload["providerOperationId"] = self.provider_operation_id
         return payload
 
     def duplicate_response_payload(self) -> dict[str, object]:
@@ -892,6 +900,14 @@ class ServerAsyncCallbackSubmission:
         }
         if self.artifacts:
             payload["artifacts"] = [_thaw_json_value(artifact) for artifact in self.artifacts]
+        if self.run_id is not None:
+            payload["runId"] = self.run_id
+        if self.node_id is not None:
+            payload["nodeId"] = self.node_id
+        if self.attempt_id is not None:
+            payload["attemptId"] = self.attempt_id
+        if self.provider_operation_id is not None:
+            payload["providerOperationId"] = self.provider_operation_id
         return payload
 
 
