@@ -228,10 +228,59 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "OutputCutoff",
         "AssistantIncomplete",
         "AssistantRetracted",
+        "RunCompleted",
+        "RunExpired",
+        "RunPolicyStopped",
+        "AsyncOperationStarted",
+        "AsyncOperationWaitingCallback",
+        "AsyncOperationPolling",
+        "AsyncOperationCompleted",
+        "AsyncOperationFailed",
+        "AsyncOperationCancelled",
+        "AsyncOperationExpired",
+        "ExternalCallbackReceived",
+        "ExternalCallbackRejected",
+        "LateExternalCallbackReceived",
+        "RunResuming",
+        "RunPausedBudget",
+        "RunPausedPolicy",
+        "RunPausedOperator",
     )
     assert "ToolCallCompleted" in TOOL_APPLICATION_EVENT_KINDS
     assert "ToolResultDelta" in TOOL_APPLICATION_EVENT_KINDS
     assert "OutputCutoff" not in TOOL_APPLICATION_EVENT_KINDS
+
+
+def test_application_event_accepts_async_run_lifecycle_events() -> None:
+    for index, kind in enumerate(
+        (
+            "AsyncOperationStarted",
+            "AsyncOperationWaitingCallback",
+            "ExternalCallbackReceived",
+            "RunResuming",
+            "RunPausedBudget",
+            "RunCompleted",
+        ),
+        start=1,
+    ):
+        event = ApplicationEvent.new(
+            kind,  # type: ignore[arg-type]
+            ApplicationEventMetadata(
+                event_id=f"event-async-{index}",
+                run_id="run-1",
+                response_id="response-1",
+                sequence=100 + index,
+                release_id="release-1",
+                policy_snapshot_id="policy-1",
+                occurred_at="2026-06-23T00:00:00Z",
+                cursor=f"cursor-async-{index}",
+                operation_id="operation-1" if kind.startswith(("AsyncOperation", "ExternalCallback")) else None,
+            ),
+            payload={"status": "observed"},
+        )
+
+        assert event.kind == kind
+        assert event.payload == {"status": "observed"}
 
 
 def test_top_level_package_exports_application_event_kind() -> None:

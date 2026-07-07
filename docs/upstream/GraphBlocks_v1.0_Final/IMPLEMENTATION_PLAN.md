@@ -481,6 +481,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   the amended command set. Python also exports TCK command-kind and event-kind views that are
   checked against the shared `tck/application-protocol/cases.json` fixture so facade drift is caught
   by the same contract file as the Rust harness.
+- `ApplicationEvent` now accepts the async/background run lifecycle and callback ingestion events
+  needed by the authoritative event stream, including async operation wait/completion events,
+  external callback receipt/rejection, late callback receipt, run resume, run pause, and terminal
+  run outcomes.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids
