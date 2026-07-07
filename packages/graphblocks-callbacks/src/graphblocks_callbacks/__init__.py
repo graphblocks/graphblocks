@@ -1061,6 +1061,7 @@ class CallbackEnvelope:
     delivered_at: str = field(default_factory=_utc_now_iso)
     release_id: str = "local"
     tenant_id: str | None = None
+    operation_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -1078,6 +1079,8 @@ class CallbackEnvelope:
             _require_non_empty_string(field_name, getattr(self, field_name))
         if self.tenant_id is not None:
             _require_non_empty_string("tenant_id", self.tenant_id)
+        if self.operation_id is not None:
+            _require_non_empty_string("operation_id", self.operation_id)
         if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
         occurred_at = _parse_field_timestamp("occurred_at", self.occurred_at)
@@ -1105,6 +1108,8 @@ class CallbackEnvelope:
         }
         if self.tenant_id is not None:
             payload["tenant_id"] = self.tenant_id
+        if self.operation_id is not None:
+            payload["operation_id"] = self.operation_id
         return payload
 
     def canonical_body(self) -> bytes:

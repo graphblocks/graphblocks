@@ -497,6 +497,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The Python `EventFilter` facade accepts both authoritative `ApplicationEvent` objects and
   client-facing `ApplicationProtocolEvent` objects, matching protocol-event `operation_id` metadata
   for async callback routing with payload spellings as compatibility fallback.
+- `graphblocks-callbacks` webhook envelopes now carry optional `operation_id` in the signed payload,
+  allowing receivers to observe the async operation identity used for routing without duplicating it
+  inside event payload content.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids

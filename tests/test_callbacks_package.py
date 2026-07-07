@@ -69,6 +69,7 @@ def test_callback_envelope_projects_required_webhook_headers() -> None:
         occurred_at="2026-07-02T00:00:00Z",
         delivered_at="2026-07-02T00:00:01Z",
         release_id="rel_001",
+        operation_id="operation-ci-1",
     )
 
     payload = envelope.to_payload()
@@ -76,6 +77,7 @@ def test_callback_envelope_projects_required_webhook_headers() -> None:
 
     assert payload["payload"] == {"subject": "changeset_abc"}
     assert payload["idempotency_key"] == "sub_001:evt_1042"
+    assert payload["operation_id"] == "operation-ci-1"
     assert set(REQUIRED_WEBHOOK_HEADERS).issubset(headers)
     assert headers["GraphBlocks-Delivery-Id"] == "del_001"
     assert headers["GraphBlocks-Signature-Algorithm"] == "hmac-sha256"
