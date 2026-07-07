@@ -1216,8 +1216,18 @@ class ApplicationEvent:
 class ApplicationEventStreamState:
     cutoffs: dict[str, OutputCutoff] = field(default_factory=dict)
     accepted_events: list[ApplicationEvent] = field(default_factory=list)
+    accepted_events_by_id: dict[str, ApplicationEvent] = field(default_factory=dict)
+    last_sequence_by_run_id: dict[str, int] = field(default_factory=dict)
 
     def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
+        existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
+        if existing_event is not None:
+            if existing_event == event:
+                return existing_event
+            return None
+        last_sequence = self.last_sequence_by_run_id.get(event.metadata.run_id)
+        if last_sequence is not None and event.metadata.sequence <= last_sequence:
+            return None
         if event.kind == "OutputCutoff":
             payload = event.payload
             payload_response_id = payload.get("response_id")
@@ -1272,7 +1282,7 @@ class ApplicationEventStreamState:
             except (KeyError, TypeError, ValueError):
                 return None
             self.cutoffs[response_id] = cutoff
-            self.accepted_events.append(event)
+            self._record(event)
             return event
 
         payload_response_id = event.payload.get("response_id")
@@ -1307,7 +1317,7 @@ class ApplicationEventStreamState:
                     return None
                 if cutoff.draft_disposition == "mark_incomplete" and event.kind != "AssistantIncomplete":
                     return None
-                self.accepted_events.append(event)
+                self._record(event)
                 return event
             chunk_sequence = event.payload.get("chunk_sequence")
             if isinstance(chunk_sequence, int):
@@ -1319,5 +1329,10 @@ class ApplicationEventStreamState:
             if event.kind in TOOL_APPLICATION_EVENT_KINDS and event.kind not in POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS:
                 return None
 
-        self.accepted_events.append(event)
+        self._record(event)
         return event
+
+    def _record(self, event: ApplicationEvent) -> None:
+        self.accepted_events_by_id[event.metadata.event_id] = event
+        self.last_sequence_by_run_id[event.metadata.run_id] = event.metadata.sequence
+        self.accepted_events.append(event)

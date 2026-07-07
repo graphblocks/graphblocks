@@ -1632,6 +1632,53 @@ def test_application_event_stream_state_validates_post_cutoff_draft_terminal_met
     assert [event.kind for event in state.accepted_events] == ["OutputCutoff", "AssistantRetracted"]
 
 
+def test_application_event_stream_state_enforces_unique_ids_and_monotonic_run_sequence() -> None:
+    state = ApplicationEventStreamState()
+    first = ApplicationEvent.new(
+        "RunStarted",
+        replace(_metadata(), event_id="event-1", sequence=1, cursor="run-1:1"),
+        payload={},
+    )
+    duplicate_id = ApplicationEvent.new(
+        "RunCompleted",
+        replace(_metadata(), event_id="event-1", sequence=2, cursor="run-1:2"),
+        payload={},
+    )
+    duplicate_sequence = ApplicationEvent.new(
+        "RunCompleted",
+        replace(_metadata(), event_id="event-2", sequence=1, cursor="run-1:1-duplicate"),
+        payload={},
+    )
+    backwards = ApplicationEvent.new(
+        "RunCompleted",
+        replace(_metadata(), event_id="event-3", sequence=0, cursor="run-1:0"),
+        payload={},
+    )
+    other_run_same_sequence = ApplicationEvent.new(
+        "RunStarted",
+        replace(_metadata(), event_id="event-other-run", run_id="run-2", sequence=1, cursor="run-2:1"),
+        payload={},
+    )
+    next_event = ApplicationEvent.new(
+        "RunCompleted",
+        replace(_metadata(), event_id="event-4", sequence=2, cursor="run-1:2"),
+        payload={},
+    )
+
+    assert state.accept(first) == first
+    assert state.accept(first) == first
+    assert state.accept(duplicate_id) is None
+    assert state.accept(duplicate_sequence) is None
+    assert state.accept(backwards) is None
+    assert state.accept(other_run_same_sequence) == other_run_same_sequence
+    assert state.accept(next_event) == next_event
+    assert [event.metadata.event_id for event in state.accepted_events] == [
+        "event-1",
+        "event-other-run",
+        "event-4",
+    ]
+
+
 def test_application_event_stream_state_discards_late_output_after_cutoff() -> None:
     state = ApplicationEventStreamState()
     cutoff = OutputCutoff(
@@ -1654,7 +1701,7 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         input_digest="sha256:late",
     )
     replacement_response = ApplicationEvent.output_policy_evaluation_started(
-        replace(_metadata(), event_id="event-replacement-response", response_id="response-2", sequence=7),
+        replace(_metadata(), event_id="event-replacement-response", response_id="response-2", sequence=9),
         GenerationChunk.text("stream-1", "response-2", 1, "replacement"),
         input_digest="sha256:replacement",
     )
@@ -1706,61 +1753,61 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     replacement_tool_draft = ApplicationEvent.tool_call_draft(
         ApplicationEventMetadata(
             event_id="event-replacement-tool",
-            run_id="run-1",
-            response_id="response-2",
-            turn_id="turn-1",
-            sequence=8,
-            release_id="release-1",
-            policy_snapshot_id="policy-1",
-            occurred_at="2026-06-23T00:00:02Z",
+                run_id="run-1",
+                response_id="response-2",
+                turn_id="turn-1",
+                sequence=10,
+                release_id="release-1",
+                policy_snapshot_id="policy-1",
+                occurred_at="2026-06-23T00:00:02Z",
         ),
         ToolCallDraft.proposed("response-2", "call-replacement", "knowledge.search"),
     )
     denied_tool = ApplicationEvent.tool(
         "ToolCallDenied",
-        _metadata(),
+        replace(_metadata(), event_id="event-tool-denied", sequence=11),
         tool_call_id="call-1",
         payload={"status": "denied"},
     )
     cancelled_tool = ApplicationEvent.tool(
         "ToolCallCancelled",
-        _metadata(),
+        replace(_metadata(), event_id="event-tool-cancelled", sequence=12),
         tool_call_id="call-2",
         payload={"status": "cancelled"},
     )
     policy_stopped_tool = ApplicationEvent.tool(
         "ToolCallPolicyStopped",
-        _metadata(),
+        replace(_metadata(), event_id="event-tool-policy-stopped", sequence=13),
         tool_call_id="call-3",
         payload={"status": "policy_stopped"},
     )
     incomplete_tool = ApplicationEvent.tool(
         "ToolCallIncomplete",
-        _metadata(),
+        replace(_metadata(), event_id="event-tool-incomplete", sequence=14),
         tool_call_id="call-4",
         payload={"status": "incomplete"},
     )
     denied_result = ApplicationEvent.tool(
         "ToolResultDenied",
-        _metadata(),
+        replace(_metadata(), event_id="event-result-denied", sequence=15),
         tool_call_id="call-result-1",
         payload={"status": "denied"},
     )
     cancelled_result = ApplicationEvent.tool(
         "ToolResultCancelled",
-        _metadata(),
+        replace(_metadata(), event_id="event-result-cancelled", sequence=16),
         tool_call_id="call-result-2",
         payload={"status": "cancelled"},
     )
     policy_stopped_result = ApplicationEvent.tool(
         "ToolResultPolicyStopped",
-        _metadata(),
+        replace(_metadata(), event_id="event-result-policy-stopped", sequence=17),
         tool_call_id="call-result-3",
         payload={"status": "policy_stopped"},
     )
     incomplete_result = ApplicationEvent.tool(
         "ToolResultIncomplete",
-        _metadata(),
+        replace(_metadata(), event_id="event-result-incomplete", sequence=18),
         tool_call_id="call-result-4",
         payload={"status": "incomplete"},
     )

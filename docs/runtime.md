@@ -41,6 +41,11 @@ is the replayable source of truth; callback subscriptions are delivery
 projections. External callbacks are authenticated resume signals for async
 operations, not the authoritative record of run correctness.
 
+The runtime event stream rejects duplicate event IDs and non-increasing
+sequences within a run before applying response-specific policy cutoff rules.
+This keeps replay cursor state authoritative while still allowing different
+runs to use independent sequence ranges.
+
 Async operation state records `callback_received_at` separately from
 `completed_at`. A callback receipt can move an operation into
 `callback_received` and then `resuming`; `completed_at` is reserved for terminal
