@@ -243,6 +243,7 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "LateExternalCallbackReceived",
         "RunResuming",
         "RunPausedBudget",
+        "RunPausedCallbackDelivery",
         "RunPausedPolicy",
         "RunPausedOperator",
     )
@@ -259,6 +260,7 @@ def test_application_event_accepts_async_run_lifecycle_events() -> None:
             "ExternalCallbackReceived",
             "RunResuming",
             "RunPausedBudget",
+            "RunPausedCallbackDelivery",
             "RunCompleted",
         ),
         start=1,
@@ -360,6 +362,7 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
         "LateExternalCallbackReceived",
         "RunResuming",
         "RunPausedBudget",
+        "RunPausedCallbackDelivery",
         "RunPausedPolicy",
         "RunPausedOperator",
     )

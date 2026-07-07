@@ -69,6 +69,7 @@ ApplicationEventKind = Literal[
     "LateExternalCallbackReceived",
     "RunResuming",
     "RunPausedBudget",
+    "RunPausedCallbackDelivery",
     "RunPausedPolicy",
     "RunPausedOperator",
 ]
@@ -126,6 +127,7 @@ STANDARD_APPLICATION_EVENT_KINDS: tuple[ApplicationEventKind, ...] = (
     "LateExternalCallbackReceived",
     "RunResuming",
     "RunPausedBudget",
+    "RunPausedCallbackDelivery",
     "RunPausedPolicy",
     "RunPausedOperator",
 )
@@ -292,6 +294,7 @@ ApplicationProtocolEventKind = Literal[
     "LateExternalCallbackReceived",
     "RunResuming",
     "RunPausedBudget",
+    "RunPausedCallbackDelivery",
     "RunPausedPolicy",
     "RunPausedOperator",
 ]
@@ -338,6 +341,7 @@ APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
     "LateExternalCallbackReceived",
     "RunResuming",
     "RunPausedBudget",
+    "RunPausedCallbackDelivery",
     "RunPausedPolicy",
     "RunPausedOperator",
 )

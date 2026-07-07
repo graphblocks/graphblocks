@@ -75,6 +75,7 @@
         "LateExternalCallbackReceived",
         "RunResuming",
         "RunPausedBudget",
+        "RunPausedCallbackDelivery",
         "RunPausedPolicy",
         "RunPausedOperator"
       ]

@@ -490,8 +490,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   by the same contract file as the Rust harness.
 - `ApplicationEvent` now accepts the async/background run lifecycle and callback ingestion events
   needed by the authoritative event stream, including async operation wait/completion events,
-  external callback receipt/rejection, late callback receipt, run resume, run pause, and terminal
-  run outcomes.
+  external callback receipt/rejection, late callback receipt, run resume, budget/policy/operator
+  pause, callback-delivery pause, and terminal run outcomes.
 - The client-facing application protocol event kind set and shared application-protocol TCK now
   include the same async/background lifecycle and callback ingestion event names, with Python and
   Rust protocol facades reporting the shared contract.
