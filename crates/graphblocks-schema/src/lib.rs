@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{json, Value};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
@@ -139,3 +140,81 @@ impl Display for SchemaIdError {
 }
 
 impl Error for SchemaIdError {}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypedValue {
+    schema: SchemaId,
+    value: Value,
+}
+
+impl TypedValue {
+    pub fn new(schema_id: impl AsRef<str>, value: Value) -> Result<Self, SchemaIdError> {
+        Ok(Self {
+            schema: SchemaId::parse(schema_id)?,
+            value,
+        })
+    }
+
+    pub fn from_schema(schema: SchemaId, value: Value) -> Self {
+        Self { schema, value }
+    }
+
+    pub fn schema_id(&self) -> &SchemaId {
+        &self.schema
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "schema": self.schema.as_str(),
+            "value": self.value,
+        })
+    }
+
+    pub fn canonical_json(&self) -> String {
+        canonical_json(&self.canonical_value())
+    }
+
+    pub fn into_value(self) -> Value {
+        self.value
+    }
+}
+
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => Value::String(value.clone()).to_string(),
+        Value::Array(values) => {
+            let mut output = String::from("[");
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&canonical_json(value));
+            }
+            output.push(']');
+            output
+        }
+        Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+            let mut output = String::from("{");
+            for (index, (key, value)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&Value::String(key.clone()).to_string());
+                output.push(':');
+                output.push_str(&canonical_json(value));
+            }
+            output.push('}');
+            output
+        }
+    }
+}
