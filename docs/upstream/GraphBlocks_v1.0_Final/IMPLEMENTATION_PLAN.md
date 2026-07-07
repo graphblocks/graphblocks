@@ -1054,7 +1054,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `idempotency_key`/`idempotencyKey`, `policy_snapshot_id`/`policySnapshotId`,
   `payload_digest`/`payloadDigest`, `run_id`/`runId`, `node_id`/`nodeId`, and
   `attempt_id`/`attemptId` are accepted only when both spellings agree, preventing ambiguous
-  callback identity, fencing, and digest metadata.
+  callback identity, fencing, and digest metadata. If the callback body and idempotency header
+  both declare an idempotency key, they must also agree before the request can be accepted or
+  projected as a route-bound rejection.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
   idempotency comparisons. Accepted callback submission projections now also record the canonical

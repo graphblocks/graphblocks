@@ -827,13 +827,7 @@ class ServerAsyncCallbackSubmission:
             )
             if declared_operation_id != endpoint_operation_id:
                 raise ValueError("server async callback operation_id must match callback endpoint operation_id")
-        headers = request.headers
-        idempotency_key = _callback_alias_value(
-            body,
-            "idempotency_key",
-            "idempotencyKey",
-            headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
-        )
+        idempotency_key = _callback_idempotency_key(body, request.headers)
         payload = body.get("payload")
         if payload is None:
             raise ValueError("server async callback payload is required")
@@ -1477,6 +1471,18 @@ def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str
     if value is None:
         return None
     return _validate_non_empty_string("server async callback", snake, value)
+
+
+def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, str]) -> object:
+    header_value = headers.get("graphblocks-idempotency-key", headers.get("idempotency-key"))
+    body_value = _callback_alias_value(body, "idempotency_key", "idempotencyKey")
+    if body_value is not None and header_value is not None and body_value != header_value:
+        raise ValueError("server async callback idempotency_key body/header values must not conflict")
+    if body_value is not None:
+        return body_value
+    if header_value is not None:
+        return header_value
+    return ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2274,13 +2280,7 @@ class GraphBlocksServerApp:
                         payload = body.get("payload")
                         if payload is None:
                             raise ValueError("server async callback payload is required")
-                        headers = request.headers
-                        idempotency_key = _callback_alias_value(
-                            body,
-                            "idempotency_key",
-                            "idempotencyKey",
-                            headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
-                        )
+                        idempotency_key = _callback_idempotency_key(body, request.headers)
                         submission = ServerAsyncCallbackSubmission(
                             operation_id=route_match.path_params.get("operation_id", ""),
                             callback_id=_validate_non_empty_string(
