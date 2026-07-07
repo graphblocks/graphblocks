@@ -7444,7 +7444,7 @@ def test_server_app_serves_application_stream_snapshot_for_existing_run() -> Non
     assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Stream ok"}
 
 
-def test_server_app_ignores_boolean_event_sequence_for_stream_cursor() -> None:
+def test_server_app_rejects_boolean_event_sequence_for_stream_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-stream-bool-sequence-1"] = (
         {
@@ -7468,6 +7468,8 @@ def test_server_app_ignores_boolean_event_sequence_for_stream_cursor() -> None:
         )
     )
 
-    payload = json.loads(response.body.decode("utf-8"))
-    assert response.status_code == 200
-    assert payload["stream"]["cursor"] == "run-stream-bool-sequence-1:0"
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "application stream sequence must be an integer",
+    }

@@ -2479,8 +2479,24 @@ class GraphBlocksServerApp:
             for event in events:
                 metadata = event.get("metadata")
                 if isinstance(metadata, Mapping):
-                    sequence = metadata.get("sequence", 0)
-                    if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
+                    sequence = metadata.get("sequence")
+                    if not isinstance(sequence, int) or isinstance(sequence, bool):
+                        return ServerResponse.json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": "application stream sequence must be an integer",
+                            },
+                        )
+                    if sequence < 0:
+                        return ServerResponse.json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": "application stream sequence must be non-negative",
+                            },
+                        )
+                    if sequence > last_sequence:
                         last_sequence = sequence
             return ServerResponse.json(
                 200,
