@@ -126,6 +126,38 @@ def test_event_filter_matches_authoritative_application_event_metadata() -> None
     assert not graphblocks.EventFilter(severity_min="error").matches(event)
 
 
+def test_event_filter_matches_application_protocol_operation_metadata() -> None:
+    event = graphblocks.ApplicationProtocolEvent.new(
+        "ExternalCallbackReceived",
+        graphblocks.ApplicationProtocolEventMetadata(
+            event_id="evt-callback-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=9,
+            occurred_at_unix_ms=1_765_843_202_000,
+            cursor="run-1:9",
+            operation_id="operation-ci",
+        ),
+        payload={"severity": "info"},
+    )
+    wrong_operation = graphblocks.ApplicationProtocolEvent.new(
+        "ExternalCallbackReceived",
+        graphblocks.ApplicationProtocolEventMetadata(
+            event_id="evt-callback-2",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=10,
+            occurred_at_unix_ms=1_765_843_202_100,
+            cursor="run-1:10",
+            operation_id="operation-other",
+        ),
+        payload={"severity": "info"},
+    )
+
+    assert graphblocks.EventFilter(operation_ids=["operation-ci"]).matches(event)
+    assert not graphblocks.EventFilter(operation_ids=["operation-ci"]).matches(wrong_operation)
+
+
 def test_event_filter_visibility_is_constrained_by_subscriber_authorization() -> None:
     requested = graphblocks.EventFilter(
         types=["RunStarted"],

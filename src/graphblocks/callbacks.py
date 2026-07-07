@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-from .application_event import ApplicationEvent
+from .application_event import ApplicationEvent, ApplicationProtocolEvent
 
 
 CallbackSubscriptionScope = Literal["run", "conversation", "project", "tenant", "deployment"]
@@ -196,14 +196,27 @@ class EventFilter:
             include_terminal_events=self.include_terminal_events,
         )
 
-    def matches(self, event: ApplicationEvent) -> bool:
-        if not isinstance(event, ApplicationEvent):
-            raise ValueError("event filter event must be an ApplicationEvent")
-        if self.visibility is not None and event.metadata.visibility not in self.visibility:
+    def matches(self, event: ApplicationEvent | ApplicationProtocolEvent) -> bool:
+        if not isinstance(event, (ApplicationEvent, ApplicationProtocolEvent)):
+            raise ValueError("event filter event must be an ApplicationEvent or ApplicationProtocolEvent")
+        if isinstance(event, ApplicationEvent):
+            visibility = event.metadata.visibility
+            node_id = event.metadata.node_id
+            operation_id = event.metadata.operation_id
+        else:
+            payload_visibility = event.payload.get("visibility")
+            payload_node_id = event.payload.get("node_id", event.payload.get("nodeId"))
+            visibility = payload_visibility if isinstance(payload_visibility, str) else None
+            node_id = payload_node_id if isinstance(payload_node_id, str) else None
+            operation_id = event.metadata.operation_id
+            if operation_id is None:
+                payload_operation_id = event.payload.get("operation_id", event.payload.get("operationId"))
+                operation_id = payload_operation_id if isinstance(payload_operation_id, str) else None
+        if self.visibility is not None and visibility not in self.visibility:
             return False
-        if self.node_ids is not None and event.metadata.node_id not in self.node_ids:
+        if self.node_ids is not None and node_id not in self.node_ids:
             return False
-        if self.operation_ids is not None and event.metadata.operation_id not in self.operation_ids:
+        if self.operation_ids is not None and operation_id not in self.operation_ids:
             return False
         if self.severity_min is not None:
             minimum_rank = EVENT_SEVERITY_RANKS.get(self.severity_min)

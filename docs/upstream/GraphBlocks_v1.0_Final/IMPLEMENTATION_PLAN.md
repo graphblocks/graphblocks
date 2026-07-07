@@ -494,6 +494,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback subscription `operation_ids` filters now match the protocol event metadata
   `operation_id` in addition to legacy payload spellings, so async callback events do not need to
   duplicate operation identity in their payload to route to subscribers.
+- The Python `EventFilter` facade accepts both authoritative `ApplicationEvent` objects and
+  client-facing `ApplicationProtocolEvent` objects, matching protocol-event `operation_id` metadata
+  for async callback routing with payload spellings as compatibility fallback.
 - The application-protocol TCK runner now passes command metadata sequence/timestamp values through
   the protocol model validators instead of coercing them with `int(...)`, so boolean metadata fields
   surface as protocol errors. The shared protocol-log fixture also maps mutated duplicate event ids
