@@ -101,6 +101,24 @@
     }
   },
   {
+    "name": "missing_policy_input_digest_denies_tool_admission",
+    "kind": "admission_policy_input_digest_missing",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "actualPolicyInputDigest": "",
+    "expected": {
+      "admitted": false,
+      "policyDigestMissingBeforeApproval": true,
+      "errorContains": "input digest"
+    }
+  },
+  {
     "name": "policy_denied_decision_denies_tool_admission",
     "kind": "admission_policy_denied",
     "toolName": "process.run",

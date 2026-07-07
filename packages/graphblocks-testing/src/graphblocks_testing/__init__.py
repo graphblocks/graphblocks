@@ -1921,6 +1921,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_policy_input_digest_mismatch",
+            "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
             "approval_argument_mutation",
@@ -8012,6 +8013,7 @@ class TckRunner:
             "admission_policy_stopped_response",
             "admission_expired_policy_decision",
             "admission_policy_input_digest_mismatch",
+            "admission_policy_input_digest_missing",
             "admission_policy_denied",
             "admission_policy_deferred",
         }:
@@ -8072,6 +8074,11 @@ class TckRunner:
                     policy_decision,
                     input_digest=str(fixture.get("actualPolicyInputDigest", "sha256:stale-before-tool")),
                 )
+            if kind == "admission_policy_input_digest_missing":
+                policy_decision = replace(
+                    policy_decision,
+                    input_digest=str(fixture.get("actualPolicyInputDigest", "")),
+                )
             if kind == "admission_policy_denied":
                 raw_reason_codes = fixture.get("reasonCodes", ())
                 reason_codes = (
@@ -8124,6 +8131,7 @@ class TckRunner:
                     "policyStoppedBeforeApproval": False,
                     "policyExpiredBeforeApproval": False,
                     "policyDigestRejectedBeforeApproval": False,
+                    "policyDigestMissingBeforeApproval": False,
                     "policyDeniedBeforeApproval": False,
                     "policyDeferredBeforeApproval": False,
                 }
@@ -8142,6 +8150,9 @@ class TckRunner:
                         "expired" in message and "requires approval" not in message
                     ),
                     "policyDigestRejectedBeforeApproval": (
+                        "input digest" in message and "requires approval" not in message
+                    ),
+                    "policyDigestMissingBeforeApproval": (
                         "input digest" in message and "requires approval" not in message
                     ),
                     "policyDeniedBeforeApproval": (

@@ -1396,6 +1396,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   rejected before approval or side-effect admission.
 - The same shared tool-lifecycle TCK now covers policy input digest mismatches, proving that a
   decision for a different `before_tool_or_effect` request cannot be replayed into admission.
+- Missing policy input digests are covered by the shared tool-lifecycle TCK as well, keeping
+  unauditable policy decisions from reaching approval or side-effect admission.
 - The tool-lifecycle TCK also covers explicit policy deny decisions, proving that runtime policy
   refusal stops admission before approval fallback or side-effect execution.
 - Deferred policy decisions are covered by the same tool-lifecycle TCK path, so an unresolved
