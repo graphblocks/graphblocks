@@ -2301,10 +2301,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
     run_parser.add_argument("--profile", default="local", help="profile label for the generated report")
+    run_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
     run_parser.add_argument("--json", action="store_true", help="emit JSON")
     run_all_parser = subparsers.add_parser("run-all", help="run every supported shared TCK fixture under a root")
     run_all_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
     run_all_parser.add_argument("--profile", default="local", help="profile label for the generated reports")
+    run_all_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
     run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
@@ -2342,7 +2344,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if coverage.ok else 1
     if args.command == "run":
         cases = load_tck_cases_for_suite(args.suite, args.path)
-        report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(cases)
+        report = TckRunner(stdlib_registry(), profile=args.profile, evidence_dir=args.evidence_dir).run_cases(cases)
         payload = report.report_contract()
         payload["contentDigest"] = report.content_digest()
         if args.json:
@@ -2357,7 +2359,8 @@ def main(argv: list[str] | None = None) -> int:
         reports: dict[str, dict[str, object]] = {}
         ok = True
         for manifest in load_tck_suite_manifests(args.root):
-            report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(
+            evidence_dir = args.evidence_dir / manifest.suite_id if args.evidence_dir is not None else None
+            report = TckRunner(stdlib_registry(), profile=args.profile, evidence_dir=evidence_dir).run_cases(
                 load_tck_cases_for_suite(manifest.suite_id, args.root / manifest.path)
             )
             reports[manifest.suite_id] = report.report_contract()
@@ -2866,6 +2869,7 @@ class AcceptanceManifest:
 class TckRunner:
     registry: RuntimeRegistry
     profile: str = "local"
+    evidence_dir: Path | None = None
 
     def run_cases(self, cases: tuple[TckCase, ...]) -> TckReport:
         results: list[TckResult] = []
@@ -9848,12 +9852,20 @@ class TckRunner:
                     run_id = "tck-" + "".join(
                         character if character.isalnum() else "-" for character in case.case_id.strip()
                     ).strip("-")
+                    run_store_path: str | None = None
+                    journal_store_path: str | None = None
+                    if self.evidence_dir is not None:
+                        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+                        run_store_path = str(self.evidence_dir / f"{run_id}-runs.sqlite3")
+                        journal_store_path = str(self.evidence_dir / f"{run_id}-journal.sqlite3")
                     try:
                         native_result = run_native_test_graph(
                             case.graph,
                             case.inputs,
                             case.native_node_outputs,
                             run_id=run_id,
+                            run_store_path=run_store_path,
+                            journal_store_path=journal_store_path,
                         )
                     except (ImportError, ModuleNotFoundError, RuntimeError) as native_error:
                         message = str(native_error)
@@ -9907,6 +9919,10 @@ class TckRunner:
                                 if isinstance(record, Mapping) and isinstance(record.get("kind"), str)
                             ],
                         }
+                        if run_store_path is not None:
+                            observed["run_store_path"] = run_store_path
+                        if journal_store_path is not None:
+                            observed["journal_store_path"] = journal_store_path
                 else:
                     result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
                     observed = {
