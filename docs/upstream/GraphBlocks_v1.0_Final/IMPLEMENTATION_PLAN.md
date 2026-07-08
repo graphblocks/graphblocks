@@ -1757,6 +1757,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection redrive evidence now requires `createsApplicationEvent` to be a real
   boolean when present, preventing truthy string values from satisfying the no-duplicate-event
   redrive invariant.
+- Durable callback projection fixture-level outage evidence now requires a real boolean
+  `nonMandatoryOutageBlocksRun`, preventing string coercion from satisfying non-mandatory webhook
+  outage behavior.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

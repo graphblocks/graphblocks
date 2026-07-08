@@ -7072,6 +7072,21 @@ class TckRunner:
                 elif not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
                 redrive_creates_application_event = True
+                raw_non_mandatory_outage_blocks_run = fixture.get(
+                    "nonMandatoryOutageBlocksRun",
+                    fixture.get("non_mandatory_outage_blocks_run", True),
+                )
+                if isinstance(raw_non_mandatory_outage_blocks_run, bool):
+                    non_mandatory_outage_blocks_run = raw_non_mandatory_outage_blocks_run
+                else:
+                    non_mandatory_outage_blocks_run = True
+                    diagnostics.append(
+                        {
+                            "code": "DurableCallbackProjectionInvalid",
+                            "message": "callback projection requires boolean nonMandatoryOutageBlocksRun",
+                            "path": "$.nonMandatoryOutageBlocksRun",
+                        }
+                    )
                 if raw_redrive:
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7277,7 +7292,7 @@ class TckRunner:
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
                     "deadLetterPreservesEventId": raw_redrive.get("eventId", raw_redrive.get("event_id")) == raw_redrive.get("originalEventId", raw_redrive.get("original_event_id")),
                     "redriveCreatesApplicationEvent": redrive_creates_application_event,
-                    "nonMandatoryOutageBlocksRun": bool(fixture.get("nonMandatoryOutageBlocksRun", fixture.get("non_mandatory_outage_blocks_run", True))),
+                    "nonMandatoryOutageBlocksRun": non_mandatory_outage_blocks_run,
                 }
             elif kind == "async_callback_resume_guards":
                 raw_checks = fixture.get("checks", {})
