@@ -473,6 +473,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut event_records = Vec::new();
             let mut previous_event_sequence = None;
             let mut event_ids = BTreeSet::new();
+            let mut event_cursors = BTreeSet::new();
             for (index, raw_event) in raw_events.iter().enumerate() {
                 let Some(event) = raw_event.as_object() else {
                     diagnostics.push(json!({
@@ -527,6 +528,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "background run event requires cursor",
                         "path": format!("$.events[{index}].cursor"),
                     }));
+                } else if let Some(cursor) =
+                    event.get("cursor").and_then(Value::as_str).map(str::trim)
+                {
+                    if !event_cursors.insert(cursor.to_owned()) {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run cursor must be unique",
+                            "path": format!("$.events[{index}].cursor"),
+                        }));
+                    }
                 }
                 if event
                     .get("type")
