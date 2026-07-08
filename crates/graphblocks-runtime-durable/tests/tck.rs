@@ -551,21 +551,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                 })
                 .and_then(Value::as_str)
                 .filter(|cursor| !cursor.trim().is_empty());
-            let last_cursor_index = last_cursor.and_then(|cursor| {
-                if initial_cursor.is_some_and(|initial| initial == cursor) {
-                    Some(-1)
-                } else {
-                    event_records
-                        .iter()
-                        .position(|event| {
-                            event
-                                .get("cursor")
-                                .and_then(Value::as_str)
-                                .is_some_and(|event_cursor| event_cursor == cursor)
-                        })
-                        .map(|index| index as isize)
+            let mut cursor_positions = BTreeMap::new();
+            if let Some(cursor) = initial_cursor {
+                cursor_positions.insert(cursor.to_owned(), -1);
+            }
+            for (index, event) in event_records.iter().enumerate() {
+                if let Some(cursor) = event.get("cursor").and_then(Value::as_str) {
+                    cursor_positions
+                        .entry(cursor.to_owned())
+                        .or_insert(index as isize);
                 }
-            });
+            }
+            let last_cursor_index =
+                last_cursor.and_then(|cursor| cursor_positions.get(cursor).copied());
             let replay_event_ids = event_records
                 .iter()
                 .enumerate()
@@ -630,6 +628,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 },
                 None => "",
             };
+            let expired_cursor_index = cursor_positions.get(expired_cursor).copied();
+            let retained_from_index = cursor_positions.get(retained_from).copied();
             let lifetime = case.get("lifetime").and_then(Value::as_str);
             let lifetime_allows_detach = match lifetime {
                 Some("background" | "job") => true,
@@ -765,9 +765,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                             .and_then(Value::as_str)
                             .is_some_and(|run_id| !run_id.trim().is_empty())),
                 "replayEventIds": replay_event_ids,
-                "cursorExpired": !expired_cursor.is_empty()
-                    && !retained_from.is_empty()
-                    && expired_cursor < retained_from,
+                "cursorExpired": expired_cursor_index
+                    .zip(retained_from_index)
+                    .is_some_and(|(expired_index, retained_index)| expired_index < retained_index),
                 "summaryIncluded": summary_on_expired_cursor,
                 "authoritativeStream": authoritative_stream,
             })

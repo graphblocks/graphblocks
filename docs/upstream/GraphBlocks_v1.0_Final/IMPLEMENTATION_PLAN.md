@@ -1853,9 +1853,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `cursor` fields in both Rust and Python runners before proving cursor replay, preventing
   anonymous or cursorless events from satisfying replay assertions.
 - Durable background-run shared TCK cases now prove attach replay from the initial run-handle
-  cursor or the matched event cursor position in the authoritative event stream rather than from
-  lexicographic cursor ordering, so opaque replay tokens such as `evt_10` cannot be skipped after
-  `evt_2`.
+  cursor or the matched event cursor position, and cursor expiry from the retained-boundary
+  cursor's position, in the authoritative event stream rather than from lexicographic cursor
+  ordering, so opaque replay tokens such as `evt_10` cannot be skipped after `evt_2`.
 - Durable background-run shared TCK cases now require `sourceOfTruth`/`source_of_truth` to be
   exactly `ApplicationEventStream` in both Rust and Python runners, preventing callback
   subscriptions or truthy placeholders from satisfying the authoritative-event-stream invariant.

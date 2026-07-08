@@ -590,6 +590,59 @@
     }
   },
   {
+    "name": "background_run_cursor_expiry_uses_retention_position_not_lexicographic_order",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "job",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-retention-position",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-retention-position/events",
+      "initialCursor": "evt_0"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-retention-1",
+        "cursor": "evt_1",
+        "type": "RunStarted"
+      },
+      {
+        "eventId": "evt-retention-2",
+        "cursor": "evt_2",
+        "type": "JobProgress"
+      },
+      {
+        "eventId": "evt-retention-10",
+        "cursor": "evt_10",
+        "type": "ReviewRequested"
+      }
+    ],
+    "attach": {
+      "expiredCursor": "evt_2",
+      "summaryOnExpiredCursor": true
+    },
+    "retention": {
+      "retainedFromCursor": "evt_10"
+    },
+    "expected": {
+      "runContinuesAfterDetach": true,
+      "acceptedResponseReturnsRunId": true,
+      "replayEventIds": [
+        "evt-retention-1",
+        "evt-retention-2",
+        "evt-retention-10"
+      ],
+      "cursorExpired": true,
+      "summaryIncluded": true,
+      "authoritativeStream": true
+    }
+  },
+  {
     "name": "background_run_non_boolean_detach_cancel_rejected",
     "kind": "background_run_event_stream",
     "lifetime": "background",

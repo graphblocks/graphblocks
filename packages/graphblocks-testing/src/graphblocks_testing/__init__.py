@@ -7171,6 +7171,13 @@ class TckRunner:
                         )
                     if event_valid:
                         event_records.append(raw_event)
+                cursor_positions = {}
+                if initial_cursor is not None:
+                    cursor_positions[initial_cursor] = -1
+                for event_index, event in enumerate(event_records):
+                    event_cursor = event.get("cursor")
+                    if isinstance(event_cursor, str) and event_cursor not in cursor_positions:
+                        cursor_positions[event_cursor] = event_index
                 has_last_cursor = "lastCursor" in raw_attach or "last_cursor" in raw_attach
                 raw_last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
                 if has_last_cursor and (
@@ -7193,17 +7200,8 @@ class TckRunner:
                     last_cursor = raw_last_cursor
                 if last_cursor is None:
                     last_cursor_index = None
-                elif initial_cursor == last_cursor:
-                    last_cursor_index = -1
                 else:
-                    last_cursor_index = next(
-                        (
-                            event_index
-                            for event_index, event in enumerate(event_records)
-                            if event.get("cursor") == last_cursor
-                        ),
-                        None,
-                    )
+                    last_cursor_index = cursor_positions.get(last_cursor)
                 replay_after_cursor = [
                     str(event.get("eventId", event.get("event_id", "")))
                     for event_index, event in enumerate(event_records)
@@ -7262,6 +7260,8 @@ class TckRunner:
                     )
                 else:
                     retained_from = raw_retained_from
+                expired_cursor_index = cursor_positions.get(expired_cursor)
+                retained_from_index = cursor_positions.get(retained_from)
                 raw_cancel_run = raw_detach.get("cancelRun", raw_detach.get("cancel_run", False))
                 if isinstance(raw_cancel_run, bool):
                     cancel_run = raw_cancel_run
@@ -7324,7 +7324,9 @@ class TckRunner:
                     "runContinuesAfterDetach": lifetime in {"background", "job"} and not cancel_run,
                     "acceptedResponseReturnsRunId": accepted_response_has_run_id,
                     "replayEventIds": replay_after_cursor,
-                    "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),
+                    "cursorExpired": expired_cursor_index is not None
+                    and retained_from_index is not None
+                    and expired_cursor_index < retained_from_index,
                     "summaryIncluded": summary_included,
                     "authoritativeStream": authoritative_stream,
                 }
