@@ -1013,6 +1013,7 @@ class CallbackEndpointRef:
     release_id: str
     tenant_id: str
     expires_at: str | None = None
+    provider_operation_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -1036,6 +1037,8 @@ class CallbackEndpointRef:
             raise ValueError("auth must be a CallbackEndpointAuth")
         if self.expires_at is not None:
             _parse_field_timestamp("expires_at", self.expires_at)
+        if self.provider_operation_id is not None:
+            _require_non_empty_string("provider_operation_id", self.provider_operation_id)
 
     def binding_key(self) -> str:
         return _callback_resume_binding_key(
@@ -1305,6 +1308,17 @@ def evaluate_callback_resume(
             status="stale",
             can_resume=False,
             reason="callback_binding_mismatch",
+            endpoint_binding_key=endpoint_binding_key,
+            receipt_binding_key=receipt_binding_key,
+        )
+    if (
+        endpoint.provider_operation_id is not None
+        and endpoint.provider_operation_id != receipt.provider_operation_id
+    ):
+        return CallbackResumeDecision(
+            status="stale",
+            can_resume=False,
+            reason="callback_provider_operation_mismatch",
             endpoint_binding_key=endpoint_binding_key,
             receipt_binding_key=receipt_binding_key,
         )

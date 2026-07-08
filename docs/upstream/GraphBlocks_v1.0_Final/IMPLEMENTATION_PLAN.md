@@ -1299,10 +1299,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   produced.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
-  attempt, release, and tenant identity into a stable fencing key so stale callbacks cannot be
-  confused with the current resumable operation. Endpoint refs also validate their callback ingress
-  URL as an absolute HTTP(S) URL and reject embedded userinfo credentials before they can be used
-  for resume admission.
+  attempt, release, tenant, and optional provider-operation identity into stable resume fences so
+  stale callbacks cannot be confused with the current resumable operation. Endpoint refs also
+  validate their callback ingress URL as an absolute HTTP(S) URL and reject embedded userinfo
+  credentials before they can be used for resume admission.
 - Callback endpoint auth projections now reject mixed credential material for the wrong auth kind,
   so a resumable callback endpoint has exactly one verifier boundary.
 - Bearer callback endpoint auth now rejects whitespace-only tokens at validation time, so callback
@@ -1314,6 +1314,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback resume admission has deterministic fuzz coverage over tenant, release, run, node,
   attempt, and operation identity mutations to protect the async callback path from stale-attempt
   and wrong-scope resume regressions.
+- Callback resume admission now rejects `ExternalCallbackReceived` receipts whose
+  `provider_operation_id` differs from an endpoint-pinned provider operation, preserving the
+  external-provider fence even when run, node, attempt, and operation ids still match.
 - Python async operation result projections now reject mappings for `artifacts`, `diagnostics`,
   `metrics`, `checks`, `usage`, and `external_effects` sequence fields instead of silently
   iterating object keys, preserving the callback-result contract that untrusted projection

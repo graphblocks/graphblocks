@@ -56,6 +56,9 @@ duplicate callback or resume decision.
 Server callback ingress also treats provider-operation identity as a fence
 between receipts for the same operation: once a receipt records a provider
 operation, later receipts for that operation must not omit or change it.
+Callback helper endpoint references may also pin the provider-operation
+identity so resume admission rejects stale provider callbacks even when the
+run, node, attempt, and operation ids still match.
 Persisted run provenance is also replay-validated without type coercion so
 corrupted release or physical-plan identity cannot become authoritative state.
 
