@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 110
+    assert [case.kind for case in cases] == ["durable"] * 112
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1308,6 +1308,8 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "callback_cancel_race_missing_usage_reconciled_rejected",
         "callback_cancel_race_non_integer_sequence_rejected",
         "callback_cancel_race_non_object_journal_entry_rejected",
+        "callback_cancel_race_missing_ownership_fence_rejected",
+        "callback_cancel_race_unstable_ownership_fence_rejected",
         "external_operation_late_side_effect_usage_reconciliation",
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_reconciled_without_usage_records_rejected",
@@ -1775,6 +1777,16 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "callback_cancel_race_non_object_journal_entry_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_ownership_fence_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_unstable_ownership_fence_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -5082,6 +5094,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "callback_cancel_race_missing_usage_reconciled_rejected",
         "callback_cancel_race_non_integer_sequence_rejected",
         "callback_cancel_race_non_object_journal_entry_rejected",
+        "callback_cancel_race_missing_ownership_fence_rejected",
+        "callback_cancel_race_unstable_ownership_fence_rejected",
         "external_operation_late_side_effect_usage_reconciliation",
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_reconciled_without_usage_records_rejected",

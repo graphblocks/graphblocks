@@ -8233,7 +8233,26 @@ class TckRunner:
                     in {"externalcallbackreceived", "external_callback_received"}
                 ]
                 journal_sequences = {}
+                fences = set()
                 for entry_index, entry in journal_entries:
+                    ownership_fence_path = (
+                        "ownershipFence"
+                        if "ownershipFence" in entry or "ownership_fence" not in entry
+                        else "ownership_fence"
+                    )
+                    ownership_fence = entry.get(
+                        "ownershipFence", entry.get("ownership_fence")
+                    )
+                    if not isinstance(ownership_fence, str) or not ownership_fence.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": "async cancel race journal entry requires ownershipFence",
+                                "path": f"$.journal[{entry_index}].{ownership_fence_path}",
+                            }
+                        )
+                    else:
+                        fences.add(ownership_fence.strip())
                     sequence = entry.get("sequence")
                     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
                         diagnostics.append(
@@ -8245,6 +8264,14 @@ class TckRunner:
                         )
                     else:
                         journal_sequences[id(entry)] = sequence
+                if len(fences) > 1:
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race journal entries require stable ownershipFence",
+                            "path": "$.journal",
+                        }
+                    )
                 cancel_sequence = min(
                     (journal_sequences[id(entry)] for entry in cancel_entries if id(entry) in journal_sequences),
                     default=0,
@@ -8257,11 +8284,6 @@ class TckRunner:
                     ),
                     default=0,
                 )
-                fences = {
-                    str(entry.get("ownershipFence", entry.get("ownership_fence", "")))
-                    for _, entry in journal_entries
-                    if entry.get("ownershipFence", entry.get("ownership_fence")) is not None
-                }
                 cancel_race_boolean_values = {}
                 for key, alias, default in (
                     ("callbackReceiptRecorded", "callback_receipt_recorded", False),

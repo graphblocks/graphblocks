@@ -2020,12 +2020,30 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                     continue;
                 };
-                if let Some(fence) = entry
+                let ownership_fence_path = if entry.contains_key("ownershipFence")
+                    || !entry.contains_key("ownership_fence")
+                {
+                    "ownershipFence"
+                } else {
+                    "ownership_fence"
+                };
+                match entry
                     .get("ownershipFence")
                     .or_else(|| entry.get("ownership_fence"))
                     .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|fence| !fence.is_empty())
                 {
-                    fences.insert(fence.to_owned());
+                    Some(fence) => {
+                        fences.insert(fence.to_owned());
+                    }
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race journal entry requires ownershipFence",
+                            "path": format!("$.journal[{entry_index}].{ownership_fence_path}"),
+                        }));
+                    }
                 }
                 let sequence = match entry.get("sequence").and_then(Value::as_u64) {
                     Some(sequence) => sequence,
@@ -2059,6 +2077,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }
                     _ => {}
                 }
+            }
+            if fences.len() > 1 {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race journal entries require stable ownershipFence",
+                    "path": "$.journal",
+                }));
             }
             let mut race_boolean_values = BTreeMap::new();
             for (key, alias, default) in [
