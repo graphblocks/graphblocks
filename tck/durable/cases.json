@@ -932,7 +932,8 @@
     "responseMode": "accepted",
     "sourceOfTruth": "ApplicationEventStream",
     "initialResponse": {
-      "status": "accepted"
+      "status": "accepted",
+      "initialCursor": "evt_000000"
     },
     "events": [
       {
@@ -961,13 +962,51 @@
     }
   },
   {
+    "name": "background_run_accepted_response_missing_initial_cursor_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-missing-initial-cursor",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-missing-initial-cursor/events"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-missing-initial-cursor-001",
+        "sequence": 1,
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": "evt_000001"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run accepted response requires initialCursor",
+        "path": "$.initialResponse.initialCursor"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "background_run_background_response_missing_run_id_rejected",
     "kind": "background_run_event_stream",
     "lifetime": "background",
     "responseMode": "background",
     "sourceOfTruth": "ApplicationEventStream",
     "initialResponse": {
-      "status": "background"
+      "status": "background",
+      "initialCursor": "evt_000000"
     },
     "events": [
       {

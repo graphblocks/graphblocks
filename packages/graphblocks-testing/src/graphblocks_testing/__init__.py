@@ -7124,6 +7124,21 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                        initial_cursor_value = raw_initial_response.get(
+                            "initialCursor",
+                            raw_initial_response.get("initial_cursor"),
+                        )
+                        if (
+                            not isinstance(initial_cursor_value, str)
+                            or not initial_cursor_value.strip()
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run {response_mode} response requires initialCursor",
+                                    "path": "$.initialResponse.initialCursor",
+                                }
+                            )
                 initial_cursor = None
                 if isinstance(raw_initial_response, Mapping):
                     raw_initial_cursor = raw_initial_response.get(

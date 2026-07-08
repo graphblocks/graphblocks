@@ -681,6 +681,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": "$.initialResponse.runId",
                         }));
                     }
+                    if response
+                        .get("initialCursor")
+                        .or_else(|| response.get("initial_cursor"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|cursor| cursor.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response requires initialCursor"),
+                            "path": "$.initialResponse.initialCursor",
+                        }));
+                    }
                 } else {
                     diagnostics.push(json!({
                         "code": "DurableBackgroundRunInvalid",

@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 96
+    assert [case.kind for case in cases] == ["durable"] * 97
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1225,6 +1225,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_sync_response_mode_rejected",
         "background_run_non_object_initial_response_rejected",
         "background_run_accepted_response_missing_run_id_rejected",
+        "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",
         "background_run_event_missing_event_id_rejected",
@@ -1361,6 +1362,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "background_run_accepted_response_missing_run_id_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_accepted_response_missing_initial_cursor_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -1740,6 +1746,7 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "run_id": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -1779,6 +1786,7 @@ def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeyp
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "run_id": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -1824,6 +1832,7 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -1863,6 +1872,7 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -1939,6 +1949,7 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "status": "accepted",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -1978,6 +1989,7 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2017,6 +2029,7 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2056,6 +2069,7 @@ def test_testing_package_rejects_background_response_without_run_id(monkeypatch)
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "status": "background",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2095,6 +2109,7 @@ def test_testing_package_rejects_non_object_background_run_event(monkeypatch) ->
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": ["evt-000001"],
             "attach": {},
@@ -2129,6 +2144,7 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2167,6 +2183,7 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2206,6 +2223,7 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2247,6 +2265,7 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2292,6 +2311,7 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2336,6 +2356,7 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
             "responseMode": "accepted",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2375,6 +2396,7 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
             "sourceOfTruth": True,
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -2414,6 +2436,7 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
             "sourceOfTruth": "CallbackSubscription",
             "initialResponse": {
                 "runId": "run-001",
+                "initialCursor": "evt-000000",
             },
             "events": [
                 {
@@ -4864,6 +4887,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_sync_response_mode_rejected",
         "background_run_non_object_initial_response_rejected",
         "background_run_accepted_response_missing_run_id_rejected",
+        "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",
         "background_run_event_missing_event_id_rejected",
