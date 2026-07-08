@@ -1939,6 +1939,52 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                let resume_token_hash_path = if operation.contains_key("resumeTokenHash")
+                    || !operation.contains_key("resume_token_hash")
+                {
+                    "resumeTokenHash"
+                } else {
+                    "resume_token_hash"
+                };
+                if !operation
+                    .get("resumeTokenHash")
+                    .or_else(|| operation.get("resume_token_hash"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|resume_token_hash| {
+                        let Some(hex) = resume_token_hash.strip_prefix("sha256:") else {
+                            return false;
+                        };
+                        hex.len() == 64
+                            && hex
+                                .bytes()
+                                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                    })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires resumeTokenHash sha256 digest",
+                        "path": format!("$.operation.{resume_token_hash_path}"),
+                    }));
+                }
+                let expected_schema_path = if operation.contains_key("expectedSchema")
+                    || !operation.contains_key("expected_schema")
+                {
+                    "expectedSchema"
+                } else {
+                    "expected_schema"
+                };
+                if operation
+                    .get("expectedSchema")
+                    .or_else(|| operation.get("expected_schema"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |expected_schema| expected_schema.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires nonblank expectedSchema",
+                        "path": format!("$.operation.{expected_schema_path}"),
+                    }));
+                }
             }
             let mut guard_values = BTreeMap::new();
             for (key, alias) in [

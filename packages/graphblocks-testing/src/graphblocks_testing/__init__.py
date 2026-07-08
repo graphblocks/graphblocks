@@ -8138,6 +8138,46 @@ class TckRunner:
                                     "path": f"$.operation.{path_key}",
                                 }
                             )
+                    resume_token_hash_path = (
+                        "resumeTokenHash"
+                        if "resumeTokenHash" in raw_operation or "resume_token_hash" not in raw_operation
+                        else "resume_token_hash"
+                    )
+                    resume_token_hash = raw_operation.get(
+                        "resumeTokenHash", raw_operation.get("resume_token_hash")
+                    )
+                    if (
+                        not isinstance(resume_token_hash, str)
+                        or not resume_token_hash.startswith("sha256:")
+                        or len(resume_token_hash.removeprefix("sha256:")) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in resume_token_hash.removeprefix("sha256:")
+                        )
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires resumeTokenHash sha256 digest",
+                                "path": f"$.operation.{resume_token_hash_path}",
+                            }
+                        )
+                    expected_schema_path = (
+                        "expectedSchema"
+                        if "expectedSchema" in raw_operation or "expected_schema" not in raw_operation
+                        else "expected_schema"
+                    )
+                    expected_schema = raw_operation.get(
+                        "expectedSchema", raw_operation.get("expected_schema")
+                    )
+                    if not isinstance(expected_schema, str) or not expected_schema.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires nonblank expectedSchema",
+                                "path": f"$.operation.{expected_schema_path}",
+                            }
+                        )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),
