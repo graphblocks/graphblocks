@@ -2647,6 +2647,44 @@ def test_client_package_acknowledges_subscription_event_over_http_transport(monk
     )
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        (
+            {"scope": "project", "scopeId": "run-requested-1"},
+            "GraphBlocks callback registration response scope must match requested scope 'run'",
+        ),
+        (
+            {"scope": "run", "scopeId": "other-run"},
+            "GraphBlocks callback registration response scope_id must match requested scope id 'run-requested-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_mismatched_callback_registration_response_scope(
+    monkeypatch,
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        client.register_callback(
+            scope="run",
+            scope_id="run-requested-1",
+            delivery={"kind": "local_callback", "callback_name": "ide"},
+        )
+
+
 def test_client_package_registers_callback_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

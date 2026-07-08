@@ -1238,7 +1238,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   recording delivery state for the subscription.
 - `graphblocks-client` now exposes `RegisterCallback` and `RevokeCallback` HTTP helpers for
   callback delivery registrations, including replayed run-scope events, delivery target config,
-  failure policy, and dead-letter policy projection.
+  failure policy, and dead-letter policy projection. Callback registration responses must echo the
+  requested `scope` and `scopeId` before the client treats replayed events as a projection for that
+  subscription.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

@@ -1205,9 +1205,11 @@ class HttpGraphBlocksClient:
     ) -> RunStreamSnapshot:
         if event_filter is None:
             event_filter = {}
+        scope_value = _http_non_empty_string("scope", scope)
+        scope_id_value = _http_non_empty_string("scope_id", scope_id)
         body: dict[str, object] = {
-            "scope": _http_non_empty_string("scope", scope),
-            "scopeId": _http_non_empty_string("scope_id", scope_id),
+            "scope": scope_value,
+            "scopeId": scope_id_value,
             "eventFilter": _http_canonical_json_mapping("event_filter", event_filter),
             "delivery": _http_canonical_json_mapping("delivery", delivery),
             "failurePolicy": _http_non_empty_string("failure_policy", failure_policy),
@@ -1236,8 +1238,25 @@ class HttpGraphBlocksClient:
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
+        response_scope = _payload_string(payload, "GraphBlocks callback registration response", "scope", "scope")
+        if response_scope != scope_value:
+            raise ValueError(
+                f"GraphBlocks callback registration response scope must match requested scope {scope_value!r}"
+            )
+        response_scope_id = _payload_string(
+            payload,
+            "GraphBlocks callback registration response",
+            "scope_id",
+            "scopeId",
+            "scope_id",
+        )
+        if response_scope_id != scope_id_value:
+            raise ValueError(
+                "GraphBlocks callback registration response scope_id "
+                f"must match requested scope id {scope_id_value!r}"
+            )
         return RunStreamSnapshot(
-            run_id=str(payload.get("scopeId", "")) if payload.get("scope") == "run" else "",
+            run_id=response_scope_id if response_scope == "run" else "",
             stream={key: deepcopy(value) for key, value in payload.items() if key != "events"},
             events=events,
             event_stream=stream_state,
