@@ -1815,6 +1815,35 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
     assert events[1].payload["outputs"] == {"prompt": "Client events ok"}
 
 
+def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    requests: list[object] = []
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return b'{"ok":true,"events":[]}'
+
+    def transport(request: object, *, timeout: float) -> FakeResponse:
+        requests.append(request)
+        return FakeResponse()
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    events = client.run_events(
+        "run-events-http-1",
+        cursor="run-events-http-1:1/with?query#fragment",
+    )
+
+    parsed = urlparse(requests[0].full_url)
+    assert events == ()
+    assert parsed.path == "/api/runs/run-events-http-1/events"
+    assert parsed.query == "cursor=run-events-http-1%3A1%2Fwith%3Fquery%23fragment"
+
+
 def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

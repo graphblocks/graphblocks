@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from graphblocks import (
@@ -939,13 +939,16 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         return _read_json_response(response, "GraphBlocks async callback response")
 
-    def run_events(self, run_id: str) -> tuple[ApplicationEvent, ...]:
+    def run_events(self, run_id: str, *, cursor: object | None = None) -> tuple[ApplicationEvent, ...]:
         run_id = _http_run_id(run_id)
+        url = f"{self.base_url.rstrip('/')}/runs/{run_id}/events"
+        if cursor is not None:
+            url = f"{url}?{urlencode({'cursor': _http_non_empty_string('cursor', cursor)})}"
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         request = Request(
-            f"{self.base_url.rstrip('/')}/runs/{run_id}/events",
+            url,
             headers=headers,
             method="GET",
         )
