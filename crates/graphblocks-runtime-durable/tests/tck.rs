@@ -3152,6 +3152,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{operation_idempotency_key_path}"),
                 }));
             }
+            if !raw_operation
+                .get("state")
+                .and_then(Value::as_str)
+                .is_some_and(|state| {
+                    matches!(
+                        state,
+                        "created"
+                            | "submitted"
+                            | "waiting_callback"
+                            | "callback_received"
+                            | "polling"
+                            | "resuming"
+                            | "completed"
+                            | "failed"
+                            | "cancelled"
+                            | "expired"
+                    )
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires valid operation state",
+                    "path": "$.operation.state",
+                }));
+            }
             let run_id_path =
                 if raw_operation.contains_key("runId") || !raw_operation.contains_key("run_id") {
                     "runId"

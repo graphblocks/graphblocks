@@ -9212,6 +9212,26 @@ class TckRunner:
                             "path": f"$.operation.{operation_idempotency_key_path}",
                         }
                     )
+                operation_state = raw_operation.get("state")
+                if operation_state not in {
+                    "created",
+                    "submitted",
+                    "waiting_callback",
+                    "callback_received",
+                    "polling",
+                    "resuming",
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "expired",
+                }:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires valid operation state",
+                            "path": "$.operation.state",
+                        }
+                    )
                 run_id_path = (
                     "runId"
                     if "runId" in raw_operation or "run_id" not in raw_operation

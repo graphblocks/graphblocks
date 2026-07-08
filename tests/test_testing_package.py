@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 250
+    assert [case.kind for case in cases] == ["durable"] * 251
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1409,6 +1409,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_missing_provider_operation_id_rejected",
         "external_operation_blank_provider_operation_id_rejected",
         "external_operation_missing_idempotency_key_rejected",
+        "external_operation_missing_state_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",
@@ -2397,6 +2398,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "external_operation_missing_idempotency_key_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_missing_state_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -3847,6 +3853,7 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
                 "policySnapshotId": "pol-callback-001",
                 "effectState": "committed",
                 "effectJournaled": True,
+                "state": "cancelled",
             },
             "lateCallback": {
                 "callbackId": "cb-ci-late-001",
@@ -3908,6 +3915,7 @@ def test_testing_package_rejects_external_operation_reconciliation_without_usage
                 "runId": "run-coding-002",
                 "nodeId": "runExternalCI",
                 "attemptId": "attempt-ci-001",
+                "state": "cancelled",
                 "releaseId": "release-2026-06-23",
                 "tenantId": "tenant-support-001",
                 "policySnapshotId": "pol-callback-001",
@@ -6257,6 +6265,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_missing_provider_operation_id_rejected",
         "external_operation_blank_provider_operation_id_rejected",
         "external_operation_missing_idempotency_key_rejected",
+        "external_operation_missing_state_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",

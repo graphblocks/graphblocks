@@ -8001,6 +8001,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -8056,6 +8057,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectJournaled": true
     },
     "lateCallback": {
@@ -8110,6 +8112,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "pending",
       "effectJournaled": true
     },
@@ -8165,6 +8168,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed"
     },
     "lateCallback": {
@@ -8219,6 +8223,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": "true"
     },
@@ -8274,6 +8279,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": false
     },
@@ -8326,6 +8332,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true,
       "providerOperationId": "gh-run-002",
@@ -8383,6 +8390,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -8433,6 +8441,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -8489,6 +8498,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -8543,6 +8553,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -8589,6 +8600,61 @@
     }
   },
   {
+    "name": "external_operation_missing_state_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "idempotencyKey": "idem-ci-operation-001",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "policySnapshotId": "pol-callback-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires valid operation state",
+        "path": "$.operation.state"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_provider_operation_id_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -8598,6 +8664,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -8652,6 +8719,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -8709,6 +8777,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -8764,6 +8833,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -8815,6 +8885,7 @@
       "idempotencyKey": "idem-ci-operation-001",
       "runId": "run-coding-002",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "tenantId": "tenant-support-001",
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
@@ -8873,6 +8944,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -8928,7 +9000,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "state": "cancelled"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8982,6 +9055,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "   ",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9034,6 +9108,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
@@ -9088,6 +9163,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "tenantId": "tenant-support-001",
       "releaseId": "   ",
       "policySnapshotId": "pol-callback-001",
@@ -9143,6 +9219,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "tenantId": "tenant-support-001",
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
@@ -9197,6 +9274,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "tenantId": "tenant-support-001",
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
@@ -9252,6 +9330,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
@@ -9306,6 +9385,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "   ",
       "policySnapshotId": "pol-callback-001",
@@ -9361,6 +9441,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -9415,6 +9496,7 @@
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
@@ -9472,6 +9554,7 @@
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9526,6 +9609,7 @@
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "policySnapshotId": "   ",
       "effectState": "committed",
       "effectJournaled": true
@@ -9581,6 +9665,7 @@
       "releaseId": "release-2026-06-23",
       "tenantId": "tenant-support-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "policySnapshotId": "pol-operation-other",
       "effectState": "committed",
       "effectJournaled": true
@@ -9637,6 +9722,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9691,6 +9777,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9746,6 +9833,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9800,6 +9888,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9855,6 +9944,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9909,6 +9999,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -9964,6 +10055,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10018,6 +10110,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10073,6 +10166,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10127,6 +10221,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10182,6 +10277,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10236,6 +10332,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10291,6 +10388,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10345,6 +10443,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10400,6 +10499,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10454,6 +10554,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10509,6 +10610,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10564,6 +10666,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10618,6 +10721,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10673,6 +10777,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10727,6 +10832,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10782,6 +10888,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10836,6 +10943,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10891,6 +10999,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10945,6 +11054,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -10999,6 +11109,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11053,6 +11164,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11107,6 +11219,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11156,6 +11269,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11210,6 +11324,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11265,6 +11380,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -11320,6 +11436,7 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
+      "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
     },
