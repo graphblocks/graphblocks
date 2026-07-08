@@ -1786,6 +1786,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation evidence now requires real boolean values for late
   callback commit/diagnostic/artifact-reference flags and late usage reconciliation, preventing
   truthy strings from proving cancellation, payload extraction, or billing reconciliation behavior.
+- Durable external-operation reconciliation evidence now requires nonempty provider usage records
+  when late usage is marked reconciled, so billing reconciliation cannot be proven from a bare flag.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

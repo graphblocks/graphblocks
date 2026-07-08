@@ -7655,6 +7655,32 @@ class TckRunner:
                                 "path": f"$.{source_name}.{path_key}",
                             }
                         )
+                raw_provider_usage_records = raw_usage.get(
+                    "providerUsageRecords", raw_usage.get("provider_usage_records", ())
+                )
+                if external_reconciliation_values[("usage", "reconciled")]:
+                    if (
+                        not isinstance(raw_provider_usage_records, Sequence)
+                        or isinstance(raw_provider_usage_records, (str, bytes))
+                        or not raw_provider_usage_records
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableExternalOperationInvalid",
+                                "message": "external operation reconciliation requires providerUsageRecords when reconciled",
+                                "path": "$.usage.providerUsageRecords",
+                            }
+                        )
+                    else:
+                        for usage_index, usage_record in enumerate(raw_provider_usage_records):
+                            if not isinstance(usage_record, Mapping):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableExternalOperationInvalid",
+                                        "message": "external operation reconciliation usage record must be object",
+                                        "path": f"$.usage.providerUsageRecords[{usage_index}]",
+                                    }
+                                )
                 observed = {
                     "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
                     "lateCallbackCommitsResult": external_reconciliation_values[("lateCallback", "commitsResult")],

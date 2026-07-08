@@ -1500,6 +1500,12 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
                 "payloadConvertedToArtifactRef": True,
             },
             "usage": {
+                "providerUsageRecords": [
+                    {
+                        "metric": "ci.minutes",
+                        "amount": 1,
+                    }
+                ],
                 "reconciled": True,
             },
         },
@@ -1513,6 +1519,42 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
             "code": "DurableExternalOperationInvalid",
             "message": "external operation reconciliation requires boolean diagnosticRecorded",
             "path": "$.lateCallback.diagnosticRecorded",
+        },
+    )
+
+
+def test_testing_package_rejects_external_operation_reconciliation_without_usage_records(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/external-operation-reconciliation-missing-usage-records",
+        fixture={
+            "kind": "external_operation_reconciliation",
+            "operation": {
+                "effectState": "committed",
+            },
+            "lateCallback": {
+                "commitsResult": False,
+                "diagnosticRecorded": True,
+                "payloadConvertedToArtifactRef": True,
+            },
+            "usage": {
+                "reconciled": True,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableExternalOperationInvalid",
+            "message": "external operation reconciliation requires providerUsageRecords when reconciled",
+            "path": "$.usage.providerUsageRecords",
         },
     )
 
