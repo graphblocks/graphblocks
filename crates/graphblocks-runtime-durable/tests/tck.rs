@@ -1050,6 +1050,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     non_retryable_4xx_terminal = true;
                 }
+                if let Some(status) = delivery.get("status").and_then(Value::as_str) {
+                    if matches!(status, "failed" | "dead_lettered" | "cancelled" | "expired")
+                        && delivery
+                            .get("lastError")
+                            .or_else(|| delivery.get("last_error"))
+                            .and_then(Value::as_str)
+                            .map_or(true, |last_error| last_error.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackDeliveryInvalid",
+                            "message": format!("{status} callback delivery requires lastError"),
+                            "path": format!("$.deliveries[{index}].lastError"),
+                        }));
+                    }
+                }
                 if let Some(key) = delivery
                     .get("idempotencyKey")
                     .or_else(|| delivery.get("idempotency_key"))
