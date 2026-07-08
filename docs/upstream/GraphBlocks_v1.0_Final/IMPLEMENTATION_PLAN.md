@@ -1874,6 +1874,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The shared durable TCK now includes a successful 2xx callback delivery case. Python and Rust
   durable runners both report `deliveredAfter2xx` only when the receiver status is 2xx and the
   durable delivery row is recorded as `delivered`.
+- The shared durable TCK now also supports expected validation diagnostics and includes a malformed
+  2xx callback delivery case, so Python and Rust both reject a successful receiver acknowledgement
+  that is durably recorded as a failed callback delivery.
 - The shared durable TCK now includes a non-retryable 4xx callback delivery case. Python and Rust
   durable runners both report `nonRetryable4xxTerminal` only for non-409/410/429 4xx receiver
   responses recorded as failed `non_retryable` deliveries.

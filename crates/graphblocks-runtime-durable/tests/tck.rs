@@ -33,8 +33,13 @@ fn run_case(case: &Value) -> Result<(), String> {
         .get("expected")
         .and_then(Value::as_object)
         .ok_or_else(|| format!("durable TCK case {name} is missing expected result"))?;
+    let expected_diagnostics = case
+        .get("expectedDiagnostics")
+        .or_else(|| case.get("expected_diagnostics"))
+        .and_then(Value::as_array);
+    let mut diagnostics = Vec::new();
 
-    let observed = match kind {
+    let mut observed = match kind {
         "source_replay" => {
             let events = event_list(case, "events", name)?;
             let mut source = InMemoryDurableSource::new(
@@ -563,7 +568,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut duplicate_409_acknowledged = false;
             let mut subscription_gone_after_410 = false;
             let mut non_retryable_4xx_terminal = false;
-            for delivery in deliveries.iter().filter_map(Value::as_object) {
+            for (index, delivery) in deliveries.iter().filter_map(Value::as_object).enumerate() {
                 let receiver_status = delivery
                     .get("receiverStatus")
                     .or_else(|| delivery.get("receiver_status"))
@@ -592,6 +597,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .is_some_and(|status| status == "delivered")
                 {
                     delivered_after_2xx = true;
+                }
+                if (200..=299).contains(&receiver_status)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status != "delivered" && status != "acknowledged")
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "2xx callback delivery requires delivered or acknowledged status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
                 }
                 if receiver_status == 409
                     && delivery
@@ -833,6 +850,17 @@ fn run_case(case: &Value) -> Result<(), String> {
         }
         other => return Err(format!("durable TCK case {name} has unknown kind {other}")),
     };
+
+    if let Some(expected_diagnostics) = expected_diagnostics {
+        let diagnostics_match = diagnostics.as_slice() == expected_diagnostics.as_slice();
+        observed
+            .as_object_mut()
+            .ok_or_else(|| format!("{name} observed durable TCK value must be object"))?
+            .insert(
+                "expectedDiagnosticsMatched".to_owned(),
+                Value::Bool(diagnostics_match),
+            );
+    }
 
     for (key, expected_value) in expected {
         assert_eq!(

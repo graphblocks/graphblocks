@@ -6390,6 +6390,37 @@ class TckRunner:
                     "path": "$.expected",
                 }
             )
+        raw_expected_diagnostics = fixture.get(
+            "expectedDiagnostics", fixture.get("expected_diagnostics")
+        )
+        expected_diagnostics = None
+        if raw_expected_diagnostics is not None:
+            if (
+                isinstance(raw_expected_diagnostics, (str, bytes))
+                or isinstance(raw_expected_diagnostics, Mapping)
+                or not isinstance(raw_expected_diagnostics, Sequence)
+            ):
+                diagnostics.append(
+                    {
+                        "code": "DurableExpectedDiagnosticsInvalid",
+                        "message": "durable TCK expectedDiagnostics must be a sequence",
+                        "path": "$.expectedDiagnostics",
+                    }
+                )
+            else:
+                expected_diagnostic_values = []
+                for index, raw_diagnostic in enumerate(raw_expected_diagnostics):
+                    if not isinstance(raw_diagnostic, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "DurableExpectedDiagnosticsInvalid",
+                                "message": "durable TCK expected diagnostic must be object",
+                                "path": f"$.expectedDiagnostics[{index}]",
+                            }
+                        )
+                    else:
+                        expected_diagnostic_values.append(dict(raw_diagnostic))
+                expected_diagnostics = tuple(expected_diagnostic_values)
         expected_keys_with_structural_diagnostics: set[str] = set()
 
         try:
@@ -8188,6 +8219,20 @@ class TckRunner:
                     "path": "$",
                 }
             )
+
+        if expected_diagnostics is not None:
+            actual_diagnostics = tuple(dict(diagnostic) for diagnostic in diagnostics)
+            diagnostics_match = actual_diagnostics == expected_diagnostics
+            observed["expectedDiagnosticsMatched"] = diagnostics_match
+            diagnostics = []
+            if not diagnostics_match:
+                diagnostics.append(
+                    {
+                        "code": "DurableExpectedDiagnosticsMismatch",
+                        "message": "durable diagnostics did not match expected diagnostics",
+                        "path": "$.expectedDiagnostics",
+                    }
+                )
 
         for key, expected_value in expected.items():
             if str(key) in expected_keys_with_structural_diagnostics:
