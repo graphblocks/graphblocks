@@ -8,7 +8,7 @@ import json
 import math
 from types import MappingProxyType
 from typing import Literal, Protocol
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
@@ -553,7 +553,7 @@ class ServerRouteManifest:
             path_params: dict[str, str] = {}
             for template_part, path_part in zip(endpoint_parts, path_parts, strict=True):
                 if template_part.startswith("{") and template_part.endswith("}"):
-                    path_params[template_part[1:-1]] = path_part
+                    path_params[template_part[1:-1]] = unquote(path_part)
                     continue
                 if template_part != path_part:
                     break

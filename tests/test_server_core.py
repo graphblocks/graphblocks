@@ -104,6 +104,28 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
         ServerRouteMatch(endpoint, path_params={"run_id": object()})  # type: ignore[dict-item]
 
 
+def test_server_route_manifest_decodes_encoded_path_parameters() -> None:
+    run_match = default_server_route_manifest().match(
+        "DELETE",
+        "/runs/run%2Fwith%3Fquery%23fragment/subscriptions/sub%2Fwith%3Fquery%23fragment",
+    )
+    callback_match = default_server_route_manifest().match(
+        "POST",
+        "/callbacks/op%2Fwith%3Fquery%23fragment",
+    )
+    delivery_match = default_server_route_manifest().match(
+        "POST",
+        "/callbacks/deliveries/del%2Fwith%3Fquery%23fragment/redrive",
+    )
+
+    assert run_match.path_params == {
+        "run_id": "run/with?query#fragment",
+        "subscription_id": "sub/with?query#fragment",
+    }
+    assert callback_match.path_params == {"operation_id": "op/with?query#fragment"}
+    assert delivery_match.path_params == {"delivery_id": "del/with?query#fragment"}
+
+
 def test_server_route_manifest_matches_run_status_path() -> None:
     route_match = default_server_route_manifest().match("GET", "/runs/run-123")
 

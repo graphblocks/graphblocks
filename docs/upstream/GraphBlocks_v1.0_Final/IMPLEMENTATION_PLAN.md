@@ -1639,7 +1639,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   non-finite floats or key-coercing nested objects cannot be emitted in server responses.
   `HttpGraphBlocksClient` now URL-encodes run, operation, subscription, callback, and delivery ids
   before inserting them into HTTP path segments, so protocol identifiers containing URL syntax stay
-  within their intended route component.
+  within their intended route component. `GraphBlocksServerApp` decodes those encoded path
+  parameters at route-match time, so handlers receive the authoritative identifier rather than a
+  transport-escaped surrogate.
   CLI JSON ingress now uses the same strict parsing for `run --input-json`, native runtime result
   decoding, GraphRelease bundle verification, and Kubernetes deploy-plan rendering.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
