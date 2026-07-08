@@ -1723,6 +1723,82 @@
     }
   },
   {
+    "name": "webhook_delivery_missing_redrive_operator_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-operator-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0302",
+        "runId": "run-coding-001",
+        "sequence": 302,
+        "cursor": "evt-0302",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0302",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:02Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-operator-invalid-001",
+      "eventId": "evt-0302",
+      "originalEventId": "evt-0302",
+      "operatorPrincipal": " ",
+      "reason": "operator redrive",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires operatorPrincipal",
+        "path": "$.redrive.operatorPrincipal"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_missing_redrive_reason_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-reason-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0303",
+        "runId": "run-coding-001",
+        "sequence": 303,
+        "cursor": "evt-0303",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0303",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:03Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-reason-invalid-001",
+      "eventId": "evt-0303",
+      "originalEventId": "evt-0303",
+      "operatorPrincipal": "operator-1",
+      "reason": " ",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires reason",
+        "path": "$.redrive.reason"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
     "kind": "async_callback_resume_guards",
     "operation": {

@@ -1811,9 +1811,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `acknowledgedAt` for acknowledged duplicate rows, while rejecting acknowledgements that precede
   delivery time, aligning the shared TCK projection with durable callback terminal timestamp
   invariants.
-- Durable callback projection redrive evidence now requires nonblank operator and reason audit
-  metadata, so dead-letter redrive conformance preserves the operator action context required for
-  durable audit and redrive review.
+- Durable callback projection shared TCK cases now require nonblank redrive operator and reason
+  audit metadata in both Rust and Python runners, so dead-letter redrive conformance preserves the
+  operator action context required for durable audit and redrive review.
 - Durable callback projection shared TCK cases now reject non-object redrive entries when present,
   so malformed dead-letter redrive projections cannot be silently treated as absent optional data
   by either Rust or Python.

@@ -555,6 +555,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("redrive")
                 .and_then(Value::as_object)
                 .is_some_and(|redrive| !redrive.is_empty());
+            if has_redrive {
+                for (key, alias, message) in [
+                    (
+                        "operatorPrincipal",
+                        "operator_principal",
+                        "callback redrive requires operatorPrincipal",
+                    ),
+                    (
+                        "reason",
+                        "redrive_reason",
+                        "callback redrive requires reason",
+                    ),
+                ] {
+                    if raw_redrive
+                        .get(key)
+                        .or_else(|| raw_redrive.get(alias))
+                        .and_then(Value::as_str)
+                        .map_or(true, |value| value.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackRedriveInvalid",
+                            "message": message,
+                            "path": format!("$.redrive.{key}"),
+                        }));
+                    }
+                }
+            }
             let empty_redrive_assertions = Map::new();
             let raw_redrive_assertions = case
                 .get("redriveAssertions")

@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 53
+    assert [case.kind for case in cases] == ["durable"] * 55
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1255,6 +1255,8 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_non_special_4xx_retry_error_rejected",
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "webhook_delivery_missing_redrive_preservation_evidence_rejected",
+        "webhook_delivery_missing_redrive_operator_rejected",
+        "webhook_delivery_missing_redrive_reason_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
@@ -1460,6 +1462,16 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "webhook_delivery_missing_redrive_preservation_evidence_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_missing_redrive_operator_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_missing_redrive_reason_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -4634,6 +4646,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_non_special_4xx_retry_error_rejected",
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "webhook_delivery_missing_redrive_preservation_evidence_rejected",
+        "webhook_delivery_missing_redrive_operator_rejected",
+        "webhook_delivery_missing_redrive_reason_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
