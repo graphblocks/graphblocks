@@ -1511,6 +1511,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `RunGraphCommand` now applies the same canonical JSON and object-key checks to graph documents
   and input objects before local or HTTP execution, so malformed run invocations fail at the client
   boundary rather than being coerced by a downstream serializer.
+  `RemoteToolInvocation` now parses caller-supplied `arguments_json` with strict JSON semantics,
+  rejecting non-standard constants such as `NaN` before argument digest verification.
   `graphblocks-client` now also parses HTTP response bodies as strict JSON, rejecting non-standard
   constants such as `NaN` before response payloads enter application-event or run-status models.
   `GraphBlocksServerApp` now routes all JSON request-body decoding through a strict parser, so

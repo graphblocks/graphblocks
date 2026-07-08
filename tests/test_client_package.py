@@ -434,6 +434,8 @@ def test_client_package_builds_remote_tool_definition_binding_and_invocation(mon
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "connection": " "})
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="must decode to an object"):
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="digest does not match"):
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
     assert "prepare_remote_tool_invocation" in graphblocks_client.__all__
