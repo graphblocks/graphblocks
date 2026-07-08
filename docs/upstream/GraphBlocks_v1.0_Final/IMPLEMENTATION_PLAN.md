@@ -1551,6 +1551,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-testing` now preserves and reports authoritative event metadata when running
   application-event TCK cases, so cursor replay and callback-projection conformance fixtures can
   assert cursor, graph/node/operation ids, and visibility directly.
+- `graphblocks-testing` now loads every JSON TCK fixture with strict JSON semantics, rejecting
+  non-standard constants such as `NaN` before fixture data can become conformance evidence.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

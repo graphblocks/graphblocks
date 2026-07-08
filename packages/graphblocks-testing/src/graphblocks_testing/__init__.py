@@ -253,6 +253,16 @@ def _first_mapping_value(mapping: Mapping[str, object], *keys: str, default: obj
     return default
 
 
+def _load_tck_cases_json(path: str | Path, suite_label: str) -> object:
+    try:
+        return json.loads(
+            Path(path).read_text(encoding="utf-8"),
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{suite_label} TCK cases must be valid strict JSON") from error
+
+
 def _string_tuple(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -1454,7 +1464,7 @@ class ReleaseCandidateGateReport:
 
 
 def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "compiler")
     if not isinstance(raw_cases, list):
         raise ValueError("compiler TCK root must be a list")
     cases: list[TckCase] = []
@@ -1497,7 +1507,7 @@ def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "runtime")
     if not isinstance(raw_cases, list):
         raise ValueError("runtime TCK root must be a list")
     cases: list[TckCase] = []
@@ -1562,7 +1572,7 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "application-events")
     if not isinstance(raw_cases, list):
         raise ValueError("application-events TCK root must be a list")
     cases: list[TckCase] = []
@@ -1596,7 +1606,7 @@ def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "application-protocol")
     if not isinstance(raw_cases, list):
         raise ValueError("application-protocol TCK root must be a list")
     cases: list[TckCase] = []
@@ -1627,7 +1637,7 @@ def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]
 
 
 def load_approval_review_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "approval-review")
     if not isinstance(raw_cases, list):
         raise ValueError("approval-review TCK root must be a list")
     cases: list[TckCase] = []
@@ -1654,7 +1664,7 @@ def load_approval_review_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "exhaustion")
     if not isinstance(raw_cases, list):
         raise ValueError("exhaustion TCK root must be a list")
     cases: list[TckCase] = []
@@ -1672,7 +1682,7 @@ def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "budget-race")
     if not isinstance(raw_cases, list):
         raise ValueError("budget-race TCK root must be a list")
     cases: list[TckCase] = []
@@ -1690,7 +1700,7 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "conversation")
     if not isinstance(raw_cases, list):
         raise ValueError("conversation TCK root must be a list")
     cases: list[TckCase] = []
@@ -1722,7 +1732,7 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "documents")
     if not isinstance(raw_cases, list):
         raise ValueError("documents TCK root must be a list")
     cases: list[TckCase] = []
@@ -1749,7 +1759,7 @@ def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_deployment_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "deployment")
     if not isinstance(raw_cases, list):
         raise ValueError("deployment TCK root must be a list")
     cases: list[TckCase] = []
@@ -1776,7 +1786,7 @@ def load_deployment_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "durable")
     if not isinstance(raw_cases, list):
         raise ValueError("durable TCK root must be a list")
     cases: list[TckCase] = []
@@ -1811,7 +1821,7 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_orchestration_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "orchestration")
     if not isinstance(raw_cases, list):
         raise ValueError("orchestration TCK root must be a list")
     cases: list[TckCase] = []
@@ -1839,7 +1849,7 @@ def load_orchestration_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "rag")
     if not isinstance(raw_cases, list):
         raise ValueError("rag TCK root must be a list")
     cases: list[TckCase] = []
@@ -1871,7 +1881,7 @@ def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "retry")
     if not isinstance(raw_cases, list):
         raise ValueError("retry TCK root must be a list")
     cases: list[TckCase] = []
@@ -1905,7 +1915,7 @@ def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "tool-lifecycle")
     if not isinstance(raw_cases, list):
         raise ValueError("tool-lifecycle TCK root must be a list")
     cases: list[TckCase] = []
@@ -1945,7 +1955,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_tool_execution_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "tool-execution")
     if not isinstance(raw_cases, list):
         raise ValueError("tool-execution TCK root must be a list")
     cases: list[TckCase] = []
@@ -1972,7 +1982,7 @@ def load_tool_execution_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_tool_result_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "tool-result")
     if not isinstance(raw_cases, list):
         raise ValueError("tool-result TCK root must be a list")
     cases: list[TckCase] = []
@@ -2004,7 +2014,7 @@ def load_tool_result_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "usage")
     if not isinstance(raw_cases, list):
         raise ValueError("usage TCK root must be a list")
     cases: list[TckCase] = []
@@ -2025,7 +2035,7 @@ def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_voice_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "voice")
     if not isinstance(raw_cases, list):
         raise ValueError("voice TCK root must be a list")
     cases: list[TckCase] = []
@@ -2051,7 +2061,7 @@ def load_voice_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "policy")
     if not isinstance(raw_cases, list):
         raise ValueError("policy TCK root must be a list")
     cases: list[TckCase] = []
@@ -2084,7 +2094,7 @@ def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_sequence_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "sequence")
     if not isinstance(raw_cases, list):
         raise ValueError("sequence TCK root must be a list")
     cases: list[TckCase] = []
@@ -2124,7 +2134,7 @@ def load_sequence_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "schema")
     if not isinstance(raw_cases, list):
         raise ValueError("schema TCK root must be a list")
     cases: list[TckCase] = []
@@ -2180,7 +2190,7 @@ def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
 
 
 def load_schema_typed_value_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
-    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_cases = _load_tck_cases_json(path, "typed value schema")
     if not isinstance(raw_cases, list):
         raise ValueError("typed value schema TCK root must be a list")
     cases: list[TckCase] = []
@@ -2231,7 +2241,7 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
     manifests: list[TckSuiteManifest] = []
     for path in sorted(root_path.glob("*/cases.json"), key=lambda item: item.parent.name):
         suite_id = path.parent.name
-        raw_cases = json.loads(path.read_text(encoding="utf-8"))
+        raw_cases = _load_tck_cases_json(path, suite_id)
         if not isinstance(raw_cases, list):
             raise ValueError(f"TCK suite {suite_id} root must be a list")
         case_ids: list[str] = []

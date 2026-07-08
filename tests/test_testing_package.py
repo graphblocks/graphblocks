@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -385,6 +387,20 @@ def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     assert report.ok
     assert {result.observed["valid"] for result in report.results} == {False, True}
     assert "load_schema_tck_cases" in graphblocks_testing.__all__
+
+
+def test_testing_package_rejects_non_standard_tck_json_constants(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(
+        '[{"name":"schema/non-standard","schema_id":"schemas/Message@1",'
+        '"expected":{"valid":true},"ignored":NaN}]',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="schema TCK cases must be valid strict JSON"):
+        graphblocks_testing.load_schema_tck_cases(cases_path)
 
 
 def test_testing_package_loads_shared_typed_value_schema_tck_cases(monkeypatch) -> None:
