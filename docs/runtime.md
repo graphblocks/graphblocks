@@ -50,6 +50,9 @@ Async operation state records `callback_received_at` separately from
 `completed_at`. A callback receipt can move an operation into
 `callback_received` and then `resuming`; `completed_at` is reserved for terminal
 operation states such as `completed`, `failed`, `cancelled`, or `expired`.
+Durable callback receipt replay must verify the stored run, node, attempt, and
+provider-operation identity against the operation record before admitting any
+duplicate callback or resume decision.
 
 Callback dead-letter records preserve original delivery identity and a
 consecutive attempt history starting at attempt `1`. Redrive uses that history

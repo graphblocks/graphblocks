@@ -1555,8 +1555,7 @@ impl AsyncOperationResult {
                     reason: format!("duplicate provider effect id {provider_effect_id}"),
                 });
             }
-            if effect.outcome == ToolEffectOutcome::Committed && effect.idempotency_key.is_none()
-            {
+            if effect.outcome == ToolEffectOutcome::Committed && effect.idempotency_key.is_none() {
                 return Err(AsyncOperationError::InvalidOperation {
                     operation_id: self.operation_id.clone(),
                     reason: format!(
@@ -1565,8 +1564,7 @@ impl AsyncOperationResult {
                     ),
                 });
             }
-            if effect.provider_effect_id.is_some()
-                && effect.outcome != ToolEffectOutcome::Committed
+            if effect.provider_effect_id.is_some() && effect.outcome != ToolEffectOutcome::Committed
             {
                 return Err(AsyncOperationError::InvalidOperation {
                     operation_id: self.operation_id.clone(),
@@ -1853,15 +1851,14 @@ impl AsyncOperationStore {
                 .inner
                 .lock()
                 .expect("async operation store lock poisoned");
-            let operation_created_at_unix_ms = if let Some(operation) =
-                inner.operations.get(operation_id)
-            {
-                operation.created_at_unix_ms
-            } else {
-                return Err(AsyncOperationError::OperationNotFound {
-                    operation_id: operation_id.to_owned(),
-                });
-            };
+            let operation_created_at_unix_ms =
+                if let Some(operation) = inner.operations.get(operation_id) {
+                    operation.created_at_unix_ms
+                } else {
+                    return Err(AsyncOperationError::OperationNotFound {
+                        operation_id: operation_id.to_owned(),
+                    });
+                };
             let keys = inner
                 .quarantined_callbacks
                 .keys()
@@ -1924,7 +1921,9 @@ impl AsyncOperationStore {
             accepted.push(result);
         }
 
-        if accepted.is_empty() && let Some(error) = first_error {
+        if accepted.is_empty()
+            && let Some(error) = first_error
+        {
             return Err(error);
         }
 
@@ -2806,7 +2805,9 @@ impl SqliteAsyncOperationStore {
                 )
                 .map_err(storage_error)?;
             let operations = statement
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(storage_error)?;
             for operation_json in operations {
                 let (row_operation_id, operation_json) = operation_json.map_err(storage_error)?;
@@ -2845,14 +2846,13 @@ impl SqliteAsyncOperationStore {
             for receipt_json in receipts {
                 let (row_operation_id, row_idempotency_key, receipt_json) =
                     receipt_json.map_err(storage_error)?;
-                let receipt =
-                    receipt_from_value(parse_json(&receipt_json)?)?;
+                let receipt = receipt_from_value(parse_json(&receipt_json)?)?;
                 if receipt.operation_id != row_operation_id
                     || receipt.idempotency_key != row_idempotency_key
                 {
                     return Err(AsyncOperationError::Storage {
-                        message:
-                            "stored callback receipt identity does not match row key".to_owned(),
+                        message: "stored callback receipt identity does not match row key"
+                            .to_owned(),
                     });
                 }
                 let operation = inner.operations.get(&receipt.operation_id).ok_or_else(|| {
@@ -2863,12 +2863,7 @@ impl SqliteAsyncOperationStore {
                 if receipt.run_id != operation.run_id
                     || receipt.node_id != operation.node_id
                     || receipt.attempt_id != operation.attempt_id
-                    || receipt
-                        .provider_operation_id
-                        .as_ref()
-                        .is_some_and(|provider_operation_id| {
-                            operation.provider_operation_id.as_ref() != Some(provider_operation_id)
-                        })
+                    || receipt.provider_operation_id != operation.provider_operation_id
                 {
                     return Err(AsyncOperationError::Storage {
                         message:
@@ -2907,20 +2902,15 @@ impl SqliteAsyncOperationStore {
                 })
                 .map_err(storage_error)?;
             for callback in quarantined {
-                let (
-                    row_operation_id,
-                    row_idempotency_key,
-                    submission_json,
-                    expires_at_unix_ms,
-                ) = callback.map_err(storage_error)?;
+                let (row_operation_id, row_idempotency_key, submission_json, expires_at_unix_ms) =
+                    callback.map_err(storage_error)?;
                 let submission = callback_submission_from_value(parse_json(&submission_json)?)?;
                 if submission.operation_id != row_operation_id
                     || submission.idempotency_key != row_idempotency_key
                 {
                     return Err(AsyncOperationError::Storage {
-                        message:
-                            "stored quarantined callback identity does not match row key"
-                                .to_owned(),
+                        message: "stored quarantined callback identity does not match row key"
+                            .to_owned(),
                     });
                 }
                 inner.quarantined_callbacks.insert(
@@ -2970,17 +2960,16 @@ impl SqliteAsyncOperationStore {
                     }
                     _ => {
                         return Err(AsyncOperationError::Storage {
-                            message:
-                                "stored async operation event index is not contiguous".to_owned(),
+                            message: "stored async operation event index is not contiguous"
+                                .to_owned(),
                         });
                     }
                 }
                 let event = event_from_value(parse_json(&event_json)?)?;
                 if event_operation_id(&event) != operation_id {
                     return Err(AsyncOperationError::Storage {
-                        message:
-                            "stored async operation event identity does not match row key"
-                                .to_owned(),
+                        message: "stored async operation event identity does not match row key"
+                            .to_owned(),
                     });
                 }
                 inner
@@ -3076,10 +3065,7 @@ impl SqliteAsyncOperationStore {
                         &record.submission.operation_id,
                         &record.submission.idempotency_key,
                         storage_json(&callback_submission_to_value(&record.submission))?,
-                        u64_to_i64(
-                            record.expires_at_unix_ms,
-                            "quarantined callback expiration",
-                        )?,
+                        u64_to_i64(record.expires_at_unix_ms, "quarantined callback expiration",)?,
                     ],
                 )
                 .map_err(storage_error)?;
@@ -3720,7 +3706,9 @@ fn event_operation_id(event: &AsyncOperationEvent) -> &str {
         | AsyncOperationEvent::CallbackResumePaused { operation_id, .. }
         | AsyncOperationEvent::CallbackResumeDenied { operation_id, .. } => operation_id,
         AsyncOperationEvent::ExternalCallbackReceived { receipt }
-        | AsyncOperationEvent::LateExternalCallbackReceived { receipt, .. } => &receipt.operation_id,
+        | AsyncOperationEvent::LateExternalCallbackReceived { receipt, .. } => {
+            &receipt.operation_id
+        }
     }
 }
 
@@ -3736,9 +3724,8 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
             if occurred_at_unix_ms == 0 {
                 return Err(AsyncOperationError::Storage {
-                    message:
-                        "stored async operation event occurred_at_unix_ms must be non-zero"
-                            .to_owned(),
+                    message: "stored async operation event occurred_at_unix_ms must be non-zero"
+                        .to_owned(),
                 });
             }
             Ok(AsyncOperationEvent::StateChanged {
@@ -3775,9 +3762,8 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             }
             if occurred_at_unix_ms == 0 {
                 return Err(AsyncOperationError::Storage {
-                    message:
-                        "stored async operation event occurred_at_unix_ms must be non-zero"
-                            .to_owned(),
+                    message: "stored async operation event occurred_at_unix_ms must be non-zero"
+                        .to_owned(),
                 });
             }
             Ok(AsyncOperationEvent::ExternalCallbackRejected {
@@ -3803,9 +3789,8 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             }
             if occurred_at_unix_ms == 0 {
                 return Err(AsyncOperationError::Storage {
-                    message:
-                        "stored async operation event occurred_at_unix_ms must be non-zero"
-                            .to_owned(),
+                    message: "stored async operation event occurred_at_unix_ms must be non-zero"
+                        .to_owned(),
                 });
             }
             Ok(AsyncOperationEvent::CallbackResumePaused {
@@ -3832,9 +3817,8 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             }
             if occurred_at_unix_ms == 0 {
                 return Err(AsyncOperationError::Storage {
-                    message:
-                        "stored async operation event occurred_at_unix_ms must be non-zero"
-                            .to_owned(),
+                    message: "stored async operation event occurred_at_unix_ms must be non-zero"
+                        .to_owned(),
                 });
             }
             Ok(AsyncOperationEvent::CallbackResumeDenied {

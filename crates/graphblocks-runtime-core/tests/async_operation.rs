@@ -11,7 +11,7 @@ use graphblocks_runtime_core::async_operation::{
 };
 use graphblocks_runtime_core::tool_result::ToolEffectOutcome;
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -390,11 +390,7 @@ fn callback_endpoint_rejects_whitespace_identity_fields_before_building_submissi
             "op-1"
         };
         let run_id = if field == "run_id" { " \t" } else { "run-1" };
-        let node_id = if field == "node_id" {
-            " \t"
-        } else {
-            "node-ci"
-        };
+        let node_id = if field == "node_id" { " \t" } else { "node-ci" };
         let attempt_id = if field == "attempt_id" {
             " \t"
         } else {
@@ -901,11 +897,13 @@ fn async_operation_validate_rejects_out_of_order_state_timestamps() {
     .submitted("gha-run-1", 999);
     let mut completed_before_submitted = waiting_operation();
     completed_before_submitted.state = AsyncOperationState::Completed;
-    completed_before_submitted.completed_at_unix_ms =
-        completed_before_submitted.submitted_at_unix_ms.map(|submitted_at| submitted_at - 1);
+    completed_before_submitted.completed_at_unix_ms = completed_before_submitted
+        .submitted_at_unix_ms
+        .map(|submitted_at| submitted_at - 1);
     let mut expires_before_submitted = waiting_operation();
-    expires_before_submitted.expires_at_unix_ms =
-        expires_before_submitted.submitted_at_unix_ms.map(|submitted_at| submitted_at - 1);
+    expires_before_submitted.expires_at_unix_ms = expires_before_submitted
+        .submitted_at_unix_ms
+        .map(|submitted_at| submitted_at - 1);
 
     assert_eq!(
         submitted_before_created.validate(),
@@ -1204,8 +1202,7 @@ fn idempotency_conflict_rejection_records_callback_receipt_metadata() {
 
     let mut mutated = valid_submission("cb-mutated", "idem-cb-1");
     mutated.payload = json!({"status": "failed", "workflow_run_id": "gha-run-1"});
-    let expected_payload_digest =
-        graphblocks_compiler::canonical::canonical_hash(&mutated.payload);
+    let expected_payload_digest = graphblocks_compiler::canonical::canonical_hash(&mutated.payload);
 
     assert_eq!(
         store.accept_callback(mutated, &callback_schema_registry()),
@@ -1216,24 +1213,26 @@ fn idempotency_conflict_rejection_records_callback_receipt_metadata() {
         })
     );
 
-    assert!(store
-        .events_for_operation("op-1")
-        .iter()
-        .any(|event| matches!(
-            event,
-            AsyncOperationEvent::ExternalCallbackRejected {
-                callback_id,
-                reason,
-                payload_digest,
-                verified_by,
-                policy_snapshot_id,
-                ..
-            } if callback_id == "cb-mutated"
-                && reason == "idempotency_conflict:payload_digest"
-                && payload_digest == &expected_payload_digest
-                && verified_by == "hmac:callback-endpoint-1"
-                && policy_snapshot_id == "policy-snapshot-1"
-        )));
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    payload_digest,
+                    verified_by,
+                    policy_snapshot_id,
+                    ..
+                } if callback_id == "cb-mutated"
+                    && reason == "idempotency_conflict:payload_digest"
+                    && payload_digest == &expected_payload_digest
+                    && verified_by == "hmac:callback-endpoint-1"
+                    && policy_snapshot_id == "policy-snapshot-1"
+            ))
+    );
 }
 
 #[test]
@@ -1270,18 +1269,20 @@ fn callback_for_non_waiting_operation_is_rejected_with_audit_event() {
         store.operation_state("op-1"),
         Some(AsyncOperationState::Submitted)
     );
-    assert!(store
-        .events_for_operation("op-1")
-        .iter()
-        .any(|event| matches!(
-            event,
-            AsyncOperationEvent::ExternalCallbackRejected {
-                callback_id,
-                reason,
-                ..
-            } if callback_id == "cb-not-waiting"
-                && reason == "operation_not_waiting_callback:submitted"
-        )));
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-not-waiting"
+                    && reason == "operation_not_waiting_callback:submitted"
+            ))
+    );
 }
 
 #[test]
@@ -1306,22 +1307,24 @@ fn callback_for_unknown_operation_is_rejected_with_audit_event() {
             operation_id: "op-missing".to_owned(),
         })
     );
-    assert!(store
-        .events_for_operation("op-missing")
-        .iter()
-        .any(|event| matches!(
-            event,
-            AsyncOperationEvent::ExternalCallbackRejected {
-                operation_id,
-                callback_id,
-                reason,
-                verified_by,
-                ..
-            } if operation_id == "op-missing"
-                && callback_id == "cb-unknown-operation"
-                && reason == "operation_not_found"
-                && verified_by == "hmac:callback-endpoint-1"
-        )));
+    assert!(
+        store
+            .events_for_operation("op-missing")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id,
+                    callback_id,
+                    reason,
+                    verified_by,
+                    ..
+                } if operation_id == "op-missing"
+                    && callback_id == "cb-unknown-operation"
+                    && reason == "operation_not_found"
+                    && verified_by == "hmac:callback-endpoint-1"
+            ))
+    );
 }
 
 #[test]
@@ -2088,15 +2091,20 @@ fn callback_missing_provider_operation_identity_does_not_resume_run() {
         store.operation_state("op-1"),
         Some(AsyncOperationState::WaitingCallback)
     );
-    assert!(store.events_for_operation("op-1").iter().any(|event| matches!(
-        event,
-        AsyncOperationEvent::ExternalCallbackRejected {
-            callback_id,
-            reason,
-            ..
-        } if callback_id == "cb-missing-provider-operation"
-            && reason == "identity_mismatch:provider_operation_id"
-    )));
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-missing-provider-operation"
+                    && reason == "identity_mismatch:provider_operation_id"
+            ))
+    );
 }
 
 #[test]
@@ -2124,15 +2132,20 @@ fn sqlite_callback_missing_provider_operation_identity_does_not_resume_run()
         store.operation_state("op-1"),
         Some(AsyncOperationState::WaitingCallback)
     );
-    assert!(store.events_for_operation("op-1").iter().any(|event| matches!(
-        event,
-        AsyncOperationEvent::ExternalCallbackRejected {
-            callback_id,
-            reason,
-            ..
-        } if callback_id == "cb-sqlite-missing-provider-operation"
-            && reason == "identity_mismatch:provider_operation_id"
-    )));
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-sqlite-missing-provider-operation"
+                    && reason == "identity_mismatch:provider_operation_id"
+            ))
+    );
     Ok(())
 }
 
@@ -2757,7 +2770,9 @@ fn callback_after_completion_records_late_callback_without_resume() {
     let mut operation = waiting_operation();
     operation.state = AsyncOperationState::Completed;
     operation.completed_at_unix_ms = Some(1_500);
-    store.register(operation).expect("completed operation registers");
+    store
+        .register(operation)
+        .expect("completed operation registers");
 
     let accepted = store
         .accept_callback(
@@ -2842,21 +2857,23 @@ fn cancel_and_expire_reject_zero_or_regressed_terminal_timestamps() {
 
 #[test]
 fn cancelled_async_operation_result_preserves_committed_external_effect() {
-    let result = AsyncOperationResult::cancelled("op-1").with_external_effects([
-        ExternalEffectRecord::new(
+    let result =
+        AsyncOperationResult::cancelled("op-1").with_external_effects([ExternalEffectRecord::new(
             "effect-ticket-1",
             "ticket-system",
             "ticket.create",
             ToolEffectOutcome::Committed,
         )
         .with_idempotency_key("idem-ticket-1")
-        .with_provider_effect_id("ticket-123"),
-    ]);
+        .with_provider_effect_id("ticket-123")]);
 
     assert_eq!(result.status, AsyncOperationResultStatus::Cancelled);
     assert_eq!(result.validate(), Ok(()));
     assert!(result.external_effect_was_committed());
-    assert_eq!(result.external_effects[0].outcome, ToolEffectOutcome::Committed);
+    assert_eq!(
+        result.external_effects[0].outcome,
+        ToolEffectOutcome::Committed
+    );
     assert_eq!(
         result.external_effects[0].idempotency_key.as_deref(),
         Some("idem-ticket-1")
@@ -2867,16 +2884,14 @@ fn cancelled_async_operation_result_preserves_committed_external_effect() {
 fn async_operation_result_projects_protocol_json() {
     let result = AsyncOperationResult::cancelled("op-1")
         .with_output(json!({"status": "cancelled_after_commit"}))
-        .with_external_effects([
-            ExternalEffectRecord::new(
-                "effect-ticket-1",
-                "ticket-system",
-                "ticket.create",
-                ToolEffectOutcome::Committed,
-            )
-            .with_idempotency_key("idem-ticket-1")
-            .with_provider_effect_id("ticket-123"),
-        ]);
+        .with_external_effects([ExternalEffectRecord::new(
+            "effect-ticket-1",
+            "ticket-system",
+            "ticket.create",
+            ToolEffectOutcome::Committed,
+        )
+        .with_idempotency_key("idem-ticket-1")
+        .with_provider_effect_id("ticket-123")]);
 
     assert_eq!(
         result.protocol_value(),
@@ -2923,23 +2938,21 @@ fn incomplete_async_operation_result_preserves_committed_external_effect_after_l
 
 #[test]
 fn async_operation_result_rejects_invalid_external_effect_records() {
-    let blank_effect = AsyncOperationResult::completed("op-1").with_external_effects([
-        ExternalEffectRecord::new(
+    let blank_effect =
+        AsyncOperationResult::completed("op-1").with_external_effects([ExternalEffectRecord::new(
             " ",
             "ticket-system",
             "ticket.create",
             ToolEffectOutcome::Committed,
-        ),
-    ]);
-    let impossible_denied_effect = AsyncOperationResult::failed("op-2").with_external_effects([
-        ExternalEffectRecord::new(
+        )]);
+    let impossible_denied_effect =
+        AsyncOperationResult::failed("op-2").with_external_effects([ExternalEffectRecord::new(
             "effect-denied",
             "ticket-system",
             "ticket.create",
             ToolEffectOutcome::NoExternalEffect,
         )
-        .with_provider_effect_id("ticket-123"),
-    ]);
+        .with_provider_effect_id("ticket-123")]);
 
     assert_eq!(
         blank_effect.validate(),
@@ -2958,15 +2971,14 @@ fn async_operation_result_rejects_invalid_external_effect_records() {
 
 #[test]
 fn async_operation_result_rejects_committed_external_effect_without_idempotency_key() {
-    let missing_idempotency = AsyncOperationResult::cancelled("op-1").with_external_effects([
-        ExternalEffectRecord::new(
+    let missing_idempotency =
+        AsyncOperationResult::cancelled("op-1").with_external_effects([ExternalEffectRecord::new(
             "effect-ticket-1",
             "ticket-system",
             "ticket.create",
             ToolEffectOutcome::Committed,
         )
-        .with_provider_effect_id("ticket-123"),
-    ]);
+        .with_provider_effect_id("ticket-123")]);
 
     assert_eq!(
         missing_idempotency.validate(),
@@ -2996,8 +3008,8 @@ fn async_operation_result_rejects_duplicate_external_effect_identities() {
         )
         .with_idempotency_key("idem-ticket-2"),
     ]);
-    let duplicate_provider_effect_id =
-        AsyncOperationResult::completed("op-2").with_external_effects([
+    let duplicate_provider_effect_id = AsyncOperationResult::completed("op-2")
+        .with_external_effects([
             ExternalEffectRecord::new(
                 "effect-ticket-1",
                 "ticket-system",
@@ -3764,6 +3776,64 @@ fn sqlite_async_operation_store_rejects_callback_receipt_operation_metadata_mism
             &callback_schema_registry(),
         )
         .expect_err("receipt operation metadata mismatch must fail durable replay");
+
+    assert!(
+        matches!(
+            error,
+            AsyncOperationError::Storage { ref message }
+                if message.contains("stored callback receipt operation metadata does not match operation")
+        ),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn sqlite_async_operation_store_rejects_callback_receipt_missing_provider_identity_on_reopen() {
+    let path = sqlite_async_operation_path("callback-receipt-provider-missing");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        store
+            .accept_callback(
+                valid_submission("cb-1", "idem-cb-1"),
+                &callback_schema_registry(),
+            )
+            .expect("callback is accepted");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        let receipt_json: String = connection
+            .query_row(
+                "SELECT receipt_json FROM async_callback_receipts WHERE operation_id = ?1 AND idempotency_key = ?2",
+                params!["op-1", "idem-cb-1"],
+                |row| row.get(0),
+            )
+            .expect("receipt row exists");
+        let mut receipt: serde_json::Value =
+            serde_json::from_str(&receipt_json).expect("receipt json parses");
+        receipt["provider_operation_id"] = serde_json::Value::Null;
+        connection
+            .execute(
+                "UPDATE async_callback_receipts SET receipt_json = ?1 WHERE operation_id = ?2 AND idempotency_key = ?3",
+                params![
+                    serde_json::to_string(&receipt).expect("receipt serializes"),
+                    "op-1",
+                    "idem-cb-1"
+                ],
+            )
+            .expect("receipt row is tampered");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    let error = store
+        .accept_callback(
+            valid_submission("cb-duplicate", "idem-cb-1"),
+            &callback_schema_registry(),
+        )
+        .expect_err("missing receipt provider identity must fail durable replay");
 
     assert!(
         matches!(
