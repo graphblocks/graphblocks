@@ -3164,14 +3164,14 @@ class TckRunner:
         for sequence, operation in enumerate(case.application_event_operations, start=1):
             response_id = str(operation.get("responseId", "response-1"))
             metadata = ApplicationEventMetadata(
-                event_id=f"{case.case_id}:{sequence}",
+                event_id=str(operation.get("eventId", f"{case.case_id}:{sequence}")),
                 run_id=str(operation.get("runId", "run-1")),
                 response_id=response_id,
                 turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
-                sequence=sequence,
+                sequence=operation.get("eventSequence", sequence),
                 cursor=(
-                    str(operation.get("cursor", operation.get("eventCursor")))
-                    if operation.get("cursor", operation.get("eventCursor")) is not None
+                    str(operation.get("eventCursor", operation.get("cursor")))
+                    if operation.get("eventCursor", operation.get("cursor")) is not None
                     else None
                 ),
                 release_id=str(operation.get("releaseId", "release-1")),

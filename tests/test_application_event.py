@@ -1860,11 +1860,12 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
         for sequence, operation in enumerate(case["operations"], start=1):
             response_id = operation.get("responseId", case.get("responseId", "response-1"))
             metadata = ApplicationEventMetadata(
-                event_id=f"{case_name}:{sequence}",
-                run_id=case.get("runId", "run-1"),
+                event_id=operation.get("eventId", f"{case_name}:{sequence}"),
+                run_id=operation.get("runId", case.get("runId", "run-1")),
                 response_id=response_id,
                 turn_id=operation.get("turnId", case.get("turnId")),
-                sequence=sequence,
+                cursor=operation.get("eventCursor", operation.get("cursor")),
+                sequence=operation.get("eventSequence", sequence),
                 release_id=case.get("releaseId", "release-1"),
                 policy_snapshot_id=case.get("policySnapshotId", "policy-1"),
                 occurred_at=operation.get("occurredAt", "2026-06-23T00:00:00Z"),

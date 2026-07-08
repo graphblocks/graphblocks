@@ -31,6 +31,10 @@ Shared fixtures live under `tck/`. Rust and Python harnesses consume the same
 fixtures where the suite applies. This keeps schema, compiler, runtime, and
 facade behavior aligned.
 
+The `application-events` suite includes authoritative stream invariants:
+idempotent exact replay, duplicate event-id conflict rejection, and monotonic
+per-run sequence enforcement.
+
 Common commands:
 
 ```bash

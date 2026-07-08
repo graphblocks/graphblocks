@@ -11,7 +11,7 @@ use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[test]
 fn rust_application_event_stream_matches_shared_tck_cases() -> Result<(), String> {
@@ -42,13 +42,20 @@ fn run_case(case: &Value) -> Result<(), String> {
         let op = required_str(operation, "op")?;
         let response_id = optional_str(operation, "responseId").unwrap_or(default_response_id);
         let metadata = ApplicationEventMetadata {
-            event_id: format!("{case_name}:{}", index + 1),
-            run_id: optional_str(case, "runId").unwrap_or("run-1").to_owned(),
+            event_id: optional_str(operation, "eventId")
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{case_name}:{}", index + 1)),
+            run_id: optional_str(operation, "runId")
+                .or_else(|| optional_str(case, "runId"))
+                .unwrap_or("run-1")
+                .to_owned(),
             response_id: response_id.to_owned(),
             turn_id: optional_str(operation, "turnId")
                 .or_else(|| optional_str(case, "turnId"))
                 .map(str::to_owned),
-            cursor: optional_str(operation, "cursor").map(str::to_owned),
+            cursor: optional_str(operation, "eventCursor")
+                .or_else(|| optional_str(operation, "cursor"))
+                .map(str::to_owned),
             graph_id: optional_str(operation, "graphId")
                 .or_else(|| optional_str(operation, "graph_id"))
                 .map(str::to_owned),
@@ -58,7 +65,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             operation_id: optional_str(operation, "operationId")
                 .or_else(|| optional_str(operation, "operation_id"))
                 .map(str::to_owned),
-            sequence: (index + 1) as u64,
+            sequence: optional_u64(operation, "eventSequence").unwrap_or((index + 1) as u64),
             release_id: optional_str(case, "releaseId")
                 .unwrap_or("release-1")
                 .to_owned(),

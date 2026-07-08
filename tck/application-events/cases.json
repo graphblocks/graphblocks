@@ -536,5 +536,84 @@
       "ToolResultFailed",
       "ToolResultDenied"
     ]
+  },
+  {
+    "name": "stream_rejects_conflicting_duplicate_ids_and_nonmonotonic_sequences",
+    "responseId": "response-stream-1",
+    "turnId": "turn-stream-1",
+    "operations": [
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1",
+        "outputs": {
+          "answer": "first"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1",
+        "outputs": {
+          "answer": "first"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 2,
+        "eventCursor": "run-1:2",
+        "outputs": {
+          "answer": "conflicting duplicate id"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-2",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1-duplicate",
+        "outputs": {
+          "answer": "duplicate sequence"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-3",
+        "eventSequence": 0,
+        "eventCursor": "run-1:0",
+        "outputs": {
+          "answer": "backwards sequence"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-other-run",
+        "runId": "run-2",
+        "eventSequence": 1,
+        "eventCursor": "run-2:1",
+        "outputs": {
+          "answer": "other run"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-4",
+        "eventSequence": 2,
+        "eventCursor": "run-1:2",
+        "outputs": {
+          "answer": "next"
+        }
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "RunSucceeded",
+      "RunSucceeded",
+      "RunSucceeded"
+    ]
   }
 ]

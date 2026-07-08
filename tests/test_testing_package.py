@@ -472,7 +472,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-events"] * 7
+    assert [case.kind for case in cases] == ["application-events"] * 8
     assert report.ok
     assert {tuple(result.observed["accepted_kinds"]) for result in report.results} == {
         (
@@ -512,6 +512,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
             "ToolResultFailed",
             "ToolResultDenied",
         ),
+        ("RunSucceeded", "RunSucceeded", "RunSucceeded"),
     }
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
@@ -1565,6 +1566,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool_result_delta_is_draft_until_completed",
         "terminal_tool_result_events_preserve_partial_status",
         "failed_and_denied_tool_result_events_are_terminal",
+        "stream_rejects_conflicting_duplicate_ids_and_nonmonotonic_sequences",
     )
     assert by_suite["application-protocol"].case_ids == (
         "application_protocol_kind_sets_match_contract",
@@ -1719,7 +1721,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["suiteCount"] == 22
     assert payload["suites"][0]["suite_id"] == "application-events"
-    assert payload["suites"][0]["case_count"] == 7
+    assert payload["suites"][0]["case_count"] == 8
     assert payload["contentDigest"].startswith("sha256:")
     assert "main" in graphblocks_testing.__all__
 
