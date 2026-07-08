@@ -795,6 +795,18 @@ fn run_case(case: &Value) -> Result<(), String> {
             let initial_response = raw_initial_response.and_then(Value::as_object);
             if let Some(mode) = valid_response_mode {
                 if let Some(response) = initial_response {
+                    let response_status = response
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|status| !status.is_empty());
+                    if response_status != Some(mode) {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response status must match responseMode"),
+                            "path": "$.initialResponse.status",
+                        }));
+                    }
                     let response_run_id = response
                         .get("runId")
                         .or_else(|| response.get("run_id"))

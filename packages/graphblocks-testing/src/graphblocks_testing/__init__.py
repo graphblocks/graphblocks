@@ -7111,6 +7111,20 @@ class TckRunner:
                             }
                         )
                     else:
+                        initial_status = raw_initial_response.get("status")
+                        valid_initial_status = (
+                            initial_status.strip()
+                            if isinstance(initial_status, str) and initial_status.strip()
+                            else None
+                        )
+                        if valid_initial_status != response_mode:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run {response_mode} response status must match responseMode",
+                                    "path": "$.initialResponse.status",
+                                }
+                            )
                         initial_run_id = raw_initial_response.get(
                             "runId", raw_initial_response.get("run_id")
                         )
