@@ -3671,6 +3671,7 @@
       "callbackId": "cb-ci-001",
       "idempotencyKey": "idem-ci-callback-001",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4226,6 +4227,7 @@
       "callbackId": " ",
       "idempotencyKey": "idem-ci-callback-blank-id",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "journalSequence": 41,
       "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "verifiedBy": "hmac-sha256:callback-endpoint-1"
@@ -4280,6 +4282,7 @@
       "callbackId": "cb-ci-invalid-payload",
       "idempotencyKey": "idem-ci-callback-invalid-payload",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "journalSequence": 41,
       "payloadDigest": "sha256:callback-payload",
       "verifiedBy": "hmac-sha256:callback-endpoint-1"
@@ -4334,6 +4337,7 @@
       "callbackId": "cb-ci-blank-verifier",
       "idempotencyKey": "idem-ci-callback-blank-verifier",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "journalSequence": 41,
       "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "verifiedBy": " "
@@ -4388,6 +4392,7 @@
       "callbackId": "cb-ci-wrong-operation",
       "idempotencyKey": "idem-ci-callback-wrong-operation",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-other",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4447,6 +4452,7 @@
       "callbackId": "cb-ci-stale-attempt",
       "idempotencyKey": "idem-ci-callback-stale-attempt",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4506,6 +4512,7 @@
       "callbackId": "cb-ci-wrong-policy",
       "idempotencyKey": "idem-ci-callback-wrong-policy",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4564,6 +4571,7 @@
     "callback": {
       "callbackId": "cb-ci-missing-idempotency",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4623,6 +4631,7 @@
       "callbackId": "cb-ci-blank-idempotency",
       "idempotencyKey": " ",
       "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4681,6 +4690,7 @@
     "callback": {
       "callbackId": "cb-ci-missing-received-at",
       "idempotencyKey": "idem-ci-callback-missing-received-at",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4740,6 +4750,7 @@
       "callbackId": "cb-ci-invalid-received-at",
       "idempotencyKey": "idem-ci-callback-invalid-received-at",
       "receivedAt": "soon",
+      "releaseId": "rel-coding-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -4764,6 +4775,125 @@
         "code": "DurableAsyncCallbackResumeInvalid",
         "message": "async callback resume callback requires ISO receivedAt",
         "path": "$.callback.receivedAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_missing_callback_release_id_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "releaseId": "rel-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "callbackId": "cb-ci-missing-release",
+      "idempotencyKey": "idem-ci-callback-missing-release",
+      "receivedAt": "2026-07-02T00:00:41Z",
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "policySnapshotId": "policy-snap-callback-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume callback requires nonblank releaseId",
+        "path": "$.callback.releaseId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_callback_release_mismatch_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "releaseId": "rel-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "callbackId": "cb-ci-wrong-release",
+      "idempotencyKey": "idem-ci-callback-wrong-release",
+      "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-other",
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "policySnapshotId": "policy-snap-callback-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume callback releaseId must match operation releaseId",
+        "path": "$.callback.releaseId"
       }
     ],
     "expected": {

@@ -8232,6 +8232,8 @@ class TckRunner:
                         "idempotency_key",
                         "receivedAt",
                         "received_at",
+                        "releaseId",
+                        "release_id",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8337,12 +8339,29 @@ class TckRunner:
                                     "path": f"$.callback.{received_at_path}",
                                 }
                             )
+                    release_id_path = (
+                        "releaseId"
+                        if "releaseId" in raw_callback or "release_id" not in raw_callback
+                        else "release_id"
+                    )
+                    release_id = raw_callback.get(
+                        "releaseId", raw_callback.get("release_id")
+                    )
+                    if not isinstance(release_id, str) or not release_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires nonblank releaseId",
+                                "path": f"$.callback.{release_id_path}",
+                            }
+                        )
                     if isinstance(raw_operation, Mapping):
                         for key, alias in (
                             ("operationId", "operation_id"),
                             ("runId", "run_id"),
                             ("nodeId", "node_id"),
                             ("attemptId", "attempt_id"),
+                            ("releaseId", "release_id"),
                             ("policySnapshotId", "policy_snapshot_id"),
                         ):
                             callback_value = raw_callback.get(

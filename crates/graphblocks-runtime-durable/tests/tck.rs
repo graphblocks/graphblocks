@@ -2046,6 +2046,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "idempotency_key",
                 "receivedAt",
                 "received_at",
+                "releaseId",
+                "release_id",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2170,12 +2172,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.callback.{received_at_path}"),
                     }));
                 }
+                let release_id_path = if raw_callback.contains_key("releaseId")
+                    || !raw_callback.contains_key("release_id")
+                {
+                    "releaseId"
+                } else {
+                    "release_id"
+                };
+                if raw_callback
+                    .get("releaseId")
+                    .or_else(|| raw_callback.get("release_id"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |release_id| release_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires nonblank releaseId",
+                        "path": format!("$.callback.{release_id_path}"),
+                    }));
+                }
                 if let Some(operation) = case.get("operation").and_then(Value::as_object) {
                     for (key, alias) in [
                         ("operationId", "operation_id"),
                         ("runId", "run_id"),
                         ("nodeId", "node_id"),
                         ("attemptId", "attempt_id"),
+                        ("releaseId", "release_id"),
                         ("policySnapshotId", "policy_snapshot_id"),
                     ] {
                         let callback_value = raw_callback
