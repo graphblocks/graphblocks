@@ -936,6 +936,42 @@ def test_client_package_posts_accepted_run_graph_command_over_http(monkeypatch) 
     assert response.status == "accepted"
     assert response.outputs == {}
     assert response.events == ()
+    assert response.event_stream_url == "/runs/run-http-accepted-1/events"
+    assert response.websocket_url == "/runs/run-http-accepted-1/ws"
+    assert response.cancel_url == "/runs/run-http-accepted-1/cancel"
+    assert response.initial_cursor == "run-http-accepted-1:0"
+
+
+def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "run-http-accepted-1",
+                    "status": "accepted",
+                    "eventStream": "",
+                    "websocket": "/runs/run-http-accepted-1/ws",
+                    "cancel": "/runs/run-http-accepted-1/cancel",
+                    "initialCursor": "run-http-accepted-1:0",
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match="GraphBlocks HTTP response eventStream must be a non-empty string"):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                response_mode="accepted",
+            )
+        )
 
 
 def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:

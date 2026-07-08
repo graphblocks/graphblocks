@@ -98,10 +98,18 @@ class RunGraphResponse:
     outputs: dict[str, object]
     events: tuple[ApplicationEvent, ...]
     event_stream: ApplicationEventStreamState
+    event_stream_url: str | None = None
+    websocket_url: str | None = None
+    cancel_url: str | None = None
+    initial_cursor: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "outputs", deepcopy(self.outputs))
         object.__setattr__(self, "events", tuple(self.events))
+        for field_name in ("event_stream_url", "websocket_url", "cancel_url", "initial_cursor"):
+            value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"run graph response {field_name} must be a non-empty string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1315,12 +1323,26 @@ class HttpGraphBlocksClient:
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
+        status = _payload_string(payload, "GraphBlocks HTTP response", "status", "status")
+        response_kwargs: dict[str, object] = {}
+        for field_name, payload_key in (
+            ("event_stream_url", "eventStream"),
+            ("websocket_url", "websocket"),
+            ("cancel_url", "cancel"),
+            ("initial_cursor", "initialCursor"),
+        ):
+            value = payload.get(payload_key)
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"GraphBlocks HTTP response {payload_key} must be a non-empty string")
+                response_kwargs[field_name] = value
         return RunGraphResponse(
             run_id=_payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id"),
-            status=_payload_string(payload, "GraphBlocks HTTP response", "status", "status"),
+            status=status,
             outputs=_payload_object(payload, "GraphBlocks HTTP response", "outputs", "outputs"),
             events=tuple(events),
             event_stream=stream_state,
+            **response_kwargs,
         )
 
 
