@@ -7205,17 +7205,34 @@ class TckRunner:
                             "cancel",
                             raw_initial_response.get("cancel_route"),
                         )
-                        if not isinstance(initial_cancel, str) or not initial_cancel.strip():
-                            cancel_path = (
-                                "cancel"
-                                if "cancel" in raw_initial_response
-                                or "cancel_route" not in raw_initial_response
-                                else "cancel_route"
-                            )
+                        valid_initial_cancel = (
+                            initial_cancel.strip()
+                            if isinstance(initial_cancel, str) and initial_cancel.strip()
+                            else None
+                        )
+                        cancel_path = (
+                            "cancel"
+                            if "cancel" in raw_initial_response
+                            or "cancel_route" not in raw_initial_response
+                            else "cancel_route"
+                        )
+                        if valid_initial_cancel is None:
                             diagnostics.append(
                                 {
                                     "code": "DurableBackgroundRunInvalid",
                                     "message": f"background run {response_mode} response requires cancel",
+                                    "path": f"$.initialResponse.{cancel_path}",
+                                }
+                            )
+                        elif (
+                            valid_initial_run_id is not None
+                            and f"/runs/{valid_initial_run_id}/"
+                            not in valid_initial_cancel
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run cancel must include runId",
                                     "path": f"$.initialResponse.{cancel_path}",
                                 }
                             )

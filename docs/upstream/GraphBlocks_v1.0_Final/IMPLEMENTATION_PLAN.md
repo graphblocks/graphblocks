@@ -1902,9 +1902,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run shared TCK cases now require an object `initialResponse` carrying
   nonblank `runId`/`run_id`, `eventStream`/`event_stream`, `websocket`/`web_socket`,
   `cancel`/`cancel_route`, and `initialCursor`/`initial_cursor` values in both Rust and Python
-  runners, and require the event-stream and websocket handles to encode the returned run id,
-  preventing truthy placeholder values, missing websocket or cancellation links, or mismatched run
-  links from satisfying durable response and replay-handle semantics.
+  runners, and require the event-stream, websocket, and cancel handles to encode the returned run
+  id, preventing truthy placeholder values, missing websocket or cancellation links, or mismatched
+  run links from satisfying durable response and replay-handle semantics.
 - Durable background-run shared TCK cases now require `responseMode`/`response_mode` to be exactly
   `accepted` or `background` in both Rust and Python runners, and apply the durable run-id handle
   requirement to background responses as well as accepted responses.

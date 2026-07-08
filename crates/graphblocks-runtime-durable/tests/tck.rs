@@ -877,17 +877,28 @@ fn run_case(case: &Value) -> Result<(), String> {
                     } else {
                         "cancel_route"
                     };
-                    if response
+                    let response_cancel = response
                         .get("cancel")
                         .or_else(|| response.get("cancel_route"))
                         .and_then(Value::as_str)
-                        .is_none_or(|cancel| cancel.trim().is_empty())
-                    {
+                        .map(str::trim)
+                        .filter(|cancel| !cancel.is_empty());
+                    if response_cancel.is_none() {
                         diagnostics.push(json!({
                             "code": "DurableBackgroundRunInvalid",
                             "message": format!("background run {mode} response requires cancel"),
                             "path": format!("$.initialResponse.{cancel_path}"),
                         }));
+                    } else if let (Some(run_id), Some(cancel)) = (response_run_id, response_cancel)
+                    {
+                        let run_id_path_segment = format!("/runs/{run_id}/");
+                        if !cancel.contains(&run_id_path_segment) {
+                            diagnostics.push(json!({
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run cancel must include runId",
+                                "path": format!("$.initialResponse.{cancel_path}"),
+                            }));
+                        }
                     }
                     if response
                         .get("initialCursor")
