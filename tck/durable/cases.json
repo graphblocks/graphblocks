@@ -8910,6 +8910,60 @@
     }
   },
   {
+    "name": "external_operation_unauthenticated_callback_verifier_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "policySnapshotId": "pol-callback-001",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "attemptId": "attempt-ci-001",
+      "tenantId": "tenant-support-001",
+      "releaseId": "release-2026-06-23",
+      "nodeId": "runExternalCI",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "unauthenticated",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires authenticated verifiedBy",
+        "path": "$.lateCallback.verifiedBy"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_idempotency_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {

@@ -9185,6 +9185,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{verified_by_path}",
                         }
                     )
+                elif verified_by.strip().lower() == "unauthenticated":
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires authenticated verifiedBy",
+                            "path": f"$.lateCallback.{verified_by_path}",
+                        }
+                    )
                 idempotency_key_path = (
                     "idempotencyKey"
                     if "idempotencyKey" in raw_late_callback

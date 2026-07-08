@@ -3204,6 +3204,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "message": "external operation reconciliation requires nonblank verifiedBy",
                     "path": format!("$.lateCallback.{verified_by_path}"),
                 }));
+            } else if raw_late_callback
+                .get("verifiedBy")
+                .or_else(|| raw_late_callback.get("verified_by"))
+                .and_then(Value::as_str)
+                .is_some_and(|verified_by| {
+                    verified_by.trim().eq_ignore_ascii_case("unauthenticated")
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires authenticated verifiedBy",
+                    "path": format!("$.lateCallback.{verified_by_path}"),
+                }));
             }
             let idempotency_key_path = if raw_late_callback.contains_key("idempotencyKey")
                 || !raw_late_callback.contains_key("idempotency_key")
