@@ -1755,8 +1755,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   differs from the explicit subscription envelope, ensuring retry, duplicate, and redrive evidence
   belongs to the projected subscription in both Rust and Python.
 - Durable callback projection redrive evidence now requires an explicit `redrive` object before
-  asserting `deadLetterPreservesEventId`, preventing absent event ids from comparing equal and
-  proving redrive preservation accidentally.
+  asserting `deadLetterPreservesEventId`; shared fixtures can express that requirement through
+  `redriveAssertions`, preventing absent event ids from comparing equal and proving redrive
+  preservation accidentally.
 - Durable callback projection redrive evidence now also requires an explicit `redrive` object
   before asserting `redriveCreatesApplicationEvent`, so redrive application-event behavior cannot
   be proven from the projection default.

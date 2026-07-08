@@ -1690,6 +1690,39 @@
     }
   },
   {
+    "name": "webhook_delivery_missing_redrive_preservation_evidence_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-required-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0301",
+        "runId": "run-coding-001",
+        "sequence": 301,
+        "cursor": "evt-0301",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0301",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:01Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive evidence required for deadLetterPreservesEventId",
+        "path": "$.redrive"
+      }
+    ],
+    "redriveAssertions": {
+      "deadLetterPreservesEventId": true
+    },
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
     "kind": "async_callback_resume_guards",
     "operation": {

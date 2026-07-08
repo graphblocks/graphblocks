@@ -7382,6 +7382,11 @@ class TckRunner:
                     raw_redrive = {}
                 elif not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
+                raw_redrive_assertions = fixture.get(
+                    "redriveAssertions", fixture.get("redrive_assertions", {})
+                )
+                if not isinstance(raw_redrive_assertions, Mapping):
+                    raw_redrive_assertions = {}
                 redrive_creates_application_event = False
                 redrive_event_id_preserved = False
                 raw_non_mandatory_outage_blocks_run = fixture.get(
@@ -7451,7 +7456,11 @@ class TckRunner:
                             }
                         )
                 else:
-                    if expected.get("deadLetterPreservesEventId") is True:
+                    if (
+                        expected.get("deadLetterPreservesEventId") is True
+                        or raw_redrive_assertions.get("deadLetterPreservesEventId") is True
+                        or raw_redrive_assertions.get("dead_letter_preserves_event_id") is True
+                    ):
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackRedriveInvalid",
@@ -7462,7 +7471,11 @@ class TckRunner:
                         expected_keys_with_structural_diagnostics.add(
                             "deadLetterPreservesEventId"
                         )
-                    if expected.get("redriveCreatesApplicationEvent") is True:
+                    if (
+                        expected.get("redriveCreatesApplicationEvent") is True
+                        or raw_redrive_assertions.get("redriveCreatesApplicationEvent") is True
+                        or raw_redrive_assertions.get("redrive_creates_application_event") is True
+                    ):
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackRedriveInvalid",

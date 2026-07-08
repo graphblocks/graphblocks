@@ -555,6 +555,12 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("redrive")
                 .and_then(Value::as_object)
                 .is_some_and(|redrive| !redrive.is_empty());
+            let empty_redrive_assertions = Map::new();
+            let raw_redrive_assertions = case
+                .get("redriveAssertions")
+                .or_else(|| case.get("redrive_assertions"))
+                .and_then(Value::as_object)
+                .unwrap_or(&empty_redrive_assertions);
             let redrive_event_id = raw_redrive
                 .get("eventId")
                 .or_else(|| raw_redrive.get("event_id"))
@@ -577,6 +583,32 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 false
             };
+            if !has_redrive
+                && raw_redrive_assertions
+                    .get("deadLetterPreservesEventId")
+                    .or_else(|| raw_redrive_assertions.get("dead_letter_preserves_event_id"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackRedriveInvalid",
+                    "message": "callback redrive evidence required for deadLetterPreservesEventId",
+                    "path": "$.redrive",
+                }));
+            }
+            if !has_redrive
+                && raw_redrive_assertions
+                    .get("redriveCreatesApplicationEvent")
+                    .or_else(|| raw_redrive_assertions.get("redrive_creates_application_event"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackRedriveInvalid",
+                    "message": "callback redrive evidence required for redriveCreatesApplicationEvent",
+                    "path": "$.redrive",
+                }));
+            }
             let raw_subscription = case
                 .get("subscription")
                 .or_else(|| case.get("callback_subscription"));
