@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -238,6 +239,25 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
         "multi-turn-chat",
     )
     assert "ConformanceProfileSet" in graphblocks_testing.__all__
+
+
+def test_conformance_profile_set_rejects_malformed_profile_lists(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    document = {
+        "kind": "ConformanceProfileSet",
+        "spec": {
+            "profiles": [
+                {
+                    "id": "GB-C0-SCHEMA",
+                    "status": "stable",
+                    "tck": {"compiler": True},
+                }
+            ]
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"conformance profile 0 tck must be a list of strings"):
+        graphblocks_testing.ConformanceProfileSet.from_document(document)
 
 
 def test_upstream_conformance_profile_catalog_matches_shipped_catalog() -> None:

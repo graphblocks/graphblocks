@@ -2678,18 +2678,34 @@ class ConformanceProfileSet:
             if not isinstance(profile_id, str):
                 raise ValueError(f"conformance profile {index} id must be a string")
             status = raw_profile.get("status", "")
-            raw_extends = raw_profile.get("extends", ())
-            raw_requires = raw_profile.get("requires", ())
-            raw_tck = raw_profile.get("tck", ())
-            raw_acceptance = raw_profile.get("acceptanceApplications", ())
+            normalized_lists: dict[str, tuple[str, ...]] = {}
+            for field_name, raw_value in (
+                ("extends", raw_profile.get("extends")),
+                ("requires", raw_profile.get("requires")),
+                ("tck", raw_profile.get("tck")),
+                ("acceptanceApplications", raw_profile.get("acceptanceApplications")),
+            ):
+                if raw_value is None:
+                    normalized_lists[field_name] = ()
+                    continue
+                if not isinstance(raw_value, list):
+                    raise ValueError(f"conformance profile {index} {field_name} must be a list of strings")
+                values: list[str] = []
+                for item_index, item in enumerate(raw_value):
+                    if not isinstance(item, str):
+                        raise ValueError(
+                            f"conformance profile {index} {field_name}[{item_index}] must be a string"
+                        )
+                    values.append(item)
+                normalized_lists[field_name] = tuple(values)
             profiles.append(
                 ConformanceProfile(
                     profile_id=profile_id,
                     status=str(status),
-                    extends=_string_tuple(raw_extends),
-                    requires=_string_tuple(raw_requires),
-                    tck_suites=_string_tuple(raw_tck),
-                    acceptance_applications=_string_tuple(raw_acceptance),
+                    extends=normalized_lists["extends"],
+                    requires=normalized_lists["requires"],
+                    tck_suites=normalized_lists["tck"],
+                    acceptance_applications=normalized_lists["acceptanceApplications"],
                 )
             )
         return cls(tuple(profiles))
