@@ -288,7 +288,13 @@ def _canonical_json(value: object) -> str:
 
 
 def _json_object_result(result_json: str, label: str) -> dict[str, object]:
-    payload = json.loads(result_json)
+    try:
+        payload = json.loads(
+            result_json,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{label} must be valid strict JSON") from error
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must decode to a JSON object")
     return payload

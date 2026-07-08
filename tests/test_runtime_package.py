@@ -55,6 +55,27 @@ def test_runtime_wrapper_reports_native_binding_readiness_without_second_impleme
         runtime.require_native_extension()
 
 
+def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def compile_graph_json(self, document_json: str, block_catalog_json: str | None = None) -> str:
+            return '{"ok": NaN}'
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    with pytest.raises(ValueError, match="native compiler result must be valid strict JSON"):
+        runtime.compile_graph({"kind": "Graph"})
+
+
 def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     calls: list[tuple[str, tuple[object, ...]]] = []
 
