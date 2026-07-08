@@ -807,6 +807,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": "$.initialResponse.runId",
                         }));
                     }
+                    let event_stream_path = if response.contains_key("eventStream")
+                        || !response.contains_key("event_stream")
+                    {
+                        "eventStream"
+                    } else {
+                        "event_stream"
+                    };
+                    if response
+                        .get("eventStream")
+                        .or_else(|| response.get("event_stream"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|event_stream| event_stream.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response requires eventStream"),
+                            "path": format!("$.initialResponse.{event_stream_path}"),
+                        }));
+                    }
                     if response
                         .get("initialCursor")
                         .or_else(|| response.get("initial_cursor"))

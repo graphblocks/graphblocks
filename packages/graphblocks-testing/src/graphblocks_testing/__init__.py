@@ -7124,6 +7124,27 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                        initial_event_stream = raw_initial_response.get(
+                            "eventStream",
+                            raw_initial_response.get("event_stream"),
+                        )
+                        if (
+                            not isinstance(initial_event_stream, str)
+                            or not initial_event_stream.strip()
+                        ):
+                            event_stream_path = (
+                                "eventStream"
+                                if "eventStream" in raw_initial_response
+                                or "event_stream" not in raw_initial_response
+                                else "event_stream"
+                            )
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run {response_mode} response requires eventStream",
+                                    "path": f"$.initialResponse.{event_stream_path}",
+                                }
+                            )
                         initial_cursor_value = raw_initial_response.get(
                             "initialCursor",
                             raw_initial_response.get("initial_cursor"),
