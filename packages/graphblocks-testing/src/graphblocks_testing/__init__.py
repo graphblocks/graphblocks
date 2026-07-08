@@ -7480,6 +7480,14 @@ class TckRunner:
                             }
                         )
                     mandatory = raw_subscription.get("mandatory")
+                    if failure_policy == "best_effort" and mandatory is True:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackProjectionInvalid",
+                                "message": "mandatory callback subscription requires retry, dead-letter, or fallback failurePolicy",
+                                "path": "$.subscription.failurePolicy",
+                            }
+                        )
                     if not isinstance(mandatory, bool):
                         diagnostics.append(
                             {

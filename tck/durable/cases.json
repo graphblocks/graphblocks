@@ -1706,6 +1706,41 @@
     }
   },
   {
+    "name": "webhook_delivery_mandatory_best_effort_policy_rejected",
+    "kind": "callback_delivery_projection",
+    "subscription": {
+      "subscriptionId": "sub-ide-001",
+      "failurePolicy": "best_effort",
+      "mandatory": true
+    },
+    "deliveries": [
+      {
+        "deliveryId": "del-sub-mandatory-best-effort-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0099",
+        "runId": "run-coding-001",
+        "sequence": 99,
+        "cursor": "evt-0099",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0099",
+        "receiverStatus": 202,
+        "status": "delivered",
+        "deliveredAt": "2026-07-02T00:00:02Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackProjectionInvalid",
+        "message": "mandatory callback subscription requires retry, dead-letter, or fallback failurePolicy",
+        "path": "$.subscription.failurePolicy"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_non_boolean_subscription_mandatory_rejected",
     "kind": "callback_delivery_projection",
     "subscription": {

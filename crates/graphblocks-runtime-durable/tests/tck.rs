@@ -1086,6 +1086,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": "$.subscription.failurePolicy",
                         }));
                     }
+                    if failure_policy == "best_effort"
+                        && subscription
+                            .get("mandatory")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackProjectionInvalid",
+                            "message": "mandatory callback subscription requires retry, dead-letter, or fallback failurePolicy",
+                            "path": "$.subscription.failurePolicy",
+                        }));
+                    }
                 }
                 if subscription
                     .get("mandatory")

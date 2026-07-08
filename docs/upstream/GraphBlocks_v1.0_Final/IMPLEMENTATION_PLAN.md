@@ -1747,7 +1747,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   run ownership, and audit assertions always have stable identities in Rust and Python.
 - Durable callback projection shared TCK fixtures now validate explicit `subscription` envelopes,
   including nonblank `subscriptionId`, protocol-defined `failurePolicy`, and boolean `mandatory`,
-  so subscription-level delivery policy evidence cannot be silently ignored by Rust or Python.
+  and reject mandatory subscriptions configured with `best_effort`, so subscription-level delivery
+  policy evidence cannot be silently ignored by Rust or Python.
 - Durable callback projection shared TCK fixtures now have explicit expected-diagnostic coverage
   for non-boolean `mandatory` subscription flags, preserving the `CallbackSubscription` schema
   contract in the MVP callback protocol.
