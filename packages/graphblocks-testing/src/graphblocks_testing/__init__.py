@@ -7682,6 +7682,32 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].status",
                             }
                         )
+                    if (
+                        receiver_status == 410
+                        and status_is_valid
+                        and status != "cancelled"
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "410 callback delivery requires cancelled status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
+                    if receiver_status == 410 and status == "cancelled":
+                        last_error = delivery.get("lastError", delivery.get("last_error"))
+                        if (
+                            isinstance(last_error, str)
+                            and last_error.strip()
+                            and last_error != "subscription_gone"
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "410 callback delivery requires subscription_gone error",
+                                    "path": f"$.deliveries[{index}].lastError",
+                                }
+                            )
                     delivered_at = None
                     if status in {"delivered", "acknowledged"}:
                         raw_delivered_at = delivery.get(

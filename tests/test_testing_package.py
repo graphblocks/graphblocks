@@ -3188,6 +3188,54 @@ def test_testing_package_observes_subscription_gone_after_410_delivery(
     assert report.results[0].observed["subscriptionGoneAfter410"] is True
 
 
+@pytest.mark.parametrize(
+    ("status", "last_error", "message"),
+    [
+        ("failed", "subscription_gone", "410 callback delivery requires cancelled status"),
+        ("cancelled", "receiver_error", "410 callback delivery requires subscription_gone error"),
+    ],
+)
+def test_testing_package_rejects_malformed_410_callback_delivery(
+    monkeypatch, status: str, last_error: str, message: str
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/malformed-callback-410-subscription-gone",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 410,
+                    "status": status,
+                    "deliveredAt": "2026-07-02T00:00:01Z",
+                    "lastError": last_error,
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": message,
+            "path": "$.deliveries[0].status" if status != "cancelled" else "$.deliveries[0].lastError",
+        },
+    )
+
+
 def test_testing_package_rejects_callback_delivery_with_non_integer_receiver_status(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
