@@ -1770,6 +1770,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run event-stream evidence now requires a real boolean `detach.cancelRun`
   value before proving that background/job lifetimes outlive client detach, preventing truthy
   strings from satisfying run-lifetime behavior.
+- Durable background-run lifetime evidence now requires `lifetime` to be exactly `background` or
+  `job`, preventing client-bound or coerced lifetimes from satisfying detach-survival assertions.
 - Durable background-run cursor-expiry evidence now requires a real boolean
   `attach.summaryOnExpiredCursor` value before proving compacted summary delivery for expired
   cursors.

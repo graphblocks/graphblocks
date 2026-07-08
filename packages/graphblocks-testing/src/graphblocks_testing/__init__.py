@@ -7028,7 +7028,21 @@ class TckRunner:
                     raw_detach = {}
                 if not isinstance(raw_retention, Mapping):
                     raw_retention = {}
-                lifetime = str(fixture.get("lifetime", ""))
+                raw_lifetime = fixture.get("lifetime")
+                if not isinstance(raw_lifetime, str) or raw_lifetime not in {
+                    "background",
+                    "job",
+                }:
+                    lifetime = ""
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run lifetime must be background or job",
+                            "path": "$.lifetime",
+                        }
+                    )
+                else:
+                    lifetime = raw_lifetime
                 response_mode_path = (
                     "responseMode"
                     if "responseMode" in fixture or "response_mode" not in fixture
