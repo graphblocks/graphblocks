@@ -2281,6 +2281,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let callback_run_id_path = if raw_late_callback.contains_key("runId")
+                || !raw_late_callback.contains_key("run_id")
+            {
+                "runId"
+            } else {
+                "run_id"
+            };
+            match raw_late_callback
+                .get("runId")
+                .or_else(|| raw_late_callback.get("run_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_run_id) if !callback_run_id.is_empty() => {
+                    let run_id = raw_operation
+                        .get("runId")
+                        .or_else(|| raw_operation.get("run_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !run_id.is_empty() && callback_run_id != run_id {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback runId must match operation",
+                            "path": format!("$.lateCallback.{callback_run_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback runId",
+                        "path": format!("$.lateCallback.{callback_run_id_path}"),
+                    }));
+                }
+            }
             let payload_digest_path = if raw_late_callback.contains_key("payloadDigest")
                 || !raw_late_callback.contains_key("payload_digest")
             {
