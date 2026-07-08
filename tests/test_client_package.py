@@ -853,6 +853,34 @@ def test_client_package_durable_response_requires_handle_fields(monkeypatch, sta
         )
 
 
+@pytest.mark.parametrize(
+    ("response_kwargs", "message"),
+    (
+        ({"run_id": ""}, "run graph response run_id must be a non-empty string"),
+        ({"status": ""}, "run graph response status must be a non-empty string"),
+        ({"outputs": []}, "run graph response outputs must be a JSON object"),
+    ),
+)
+def test_client_package_rejects_malformed_run_graph_response_fields(
+    monkeypatch,
+    response_kwargs: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    kwargs: dict[str, object] = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "outputs": {},
+        "events": (),
+        "event_stream": graphblocks_client.ApplicationEventStreamState(),
+    }
+    kwargs.update(response_kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        graphblocks_client.RunGraphResponse(**kwargs)
+
+
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

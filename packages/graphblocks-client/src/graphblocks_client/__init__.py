@@ -104,7 +104,13 @@ class RunGraphResponse:
     initial_cursor: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "outputs", deepcopy(self.outputs))
+        for field_name in ("run_id", "status"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"run graph response {field_name} must be a non-empty string")
+        if not isinstance(self.outputs, Mapping):
+            raise ValueError("run graph response outputs must be a JSON object")
+        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
         object.__setattr__(self, "events", tuple(self.events))
         for field_name in ("event_stream_url", "websocket_url", "cancel_url", "initial_cursor"):
             value = getattr(self, field_name)

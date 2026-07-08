@@ -1192,12 +1192,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   with an optional reason while preserving the authoritative run event stream.
 - `RunGraphCommand` now carries the invocation `responseMode` contract through the HTTP client,
   allowing callers to request `sync`, `accepted`, or `background` `InvokeGraph` responses instead
-  of being limited to the default synchronous path. `RunGraphResponse` preserves accepted/background
-  run-handle links (`eventStream`, `websocket`, `cancel`) and `initialCursor`; accepted and
-  background response objects must carry every handle field. The HTTP client rejects missing or
-  blank durable handle fields rather than dropping durable attach metadata. `LocalGraphBlocksClient`
-  rejects non-`sync` response modes instead of pretending in-process execution has durable
-  background-run lifetime.
+  of being limited to the default synchronous path. `RunGraphResponse` validates non-empty run
+  identity and status plus JSON-object outputs, and preserves accepted/background run-handle links
+  (`eventStream`, `websocket`, `cancel`) and `initialCursor`; accepted and background response
+  objects must carry every handle field. The HTTP client rejects missing or blank durable handle
+  fields rather than dropping durable attach metadata. `LocalGraphBlocksClient` rejects non-`sync`
+  response modes instead of pretending in-process execution has durable background-run lifetime.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
   subscriptions with replay cursor, filter, delivery target, and failure-policy configuration, and
   parses replayed events through the shared event-stream parser.
