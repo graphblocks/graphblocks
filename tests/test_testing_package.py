@@ -3301,6 +3301,46 @@ def test_testing_package_rejects_rate_limited_callback_delivery_without_next_ret
     )
 
 
+def test_testing_package_observes_retry_scheduled_after_rate_limited_delivery(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/rate-limited-callback-delivery-schedules-retry",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 429,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "rate_limited",
+                }
+            ],
+            "expected": {
+                "retryScheduledAfter5xx": False,
+                "retryScheduledAfterRetryableStatus": True,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["retryScheduledAfterRetryableStatus"] is True
+    assert report.results[0].observed["retryScheduledAfter5xx"] is False
+
+
 def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

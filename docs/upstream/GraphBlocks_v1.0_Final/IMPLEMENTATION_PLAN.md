@@ -1764,6 +1764,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection retry evidence now treats HTTP 429 receiver responses as retryable
   alongside 5xx responses, so `retry_then_dead_letter` rows cannot omit durable `nextRetryAt`
   metadata after rate limiting.
+- Durable callback projection retry evidence now reports a distinct
+  `retryScheduledAfterRetryableStatus` observation for 429-or-5xx retry rows while preserving the
+  legacy `retryScheduledAfter5xx` observation for 5xx-specific cases.
 - Durable callback projection retry evidence now rejects blank, non-string, or unparsable
   `nextRetryAt` timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook
   retry evidence tied to durable retry metadata.

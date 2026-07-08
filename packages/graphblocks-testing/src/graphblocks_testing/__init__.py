@@ -7762,6 +7762,7 @@ class TckRunner:
                                 }
                             )
                 scheduled_retry_ids = []
+                scheduled_retryable_status_ids = []
                 acknowledged_duplicates = []
                 for index, delivery in enumerate(deliveries):
                     receiver_status = receiver_statuses[index]
@@ -7774,6 +7775,12 @@ class TckRunner:
                     ):
                         scheduled_retry_ids.append(delivery_id)
                     if (
+                        receiver_status is not None
+                        and (receiver_status == 429 or receiver_status >= 500)
+                        and next_retry_at is not None
+                    ):
+                        scheduled_retryable_status_ids.append(delivery_id)
+                    if (
                         receiver_status == 409
                         and str(delivery.get("status", "")) == "acknowledged"
                     ):
@@ -7784,6 +7791,7 @@ class TckRunner:
                 ]
                 observed = {
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),
+                    "retryScheduledAfterRetryableStatus": bool(scheduled_retryable_status_ids),
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
                     "deadLetterPreservesEventId": redrive_event_id_preserved,
