@@ -38,9 +38,18 @@ class OpaPolicyInput:
             object.__setattr__(self, "package_ref", package_ref)
 
     def input_contract(self) -> dict[str, object]:
+        try:
+            parsed_input = json.loads(
+                self.input_json,
+                parse_constant=lambda constant: (_ for _ in ()).throw(
+                    ValueError(f"non-standard JSON constant {constant}")
+                ),
+            )
+        except ValueError as error:
+            raise OpaPolicyAdapterError("OPA policy input must be valid strict JSON") from error
         return {
             "package_ref": self.package_ref,
-            "input": json.loads(self.input_json),
+            "input": parsed_input,
         }
 
 

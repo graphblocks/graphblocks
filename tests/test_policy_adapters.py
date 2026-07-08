@@ -144,6 +144,16 @@ def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
     }
 
 
+def test_opa_adapter_rejects_non_standard_input_json_constants(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+
+    opa_input = graphblocks_policy_opa.OpaPolicyInput(input_json='{"score": NaN}')
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="strict JSON"):
+        opa_input.input_contract()
+
+
 def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
     graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
@@ -360,6 +370,16 @@ def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
             "input_digest": request.input_digest,
         },
     }
+
+
+def test_cedar_adapter_rejects_non_standard_authorization_json_constants(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    authorization = graphblocks_policy_cedar.CedarAuthorizationRequest(authorization_json='{"principal": NaN}')
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="strict JSON"):
+        authorization.authorization_contract()
 
 
 def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:

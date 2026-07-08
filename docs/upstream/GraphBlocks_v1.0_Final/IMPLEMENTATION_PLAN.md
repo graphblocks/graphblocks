@@ -1525,6 +1525,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   MCP and OpenAPI adapter invocations now apply the same strict parsing to caller-supplied
   `arguments_json`, so non-standard constants are rejected before the executable request contract is
   canonicalized or digest-checked.
+  `graphblocks-policy-opa` and `graphblocks-policy-cedar` now parse stored PDP request contracts
+  with strict JSON semantics, rejecting non-standard constants such as `NaN` before OPA input or
+  Cedar authorization payloads are exposed to external policy engines.
   `graphblocks-client` now also parses HTTP response bodies as strict JSON, rejecting non-standard
   constants such as `NaN` before response payloads enter application-event or run-status models.
   `GraphBlocksServerApp` now routes all JSON request-body decoding through a strict parser, so

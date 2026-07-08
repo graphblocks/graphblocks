@@ -30,7 +30,15 @@ class CedarAuthorizationRequest:
             object.__setattr__(self, "schema_ref", schema_ref)
 
     def authorization_contract(self) -> dict[str, object]:
-        contract = json.loads(self.authorization_json)
+        try:
+            contract = json.loads(
+                self.authorization_json,
+                parse_constant=lambda constant: (_ for _ in ()).throw(
+                    ValueError(f"non-standard JSON constant {constant}")
+                ),
+            )
+        except ValueError as error:
+            raise CedarPolicyAdapterError("Cedar authorization input must be valid strict JSON") from error
         contract["schema_ref"] = self.schema_ref
         return contract
 
