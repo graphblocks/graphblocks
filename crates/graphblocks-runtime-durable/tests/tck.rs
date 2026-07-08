@@ -2171,6 +2171,24 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{operation_id_path}"),
                 }));
             }
+            let run_id_path =
+                if raw_operation.contains_key("runId") || !raw_operation.contains_key("run_id") {
+                    "runId"
+                } else {
+                    "run_id"
+                };
+            if raw_operation
+                .get("runId")
+                .or_else(|| raw_operation.get("run_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |run_id| run_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank runId",
+                    "path": format!("$.operation.{run_id_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
