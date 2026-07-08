@@ -679,6 +679,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   filters against canonical application-event metadata as well as legacy payload fields, so
   metadata-only async callback receipt/rejection events route to operator subscriptions without
   duplicating routing identity in the payload.
+- Raw run event replay now enforces the same principal visibility boundary for SSE, attach, and
+  WebSocket snapshot responses. Hidden operator/internal/audit events remain part of the
+  authoritative cursor sequence, allowing clients to advance cursors without receiving events they
+  are not authorized to observe.
 - Async callback ingestion now supports durable pre-operation quarantine for the race where an
   external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate

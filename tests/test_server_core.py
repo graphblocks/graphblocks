@@ -1556,7 +1556,9 @@ def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None
 
 
 def test_server_app_accepts_authenticated_async_callback_submission() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay", roles=("operator",))})
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -2257,7 +2259,9 @@ def test_server_app_rejection_records_callback_artifact_ids() -> None:
 
 
 def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay", roles=("operator",))})
+    )
     app._events_by_run_id["run-1"] = (
         {
             "kind": "RunStarted",
@@ -3016,7 +3020,9 @@ def test_server_app_rejects_unscoped_async_callback_attempt_change_for_existing_
 
 
 def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay", roles=("operator",))})
+    )
     app._events_by_run_id["run-terminal-1"] = (
         {
             "kind": "RunStarted",
@@ -3862,6 +3868,77 @@ def test_server_app_replays_stored_run_events_after_cursor_query() -> None:
     assert payload["lastCursor"] == "run-events-cursor-1:2"
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
     assert payload["events"][0]["payload"]["outputs"] == {"prompt": "Events cursor"}
+
+
+def test_server_app_run_event_replay_filters_visibility_by_principal() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "client-token": PrincipalRef("user-1"),
+                "operator-token": PrincipalRef("operator-1", roles=("operator",)),
+            }
+        )
+    )
+    app._events_by_run_id["run-events-visibility-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-events-visibility-1"},
+            "metadata": {
+                "eventId": "evt-client",
+                "runId": "run-events-visibility-1",
+                "sequence": 1,
+                "cursor": "run-events-visibility-1:1",
+                "releaseId": "release-events-visibility-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+                "visibility": "client",
+            },
+        },
+        {
+            "kind": "ExternalCallbackReceived",
+            "payload": {"callbackId": "cb-visibility"},
+            "metadata": {
+                "eventId": "evt-operator",
+                "runId": "run-events-visibility-1",
+                "sequence": 2,
+                "cursor": "run-events-visibility-1:2",
+                "releaseId": "release-events-visibility-1",
+                "occurredAt": "2026-07-03T00:00:01Z",
+                "visibility": "operator",
+                "operationId": "op-ci-visibility-1",
+            },
+        },
+    )
+
+    client_response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-visibility-1/events",
+            headers={"Authorization": "Bearer client-token"},
+            query={"cursor": "run-events-visibility-1:0"},
+            cookies={},
+        )
+    )
+    operator_response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-visibility-1/events",
+            headers={"Authorization": "Bearer operator-token"},
+            query={"cursor": "run-events-visibility-1:0"},
+            cookies={},
+        )
+    )
+
+    client_payload = json.loads(client_response.body.decode("utf-8"))
+    operator_payload = json.loads(operator_response.body.decode("utf-8"))
+    assert client_response.status_code == 200
+    assert operator_response.status_code == 200
+    assert client_payload["lastCursor"] == "run-events-visibility-1:2"
+    assert [event["metadata"]["eventId"] for event in client_payload["events"]] == ["evt-client"]
+    assert operator_payload["lastCursor"] == "run-events-visibility-1:2"
+    assert [event["metadata"]["eventId"] for event in operator_payload["events"]] == [
+        "evt-client",
+        "evt-operator",
+    ]
 
 
 def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:

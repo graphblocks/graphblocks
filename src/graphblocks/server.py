@@ -366,6 +366,26 @@ def _authorized_callback_visibility(principal: PrincipalRef | None) -> tuple[str
     return tuple(allowed)
 
 
+def _event_visibility(event: Mapping[str, object]) -> str | None:
+    metadata = event.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    payload = event.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    for source in (metadata, event, payload):
+        visibility = source.get("visibility")
+        if visibility is None:
+            continue
+        if isinstance(visibility, str) and visibility in VALID_EVENT_VISIBILITIES:
+            return visibility
+        return None
+    return "client"
+
+
+def _event_visible_to_principal(event: Mapping[str, object], principal: PrincipalRef | None) -> bool:
+    visibility = _event_visibility(event)
+    return visibility is not None and visibility in _authorized_callback_visibility(principal)
+
+
 def _constrain_event_filter_visibility(
     event_filter: Mapping[str, object],
     principal: PrincipalRef | None,
@@ -1880,7 +1900,7 @@ class GraphBlocksServerApp:
                 payload = _server_request_json_body(request, "attach request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("attach request body must be a JSON object")
-                return self._attach_to_run_response(run_id, events, payload)
+                return self._attach_to_run_response(run_id, events, payload, auth_decision.principal)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -2655,6 +2675,7 @@ class GraphBlocksServerApp:
                         and not isinstance(sequence, bool)
                         and sequence >= 0
                         and sequence > replay_after_sequence
+                        and _event_visible_to_principal(event, auth_decision.principal)
                     ],
                 },
             )
@@ -2709,6 +2730,11 @@ class GraphBlocksServerApp:
                         )
                     if sequence > last_sequence:
                         last_sequence = sequence
+            visible_events = [
+                _response_json_object(event)
+                for event in events
+                if _event_visible_to_principal(event, auth_decision.principal)
+            ]
             return ServerResponse.json(
                 200,
                 {
@@ -2718,9 +2744,9 @@ class GraphBlocksServerApp:
                         "transport": "websocket",
                         "status": "accepted",
                         "cursor": f"{run_id}:{last_sequence}",
-                        "eventCount": len(events),
+                        "eventCount": len(visible_events),
                     },
-                    "events": [_response_json_object(event) for event in events],
+                    "events": visible_events,
                 },
             )
         if route.operation == "invoke_graph":
@@ -3289,6 +3315,7 @@ class GraphBlocksServerApp:
         run_id: str,
         events: tuple[dict[str, object], ...],
         payload: Mapping[str, object],
+        principal: PrincipalRef | None,
     ) -> ServerResponse:
         last_cursor = payload.get("last_cursor", payload.get("lastCursor"))
         if last_cursor is not None:
@@ -3345,7 +3372,7 @@ class GraphBlocksServerApp:
                 raise ValueError("attach request sequence must be an integer")
             if sequence < 0:
                 raise ValueError("attach request sequence must be non-negative")
-            if sequence > replay_after_sequence:
+            if sequence > replay_after_sequence and _event_visible_to_principal(event, principal):
                 replayed_events.append(_response_json_object(event))
 
         last_cursor_value = f"{run_id}:{last_sequence}"
