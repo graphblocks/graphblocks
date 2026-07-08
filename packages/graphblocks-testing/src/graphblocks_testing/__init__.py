@@ -7602,6 +7602,22 @@ class TckRunner:
                             }
                         )
                     if (
+                        raw_next_retry_at is not None
+                        and status
+                        in {"delivered", "acknowledged", "dead_lettered", "cancelled", "expired"}
+                        and not (
+                            receiver_status is not None
+                            and receiver_status >= 500
+                        )
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "terminal callback delivery must not have nextRetryAt",
+                                "path": f"$.deliveries[{index}].nextRetryAt",
+                            }
+                        )
+                    if (
                         subscription_failure_policy == "retry_then_dead_letter"
                         and receiver_status is not None
                         and receiver_status >= 500

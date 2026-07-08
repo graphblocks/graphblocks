@@ -2928,6 +2928,47 @@ def test_testing_package_rejects_callback_retry_scheduled_for_non_failed_deliver
     )
 
 
+def test_testing_package_rejects_terminal_callback_delivery_with_next_retry(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/terminal-callback-delivery-with-next-retry",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 200,
+                    "status": "delivered",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "deliveredAt": "2026-07-02T00:00:01Z",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "terminal callback delivery must not have nextRetryAt",
+            "path": "$.deliveries[0].nextRetryAt",
+        },
+    )
+
+
 def test_testing_package_rejects_callback_duplicate_409_without_acknowledged_status(
     monkeypatch,
 ) -> None:
