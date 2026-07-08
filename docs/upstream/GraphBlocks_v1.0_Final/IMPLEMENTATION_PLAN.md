@@ -1978,6 +1978,9 @@ sandbox
 - `WorkspaceTrialPlan` now materializes a commit request only after a verified trial has the
   required passing checks, passing gate, active trial-scoped leases, allowed mutation decision, and
   valid review scopes for the candidate digest.
+- Python review requests and reviewer credentials now deep-freeze nested metadata while thawing
+  those snapshots for canonical review-request digests, so retained caller references cannot alter
+  review evidence or digest inputs after construction.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

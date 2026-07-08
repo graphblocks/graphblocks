@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Protocol
 
 from .canonical import canonical_hash
@@ -33,7 +34,7 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
     return tuple(sorted(set(normalized)))
 
 
-def _freeze_metadata(owner: str, value: object) -> dict[str, object]:
+def _freeze_metadata(owner: str, value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
     metadata = dict(value)
@@ -42,7 +43,23 @@ def _freeze_metadata(owner: str, value: object) -> dict[str, object]:
             raise ValueError(f"{owner} metadata keys must be strings")
         if not key.strip():
             raise ValueError(f"{owner} metadata key must not be empty")
-    return metadata
+    return MappingProxyType({key: _freeze_metadata_value(owner, item) for key, item in metadata.items()})
+
+
+def _freeze_metadata_value(owner: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_metadata(owner, value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_metadata_value(owner, item) for item in value)
+    return value
+
+
+def _thaw_metadata_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw_metadata_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_metadata_value(item) for item in value]
+    return value
 
 
 def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
@@ -94,17 +111,17 @@ class ReviewRequest:
                     "digest": self.subject.digest,
                     "resource_kind": self.subject.resource_kind,
                     "uri": self.subject.uri,
-                    "metadata": dict(self.subject.metadata),
+                    "metadata": _thaw_metadata_value(self.subject.metadata),
                 },
                 "requested_by": {
                     "principal_id": self.requested_by.principal_id,
                     "tenant_id": self.requested_by.tenant_id,
                     "groups": tuple(sorted(self.requested_by.groups)),
                     "roles": tuple(sorted(self.requested_by.roles)),
-                    "attributes": dict(self.requested_by.attributes),
+                    "attributes": _thaw_metadata_value(self.requested_by.attributes),
                 },
                 "required_scopes": self.required_scopes,
-                "metadata": self.metadata,
+                "metadata": _thaw_metadata_value(self.metadata),
             }
         )
 

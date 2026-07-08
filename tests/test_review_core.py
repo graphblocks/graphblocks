@@ -78,11 +78,18 @@ def test_review_request_rejects_invalid_identity_and_metadata_fields() -> None:
         with pytest.raises(ValueError, match=message):
             ReviewRequest(**(base | overrides))  # type: ignore[arg-type]
 
-    metadata = {"purpose": "release"}
+    metadata = {"purpose": "release", "scope": {"labels": ["quality"]}}
     request = ReviewRequest(**(base | {"metadata": metadata}))
     metadata["purpose"] = "mutated"
+    metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
-    assert request.metadata == {"purpose": "release"}
+    assert request.metadata == {"purpose": "release", "scope": {"labels": ("quality",)}}
+    with pytest.raises(TypeError):
+        request.metadata["purpose"] = "mutated"
+    with pytest.raises(TypeError):
+        request.metadata["scope"]["labels"] = ("mutated",)  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        request.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
 
 def test_review_workflow_records_review_with_credential_reference() -> None:
@@ -170,11 +177,18 @@ def test_reviewer_credential_rejects_invalid_identity_and_metadata_fields() -> N
         with pytest.raises(ValueError, match=message):
             ReviewerCredential(**(base | overrides))  # type: ignore[arg-type]
 
-    metadata = {"source": "policy"}
+    metadata = {"source": "policy", "scope": {"labels": ["quality"]}}
     credential = ReviewerCredential(**(base | {"metadata": metadata}))
     metadata["source"] = "mutated"
+    metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
-    assert credential.metadata == {"source": "policy"}
+    assert credential.metadata == {"source": "policy", "scope": {"labels": ("quality",)}}
+    with pytest.raises(TypeError):
+        credential.metadata["source"] = "mutated"
+    with pytest.raises(TypeError):
+        credential.metadata["scope"]["labels"] = ("mutated",)  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        credential.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
     assert credential.scopes == ("quality",)
 
 
