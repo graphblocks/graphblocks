@@ -76,8 +76,11 @@ class McpToolInvocation:
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise McpToolAdapterError("MCP invocation arguments_json must not be empty")
         try:
-            arguments = json.loads(self.arguments_json)
-        except json.JSONDecodeError as error:
+            arguments = json.loads(
+                self.arguments_json,
+                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            )
+        except ValueError as error:
             raise McpToolAdapterError("MCP invocation arguments_json must be valid JSON") from error
         if not isinstance(arguments, Mapping):
             raise McpToolAdapterError("MCP invocation arguments_json must decode to an object")

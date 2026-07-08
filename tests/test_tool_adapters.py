@@ -290,6 +290,8 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "server": " "})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="must decode to an object"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="digest does not match"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
 
@@ -960,6 +962,8 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "connection": " "})
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="must decode to an object"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments_json must be valid JSON"):
+        graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": '{"score": NaN}'})
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="digest does not match"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": '{"title":"changed"}'})
 
