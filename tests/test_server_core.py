@@ -5796,6 +5796,69 @@ def test_server_app_treats_repeated_unsubscribe_as_idempotent() -> None:
     assert app.subscriptions("run-unsubscribe-idempotent-1")[0].status == "revoked"
 
 
+def test_server_app_rejects_unsubscribe_from_non_owner_principal() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "owner-token": PrincipalRef("user-1"),
+                "other-token": PrincipalRef("user-2"),
+            }
+        )
+    )
+    app._events_by_run_id["run-unsubscribe-owner-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-unsubscribe-owner-1"},
+            "metadata": {
+                "runId": "run-unsubscribe-owner-1",
+                "sequence": 1,
+                "cursor": "run-unsubscribe-owner-1:1",
+                "releaseId": "release-unsubscribe-owner-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+    created = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-unsubscribe-owner-1/subscriptions",
+            headers={"Authorization": "Bearer owner-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-unsubscribe-owner-1",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    denied = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-unsubscribe-owner-1/subscriptions/sub-unsubscribe-owner-1",
+            headers={"Authorization": "Bearer other-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert created.status_code == 201
+    assert denied.status_code == 403
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "subscription 'sub-unsubscribe-owner-1' for run 'run-unsubscribe-owner-1' "
+            "belongs to a different principal"
+        ),
+    }
+    assert app.subscriptions("run-unsubscribe-owner-1")[0].status == "active"
+
+
 def test_server_app_rejects_ack_after_subscription_is_revoked() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -6791,6 +6854,55 @@ def test_server_app_treats_repeated_callback_revoke_as_idempotent() -> None:
         "duplicate": True,
     }
     assert app.callback_registrations()[0].status == "revoked"
+
+
+def test_server_app_rejects_callback_revoke_from_non_owner_principal() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "owner-token": PrincipalRef("user-1"),
+                "other-token": PrincipalRef("user-2"),
+            }
+        )
+    )
+    registered = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer owner-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-owner-1",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    denied = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/callbacks/callback-sub-owner-1",
+            headers={"Authorization": "Bearer other-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert registered.status_code == 201
+    assert denied.status_code == 403
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback registration 'callback-sub-owner-1' belongs to a different principal",
+    }
+    assert app.callback_registrations()[0].status == "active"
 
 
 def test_server_app_registers_callback_projection_from_accepted_run_initial_cursor() -> None:

@@ -1973,6 +1973,20 @@ class GraphBlocksServerApp:
             )
             for index, subscription in enumerate(subscriptions):
                 if subscription.subscription_id == subscription_id:
+                    if subscription.owner is not None and (
+                        auth_decision.principal is None
+                        or auth_decision.principal.principal_id != subscription.owner.principal_id
+                    ):
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "error": (
+                                    f"subscription {subscription_id!r} for run {run_id!r} "
+                                    "belongs to a different principal"
+                                ),
+                            },
+                        )
                     if subscription.status == "revoked":
                         return ServerResponse.json(
                             200,
@@ -2103,6 +2117,17 @@ class GraphBlocksServerApp:
                     {
                         "ok": False,
                         "error": f"callback registration {subscription_id!r} not found",
+                    },
+                )
+            if registration.owner is not None and (
+                auth_decision.principal is None
+                or auth_decision.principal.principal_id != registration.owner.principal_id
+            ):
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "error": f"callback registration {subscription_id!r} belongs to a different principal",
                     },
                 )
             if registration.status == "revoked":

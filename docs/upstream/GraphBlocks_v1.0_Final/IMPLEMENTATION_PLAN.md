@@ -1154,6 +1154,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   parses replayed events through the shared event-stream parser.
 - Run-scoped event subscriptions now persist the authenticated principal as the subscription owner
   and project that owner in subscription creation responses for policy and audit follow-up.
+  `UnsubscribeEvents` rejects requests from a different authenticated principal before mutating the
+  subscription or returning an idempotent revoke projection.
 - `graphblocks-client` now exposes `UnsubscribeEvents` and `AckEvent` HTTP helpers for run-scoped
   subscriptions, preserving the server's idempotent revoke and event/cursor acknowledgement
   projections.
@@ -1242,6 +1244,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
   Authenticated registration requests persist the authorized principal as the callback owner and
   project that owner through the registration response for later policy/audit decisions.
+  `RevokeCallback` rejects requests from a different authenticated principal before mutating the
+  stored registration or returning an idempotent revoke projection.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
   and does not rewrite the stored projection. Callback registrations share the same route-level
