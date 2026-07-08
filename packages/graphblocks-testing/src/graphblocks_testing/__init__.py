@@ -7183,6 +7183,24 @@ class TckRunner:
                                     "path": f"$.initialResponse.{websocket_path}",
                                 }
                             )
+                        initial_cancel = raw_initial_response.get(
+                            "cancel",
+                            raw_initial_response.get("cancel_route"),
+                        )
+                        if not isinstance(initial_cancel, str) or not initial_cancel.strip():
+                            cancel_path = (
+                                "cancel"
+                                if "cancel" in raw_initial_response
+                                or "cancel_route" not in raw_initial_response
+                                else "cancel_route"
+                            )
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run {response_mode} response requires cancel",
+                                    "path": f"$.initialResponse.{cancel_path}",
+                                }
+                            )
                         initial_cursor_value = raw_initial_response.get(
                             "initialCursor",
                             raw_initial_response.get("initial_cursor"),

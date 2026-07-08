@@ -858,6 +858,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": format!("$.initialResponse.{websocket_path}"),
                         }));
                     }
+                    let cancel_path = if response.contains_key("cancel")
+                        || !response.contains_key("cancel_route")
+                    {
+                        "cancel"
+                    } else {
+                        "cancel_route"
+                    };
+                    if response
+                        .get("cancel")
+                        .or_else(|| response.get("cancel_route"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|cancel| cancel.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response requires cancel"),
+                            "path": format!("$.initialResponse.{cancel_path}"),
+                        }));
+                    }
                     if response
                         .get("initialCursor")
                         .or_else(|| response.get("initial_cursor"))
