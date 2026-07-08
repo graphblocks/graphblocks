@@ -8269,10 +8269,19 @@ class TckRunner:
                     ("resultCommitted", "result_committed", True),
                     ("usageReconciled", "usage_reconciled", False),
                 ):
-                    raw_value = raw_race.get(key, raw_race.get(alias, default))
+                    raw_value_missing = False
+                    if key in raw_race:
+                        raw_value = raw_race[key]
+                        path_key = key
+                    elif alias in raw_race:
+                        raw_value = raw_race[alias]
+                        path_key = alias
+                    else:
+                        raw_value = default
+                        path_key = key
+                        raw_value_missing = True
                     cancel_race_boolean_values[key] = raw_value if isinstance(raw_value, bool) else default
-                    if not isinstance(raw_value, bool):
-                        path_key = key if key in raw_race or alias not in raw_race else alias
+                    if raw_value_missing or not isinstance(raw_value, bool):
                         diagnostics.append(
                             {
                                 "code": "DurableAsyncCancelRaceInvalid",

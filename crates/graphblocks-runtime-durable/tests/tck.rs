@@ -2074,7 +2074,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 let raw_value = raw_race.get(key).or_else(|| raw_race.get(alias));
                 race_boolean_values
                     .insert(key, raw_value.and_then(Value::as_bool).unwrap_or(default));
-                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                if raw_value.is_none_or(|value| !value.is_boolean()) {
                     let path_key = if raw_race.contains_key(key) || !raw_race.contains_key(alias) {
                         key
                     } else {

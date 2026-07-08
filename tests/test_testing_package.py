@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 106
+    assert [case.kind for case in cases] == ["durable"] * 110
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1302,6 +1302,10 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "callback_cancel_race_non_boolean_receipt_rejected",
+        "callback_cancel_race_missing_receipt_rejected",
+        "callback_cancel_race_missing_resume_attempted_rejected",
+        "callback_cancel_race_missing_result_committed_rejected",
+        "callback_cancel_race_missing_usage_reconciled_rejected",
         "callback_cancel_race_non_integer_sequence_rejected",
         "callback_cancel_race_non_object_journal_entry_rejected",
         "external_operation_late_side_effect_usage_reconciliation",
@@ -1741,6 +1745,26 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(result.observed.get("cancelWinsBlocksResume") is True for result in report.results)
     assert any(
         result.case_id == "callback_cancel_race_non_boolean_receipt_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_receipt_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_resume_attempted_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_result_committed_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_usage_reconciled_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -5052,6 +5076,10 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "callback_cancel_race_non_boolean_receipt_rejected",
+        "callback_cancel_race_missing_receipt_rejected",
+        "callback_cancel_race_missing_resume_attempted_rejected",
+        "callback_cancel_race_missing_result_committed_rejected",
+        "callback_cancel_race_missing_usage_reconciled_rejected",
         "callback_cancel_race_non_integer_sequence_rejected",
         "callback_cancel_race_non_object_journal_entry_rejected",
         "external_operation_late_side_effect_usage_reconciliation",

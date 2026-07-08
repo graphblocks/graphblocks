@@ -1876,7 +1876,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   resume-admission conformance.
 - Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
-  preventing truthy strings from proving cancellation/resume race behavior.
+  rejecting missing flags as well as truthy strings before they can prove cancellation/resume race
+  behavior.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.

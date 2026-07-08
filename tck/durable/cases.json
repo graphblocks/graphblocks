@@ -3591,6 +3591,134 @@
     }
   },
   {
+    "name": "callback_cancel_race_missing_receipt_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      {
+        "sequence": 50,
+        "kind": "CancelRun",
+        "ownershipFence": "lease-1:7"
+      },
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "resumeAttempted": false,
+      "resultCommitted": false,
+      "usageReconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race requires boolean callbackReceiptRecorded",
+        "path": "$.race.callbackReceiptRecorded"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "callback_cancel_race_missing_resume_attempted_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      {
+        "sequence": 50,
+        "kind": "CancelRun",
+        "ownershipFence": "lease-1:7"
+      },
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "callbackReceiptRecorded": true,
+      "resultCommitted": false,
+      "usageReconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race requires boolean resumeAttempted",
+        "path": "$.race.resumeAttempted"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "callback_cancel_race_missing_result_committed_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      {
+        "sequence": 50,
+        "kind": "CancelRun",
+        "ownershipFence": "lease-1:7"
+      },
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "callbackReceiptRecorded": true,
+      "resumeAttempted": false,
+      "usageReconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race requires boolean resultCommitted",
+        "path": "$.race.resultCommitted"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "callback_cancel_race_missing_usage_reconciled_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      {
+        "sequence": 50,
+        "kind": "CancelRun",
+        "ownershipFence": "lease-1:7"
+      },
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "callbackReceiptRecorded": true,
+      "resumeAttempted": false,
+      "resultCommitted": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race requires boolean usageReconciled",
+        "path": "$.race.usageReconciled"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "callback_cancel_race_non_integer_sequence_rejected",
     "kind": "async_callback_cancel_race",
     "journal": [
