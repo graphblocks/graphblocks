@@ -7404,6 +7404,21 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].payload",
                             }
                         )
+                    visibility = raw_event.get("visibility")
+                    if visibility is not None and visibility not in {
+                        "client",
+                        "operator",
+                        "internal",
+                        "audit_only",
+                    }:
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event visibility must be client, operator, internal, or audit_only",
+                                "path": f"$.events[{event_index}].visibility",
+                            }
+                        )
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False

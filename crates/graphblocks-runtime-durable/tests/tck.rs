@@ -597,6 +597,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.events[{index}].payload"),
                     }));
                 }
+                if let Some(visibility) = event.get("visibility") {
+                    if !visibility.as_str().is_some_and(|visibility| {
+                        matches!(
+                            visibility,
+                            "client" | "operator" | "internal" | "audit_only"
+                        )
+                    }) {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run event visibility must be client, operator, internal, or audit_only",
+                            "path": format!("$.events[{index}].visibility"),
+                        }));
+                    }
+                }
                 if event
                     .get("cursor")
                     .and_then(Value::as_str)
