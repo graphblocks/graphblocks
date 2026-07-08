@@ -9254,6 +9254,35 @@ class TckRunner:
                             "path": f"$.operation.{expected_schema_path}",
                         }
                     )
+                created_at_path = (
+                    "createdAt"
+                    if "createdAt" in raw_operation or "created_at" not in raw_operation
+                    else "created_at"
+                )
+                created_at = raw_operation.get("createdAt", raw_operation.get("created_at"))
+                if not isinstance(created_at, str) or not created_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires ISO createdAt",
+                            "path": f"$.operation.{created_at_path}",
+                        }
+                    )
+                else:
+                    try:
+                        datetime.fromisoformat(
+                            created_at.replace("Z", "+00:00")
+                            if created_at.endswith("Z")
+                            else created_at
+                        )
+                    except ValueError:
+                        diagnostics.append(
+                            {
+                                "code": "DurableExternalOperationInvalid",
+                                "message": "external operation reconciliation requires ISO createdAt",
+                                "path": f"$.operation.{created_at_path}",
+                            }
+                        )
                 operation_state = raw_operation.get("state")
                 if operation_state not in {
                     "created",

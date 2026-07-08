@@ -7952,7 +7952,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8007,7 +8008,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8064,7 +8066,8 @@
       "state": "cancelled",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8122,7 +8125,8 @@
       "effectState": "pending",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8179,7 +8183,8 @@
       "state": "cancelled",
       "effectState": "committed",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8237,7 +8242,8 @@
       "effectState": "committed",
       "effectJournaled": "true",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8295,7 +8301,8 @@
       "effectState": "committed",
       "effectJournaled": false,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8352,7 +8359,8 @@
       "providerOperationId": "gh-run-002",
       "idempotencyKey": "idem-ci-operation-001",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8410,7 +8418,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8467,7 +8476,8 @@
       "effectJournaled": true,
       "idempotencyKey": "idem-ci-operation-001",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8525,7 +8535,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8582,7 +8593,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8639,7 +8651,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8696,7 +8709,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "state": "cancelled",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8753,7 +8767,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "state": "cancelled",
-      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8795,6 +8810,64 @@
     }
   },
   {
+    "name": "external_operation_missing_created_at_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "idempotencyKey": "idem-ci-operation-001",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "policySnapshotId": "pol-callback-001",
+      "effectState": "committed",
+      "effectJournaled": true,
+      "state": "cancelled",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires ISO createdAt",
+        "path": "$.operation.createdAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_provider_operation_id_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -8811,7 +8884,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8868,7 +8942,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8925,7 +9000,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8983,7 +9059,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9040,7 +9117,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9098,7 +9176,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9155,7 +9234,8 @@
       "effectJournaled": true,
       "state": "cancelled",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9213,7 +9293,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9270,7 +9351,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9328,7 +9410,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9386,7 +9469,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9443,7 +9527,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9500,7 +9585,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9558,7 +9644,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9616,7 +9703,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9673,7 +9761,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9730,7 +9819,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9788,7 +9878,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9846,7 +9937,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9904,7 +9996,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "operationId": "op-ci-002",
@@ -9961,7 +10054,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "   ",
@@ -10019,7 +10113,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10076,7 +10171,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10134,7 +10230,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10191,7 +10288,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10249,7 +10347,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10306,7 +10405,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10364,7 +10464,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10421,7 +10522,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10479,7 +10581,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10536,7 +10639,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10594,7 +10698,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10651,7 +10756,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10709,7 +10815,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10766,7 +10873,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10824,7 +10932,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10882,7 +10991,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10939,7 +11049,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10997,7 +11108,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11054,7 +11166,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11112,7 +11225,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11169,7 +11283,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11227,7 +11342,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11284,7 +11400,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11341,7 +11458,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11398,7 +11516,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11455,7 +11574,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11507,7 +11627,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11564,7 +11685,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11622,7 +11744,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11680,7 +11803,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "expectedSchema": "schemas/CICallback@1"
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",

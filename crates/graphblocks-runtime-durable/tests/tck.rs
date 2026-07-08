@@ -3198,6 +3198,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{expected_schema_path}"),
                 }));
             }
+            let created_at_path = if raw_operation.contains_key("createdAt")
+                || !raw_operation.contains_key("created_at")
+            {
+                "createdAt"
+            } else {
+                "created_at"
+            };
+            let created_at_is_iso = raw_operation
+                .get("createdAt")
+                .or_else(|| raw_operation.get("created_at"))
+                .and_then(Value::as_str)
+                .is_some_and(|created_at| {
+                    let created_at = created_at.trim();
+                    let bytes = created_at.as_bytes();
+                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                    bytes.len() >= 20
+                        && digit_positions
+                            .into_iter()
+                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                        && bytes.get(4) == Some(&b'-')
+                        && bytes.get(7) == Some(&b'-')
+                        && bytes.get(10) == Some(&b'T')
+                        && bytes.get(13) == Some(&b':')
+                        && bytes.get(16) == Some(&b':')
+                        && (created_at.ends_with('Z')
+                            || created_at
+                                .get(19..)
+                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
+                });
+            if !created_at_is_iso {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires ISO createdAt",
+                    "path": format!("$.operation.{created_at_path}"),
+                }));
+            }
             if !raw_operation
                 .get("state")
                 .and_then(Value::as_str)

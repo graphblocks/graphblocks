@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 253
+    assert [case.kind for case in cases] == ["durable"] * 254
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1412,6 +1412,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_missing_state_rejected",
         "external_operation_missing_resume_token_hash_rejected",
         "external_operation_missing_expected_schema_rejected",
+        "external_operation_missing_created_at_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",
@@ -2415,6 +2416,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "external_operation_missing_expected_schema_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_missing_created_at_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -3868,6 +3874,7 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
                 "state": "cancelled",
                 "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "expectedSchema": "schemas/CICallback@1",
+                "createdAt": "2026-06-23T00:00:00Z",
             },
             "lateCallback": {
                 "callbackId": "cb-ci-late-001",
@@ -3937,6 +3944,7 @@ def test_testing_package_rejects_external_operation_reconciliation_without_usage
                 "effectJournaled": True,
                 "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "expectedSchema": "schemas/CICallback@1",
+                "createdAt": "2026-06-23T00:00:00Z",
             },
             "lateCallback": {
                 "callbackId": "cb-ci-late-001",
@@ -6284,6 +6292,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_missing_state_rejected",
         "external_operation_missing_resume_token_hash_rejected",
         "external_operation_missing_expected_schema_rejected",
+        "external_operation_missing_created_at_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",

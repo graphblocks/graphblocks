@@ -1979,9 +1979,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `operation.operationId`, `operation.idempotencyKey`, `operation.runId`, `operation.nodeId`, and
   `operation.attemptId` values, an AsyncOperation `operation.resumeTokenHash` SHA-256 digest,
-  nonblank `operation.expectedSchema` evidence, and a valid AsyncOperation `operation.state`
-  literal in both Rust and Python runners before accepting late side-effect, callback, or usage
-  reconciliation evidence.
+  nonblank `operation.expectedSchema` evidence, an ISO `operation.createdAt` timestamp, and a
+  valid AsyncOperation `operation.state` literal in both Rust and Python runners before accepting
+  late side-effect, callback, or usage reconciliation evidence.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `operation.providerOperationId` evidence in both Rust and Python runners before accepting
   provider-backed late callback reconciliation.
