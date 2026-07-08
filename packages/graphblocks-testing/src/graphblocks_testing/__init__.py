@@ -7585,6 +7585,19 @@ class TckRunner:
                             else:
                                 next_retry_at = raw_next_retry_at
                     next_retry_at_values.append(next_retry_at)
+                    if (
+                        receiver_status is not None
+                        and receiver_status >= 500
+                        and next_retry_at is not None
+                        and status != "failed"
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery retry requires failed status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
                     delivered_at = None
                     if status in {"delivered", "acknowledged"}:
                         raw_delivered_at = delivery.get(
