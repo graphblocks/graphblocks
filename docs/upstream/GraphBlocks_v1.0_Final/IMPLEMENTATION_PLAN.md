@@ -1752,6 +1752,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK fixtures now include expected-diagnostic coverage for
   missing or blank subscription envelope `subscriptionId`, keeping Rust and Python aligned on
   `CallbackSubscription` identity validation.
+- Durable callback projection shared TCK fixtures now reject explicitly empty subscription
+  envelopes rather than treating them as absent optional data.
 - Durable callback projection shared TCK fixtures now have explicit expected-diagnostic coverage
   for missing or non-boolean `mandatory` subscription flags, preserving the `CallbackSubscription`
   schema contract in the MVP callback protocol.

@@ -7424,6 +7424,9 @@ class TckRunner:
                 raw_deliveries = fixture.get("deliveries", [])
                 raw_redrive = fixture.get("redrive", {})
                 raw_subscription = fixture.get("subscription", {})
+                subscription_supplied = "subscription" in fixture and isinstance(
+                    raw_subscription, Mapping
+                )
                 if not isinstance(raw_deliveries, list):
                     raise ValueError("durable callback_delivery_projection case requires deliveries")
                 if not raw_deliveries:
@@ -7447,7 +7450,7 @@ class TckRunner:
                     raw_subscription = {}
                 subscription_identity = None
                 subscription_failure_policy = None
-                if raw_subscription:
+                if subscription_supplied:
                     subscription_id = raw_subscription.get(
                         "subscriptionId", raw_subscription.get("subscription_id")
                     )
