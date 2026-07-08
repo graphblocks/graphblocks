@@ -1832,8 +1832,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run shared TCK cases now require a real boolean `detach.cancelRun` value in
   both Rust and Python runners before proving that background/job lifetimes outlive client detach,
   preventing truthy strings from satisfying run-lifetime behavior.
-- Durable background-run lifetime evidence now requires `lifetime` to be exactly `background` or
-  `job`, preventing client-bound or coerced lifetimes from satisfying detach-survival assertions.
+- Durable background-run shared TCK cases now require `lifetime` to be exactly `background` or
+  `job` in both Rust and Python runners, preventing client-bound or coerced lifetimes from
+  satisfying detach-survival assertions.
 - Durable background-run shared TCK cases now require a real boolean
   `attach.summaryOnExpiredCursor` value in both Rust and Python runners before proving compacted
   summary delivery for expired cursors.

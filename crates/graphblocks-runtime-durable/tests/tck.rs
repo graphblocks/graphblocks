@@ -502,6 +502,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_retention.get("retained_from_cursor"))
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let lifetime = case.get("lifetime").and_then(Value::as_str);
+            let lifetime_allows_detach = match lifetime {
+                Some("background" | "job") => true,
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run lifetime must be background or job",
+                        "path": "$.lifetime",
+                    }));
+                    false
+                }
+            };
             let raw_cancel_run = raw_detach
                 .get("cancelRun")
                 .or_else(|| raw_detach.get("cancel_run"));
@@ -551,8 +563,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 None => false,
             };
             json!({
-                "runContinuesAfterDetach": matches!(required_str(case, "lifetime", name)?, "background" | "job")
-                    && !cancel_run,
+                "runContinuesAfterDetach": lifetime_allows_detach && !cancel_run,
                 "acceptedResponseReturnsRunId": required_str(case, "responseMode", name)? == "accepted"
                     && case
                         .get("initialResponse")
