@@ -1765,6 +1765,57 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .iter()
                 .filter_map(Value::as_str)
                 .collect::<BTreeSet<_>>();
+            let raw_callback_journal_sequence = raw_callback
+                .get("journalSequence")
+                .or_else(|| raw_callback.get("journal_sequence"));
+            let callback_journal_sequence = match raw_callback_journal_sequence {
+                Some(value) => match value.as_u64() {
+                    Some(sequence) => sequence,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer callback journalSequence",
+                            "path": "$.callback.journalSequence",
+                        }));
+                        0
+                    }
+                },
+                None => 0,
+            };
+            let raw_resume_sequence = raw_resume
+                .get("resumeSequence")
+                .or_else(|| raw_resume.get("resume_sequence"));
+            let resume_sequence = match raw_resume_sequence {
+                Some(value) => match value.as_u64() {
+                    Some(sequence) => sequence,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer resumeSequence",
+                            "path": "$.resume.resumeSequence",
+                        }));
+                        0
+                    }
+                },
+                None => 0,
+            };
+            let raw_successful_resume_count = raw_resume
+                .get("successfulResumeCount")
+                .or_else(|| raw_resume.get("successful_resume_count"));
+            let successful_resume_count = match raw_successful_resume_count {
+                Some(value) => match value.as_u64() {
+                    Some(count) => count,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer successfulResumeCount",
+                            "path": "$.resume.successfulResumeCount",
+                        }));
+                        0
+                    }
+                },
+                None => 0,
+            };
             json!({
                 "signatureFailureRevealsOperation": guard_values
                     .get("signatureFailureRevealsOperation")
@@ -1798,8 +1849,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .get("providerOperationMismatchCanResume")
                     .copied()
                     .unwrap_or(true),
-                "receiptJournaledBeforeResume": required_u64_map(raw_callback, "journalSequence", name)?
-                    < required_u64_map(raw_resume, "resumeSequence", name)?,
+                "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
                 "resumeReevaluatesPolicyBudgetRelease": reevaluates.contains("policy")
                     && reevaluates.contains("budget")
                     && reevaluates.contains("release"),
@@ -1808,11 +1858,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .or_else(|| raw_resume.get("budget_exhaustion_state"))
                     .and_then(Value::as_str)
                     .is_some_and(|state| state == "paused_budget"),
-                "coordinatorFailoverResumesOnce": raw_resume
-                    .get("successfulResumeCount")
-                    .or_else(|| raw_resume.get("successful_resume_count"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) == 1,
+                "coordinatorFailoverResumesOnce": successful_resume_count == 1,
             })
         }
         "async_callback_cancel_race" => {
