@@ -78,6 +78,16 @@ PHASE_FIVE_IMAGE_ROLES = (
 )
 
 
+def _loads_strict_json(owner: str, value: str) -> object:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{owner} must be valid strict JSON") from error
+
+
 def _field(mapping: Mapping[str, object], *names: str, default: object = None) -> object:
     for name in names:
         if name in mapping:
@@ -363,7 +373,11 @@ def main(argv: list[str] | None = None) -> int:
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
             return 1
-        inputs = json.loads(args.input_json)
+        try:
+            inputs = _loads_strict_json("--input-json", args.input_json)
+        except ValueError as error:
+            print(error)
+            return 1
         if not isinstance(inputs, dict):
             print("--input-json must decode to a JSON object")
             return 1
@@ -398,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
                         graph_json,
                         inputs_json,
                     )
-                result_payload = json.loads(result_json)
+                result_payload = _loads_strict_json("native runtime response", result_json)
             except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as error:
                 print(f"native runtime execution failed: {error}")
                 return 1
@@ -677,9 +691,15 @@ def main(argv: list[str] | None = None) -> int:
                     release_file = archive.extractfile(release_member)
                     if manifest_file is None or release_file is None:
                         raise ValueError("GraphRelease bundle members could not be read")
-                    manifest_value = json.loads(manifest_file.read().decode("utf-8"))
+                    manifest_value = _loads_strict_json(
+                        "GraphRelease bundle manifest",
+                        manifest_file.read().decode("utf-8"),
+                    )
                     archive_release_bytes = release_file.read()
-                    release_value = json.loads(archive_release_bytes.decode("utf-8"))
+                    release_value = _loads_strict_json(
+                        "GraphRelease bundle release",
+                        archive_release_bytes.decode("utf-8"),
+                    )
                 if not isinstance(manifest_value, Mapping):
                     raise ValueError("GraphRelease bundle manifest must be a mapping")
                 if not isinstance(release_value, Mapping):
@@ -1083,7 +1103,10 @@ def main(argv: list[str] | None = None) -> int:
                     render_target_manifests,
                 )
 
-                payload = json.loads(args.path.read_text(encoding="utf-8"))
+                payload = _loads_strict_json(
+                    "deploy plan payload",
+                    args.path.read_text(encoding="utf-8"),
+                )
                 if not isinstance(payload, Mapping):
                     raise ValueError("deploy plan payload must be a JSON object")
                 if payload.get("ok") is False:

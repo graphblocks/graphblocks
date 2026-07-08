@@ -1544,6 +1544,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   non-standard constants such as `NaN` are denied at ingress before command-specific validation.
   `ServerResponse.json` now validates nested payload JSON values and uses strict serialization, so
   non-finite floats or key-coercing nested objects cannot be emitted in server responses.
+  CLI JSON ingress now uses the same strict parsing for `run --input-json`, native runtime result
+  decoding, GraphRelease bundle verification, and Kubernetes deploy-plan rendering.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
   application events, matching the replay contract used by server attach/event-stream routes.
 - `graphblocks-testing` now preserves and reports authoritative event metadata when running

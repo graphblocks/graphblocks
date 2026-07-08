@@ -178,6 +178,20 @@ def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
     assert '"prompt": "Echo hi"' in capsys.readouterr().out
 
 
+def test_run_cli_rejects_non_standard_input_json_constants(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-run"},
+        "spec": {"nodes": {}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["run", str(path), "--input-json", '{"score": NaN}']) == 1
+    assert "--input-json must be valid strict JSON" in capsys.readouterr().out
+
+
 def test_run_cli_persists_sqlite_run_and_journal_stores(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
