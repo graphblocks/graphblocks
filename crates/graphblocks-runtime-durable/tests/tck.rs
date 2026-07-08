@@ -2042,6 +2042,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "payload_digest",
                 "verifiedBy",
                 "verified_by",
+                "idempotencyKey",
+                "idempotency_key",
+                "receivedAt",
+                "received_at",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2109,6 +2113,61 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "code": "DurableAsyncCallbackResumeInvalid",
                         "message": "async callback resume callback requires nonblank verifiedBy",
                         "path": format!("$.callback.{verified_by_path}"),
+                    }));
+                }
+                let idempotency_key_path = if raw_callback.contains_key("idempotencyKey")
+                    || !raw_callback.contains_key("idempotency_key")
+                {
+                    "idempotencyKey"
+                } else {
+                    "idempotency_key"
+                };
+                if raw_callback
+                    .get("idempotencyKey")
+                    .or_else(|| raw_callback.get("idempotency_key"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |idempotency_key| idempotency_key.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires nonblank idempotencyKey",
+                        "path": format!("$.callback.{idempotency_key_path}"),
+                    }));
+                }
+                let received_at_path = if raw_callback.contains_key("receivedAt")
+                    || !raw_callback.contains_key("received_at")
+                {
+                    "receivedAt"
+                } else {
+                    "received_at"
+                };
+                let received_at_is_iso = raw_callback
+                    .get("receivedAt")
+                    .or_else(|| raw_callback.get("received_at"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|received_at| {
+                        let received_at = received_at.trim();
+                        let bytes = received_at.as_bytes();
+                        let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                        bytes.len() >= 20
+                            && digit_positions
+                                .into_iter()
+                                .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                            && bytes.get(4) == Some(&b'-')
+                            && bytes.get(7) == Some(&b'-')
+                            && bytes.get(10) == Some(&b'T')
+                            && bytes.get(13) == Some(&b':')
+                            && bytes.get(16) == Some(&b':')
+                            && (received_at.ends_with('Z')
+                                || received_at.get(19..).is_some_and(|suffix| {
+                                    suffix.contains('+') || suffix.contains('-')
+                                }))
+                    });
+                if !received_at_is_iso {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires ISO receivedAt",
+                        "path": format!("$.callback.{received_at_path}"),
                     }));
                 }
                 if let Some(operation) = case.get("operation").and_then(Value::as_object) {

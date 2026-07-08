@@ -8228,6 +8228,10 @@ class TckRunner:
                         "payload_digest",
                         "verifiedBy",
                         "verified_by",
+                        "idempotencyKey",
+                        "idempotency_key",
+                        "receivedAt",
+                        "received_at",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8287,6 +8291,52 @@ class TckRunner:
                                 "path": f"$.callback.{verified_by_path}",
                             }
                         )
+                    idempotency_key_path = (
+                        "idempotencyKey"
+                        if "idempotencyKey" in raw_callback or "idempotency_key" not in raw_callback
+                        else "idempotency_key"
+                    )
+                    idempotency_key = raw_callback.get(
+                        "idempotencyKey", raw_callback.get("idempotency_key")
+                    )
+                    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires nonblank idempotencyKey",
+                                "path": f"$.callback.{idempotency_key_path}",
+                            }
+                        )
+                    received_at_path = (
+                        "receivedAt"
+                        if "receivedAt" in raw_callback or "received_at" not in raw_callback
+                        else "received_at"
+                    )
+                    received_at = raw_callback.get(
+                        "receivedAt", raw_callback.get("received_at")
+                    )
+                    if not isinstance(received_at, str) or not received_at.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires ISO receivedAt",
+                                "path": f"$.callback.{received_at_path}",
+                            }
+                        )
+                    else:
+                        received_at_text = received_at.strip()
+                        if received_at_text.endswith("Z"):
+                            received_at_text = f"{received_at_text[:-1]}+00:00"
+                        try:
+                            datetime.fromisoformat(received_at_text)
+                        except ValueError:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback requires ISO receivedAt",
+                                    "path": f"$.callback.{received_at_path}",
+                                }
+                            )
                     if isinstance(raw_operation, Mapping):
                         for key, alias in (
                             ("operationId", "operation_id"),
