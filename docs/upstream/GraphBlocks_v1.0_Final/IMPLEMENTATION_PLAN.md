@@ -754,8 +754,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Python testing package asserts the fixture cannot drift back to placeholder callback fencing
   labels.
 - Shared durable async callback resume TCK fixtures now validate supplied operation envelopes,
-  starting with nonblank `operationId` evidence, so journal-before-resume conformance cannot be
-  proven from an anonymous `AsyncOperation` reference.
+  requiring nonblank `operationId`, `runId`, `nodeId`, and `attemptId` evidence, so
+  journal-before-resume conformance cannot be proven from an anonymous `AsyncOperation` reference.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
   through `waiting_callback` before `callback_received`, polling must be explicit before terminal
   poll results, terminal operations cannot transition again, and direct construction rejects

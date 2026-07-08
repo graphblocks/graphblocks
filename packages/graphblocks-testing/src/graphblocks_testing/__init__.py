@@ -8118,22 +8118,26 @@ class TckRunner:
                     raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
                 raw_operation = fixture.get("operation")
                 if isinstance(raw_operation, Mapping):
-                    operation_id_path = (
-                        "operationId"
-                        if "operationId" in raw_operation or "operation_id" not in raw_operation
-                        else "operation_id"
-                    )
-                    operation_id = raw_operation.get(
-                        "operationId", raw_operation.get("operation_id")
-                    )
-                    if not isinstance(operation_id, str) or not operation_id.strip():
-                        diagnostics.append(
-                            {
-                                "code": "DurableAsyncCallbackResumeInvalid",
-                                "message": "async callback resume operation requires nonblank operationId",
-                                "path": f"$.operation.{operation_id_path}",
-                            }
+                    for key, alias in (
+                        ("operationId", "operation_id"),
+                        ("runId", "run_id"),
+                        ("nodeId", "node_id"),
+                        ("attemptId", "attempt_id"),
+                    ):
+                        path_key = (
+                            key
+                            if key in raw_operation or alias not in raw_operation
+                            else alias
                         )
+                        value = raw_operation.get(key, raw_operation.get(alias))
+                        if not isinstance(value, str) or not value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": f"async callback resume operation requires nonblank {key}",
+                                    "path": f"$.operation.{path_key}",
+                                }
+                            )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),

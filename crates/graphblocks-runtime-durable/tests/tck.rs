@@ -1914,24 +1914,30 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_callback = required_object(case, "callback", name)?;
             let raw_resume = required_object(case, "resume", name)?;
             if let Some(operation) = case.get("operation").and_then(Value::as_object) {
-                let operation_id_path = if operation.contains_key("operationId")
-                    || !operation.contains_key("operation_id")
-                {
-                    "operationId"
-                } else {
-                    "operation_id"
-                };
-                if operation
-                    .get("operationId")
-                    .or_else(|| operation.get("operation_id"))
-                    .and_then(Value::as_str)
-                    .map_or(true, |operation_id| operation_id.trim().is_empty())
-                {
-                    diagnostics.push(json!({
-                        "code": "DurableAsyncCallbackResumeInvalid",
-                        "message": "async callback resume operation requires nonblank operationId",
-                        "path": format!("$.operation.{operation_id_path}"),
-                    }));
+                for (key, alias) in [
+                    ("operationId", "operation_id"),
+                    ("runId", "run_id"),
+                    ("nodeId", "node_id"),
+                    ("attemptId", "attempt_id"),
+                ] {
+                    let path_key = if operation.contains_key(key) || !operation.contains_key(alias)
+                    {
+                        key
+                    } else {
+                        alias
+                    };
+                    if operation
+                        .get(key)
+                        .or_else(|| operation.get(alias))
+                        .and_then(Value::as_str)
+                        .map_or(true, |value| value.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": format!("async callback resume operation requires nonblank {key}"),
+                            "path": format!("$.operation.{path_key}"),
+                        }));
+                    }
                 }
             }
             let mut guard_values = BTreeMap::new();
