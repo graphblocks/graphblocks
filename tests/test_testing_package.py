@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 76
+    assert [case.kind for case in cases] == ["durable"] * 79
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1229,6 +1229,9 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_non_string_last_cursor_rejected",
         "background_run_non_string_expired_cursor_rejected",
         "background_run_non_string_retained_cursor_rejected",
+        "background_run_missing_source_of_truth_rejected",
+        "background_run_non_string_source_of_truth_rejected",
+        "background_run_callback_source_of_truth_rejected",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_non_object_redrive_rejected",
         "webhook_delivery_invalid_subscription_failure_policy_rejected",
@@ -1361,6 +1364,21 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "background_run_non_string_retained_cursor_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_missing_source_of_truth_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_non_string_source_of_truth_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_callback_source_of_truth_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -4748,6 +4766,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_non_string_last_cursor_rejected",
         "background_run_non_string_expired_cursor_rejected",
         "background_run_non_string_retained_cursor_rejected",
+        "background_run_missing_source_of_truth_rejected",
+        "background_run_non_string_source_of_truth_rejected",
+        "background_run_callback_source_of_truth_rejected",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_non_object_redrive_rejected",
         "webhook_delivery_invalid_subscription_failure_policy_rejected",

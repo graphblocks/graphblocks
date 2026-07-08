@@ -712,6 +712,24 @@ fn run_case(case: &Value) -> Result<(), String> {
                 },
                 None => false,
             };
+            let source_of_truth_path =
+                if case.get("sourceOfTruth").is_some() || case.get("source_of_truth").is_none() {
+                    "sourceOfTruth"
+                } else {
+                    "source_of_truth"
+                };
+            let authoritative_stream = case
+                .get("sourceOfTruth")
+                .or_else(|| case.get("source_of_truth"))
+                .and_then(Value::as_str)
+                .is_some_and(|source| source == "ApplicationEventStream");
+            if !authoritative_stream {
+                diagnostics.push(json!({
+                    "code": "DurableBackgroundRunInvalid",
+                    "message": "background run sourceOfTruth must be ApplicationEventStream",
+                    "path": format!("$.{source_of_truth_path}"),
+                }));
+            }
             json!({
                 "runContinuesAfterDetach": lifetime_allows_detach && !cancel_run,
                 "acceptedResponseReturnsRunId": matches!(valid_response_mode, Some("accepted"))
@@ -726,7 +744,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     && !retained_from.is_empty()
                     && expired_cursor < retained_from,
                 "summaryIncluded": summary_on_expired_cursor,
-                "authoritativeStream": required_str(case, "sourceOfTruth", name)? == "ApplicationEventStream",
+                "authoritativeStream": authoritative_stream,
             })
         }
         "callback_delivery_projection" => {
