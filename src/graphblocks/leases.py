@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -66,13 +67,28 @@ def _validate_optional_time(field_name: str, value: object | None) -> LeaseTime 
 def _freeze_attributes(value: object) -> MappingProxyType[str, object]:
     if not isinstance(value, Mapping):
         raise InvalidLeaseRequestError("lease attributes must be a mapping")
-    attributes = dict(value)
-    for key in attributes:
+    attributes: dict[str, object] = {}
+    for key, item in value.items():
         if not isinstance(key, str):
             raise InvalidLeaseRequestError("lease attribute keys must be strings")
         if not key.strip():
             raise InvalidLeaseRequestError("lease attribute keys must not be empty")
+        attributes[key] = _freeze_attribute_value(item)
     return MappingProxyType(attributes)
+
+
+def _freeze_attribute_value(value: object) -> object:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise InvalidLeaseRequestError("lease attribute values must be JSON-compatible")
+        return value
+    if isinstance(value, Mapping):
+        return _freeze_attributes(value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_attribute_value(item) for item in value)
+    raise InvalidLeaseRequestError("lease attribute values must be JSON-compatible")
 
 
 @dataclass(frozen=True, slots=True)

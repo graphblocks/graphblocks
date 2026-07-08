@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from graphblocks.leases import (
@@ -73,6 +75,27 @@ def test_lease_pool_reserves_units_and_preserves_attributes() -> None:
     assert lease.release() is True
     assert lease.release() is False
     assert pool.available("licensed-tool") == 8
+
+
+def test_lease_attributes_are_deep_frozen_against_caller_mutation() -> None:
+    pool = InMemoryLeasePool({"sandbox": 1})
+    attributes = {
+        "scope": {"tenant": "tenant-1", "labels": ["internal"]},
+        "limits": [1, {"kind": "gpu"}],
+    }
+
+    lease = pool.acquire("sandbox", owner="run-1", attributes=attributes)
+    attributes["scope"]["tenant"] = "mutated"
+    attributes["scope"]["labels"].append("external")
+    attributes["limits"][1]["kind"] = "cpu"
+
+    assert lease.attributes["scope"]["tenant"] == "tenant-1"
+    assert lease.attributes["scope"]["labels"] == ("internal",)
+    assert lease.attributes["limits"] == (1, {"kind": "gpu"})
+    with pytest.raises(TypeError):
+        lease.attributes["scope"]["tenant"] = "mutated"
+    with pytest.raises(TypeError):
+        lease.attributes["limits"][1]["kind"] = "cpu"
 
 
 def test_lease_pool_assigns_monotonic_fencing_tokens_and_validates_current_token() -> None:
@@ -229,6 +252,12 @@ def test_lease_pool_rejects_invalid_attributes_and_release_inputs() -> None:
         pool.acquire("model", owner="run-1", attributes=object())  # type: ignore[arg-type]
     with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must be strings"):
         pool.acquire("model", owner="run-1", attributes={object(): "value"})  # type: ignore[dict-item]
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must be strings"):
+        pool.acquire("model", owner="run-1", attributes={"scope": {object(): "value"}})
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute values must be JSON-compatible"):
+        pool.acquire("model", owner="run-1", attributes={"scope": object()})
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute values must be JSON-compatible"):
+        pool.acquire("model", owner="run-1", attributes={"scope": math.inf})
     with pytest.raises(InvalidLeaseRequestError, match="lease lease_id must be a non-empty string"):
         pool.release(" ")
     with pytest.raises(InvalidLeaseRequestError, match="lease owner must be a non-empty string"):

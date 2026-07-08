@@ -1949,6 +1949,9 @@ sandbox
 - `graphblocks-runtime-core::orchestration` includes bounded `TaskPlan` and `TaskPlanPatch`
   revision-CAS semantics, dependency/cycle validation, context-resource validation, model/worker
   eligibility, child budget delegation, and `LeasePool` fencing for scarce resources.
+- Python lease pools now deep-freeze and JSON-validate lease attributes, rejecting nested mutable
+  aliases, non-string mapping keys, non-JSON values, and non-finite floats before ownership/fencing
+  metadata can be persisted on an active lease.
 - `TaskPlanPatch` validation now rejects duplicate upsert step ids before patch application, so
   model-authored plan edits cannot rely on ambiguous last-write-wins behavior.
 - `TaskPlan::context_access_graph` now derives deterministic resource-conflict edges from declared
