@@ -1426,6 +1426,7 @@ def stdlib_registry() -> RuntimeRegistry:
                 raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
             normalized[snake_key] = value
         for snake_key, camel_key in (
+            ("created_at_unix_ms", "createdAtUnixMs"),
             ("submitted_at_unix_ms", "submittedAtUnixMs"),
             ("expires_at_unix_ms", "expiresAtUnixMs"),
             ("completed_at_unix_ms", "completedAtUnixMs"),

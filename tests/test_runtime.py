@@ -911,6 +911,56 @@ def test_stdlib_async_await_callback_accepts_camel_case_operation_input() -> Non
     assert wait["operation"]["expires_at_unix_ms"] == 1_801_000
 
 
+def test_stdlib_async_operation_consumers_accept_protocol_operation_projection() -> None:
+    registry = stdlib_registry()
+    operation = {
+        "operationId": "op-ci-1",
+        "runId": "run-coding-1",
+        "nodeId": "waitCI",
+        "attemptId": "attempt-1",
+        "kind": "ci_job",
+        "providerOperationId": "gha-run-1",
+        "state": "waiting_callback",
+        "resumeTokenHash": "sha256:resume-token",
+        "idempotencyKey": "idem-op-ci-1",
+        "expectedSchema": "schemas/CICallback@1",
+        "createdAtUnixMs": 1_000,
+        "submittedAtUnixMs": 1_050,
+        "expiresAtUnixMs": 1_801_000,
+        "infiniteWaitPolicy": "operator_review_required",
+    }
+
+    wait = registry.resolve("async.await_callback@1")(
+        {"operation": operation},
+        {"checkpoint": True, "onTimeout": "fail", "timeout": "30m"},
+        {},
+    )["wait"]
+    assert wait["operation"]["operation_id"] == "op-ci-1"
+    assert wait["operation"]["provider_operation_id"] == "gha-run-1"
+    assert wait["operation"]["created_at_unix_ms"] == 1_000
+    assert wait["operation"]["submitted_at_unix_ms"] == 1_050
+    assert wait["operation"]["expires_at_unix_ms"] == 1_801_000
+    assert wait["operation"]["infinite_wait_policy"] == "operator_review_required"
+
+    poll = registry.resolve("async.poll_operation@1")(
+        {"operation": operation},
+        {"interval": "30s", "timeout": "30m"},
+        {},
+    )["poll"]
+    assert poll["operation"]["state"] == "polling"
+    assert poll["operation"]["created_at_unix_ms"] == 1_000
+
+    for block_name, config, expected_status in (
+        ("async.complete_operation@1", {"completedAtUnixMs": 1_700, "artifacts": []}, "completed"),
+        ("async.cancel_operation@1", {"cancelledAtUnixMs": 1_700}, "cancelled"),
+        ("async.expire_operation@1", {"expiredAtUnixMs": 1_700}, "expired"),
+    ):
+        result = registry.resolve(block_name)({"operation": operation}, config, {})["result"]
+        assert result["operation_id"] == "op-ci-1"
+        assert result["status"] == expected_status
+        assert result["completed_at_unix_ms"] == 1_700
+
+
 def test_stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() -> None:
     registry = stdlib_registry()
     operation = registry.resolve("async.start_operation@1")(
