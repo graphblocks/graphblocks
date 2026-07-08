@@ -3152,6 +3152,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{operation_idempotency_key_path}"),
                 }));
             }
+            let resume_token_hash_path = if raw_operation.contains_key("resumeTokenHash")
+                || !raw_operation.contains_key("resume_token_hash")
+            {
+                "resumeTokenHash"
+            } else {
+                "resume_token_hash"
+            };
+            if !raw_operation
+                .get("resumeTokenHash")
+                .or_else(|| raw_operation.get("resume_token_hash"))
+                .and_then(Value::as_str)
+                .is_some_and(|resume_token_hash| {
+                    let Some(hex) = resume_token_hash.strip_prefix("sha256:") else {
+                        return false;
+                    };
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires resumeTokenHash sha256 digest",
+                    "path": format!("$.operation.{resume_token_hash_path}"),
+                }));
+            }
             if !raw_operation
                 .get("state")
                 .and_then(Value::as_str)

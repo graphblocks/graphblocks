@@ -7950,7 +7950,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8003,7 +8004,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8058,7 +8060,8 @@
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8114,7 +8117,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "pending",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8169,7 +8173,8 @@
       "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
-      "effectState": "committed"
+      "effectState": "committed",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8225,7 +8230,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": "true"
+      "effectJournaled": "true",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8281,7 +8287,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": false
+      "effectJournaled": false,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8336,7 +8343,8 @@
       "effectState": "committed",
       "effectJournaled": true,
       "providerOperationId": "gh-run-002",
-      "idempotencyKey": "idem-ci-operation-001"
+      "idempotencyKey": "idem-ci-operation-001",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8392,7 +8400,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8447,7 +8456,8 @@
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
       "effectJournaled": true,
-      "idempotencyKey": "idem-ci-operation-001"
+      "idempotencyKey": "idem-ci-operation-001",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8503,7 +8513,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8558,7 +8569,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8613,7 +8625,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8655,6 +8668,62 @@
     }
   },
   {
+    "name": "external_operation_missing_resume_token_hash_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "idempotencyKey": "idem-ci-operation-001",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "policySnapshotId": "pol-callback-001",
+      "effectState": "committed",
+      "effectJournaled": true,
+      "state": "cancelled"
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires resumeTokenHash sha256 digest",
+        "path": "$.operation.resumeTokenHash"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_provider_operation_id_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -8669,7 +8738,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8724,7 +8794,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8779,7 +8850,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8835,7 +8907,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8890,7 +8963,8 @@
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8946,7 +9020,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9001,7 +9076,8 @@
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
       "effectJournaled": true,
-      "state": "cancelled"
+      "state": "cancelled",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9057,7 +9133,8 @@
       "attemptId": "   ",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9112,7 +9189,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9168,7 +9246,8 @@
       "releaseId": "   ",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9224,7 +9303,8 @@
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9279,7 +9359,8 @@
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9334,7 +9415,8 @@
       "releaseId": "release-2026-06-23",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9390,7 +9472,8 @@
       "tenantId": "   ",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9446,7 +9529,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9501,7 +9585,8 @@
       "tenantId": "tenant-support-001",
       "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9556,7 +9641,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9612,7 +9698,8 @@
       "state": "cancelled",
       "policySnapshotId": "   ",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9668,7 +9755,8 @@
       "state": "cancelled",
       "policySnapshotId": "pol-operation-other",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9724,7 +9812,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "operationId": "op-ci-002",
@@ -9779,7 +9868,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "   ",
@@ -9835,7 +9925,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9890,7 +9981,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9946,7 +10038,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10001,7 +10094,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10057,7 +10151,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10112,7 +10207,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10168,7 +10264,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10223,7 +10320,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10279,7 +10377,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10334,7 +10433,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10390,7 +10490,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10445,7 +10546,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10501,7 +10603,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10556,7 +10659,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10612,7 +10716,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10668,7 +10773,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10723,7 +10829,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10779,7 +10886,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10834,7 +10942,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10890,7 +10999,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10945,7 +11055,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11001,7 +11112,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11056,7 +11168,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11111,7 +11224,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11166,7 +11280,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11221,7 +11336,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11271,7 +11387,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11326,7 +11443,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11382,7 +11500,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11438,7 +11557,8 @@
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
-      "effectJournaled": true
+      "effectJournaled": true,
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
