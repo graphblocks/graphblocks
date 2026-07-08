@@ -1728,9 +1728,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection TCK cases now reject non-object delivery entries before evaluating
   retry, duplicate, idempotency, or redrive evidence, preserving the `CallbackDelivery` envelope
   shape in shared fixtures.
-- Durable callback projection TCK cases also reject delivery rows without nonblank `idempotencyKey`
-  evidence, preserving the callback protocol's at-least-once deduplication contract in shared MVP
-  fixtures.
+- Durable callback projection TCK cases now have shared expected-diagnostic coverage rejecting
+  delivery rows without nonblank `idempotencyKey` evidence, preserving the callback protocol's
+  at-least-once deduplication contract in shared MVP fixtures.
 - Durable callback projection TCK cases now have shared expected-diagnostic coverage rejecting
   `idempotencyKey` reuse across distinct subscription/event deliveries, preventing one receiver
   deduplication token from proving multiple callback delivery identities.

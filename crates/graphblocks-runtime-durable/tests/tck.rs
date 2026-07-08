@@ -1127,6 +1127,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                if delivery
+                    .get("idempotencyKey")
+                    .or_else(|| delivery.get("idempotency_key"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |key| key.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires idempotencyKey",
+                        "path": format!("$.deliveries[{index}].idempotencyKey"),
+                    }));
+                }
                 if let Some(key) = delivery
                     .get("idempotencyKey")
                     .or_else(|| delivery.get("idempotency_key"))

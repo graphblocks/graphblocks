@@ -629,6 +629,35 @@
     }
   },
   {
+    "name": "webhook_delivery_missing_idempotency_key_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-idem-missing-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0109",
+        "runId": "run-coding-001",
+        "sequence": 109,
+        "cursor": "evt-0109",
+        "attempt": 1,
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:30Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery requires idempotencyKey",
+        "path": "$.deliveries[0].idempotencyKey"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_409_failed_status_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
