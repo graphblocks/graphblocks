@@ -793,6 +793,36 @@ def test_stdlib_async_start_operation_rejects_ambiguous_wait_bounds() -> None:
         )
 
 
+def test_stdlib_async_start_operation_rejects_absolute_and_relative_wait_bounds() -> None:
+    with pytest.raises(ValueError, match="must not define both expiresAtUnixMs and timeout"):
+        stdlib_registry().resolve("async.start_operation@1")(
+            {},
+            {
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "expiresAtUnixMs": 1_801_000,
+                "timeoutMs": 1_800_000,
+                "resume": {
+                    "requirePolicyReevaluation": True,
+                    "requireBudgetReservation": True,
+                    "requireReleaseCompatibility": True,
+                    "requireOwnershipFence": True,
+                },
+                "attemptFencing": True,
+            },
+            {},
+        )
+
+
 def test_stdlib_async_await_callback_rejects_ambiguous_wait_bounds() -> None:
     registry = stdlib_registry()
     operation = registry.resolve("async.start_operation@1")(
@@ -900,7 +930,6 @@ def test_stdlib_async_terminal_blocks_reject_invalid_terminal_timestamps() -> No
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -955,7 +984,6 @@ def test_stdlib_async_terminal_blocks_reject_non_mapping_config() -> None:
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1009,7 +1037,6 @@ def test_stdlib_async_terminal_blocks_reject_terminal_after_expiration() -> None
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1052,7 +1079,6 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
         "createdAtUnixMs": 1_000,
         "submittedAtUnixMs": 1_050,
         "expiresAtUnixMs": 2_000,
-        "timeoutMs": 1_000,
         "resume": {
             "requirePolicyReevaluation": True,
             "requireBudgetReservation": True,
@@ -1222,7 +1248,6 @@ def test_stdlib_async_terminal_effects_reject_provider_identity_without_committe
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1287,7 +1312,6 @@ def test_stdlib_async_terminal_blocks_reject_invalid_projection_entries() -> Non
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1344,7 +1368,6 @@ def test_stdlib_async_terminal_blocks_reject_invalid_artifact_entries() -> None:
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 2_000,
-                        "timeoutMs": 1_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1401,7 +1424,6 @@ def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 10_000,
-                        "timeoutMs": 9_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,
@@ -1468,7 +1490,6 @@ def test_stdlib_async_poll_rejects_oversized_string_duration() -> None:
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
                         "expiresAtUnixMs": 10_000,
-                        "timeoutMs": 9_000,
                         "resume": {
                             "requirePolicyReevaluation": True,
                             "requireBudgetReservation": True,

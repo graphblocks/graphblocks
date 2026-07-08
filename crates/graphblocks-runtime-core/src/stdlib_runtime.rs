@@ -734,28 +734,37 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
         )?;
         operation = operation.submitted(provider_operation_id, submitted_at_unix_ms);
     }
-    let expires_at_unix_ms = if let Some(expires_at_unix_ms) =
-        optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
-    {
-        Some(expires_at_unix_ms)
-    } else {
-        optional_alias_duration_ms(
-            config,
-            &["timeoutMs", "timeout_ms", "timeout"],
+    let explicit_expires_at_unix_ms =
+        optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?;
+    let timeout_ms = optional_alias_duration_ms(
+        config,
+        &["timeoutMs", "timeout_ms", "timeout"],
+        "async.start_operation.invalid_config",
+        "async.start_operation@1 timeout must be a positive duration",
+    )?;
+    if explicit_expires_at_unix_ms.is_some() && timeout_ms.is_some() {
+        return Err(BlockError::new(
             "async.start_operation.invalid_config",
-            "async.start_operation@1 timeout must be a positive duration",
-        )?
-        .map(|timeout_ms| {
-            created_at_unix_ms.checked_add(timeout_ms).ok_or_else(|| {
-                BlockError::new(
-                    "async.start_operation.invalid_config",
-                    ErrorCategory::Configuration,
-                    "async.start_operation@1 timeout exceeds timestamp range",
-                    false,
-                )
+            ErrorCategory::Configuration,
+            "async.start_operation@1 must not define both expiresAtUnixMs and timeout",
+            false,
+        ));
+    }
+    let expires_at_unix_ms = if explicit_expires_at_unix_ms.is_some() {
+        explicit_expires_at_unix_ms
+    } else {
+        timeout_ms
+            .map(|timeout_ms| {
+                created_at_unix_ms.checked_add(timeout_ms).ok_or_else(|| {
+                    BlockError::new(
+                        "async.start_operation.invalid_config",
+                        ErrorCategory::Configuration,
+                        "async.start_operation@1 timeout exceeds timestamp range",
+                        false,
+                    )
+                })
             })
-        })
-        .transpose()?
+            .transpose()?
     };
     let infinite_wait_policy = optional_infinite_wait_policy(
         config,
@@ -2865,6 +2874,46 @@ mod tests {
             error
                 .message
                 .contains("must not define both timeout and infiniteWaitPolicy"),
+            "unexpected error: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn stdlib_async_start_operation_rejects_absolute_and_relative_wait_bounds() {
+        let error = super::execute_stdlib_block(
+            "async.start_operation@1",
+            &json!({}),
+            &json!({
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "expiresAtUnixMs": 1_801_000,
+                "timeoutMs": 1_800_000,
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }),
+        )
+        .expect_err("absolute and relative async start wait bounds should fail");
+
+        assert_eq!(error.code, "async.start_operation.invalid_config");
+        assert!(
+            error
+                .message
+                .contains("must not define both expiresAtUnixMs and timeout"),
             "unexpected error: {:?}",
             error
         );

@@ -638,6 +638,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   diagnostics as callback-backed async waits, and timeout fields must parse to positive durations
   rather than merely being non-empty strings. The compilers also reject graph-authored waits that
   define both a bounded timeout and an explicit infinite-wait policy as `InvalidAsyncOperation`.
+  `expiresAtUnixMs` now satisfies the bounded-wait contract as an absolute deadline, but compiler
+  diagnostics reject configs that also define relative timeout fields so absolute and derived
+  deadlines cannot silently diverge.
   Async wait `onTimeout` actions are validated at compile time as `fail`, `cancel`, or `expire`,
   and poll `interval`/`maxInterval` duration fields are rejected before runtime when they are zero
   or unparsable. The Python authoring facade mirrors these diagnostics so shared compiler TCK

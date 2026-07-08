@@ -1476,6 +1476,85 @@
     }
   },
   {
+    "name": "async_operation_absolute_deadline_bound",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-absolute-deadline"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "expiresAtUnixMs": 1801000,
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:71389af7b72b31cc8960abc6628179cb296a0c7852f04cd03cc777c093de7d7d",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "async_operation_ambiguous_absolute_and_relative_wait",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-ambiguous-absolute-relative-wait"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "expiresAtUnixMs": 1801000,
+            "timeoutMs": 1800000,
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:4bbff2d6e9424624beee6f1ba90eb2bfd3dcbcc564fbcf2b824b6140e23ab73d",
+      "error_codes": ["InvalidAsyncOperation"]
+    }
+  },
+  {
     "name": "callback_subscription_safety_diagnostics",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

@@ -76,7 +76,7 @@ def _has_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _has_async_bounded_timeout(config: dict[str, Any]) -> bool:
+def _has_async_relative_timeout(config: dict[str, Any]) -> bool:
     timeout = (
         config.get("timeout")
         or config.get("timeoutMs")
@@ -85,6 +85,10 @@ def _has_async_bounded_timeout(config: dict[str, Any]) -> bool:
     )
     timeout_ms = _duration_milliseconds(timeout)
     return timeout_ms is not None and timeout_ms > 0
+
+
+def _has_async_absolute_deadline(config: dict[str, Any]) -> bool:
+    return _is_positive_integer(config.get("expiresAtUnixMs") or config.get("expires_at_unix_ms"))
 
 
 def _has_async_explicit_infinite_wait(config: dict[str, Any]) -> bool:
@@ -262,8 +266,18 @@ def _diagnose_async_operation_config(
                 path,
             )
         )
-    has_bounded_timeout = _has_async_bounded_timeout(config)
+    has_relative_timeout = _has_async_relative_timeout(config)
+    has_absolute_deadline = _has_async_absolute_deadline(config)
+    has_bounded_timeout = has_relative_timeout or has_absolute_deadline
     has_infinite_wait = _has_async_explicit_infinite_wait(config)
+    if has_relative_timeout and has_absolute_deadline:
+        diagnostics.append(
+            Diagnostic(
+                "InvalidAsyncOperation",
+                "async operation wait must not define both expiresAtUnixMs and timeout",
+                path,
+            )
+        )
     if has_bounded_timeout and has_infinite_wait:
         diagnostics.append(
             Diagnostic(

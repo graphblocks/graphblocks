@@ -1102,12 +1102,13 @@ def stdlib_registry() -> RuntimeRegistry:
             operation["submitted_at_unix_ms"] = submitted_at_unix_ms
             operation["state"] = "submitted"
         expires_at_unix_ms = _optional_async_u64(config, "expiresAtUnixMs", "expires_at_unix_ms", "expiresAtUnixMs")
-        if expires_at_unix_ms is None:
-            timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
-            if timeout_ms is not None:
-                if created_at_unix_ms > MAX_U64 - timeout_ms:
-                    raise ValueError("async.start_operation@1 timeout exceeds timestamp range")
-                expires_at_unix_ms = created_at_unix_ms + timeout_ms
+        timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
+        if expires_at_unix_ms is not None and timeout_ms is not None:
+            raise ValueError("async.start_operation@1 must not define both expiresAtUnixMs and timeout")
+        if expires_at_unix_ms is None and timeout_ms is not None:
+            if created_at_unix_ms > MAX_U64 - timeout_ms:
+                raise ValueError("async.start_operation@1 timeout exceeds timestamp range")
+            expires_at_unix_ms = created_at_unix_ms + timeout_ms
         infinite_wait_policy = _optional_async_string(
             config,
             "infiniteWaitPolicy",

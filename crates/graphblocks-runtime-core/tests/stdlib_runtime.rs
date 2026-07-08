@@ -441,7 +441,6 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
-                        "expiresAtUnixMs": 1_800,
                         "timeoutMs": 800,
                         "resume": {
                             "requirePolicyReevaluation": true,
@@ -1976,7 +1975,6 @@ fn async_start_config(operation_id: &str, node_id: &str) -> Value {
         "createdAtUnixMs": 1_000,
         "submittedAtUnixMs": 1_050,
         "expiresAtUnixMs": 2_000,
-        "timeoutMs": 1_000,
         "resume": {
             "requirePolicyReevaluation": true,
             "requireBudgetReservation": true,

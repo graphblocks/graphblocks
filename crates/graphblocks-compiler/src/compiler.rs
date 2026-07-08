@@ -289,13 +289,22 @@ fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
     }
 }
 
-fn has_async_bounded_timeout(config: &Map<String, Value>) -> bool {
+fn has_async_relative_timeout(config: &Map<String, Value>) -> bool {
     let timeout = config
         .get("timeout")
         .or_else(|| config.get("timeoutMs"))
         .or_else(|| config.get("timeout_ms"))
         .or_else(|| config.get("deadline"));
     duration_milliseconds(timeout).is_some_and(|timeout_ms| timeout_ms > 0)
+}
+
+fn has_async_absolute_deadline(config: &Map<String, Value>) -> bool {
+    positive_integer(
+        config
+            .get("expiresAtUnixMs")
+            .or_else(|| config.get("expires_at_unix_ms")),
+    )
+    .is_some()
 }
 
 fn has_async_explicit_infinite_wait(config: &Map<String, Value>) -> bool {
@@ -503,8 +512,17 @@ fn diagnose_async_operation_config(
             path,
         ));
     }
-    let has_bounded_timeout = has_async_bounded_timeout(config);
+    let has_relative_timeout = has_async_relative_timeout(config);
+    let has_absolute_deadline = has_async_absolute_deadline(config);
+    let has_bounded_timeout = has_relative_timeout || has_absolute_deadline;
     let has_infinite_wait = has_async_explicit_infinite_wait(config);
+    if has_relative_timeout && has_absolute_deadline {
+        diagnostics.push(Diagnostic::error(
+            "InvalidAsyncOperation",
+            "async operation wait must not define both expiresAtUnixMs and timeout",
+            path,
+        ));
+    }
     if has_bounded_timeout && has_infinite_wait {
         diagnostics.push(Diagnostic::error(
             "InvalidAsyncOperation",
