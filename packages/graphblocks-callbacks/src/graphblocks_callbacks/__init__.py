@@ -1213,6 +1213,8 @@ def record_external_callback_receipt(
         raise ValueError("envelope must be a CallbackEnvelope")
     if not isinstance(payload_projection, CallbackPayloadProjection):
         raise ValueError("payload_projection must be a CallbackPayloadProjection")
+    if envelope.type != "ExternalCallbackReceived":
+        raise ValueError("envelope type must be ExternalCallbackReceived")
     expected_payload_digest = canonical_hash(envelope.payload)
     if payload_projection.payload_digest != expected_payload_digest:
         raise ValueError("payload_projection must match the envelope payload")

@@ -1303,6 +1303,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - External callback receipt projection rejects explicitly `unauthenticated` verifier markers, so
   the Python callback facade cannot mint durable `ExternalCallbackReceived` metadata from an
   unauthenticated callback.
+- External callback receipt projection now requires the callback envelope type to be
+  `ExternalCallbackReceived`, preventing ordinary callback-subscription events from being promoted
+  into async resume receipts.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, tenant, and optional provider-operation identity into stable resume fences so

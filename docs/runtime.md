@@ -65,6 +65,8 @@ compaction, or pre-operation quarantine can create resumable state.
 Callback receipt projection also rejects operation identity drift when a
 callback envelope includes `operation_id`; the durable receipt must name the
 same operation as the authenticated envelope.
+Receipt projection only accepts `ExternalCallbackReceived` envelopes, so
+ordinary callback-subscription events cannot become async resume receipts.
 Persisted run provenance is also replay-validated without type coercion so
 corrupted release or physical-plan identity cannot become authoritative state.
 
