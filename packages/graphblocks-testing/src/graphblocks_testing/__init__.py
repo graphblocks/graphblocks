@@ -8462,6 +8462,23 @@ class TckRunner:
                             "path": f"$.lateCallback.{verified_by_path}",
                         }
                     )
+                idempotency_key_path = (
+                    "idempotencyKey"
+                    if "idempotencyKey" in raw_late_callback
+                    or "idempotency_key" not in raw_late_callback
+                    else "idempotency_key"
+                )
+                idempotency_key = raw_late_callback.get(
+                    "idempotencyKey", raw_late_callback.get("idempotency_key")
+                )
+                if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank idempotencyKey",
+                            "path": f"$.lateCallback.{idempotency_key_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

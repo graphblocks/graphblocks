@@ -2307,6 +2307,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{verified_by_path}"),
                 }));
             }
+            let idempotency_key_path = if raw_late_callback.contains_key("idempotencyKey")
+                || !raw_late_callback.contains_key("idempotency_key")
+            {
+                "idempotencyKey"
+            } else {
+                "idempotency_key"
+            };
+            if raw_late_callback
+                .get("idempotencyKey")
+                .or_else(|| raw_late_callback.get("idempotency_key"))
+                .and_then(Value::as_str)
+                .map_or(true, |idempotency_key| idempotency_key.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank idempotencyKey",
+                    "path": format!("$.lateCallback.{idempotency_key_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {

@@ -3862,6 +3862,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -3899,6 +3900,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": "true",
       "payloadConvertedToArtifactRef": true
@@ -3938,6 +3940,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -3978,6 +3981,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4017,6 +4021,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4057,6 +4062,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4097,6 +4103,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4136,6 +4143,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4176,6 +4184,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4215,6 +4224,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4255,6 +4265,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4294,6 +4305,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4334,6 +4346,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4373,6 +4386,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4413,6 +4427,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4452,6 +4467,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4492,6 +4508,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4531,6 +4548,7 @@
       "callbackId": "cb-ci-late-001",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4571,6 +4589,7 @@
       "payloadDigest": "sha256:not-a-digest",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4610,6 +4629,7 @@
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4650,6 +4670,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "running",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4689,6 +4710,7 @@
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4729,6 +4751,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "   ",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4754,6 +4777,87 @@
     }
   },
   {
+    "name": "external_operation_missing_callback_idempotency_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank idempotencyKey",
+        "path": "$.lateCallback.idempotencyKey"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_blank_callback_idempotency_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "   ",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank idempotencyKey",
+        "path": "$.lateCallback.idempotencyKey"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_commits_result_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -4769,6 +4873,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
     },
@@ -4808,6 +4913,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "payloadConvertedToArtifactRef": true
     },
@@ -4847,6 +4953,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true
     },
@@ -4886,6 +4993,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4925,6 +5033,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4959,6 +5068,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4998,6 +5108,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5038,6 +5149,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5078,6 +5190,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
