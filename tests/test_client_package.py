@@ -1191,6 +1191,9 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
             return json.dumps(
                 {
                     "ok": True,
+                    "operationId": "id/with?query#fragment",
+                    "callbackId": "callback-1",
+                    "idempotencyKey": "idem-1",
                     "runId": "id/with?query#fragment",
                     "subscriptionId": "id/with?query#fragment",
                     "deliveryId": "id/with?query#fragment",
@@ -2253,6 +2256,84 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
         "attemptId": "attempt-1",
         "providerOperationId": "provider-ci-1",
     }
+
+
+@pytest.mark.parametrize(
+    ("response_update", "message"),
+    (
+        (
+            {"operationId": "other-op"},
+            "GraphBlocks async callback response operation_id must match requested operation 'op-ci-client-1'",
+        ),
+        (
+            {"callbackId": "other-callback"},
+            "GraphBlocks async callback response callback_id must match requested callback 'cb-client-1'",
+        ),
+        (
+            {"idempotencyKey": "other-idem"},
+            "GraphBlocks async callback response idempotency_key must match requested idempotency key 'idem-client-callback-1'",
+        ),
+        (
+            {"runId": "other-run"},
+            "GraphBlocks async callback response run_id must match requested run 'run-client-callback-1'",
+        ),
+        (
+            {"nodeId": "other-node"},
+            "GraphBlocks async callback response node_id must match requested node 'waitCI'",
+        ),
+        (
+            {"attemptId": "other-attempt"},
+            "GraphBlocks async callback response attempt_id must match requested attempt 'attempt-1'",
+        ),
+        (
+            {"providerOperationId": "other-provider"},
+            "GraphBlocks async callback response provider_operation_id must match requested provider operation 'provider-ci-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_mismatched_async_callback_response_identity(
+    monkeypatch,
+    response_update: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            payload = {
+                "ok": True,
+                "operationId": "op-ci-client-1",
+                "callbackId": "cb-client-1",
+                "idempotencyKey": "idem-client-callback-1",
+                "payloadDigest": "sha256:4b7f8e395f509529dbf2eba914e46745cbe72791078d1b9c198d01daab24c9ae",
+                "verifiedBy": "callback-relay",
+                "policySnapshotId": "local",
+                "status": "accepted",
+                "runId": "run-client-callback-1",
+                "nodeId": "waitCI",
+                "attemptId": "attempt-1",
+                "providerOperationId": "provider-ci-1",
+            }
+            payload.update(response_update)
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        client.submit_async_callback(
+            operation_id="op-ci-client-1",
+            callback_id="cb-client-1",
+            idempotency_key="idem-client-callback-1",
+            payload={"status": "completed", "checks": [{"name": "unit", "passed": True}]},
+            run_id="run-client-callback-1",
+            node_id="waitCI",
+            attempt_id="attempt-1",
+            provider_operation_id="provider-ci-1",
+        )
 
 
 @pytest.mark.parametrize(

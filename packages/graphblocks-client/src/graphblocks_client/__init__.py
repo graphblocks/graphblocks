@@ -933,7 +933,8 @@ class HttpGraphBlocksClient:
         attempt_id: object | None = None,
         provider_operation_id: object | None = None,
     ) -> dict[str, object]:
-        operation_id = _http_path_segment("operation_id", operation_id)
+        requested_operation_id = _http_non_empty_string("operation_id", operation_id)
+        operation_id = quote(requested_operation_id, safe="")
         callback_id = _http_non_empty_string("callback_id", callback_id)
         idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
         payload = _http_canonical_json_mapping("callback payload", payload)
@@ -941,17 +942,25 @@ class HttpGraphBlocksClient:
             "callbackId": callback_id,
             "payload": payload,
         }
+        requested_run_id = None
         if run_id is not None:
-            body["runId"] = _http_non_empty_string("run_id", run_id)
+            requested_run_id = _http_non_empty_string("run_id", run_id)
+            body["runId"] = requested_run_id
+        requested_node_id = None
         if node_id is not None:
-            body["nodeId"] = _http_non_empty_string("node_id", node_id)
+            requested_node_id = _http_non_empty_string("node_id", node_id)
+            body["nodeId"] = requested_node_id
+        requested_attempt_id = None
         if attempt_id is not None:
-            body["attemptId"] = _http_non_empty_string("attempt_id", attempt_id)
+            requested_attempt_id = _http_non_empty_string("attempt_id", attempt_id)
+            body["attemptId"] = requested_attempt_id
+        requested_provider_operation_id = None
         if provider_operation_id is not None:
-            body["providerOperationId"] = _http_non_empty_string(
+            requested_provider_operation_id = _http_non_empty_string(
                 "provider_operation_id",
                 provider_operation_id,
             )
+            body["providerOperationId"] = requested_provider_operation_id
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -966,7 +975,95 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks async callback response")
+        response_payload = _read_json_response(response, "GraphBlocks async callback response")
+        response_operation_id = _payload_string(
+            response_payload,
+            "GraphBlocks async callback response",
+            "operation_id",
+            "operationId",
+            "operation_id",
+        )
+        if response_operation_id != requested_operation_id:
+            raise ValueError(
+                "GraphBlocks async callback response operation_id "
+                f"must match requested operation {requested_operation_id!r}"
+            )
+        response_callback_id = _payload_string(
+            response_payload,
+            "GraphBlocks async callback response",
+            "callback_id",
+            "callbackId",
+            "callback_id",
+        )
+        if response_callback_id != callback_id:
+            raise ValueError(
+                "GraphBlocks async callback response callback_id "
+                f"must match requested callback {callback_id!r}"
+            )
+        response_idempotency_key = _payload_string(
+            response_payload,
+            "GraphBlocks async callback response",
+            "idempotency_key",
+            "idempotencyKey",
+            "idempotency_key",
+        )
+        if response_idempotency_key != idempotency_key:
+            raise ValueError(
+                "GraphBlocks async callback response idempotency_key "
+                f"must match requested idempotency key {idempotency_key!r}"
+            )
+        if requested_run_id is not None:
+            _validate_response_run_id(
+                "GraphBlocks async callback response",
+                requested_run_id,
+                _payload_string(
+                    response_payload,
+                    "GraphBlocks async callback response",
+                    "run_id",
+                    "runId",
+                    "run_id",
+                ),
+            )
+        if requested_node_id is not None:
+            response_node_id = _payload_string(
+                response_payload,
+                "GraphBlocks async callback response",
+                "node_id",
+                "nodeId",
+                "node_id",
+            )
+            if response_node_id != requested_node_id:
+                raise ValueError(
+                    "GraphBlocks async callback response node_id "
+                    f"must match requested node {requested_node_id!r}"
+                )
+        if requested_attempt_id is not None:
+            response_attempt_id = _payload_string(
+                response_payload,
+                "GraphBlocks async callback response",
+                "attempt_id",
+                "attemptId",
+                "attempt_id",
+            )
+            if response_attempt_id != requested_attempt_id:
+                raise ValueError(
+                    "GraphBlocks async callback response attempt_id "
+                    f"must match requested attempt {requested_attempt_id!r}"
+                )
+        if requested_provider_operation_id is not None:
+            response_provider_operation_id = _payload_string(
+                response_payload,
+                "GraphBlocks async callback response",
+                "provider_operation_id",
+                "providerOperationId",
+                "provider_operation_id",
+            )
+            if response_provider_operation_id != requested_provider_operation_id:
+                raise ValueError(
+                    "GraphBlocks async callback response provider_operation_id "
+                    f"must match requested provider operation {requested_provider_operation_id!r}"
+                )
+        return response_payload
 
     def run_events(self, run_id: str, *, cursor: object | None = None) -> tuple[ApplicationEvent, ...]:
         requested_run_id = _http_non_empty_string("run_id", run_id)
@@ -1430,11 +1527,9 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, label)
-        _validate_response_delivery_id(
-            label,
-            requested_delivery_id,
-            _payload_string(payload, label, "delivery_id", "deliveryId", "delivery_id"),
-        )
+        response_delivery_id = _payload_string(payload, label, "delivery_id", "deliveryId", "delivery_id")
+        if response_delivery_id != requested_delivery_id:
+            raise ValueError(f"{label} delivery_id must match requested delivery {requested_delivery_id!r}")
         return payload
 
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
@@ -1542,12 +1637,6 @@ def _validate_response_run_id(label: str, expected_run_id: str, value: str) -> s
 def _validate_response_subscription_id(label: str, expected_subscription_id: str, value: str) -> str:
     if value != expected_subscription_id:
         raise ValueError(f"{label} subscription_id must match requested subscription {expected_subscription_id!r}")
-    return value
-
-
-def _validate_response_delivery_id(label: str, expected_delivery_id: str, value: str) -> str:
-    if value != expected_delivery_id:
-        raise ValueError(f"{label} delivery_id must match requested delivery {expected_delivery_id!r}")
     return value
 
 
