@@ -1754,6 +1754,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   retry evidence tied to durable retry metadata.
 - Durable callback projection retry evidence now requires 5xx retry-scheduled deliveries to remain
   in `failed` status, preventing delivered or acknowledged rows from proving retry behavior.
+- Durable callback projection duplicate evidence now requires receiver `409` rows to be in
+  `acknowledged` status, preventing duplicate-acknowledgement behavior from being proven by merely
+  delivered rows.
 - Durable callback projection delivery evidence now requires parseable `deliveredAt` for
   `delivered`/`acknowledged` rows and parseable `acknowledgedAt` for acknowledged duplicate rows,
   while rejecting acknowledgements that precede delivery time, aligning the shared TCK projection

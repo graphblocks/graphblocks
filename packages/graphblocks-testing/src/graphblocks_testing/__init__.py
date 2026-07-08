@@ -7598,6 +7598,14 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].status",
                             }
                         )
+                    if receiver_status == 409 and status != "acknowledged":
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery duplicate 409 requires acknowledged status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
                     delivered_at = None
                     if status in {"delivered", "acknowledged"}:
                         raw_delivered_at = delivery.get(
