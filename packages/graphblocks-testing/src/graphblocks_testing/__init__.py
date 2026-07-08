@@ -8123,6 +8123,8 @@ class TckRunner:
                         ("runId", "run_id"),
                         ("nodeId", "node_id"),
                         ("attemptId", "attempt_id"),
+                        ("releaseId", "release_id"),
+                        ("policySnapshotId", "policy_snapshot_id"),
                     ):
                         path_key = (
                             key

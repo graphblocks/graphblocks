@@ -1919,6 +1919,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                     ("runId", "run_id"),
                     ("nodeId", "node_id"),
                     ("attemptId", "attempt_id"),
+                    ("releaseId", "release_id"),
+                    ("policySnapshotId", "policy_snapshot_id"),
                 ] {
                     let path_key = if operation.contains_key(key) || !operation.contains_key(alias)
                     {
