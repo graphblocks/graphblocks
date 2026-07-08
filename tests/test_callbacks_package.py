@@ -1807,6 +1807,37 @@ def test_external_callback_receipt_accepts_artifact_backed_large_payload() -> No
     assert receipt.payload_digest == projection.payload_digest
 
 
+def test_external_callback_receipt_rejects_unauthenticated_verifier() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    projection = project_callback_payload(envelope.payload, max_inline_bytes=256)
+
+    _assert_raises_value_error(
+        "verified_by must identify an authenticated verifier",
+        lambda: record_external_callback_receipt(
+            envelope,
+            projection,
+            operation_id="op_ci_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            verified_by="unauthenticated",
+            policy_snapshot_id="policy_001",
+            received_at="2026-07-02T00:00:02Z",
+        ),
+    )
+
+
 def test_external_callback_receipt_rejects_idempotency_key_mismatch() -> None:
     envelope = CallbackEnvelope(
         delivery_id="cb_001",

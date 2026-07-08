@@ -1168,6 +1168,8 @@ class ExternalCallbackReceipt:
             "release_id",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
+        if self.verified_by.strip().lower() == "unauthenticated":
+            raise ValueError("verified_by must identify an authenticated verifier")
         _require_sha256_digest("external callback receipt payload_digest", self.payload_digest)
         if self.tenant_id is not None:
             _require_non_empty_string("tenant_id", self.tenant_id)

@@ -1300,6 +1300,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - External callback receipt projection now also rejects operation id drift when the callback
   envelope carries `operation_id`, so authenticated callback envelopes cannot be re-bound to a
   different async operation during journal-before-resume projection.
+- External callback receipt projection rejects explicitly `unauthenticated` verifier markers, so
+  the Python callback facade cannot mint durable `ExternalCallbackReceived` metadata from an
+  unauthenticated callback.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, tenant, and optional provider-operation identity into stable resume fences so
@@ -1392,9 +1395,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async callback ingestion now treats `provider_operation_id` as fenced operation metadata and
   rejects callbacks that omit or contradict the registered provider operation before journaling
   receipt or resuming the run.
-- `graphblocks-runtime-core` now rejects explicitly `unauthenticated` async callback submissions
-  before normal receipt journaling, artifact-backed callback compaction, or pre-operation
-  quarantine can create resumable state.
+- `graphblocks-runtime-core` and `graphblocks-callbacks` now reject explicitly `unauthenticated`
+  async callback submissions/receipts before normal receipt journaling, artifact-backed callback
+  compaction, or pre-operation quarantine can create resumable state.
 - `graphblocks-server` now applies the same provider-operation fence at callback ingress for
   repeated receipts on one operation, producing a dedicated `provider_operation_mismatch`
   rejection before the generic duplicate-receipt path.
