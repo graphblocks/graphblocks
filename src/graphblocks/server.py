@@ -2318,6 +2318,61 @@ class GraphBlocksServerApp:
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
                         )
+                        events = self._events_by_run_id[submission.run_id]
+                        sequence = self._last_event_sequence(events, owner="late async callback event") + 1
+                        release_id = run_status.get("releaseId")
+                        if not isinstance(release_id, str) or not release_id:
+                            release_id = "local"
+                        late_event = ApplicationEvent.new(
+                            "LateExternalCallbackReceived",
+                            ApplicationEventMetadata(
+                                event_id=f"{submission.run_id}:late-callback:{sequence}",
+                                run_id=submission.run_id,
+                                response_id=f"callback:{submission.callback_id}",
+                                sequence=sequence,
+                                release_id=release_id,
+                                policy_snapshot_id=submission.policy_snapshot_id,
+                                occurred_at=submission.received_at,
+                                cursor=f"{submission.run_id}:{sequence}",
+                                node_id=submission.node_id,
+                                operation_id=submission.operation_id,
+                                visibility="operator",
+                            ),
+                            payload={
+                                "callbackId": submission.callback_id,
+                                "idempotencyKey": submission.idempotency_key,
+                                "payloadDigest": submission.payload_digest,
+                                "verifiedBy": submission.verified_by,
+                                "policySnapshotId": submission.policy_snapshot_id,
+                                "attemptId": submission.attempt_id,
+                                "status": state,
+                                "reason": "terminal_run",
+                                "receivedAt": submission.received_at,
+                            },
+                        )
+                        late_event_payload = {
+                            "kind": late_event.kind,
+                            "metadata": {
+                                "eventId": late_event.metadata.event_id,
+                                "runId": late_event.metadata.run_id,
+                                "responseId": late_event.metadata.response_id,
+                                "turnId": late_event.metadata.turn_id,
+                                "sequence": late_event.metadata.sequence,
+                                "cursor": late_event.metadata.cursor,
+                                "releaseId": late_event.metadata.release_id,
+                                "policySnapshotId": late_event.metadata.policy_snapshot_id,
+                                "occurredAt": late_event.metadata.occurred_at,
+                                "graphId": late_event.metadata.graph_id,
+                                "nodeId": late_event.metadata.node_id,
+                                "operationId": late_event.metadata.operation_id,
+                                "visibility": late_event.metadata.visibility,
+                            },
+                            "payload": dict(late_event.payload),
+                        }
+                        self._events_by_run_id[submission.run_id] = (
+                            *events,
+                            _freeze_json_value("application event stream", "event", late_event_payload),
+                        )
                         return ServerResponse.json(
                             409,
                             {

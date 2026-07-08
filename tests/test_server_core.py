@@ -3043,6 +3043,52 @@ def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
             "receivedAt": "2026-07-03T00:00:02Z",
         },
     )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-terminal-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": "run-terminal-1:2"},
+            cookies={},
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-terminal-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    event_payload = json.loads(events.body.decode("utf-8"))
+    status_payload = json.loads(status.body.decode("utf-8"))
+    assert events.status_code == 200
+    assert event_payload["lastCursor"] == "run-terminal-1:3"
+    assert [event["kind"] for event in event_payload["events"]] == ["LateExternalCallbackReceived"]
+    late_event = event_payload["events"][0]
+    assert late_event["metadata"]["sequence"] == 3
+    assert late_event["metadata"]["cursor"] == "run-terminal-1:3"
+    assert late_event["metadata"]["operationId"] == "op-ci-terminal-1"
+    assert late_event["metadata"]["nodeId"] == "waitCI"
+    assert late_event["metadata"]["visibility"] == "operator"
+    assert late_event["payload"] == {
+        "callbackId": "cb-terminal",
+        "idempotencyKey": "idem-callback-terminal",
+        "payloadDigest": graphblocks.canonical_hash({"status": "completed"}),
+        "verifiedBy": "callback-relay",
+        "policySnapshotId": "local",
+        "attemptId": "attempt-1",
+        "status": "cancelled",
+        "reason": "terminal_run",
+        "receivedAt": "2026-07-03T00:00:02Z",
+    }
+    assert status_payload["state"] == "cancelled"
+    assert status_payload["completedAt"] == "2026-07-03T00:00:01Z"
+    assert status_payload["updatedAt"] == "2026-07-03T00:00:02Z"
+    assert status_payload["waitingOn"] == []
+    assert status_payload["activeOperations"] == []
 
 
 def test_server_app_deduplicates_async_callback_sequence_deterministically() -> None:
