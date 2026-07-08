@@ -2648,6 +2648,7 @@ class GraphBlocksServerApp:
                                 "nearestAvailableCursor": nearest_cursor,
                                 "lastCursor": f"{run_id}:{last_sequence}",
                                 "lastSequence": last_sequence,
+                                "runStatus": self._run_status_payload(run_id, events, include_ok=False),
                             },
                         )
                     else:
@@ -3357,6 +3358,7 @@ class GraphBlocksServerApp:
                         "nearestAvailableCursor": nearest_cursor,
                         "lastCursor": f"{run_id}:{last_sequence}",
                         "lastSequence": last_sequence,
+                        "runStatus": self._run_status_payload(run_id, events, include_ok=False),
                     },
                 )
             else:

@@ -1197,7 +1197,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   returning only events after that cursor plus `lastCursor` metadata. Malformed event cursors are
   rejected before retention lookup, retained event `sequence` metadata must be a non-boolean
   non-negative integer before replay cursor projection, and well-formed missing cursors return
-  `CursorExpired`.
+  `CursorExpired` with nearest replay cursor, last cursor, and current `runStatus` recovery
+  metadata.
   Runtime protocol events now require a non-empty replay cursor at construction time, preserving
   cursor-based replay and duplicate-tolerant attach semantics for the authoritative event stream.
   The Python `ApplicationProtocolLog` facade also rejects unresolved replay cursors instead of
@@ -1208,10 +1209,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   same event-derived run status projection, keeping `POST /runs` reserved for `InvokeGraph`.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`
   `AttachToRun` route, replaying stored events after a supplied cursor and returning explicit
-  `CursorExpired` recovery metadata when the requested cursor is no longer retained. Attach cursors
-  must belong to the target run and use a non-negative integer sequence; retained event `sequence`
-  metadata must also be a non-boolean non-negative integer before attach replay projection, and
-  malformed or wrong-run cursors are rejected before retention lookup.
+  `CursorExpired` recovery metadata, including current `runStatus`, when the requested cursor is no
+  longer retained. Attach cursors must belong to the target run and use a non-negative integer
+  sequence; retained event `sequence` metadata must also be a non-boolean non-negative integer
+  before attach replay projection, and malformed or wrong-run cursors are rejected before retention
+  lookup.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
   event stream and current run status. Stored detach projection records are immutable snapshots,

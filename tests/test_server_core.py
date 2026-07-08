@@ -4000,7 +4000,12 @@ def test_server_app_reports_stored_event_cursor_expired() -> None:
     app._events_by_run_id["run-events-cursor-expired-1"] = (
         {
             "kind": "RunStarted",
-            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "metadata": {
+                "eventId": "evt-start",
+                "sequence": 1,
+                "releaseId": "release-events-cursor-expired-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
             "payload": {},
         },
     )
@@ -4024,6 +4029,17 @@ def test_server_app_reports_stored_event_cursor_expired() -> None:
         "nearestAvailableCursor": "run-events-cursor-expired-1:1",
         "lastCursor": "run-events-cursor-expired-1:1",
         "lastSequence": 1,
+        "runStatus": {
+            "runId": "run-events-cursor-expired-1",
+            "state": "running",
+            "releaseId": "release-events-cursor-expired-1",
+            "lastCursor": "run-events-cursor-expired-1:1",
+            "startedAt": "2026-07-02T00:00:00Z",
+            "updatedAt": "2026-07-02T00:00:00Z",
+            "completedAt": None,
+            "waitingOn": [],
+            "activeOperations": [],
+        },
     }
 
 
@@ -4410,6 +4426,7 @@ def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
                     "inputs": {"message": {"text": "ok"}},
                     "runId": "run-attach-expired-1",
                     "responseId": "response-attach-expired-1",
+                    "occurredAt": "2026-07-02T00:00:00Z",
                 }
             ).encode("utf-8"),
         )
@@ -4434,6 +4451,17 @@ def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
         "nearestAvailableCursor": "run-attach-expired-1:1",
         "lastCursor": "run-attach-expired-1:2",
         "lastSequence": 2,
+        "runStatus": {
+            "runId": "run-attach-expired-1",
+            "state": "succeeded",
+            "releaseId": "local",
+            "lastCursor": "run-attach-expired-1:2",
+            "startedAt": "2026-07-02T00:00:00Z",
+            "updatedAt": "2026-07-02T00:00:00Z",
+            "completedAt": "2026-07-02T00:00:00Z",
+            "waitingOn": [],
+            "activeOperations": [],
+        },
     }
 
 
