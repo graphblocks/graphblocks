@@ -7159,6 +7159,7 @@ class TckRunner:
                 }
                 receiver_statuses = []
                 next_retry_at_values = []
+                seen_idempotency_keys: dict[str, tuple[str, str]] = {}
                 for index, delivery in enumerate(deliveries):
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7203,6 +7204,29 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].idempotencyKey",
                             }
                         )
+                    else:
+                        subscription_id = delivery.get(
+                            "subscriptionId", delivery.get("subscription_id")
+                        )
+                        event_id = delivery.get("eventId", delivery.get("event_id"))
+                        logical_delivery = (
+                            subscription_id.strip() if isinstance(subscription_id, str) else "",
+                            event_id.strip() if isinstance(event_id, str) else "",
+                        )
+                        normalized_idempotency_key = idempotency_key.strip()
+                        previous_delivery = seen_idempotency_keys.get(
+                            normalized_idempotency_key
+                        )
+                        if previous_delivery is None:
+                            seen_idempotency_keys[normalized_idempotency_key] = logical_delivery
+                        elif previous_delivery != logical_delivery:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "callback delivery idempotencyKey must be unique",
+                                    "path": f"$.deliveries[{index}].idempotencyKey",
+                                }
+                            )
                     raw_status = delivery.get("status")
                     if not isinstance(raw_status, str) or raw_status not in valid_delivery_statuses:
                         diagnostics.append(

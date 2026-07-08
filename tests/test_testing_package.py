@@ -1303,6 +1303,57 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
     )
 
 
+def test_testing_package_rejects_duplicate_callback_delivery_idempotency_keys(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/duplicate-callback-delivery-idempotency",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "receiver_error",
+                },
+                {
+                    "deliveryId": "del-002",
+                    "subscriptionId": "sub-ide-002",
+                    "eventId": "evt-0101",
+                    "runId": "run-coding-001",
+                    "sequence": 101,
+                    "cursor": "evt-0101",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 409,
+                    "status": "acknowledged",
+                },
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "callback delivery idempotencyKey must be unique",
+            "path": "$.deliveries[1].idempotencyKey",
+        },
+    )
+
+
 def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
