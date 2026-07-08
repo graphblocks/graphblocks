@@ -1068,6 +1068,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                 }));
             }
             if let Some(subscription) = raw_subscription.and_then(Value::as_object) {
+                if subscription
+                    .get("subscriptionId")
+                    .or_else(|| subscription.get("subscription_id"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|subscription_id| subscription_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackProjectionInvalid",
+                        "message": "callback subscription requires subscriptionId",
+                        "path": "$.subscription.subscriptionId",
+                    }));
+                }
                 let mandatory = subscription
                     .get("mandatory")
                     .and_then(Value::as_bool)

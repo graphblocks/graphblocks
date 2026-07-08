@@ -1775,6 +1775,41 @@
     }
   },
   {
+    "name": "webhook_delivery_subscription_missing_subscription_id_rejected",
+    "kind": "callback_delivery_projection",
+    "subscription": {
+      "subscriptionId": " ",
+      "failurePolicy": "retry_then_dead_letter",
+      "mandatory": false
+    },
+    "deliveries": [
+      {
+        "deliveryId": "del-sub-envelope-id-missing-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0098",
+        "runId": "run-coding-001",
+        "sequence": 98,
+        "cursor": "evt-0098",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0098",
+        "receiverStatus": 202,
+        "status": "delivered",
+        "deliveredAt": "2026-07-02T00:00:02Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackProjectionInvalid",
+        "message": "callback subscription requires subscriptionId",
+        "path": "$.subscription.subscriptionId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_non_boolean_subscription_mandatory_rejected",
     "kind": "callback_delivery_projection",
     "subscription": {

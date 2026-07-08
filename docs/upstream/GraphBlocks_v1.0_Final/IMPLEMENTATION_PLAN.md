@@ -1749,6 +1749,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   including nonblank `subscriptionId`, protocol-defined `failurePolicy`, and boolean `mandatory`,
   and reject mandatory subscriptions with omitted or `best_effort` failure policy, so
   subscription-level delivery policy evidence cannot be silently ignored by Rust or Python.
+- Durable callback projection shared TCK fixtures now include expected-diagnostic coverage for
+  missing or blank subscription envelope `subscriptionId`, keeping Rust and Python aligned on
+  `CallbackSubscription` identity validation.
 - Durable callback projection shared TCK fixtures now have explicit expected-diagnostic coverage
   for non-boolean `mandatory` subscription flags, preserving the `CallbackSubscription` schema
   contract in the MVP callback protocol.
