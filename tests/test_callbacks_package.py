@@ -6,6 +6,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLBACKS_SRC = ROOT / "packages" / "graphblocks-callbacks" / "src"
@@ -107,6 +109,30 @@ def test_callback_envelope_deep_copies_payload() -> None:
     projected = envelope.to_payload()
     projected["payload"]["summary"]["files"].append("c.py")  # type: ignore[index, union-attr]
 
+    assert envelope.to_payload()["payload"] == {"summary": {"files": ["a.py"]}}
+
+
+def test_callback_envelope_freezes_internal_payload_snapshot() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"summary": {"files": ["a.py"]}},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+    )
+
+    assert envelope.payload["summary"]["files"] == ("a.py",)  # type: ignore[index]
+    with pytest.raises(TypeError):
+        envelope.payload["summary"] = {"files": ["mutated"]}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        envelope.payload["summary"]["files"] = ["mutated"]  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        envelope.payload["summary"]["files"].append("mutated")  # type: ignore[index, union-attr]
     assert envelope.to_payload()["payload"] == {"summary": {"files": ["a.py"]}}
 
 
@@ -1066,6 +1092,19 @@ def test_callback_payload_projection_keeps_small_payload_inline() -> None:
     )
     assert projection.artifact is None
     assert projection.payload_digest.startswith("sha256:")
+
+
+def test_callback_payload_projection_freezes_inline_payload_snapshot() -> None:
+    projection = project_callback_payload(
+        {"status": "completed", "checks": ["lint"]},
+        max_inline_bytes=256,
+    )
+
+    assert projection.payload["checks"] == ("lint",)
+    with pytest.raises(TypeError):
+        projection.payload["status"] = "failed"
+    with pytest.raises(AttributeError):
+        projection.payload["checks"].append("unit")  # type: ignore[union-attr]
 
 
 def test_callback_payload_projection_converts_large_payload_to_artifact_ref() -> None:

@@ -52,6 +52,33 @@ VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
 
+class _FrozenJsonArray(tuple[object, ...]):
+    pass
+
+
+class _FrozenJsonObject(dict[str, object]):
+    def __setitem__(self, key: str, value: object) -> None:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def pop(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def popitem(self) -> tuple[str, object]:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def setdefault(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def update(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -129,26 +156,37 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     return normalized
 
 
-def _validate_json_value(value: object) -> None:
+def _freeze_json_value(value: object) -> object:
     if value is None or isinstance(value, str) or isinstance(value, bool):
-        return
+        return value
     if isinstance(value, int):
-        return
+        return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("payload must not contain non-finite numbers")
-        return
+        return value
+    if isinstance(value, _FrozenJsonArray):
+        return _FrozenJsonArray(_freeze_json_value(item) for item in value)
     if isinstance(value, list):
-        for item in value:
-            _validate_json_value(item)
-        return
-    if isinstance(value, dict):
+        return _FrozenJsonArray(_freeze_json_value(item) for item in value)
+    if isinstance(value, tuple):
+        raise ValueError("payload must contain only JSON values")
+    if isinstance(value, Mapping):
+        frozen: dict[str, object] = {}
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("payload must contain only string object keys")
-            _validate_json_value(item)
-        return
+            frozen[key] = _freeze_json_value(item)
+        return _FrozenJsonObject(frozen)
     raise ValueError("payload must contain only JSON values")
+
+
+def _thaw_json_value(value: object) -> object:
+    if isinstance(value, _FrozenJsonArray):
+        return [_thaw_json_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    return deepcopy(value)
 
 
 def _deterministic_jitter_ms(seed: str, jitter_ms: int) -> int:
@@ -158,10 +196,12 @@ def _deterministic_jitter_ms(seed: str, jitter_ms: int) -> int:
     return int(digest[:8], 16) % (jitter_ms + 1)
 
 
-def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
-    _validate_json_value(dict(value))
-    json.dumps(value, allow_nan=False)
-    return deepcopy(dict(value))
+def _json_payload(value: Mapping[str, object]) -> _FrozenJsonObject:
+    frozen = _freeze_json_value(value)
+    if not isinstance(frozen, _FrozenJsonObject):
+        raise ValueError("payload must be a JSON object")
+    json.dumps(frozen, allow_nan=False)
+    return frozen
 
 
 def _callback_resume_binding_key(
@@ -1105,7 +1145,7 @@ class CallbackEnvelope:
             "sequence": self.sequence,
             "cursor": self.cursor,
             "type": self.type,
-            "payload": deepcopy(self.payload),
+            "payload": _thaw_json_value(self.payload),
             "idempotency_key": self.idempotency_key,
             "occurred_at": self.occurred_at,
             "delivered_at": self.delivered_at,
