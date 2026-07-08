@@ -632,6 +632,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].nextRetryAt"),
                     }));
                 }
+                if !(receiver_status == 429 || receiver_status >= 500)
+                    && delivery
+                        .get("nextRetryAt")
+                        .or_else(|| delivery.get("next_retry_at"))
+                        .is_some()
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| {
+                            matches!(
+                                status,
+                                "delivered"
+                                    | "acknowledged"
+                                    | "dead_lettered"
+                                    | "cancelled"
+                                    | "expired"
+                            )
+                        })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "terminal callback delivery must not have nextRetryAt",
+                        "path": format!("$.deliveries[{index}].nextRetryAt"),
+                    }));
+                }
                 if (200..=299).contains(&receiver_status)
                     && delivery
                         .get("status")
