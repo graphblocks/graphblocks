@@ -117,7 +117,17 @@ impl TuiRunView {
                 earliest_available_cursor,
                 last_cursor,
                 last_sequence,
+                run_status,
             } => {
+                if let Some(status) = run_status {
+                    if status.run_id == self.run_id {
+                        self.state = status.state;
+                        self.release_id = status.release_id;
+                        self.last_cursor = Some(status.last_cursor);
+                        self.waiting_count = status.waiting_on.len();
+                        self.active_operations = status.active_operations;
+                    }
+                }
                 self.cursor_expired = Some(CursorExpiredProjection {
                     requested_cursor,
                     earliest_available_cursor,

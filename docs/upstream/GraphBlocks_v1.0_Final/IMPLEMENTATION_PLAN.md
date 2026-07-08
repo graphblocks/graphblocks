@@ -1013,7 +1013,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   only when the full event matches the committed record; mutated replays are rejected as conflicts
   so a globally unique `event_id` cannot hide divergent payload, cursor, sequence, or metadata.
 - `AttachToRun` replay now has a typed runtime result that either returns retained missed events
-  and the live-stream cursor, or reports expired-cursor recovery metadata.
+  and the live-stream cursor, or reports expired-cursor recovery metadata. Rust
+  `ApplicationProtocolLog::attach_to_run_with_status(...)` can attach the current
+  `RunStatusSnapshot` to expired-cursor recovery, and the runtime TUI projection applies that
+  snapshot when it belongs to the same run.
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,
   localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
   with explicit host allowlisting for trusted development or private deployments.

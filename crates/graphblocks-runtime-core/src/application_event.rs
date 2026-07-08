@@ -8,6 +8,7 @@ use crate::output_policy::{
     PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
 };
 use crate::policy::PolicyDecision;
+use crate::run_store::RunStatusSnapshot;
 use crate::tool_approval::ToolApprovalRequest;
 use crate::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
@@ -1676,6 +1677,7 @@ pub enum AttachToRunReplay {
         earliest_available_cursor: Option<String>,
         last_cursor: Option<String>,
         last_sequence: Option<u64>,
+        run_status: Option<RunStatusSnapshot>,
     },
 }
 
@@ -1803,6 +1805,36 @@ impl ApplicationProtocolLog {
         replay_limit: usize,
         retained_event_count: usize,
     ) -> AttachToRunReplay {
+        self.attach_to_run_with_optional_status(
+            last_cursor,
+            replay_limit,
+            retained_event_count,
+            None,
+        )
+    }
+
+    pub fn attach_to_run_with_status(
+        &self,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+        run_status: RunStatusSnapshot,
+    ) -> AttachToRunReplay {
+        self.attach_to_run_with_optional_status(
+            last_cursor,
+            replay_limit,
+            retained_event_count,
+            Some(run_status),
+        )
+    }
+
+    fn attach_to_run_with_optional_status(
+        &self,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+        run_status: Option<RunStatusSnapshot>,
+    ) -> AttachToRunReplay {
         match self.replay_after_retained(last_cursor, replay_limit, retained_event_count) {
             Ok(replayed_events) => AttachToRunReplay::Attached {
                 replayed_events,
@@ -1818,6 +1850,7 @@ impl ApplicationProtocolLog {
                 earliest_available_cursor,
                 last_cursor,
                 last_sequence,
+                run_status,
             },
         }
     }

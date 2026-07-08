@@ -106,6 +106,12 @@ fn tui_view_deduplicates_replay_and_live_events() {
 #[test]
 fn tui_view_records_cursor_expiry_without_losing_status_context() {
     let mut view = TuiRunView::from_status(status_snapshot());
+    let recovery_status = RunStatusSnapshot {
+        last_cursor: "cursor-030".to_owned(),
+        updated_at_unix_ms: 1_800_300,
+        active_operations: vec!["op-ci-2".to_owned()],
+        ..status_snapshot()
+    };
 
     assert_eq!(
         view.apply_attach_replay(AttachToRunReplay::CursorExpired {
@@ -113,6 +119,7 @@ fn tui_view_records_cursor_expiry_without_losing_status_context() {
             earliest_available_cursor: Some("cursor-010".to_owned()),
             last_cursor: Some("cursor-030".to_owned()),
             last_sequence: Some(30),
+            run_status: Some(recovery_status),
         }),
         TuiAttachState::CursorExpired
     );
@@ -120,6 +127,7 @@ fn tui_view_records_cursor_expiry_without_losing_status_context() {
     assert_eq!(view.run_id(), "run-coding-1");
     assert_eq!(view.last_cursor(), Some("cursor-030"));
     assert_eq!(view.last_sequence(), Some(30));
+    assert_eq!(view.active_operations(), ["op-ci-2"]);
     assert_eq!(
         view.cursor_expired().unwrap().requested_cursor,
         "cursor-old"

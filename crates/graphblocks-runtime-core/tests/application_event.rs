@@ -12,6 +12,7 @@ use graphblocks_runtime_core::output_policy::{
     OutputPolicyDecision, OutputPolicyDecisionError, TerminalReason,
 };
 use graphblocks_runtime_core::policy::{PolicyDecision, PolicyEffect};
+use graphblocks_runtime_core::run_store::{RunStatus, RunStatusSnapshot};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
     ToolResolutionScope,
@@ -1605,6 +1606,20 @@ fn protocol_event_metadata(
     }
 }
 
+fn protocol_run_status_snapshot(last_cursor: &str) -> RunStatusSnapshot {
+    RunStatusSnapshot {
+        run_id: "run-1".to_owned(),
+        state: RunStatus::Running,
+        release_id: "release-1".to_owned(),
+        last_cursor: last_cursor.to_owned(),
+        started_at_unix_ms: 1_700_200,
+        updated_at_unix_ms: 1_700_204,
+        completed_at_unix_ms: None,
+        waiting_on: Vec::new(),
+        active_operations: Vec::new(),
+    }
+}
+
 #[test]
 fn application_command_names_match_the_client_protocol() {
     let names = [
@@ -2588,6 +2603,41 @@ fn attach_to_run_reports_expired_cursor_recovery_metadata() {
             earliest_available_cursor: Some("cursor-3".to_owned()),
             last_cursor: Some("cursor-4".to_owned()),
             last_sequence: Some(4),
+            run_status: None,
+        }
+    );
+}
+
+#[test]
+fn attach_to_run_reports_expired_cursor_with_current_run_status() {
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=4 {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(
+                    &format!("event-{sequence}"),
+                    sequence,
+                    &format!("cursor-{sequence}"),
+                ),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+    let status = protocol_run_status_snapshot("cursor-4");
+
+    let attach = log.attach_to_run_with_status(Some("cursor-1"), 10, 2, status.clone());
+
+    assert_eq!(
+        attach,
+        AttachToRunReplay::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: Some("cursor-3".to_owned()),
+            last_cursor: Some("cursor-4".to_owned()),
+            last_sequence: Some(4),
+            run_status: Some(status),
         }
     );
 }
