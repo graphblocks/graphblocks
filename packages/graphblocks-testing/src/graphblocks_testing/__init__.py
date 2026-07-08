@@ -7375,6 +7375,26 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].{event_run_id_path}",
                             }
                         )
+                    event_release_id = raw_event.get(
+                        "releaseId", raw_event.get("release_id")
+                    )
+                    event_release_id_path = (
+                        "releaseId"
+                        if "releaseId" in raw_event or "release_id" not in raw_event
+                        else "release_id"
+                    )
+                    if (
+                        not isinstance(event_release_id, str)
+                        or not event_release_id.strip()
+                    ):
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires releaseId",
+                                "path": f"$.events[{event_index}].{event_release_id_path}",
+                            }
+                        )
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False

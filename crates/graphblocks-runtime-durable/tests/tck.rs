@@ -570,6 +570,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }
                     Some(_) => {}
                 }
+                let event_release_id_path =
+                    if event.contains_key("releaseId") || !event.contains_key("release_id") {
+                        "releaseId"
+                    } else {
+                        "release_id"
+                    };
+                if event
+                    .get("releaseId")
+                    .or_else(|| event.get("release_id"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|release_id| release_id.trim().is_empty())
+                {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires releaseId",
+                        "path": format!("$.events[{index}].{event_release_id_path}"),
+                    }));
+                }
                 if event
                     .get("cursor")
                     .and_then(Value::as_str)

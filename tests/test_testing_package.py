@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 239
+    assert [case.kind for case in cases] == ["durable"] * 240
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1245,6 +1245,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_non_object_event_rejected",
         "background_run_event_missing_run_id_rejected",
         "background_run_event_run_id_mismatch_rejected",
+        "background_run_event_missing_release_id_rejected",
         "background_run_event_missing_event_id_rejected",
         "background_run_duplicate_event_id_rejected",
         "background_run_event_missing_cursor_rejected",
@@ -1584,6 +1585,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "background_run_event_run_id_mismatch_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_event_missing_release_id_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -2615,6 +2621,7 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2663,6 +2670,7 @@ def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeyp
                 {
                     "eventId": "evt-000002",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -2707,6 +2715,7 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -2717,6 +2726,7 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2755,6 +2765,7 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -2765,6 +2776,7 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2806,6 +2818,7 @@ def test_testing_package_rejects_non_object_background_run_initial_response(monk
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2853,6 +2866,7 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2891,6 +2905,7 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -2901,6 +2916,7 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2939,6 +2955,7 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -2949,6 +2966,7 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2996,6 +3014,7 @@ def test_testing_package_rejects_background_response_without_run_id(monkeypatch)
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3034,6 +3053,7 @@ def test_testing_package_rejects_non_object_background_run_event(monkeypatch) ->
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3073,6 +3093,7 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3082,6 +3103,7 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
             "events": [
                 {
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3120,6 +3142,7 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3130,6 +3153,7 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": " ",
@@ -3168,6 +3192,7 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3178,6 +3203,7 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3218,6 +3244,7 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3228,6 +3255,7 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
                 {
                     "eventId": "evt-000002",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -3272,6 +3300,7 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
             "sourceOfTruth": "ApplicationEventStream",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3282,6 +3311,7 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
                 {
                     "eventId": "evt-000002",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -3325,6 +3355,7 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
             "responseMode": "accepted",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3335,6 +3366,7 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3373,6 +3405,7 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
             "sourceOfTruth": True,
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3383,6 +3416,7 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3421,6 +3455,7 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
             "sourceOfTruth": "CallbackSubscription",
             "initialResponse": {
                 "runId": "run-001",
+                "releaseId": "release-background-001",
                 "status": "accepted",
                 "eventStream": "/v1/runs/run-001/events",
                 "websocket": "/v1/runs/run-001/ws",
@@ -3431,6 +3466,7 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
                 {
                     "eventId": "evt-000001",
                     "runId": "run-001",
+                    "releaseId": "release-background-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -5978,6 +6014,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_non_object_event_rejected",
         "background_run_event_missing_run_id_rejected",
         "background_run_event_run_id_mismatch_rejected",
+        "background_run_event_missing_release_id_rejected",
         "background_run_event_missing_event_id_rejected",
         "background_run_duplicate_event_id_rejected",
         "background_run_event_missing_cursor_rejected",
