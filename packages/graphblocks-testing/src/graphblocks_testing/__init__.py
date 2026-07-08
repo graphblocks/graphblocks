@@ -7066,6 +7066,7 @@ class TckRunner:
                     "expired",
                 }
                 receiver_statuses = []
+                next_retry_at_values = []
                 for index, delivery in enumerate(deliveries):
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7146,6 +7147,22 @@ class TckRunner:
                         else:
                             receiver_status = raw_receiver_status
                     receiver_statuses.append(receiver_status)
+                    raw_next_retry_at = delivery.get(
+                        "nextRetryAt", delivery.get("next_retry_at")
+                    )
+                    next_retry_at = None
+                    if raw_next_retry_at is not None:
+                        if not isinstance(raw_next_retry_at, str) or not raw_next_retry_at.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "callback delivery requires nextRetryAt timestamp",
+                                    "path": f"$.deliveries[{index}].nextRetryAt",
+                                }
+                            )
+                        else:
+                            next_retry_at = raw_next_retry_at
+                    next_retry_at_values.append(next_retry_at)
                     if status in {"failed", "dead_lettered", "cancelled", "expired"}:
                         last_error = delivery.get("lastError", delivery.get("last_error"))
                         if not isinstance(last_error, str) or not last_error.strip():
@@ -7160,11 +7177,12 @@ class TckRunner:
                 acknowledged_duplicates = []
                 for index, delivery in enumerate(deliveries):
                     receiver_status = receiver_statuses[index]
+                    next_retry_at = next_retry_at_values[index]
                     delivery_id = str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
                     if (
                         receiver_status is not None
                         and receiver_status >= 500
-                        and delivery.get("nextRetryAt", delivery.get("next_retry_at")) is not None
+                        and next_retry_at is not None
                     ):
                         scheduled_retry_ids.append(delivery_id)
                     if (
