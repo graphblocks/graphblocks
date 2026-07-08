@@ -1784,6 +1784,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run replay evidence now requires nonblank event `eventId`/`event_id` and
   `cursor` fields before proving cursor replay, preventing anonymous or cursorless events from
   satisfying replay assertions.
+- Durable background-run authority evidence now requires `sourceOfTruth`/`source_of_truth` to be
+  exactly `ApplicationEventStream`, preventing callback subscriptions or truthy placeholders from
+  satisfying the authoritative-event-stream invariant.
 - Durable async callback resume-guard evidence now requires real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks, preventing truthy strings from satisfying callback resume conformance.

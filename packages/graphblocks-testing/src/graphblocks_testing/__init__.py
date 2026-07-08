@@ -7208,13 +7208,33 @@ class TckRunner:
                             "path": f"$.attach.{summary_path}",
                         }
                     )
+                source_of_truth_path = (
+                    "sourceOfTruth"
+                    if "sourceOfTruth" in fixture or "source_of_truth" not in fixture
+                    else "source_of_truth"
+                )
+                source_of_truth = fixture.get(
+                    "sourceOfTruth", fixture.get("source_of_truth")
+                )
+                authoritative_stream = (
+                    isinstance(source_of_truth, str)
+                    and source_of_truth == "ApplicationEventStream"
+                )
+                if not authoritative_stream:
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run sourceOfTruth must be ApplicationEventStream",
+                            "path": f"$.{source_of_truth_path}",
+                        }
+                    )
                 observed = {
                     "runContinuesAfterDetach": lifetime in {"background", "job"} and not cancel_run,
                     "acceptedResponseReturnsRunId": accepted_response_has_run_id,
                     "replayEventIds": replay_after_cursor,
                     "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),
                     "summaryIncluded": summary_included,
-                    "authoritativeStream": str(fixture.get("sourceOfTruth", fixture.get("source_of_truth", ""))) == "ApplicationEventStream",
+                    "authoritativeStream": authoritative_stream,
                 }
             elif kind == "callback_delivery_projection":
                 raw_deliveries = fixture.get("deliveries", [])

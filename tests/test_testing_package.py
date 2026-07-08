@@ -1627,6 +1627,122 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
     )
 
 
+def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/missing-background-run-source-of-truth",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000001",
+                    "cursor": "evt-000001",
+                }
+            ],
+            "attach": {},
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run sourceOfTruth must be ApplicationEventStream",
+            "path": "$.sourceOfTruth",
+        },
+    )
+
+
+def test_testing_package_rejects_non_string_background_run_source_of_truth(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-string-background-run-source-of-truth",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": True,
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000001",
+                    "cursor": "evt-000001",
+                }
+            ],
+            "attach": {},
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run sourceOfTruth must be ApplicationEventStream",
+            "path": "$.sourceOfTruth",
+        },
+    )
+
+
+def test_testing_package_rejects_callback_background_run_source_of_truth(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/callback-background-run-source-of-truth",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "CallbackSubscription",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000001",
+                    "cursor": "evt-000001",
+                }
+            ],
+            "attach": {},
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run sourceOfTruth must be ApplicationEventStream",
+            "path": "$.sourceOfTruth",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
