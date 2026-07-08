@@ -2353,6 +2353,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let callback_attempt_id_path = if raw_late_callback.contains_key("attemptId")
+                || !raw_late_callback.contains_key("attempt_id")
+            {
+                "attemptId"
+            } else {
+                "attempt_id"
+            };
+            match raw_late_callback
+                .get("attemptId")
+                .or_else(|| raw_late_callback.get("attempt_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_attempt_id) if !callback_attempt_id.is_empty() => {
+                    let attempt_id = raw_operation
+                        .get("attemptId")
+                        .or_else(|| raw_operation.get("attempt_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !attempt_id.is_empty() && callback_attempt_id != attempt_id {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback attemptId must match operation",
+                            "path": format!("$.lateCallback.{callback_attempt_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback attemptId",
+                        "path": format!("$.lateCallback.{callback_attempt_id_path}"),
+                    }));
+                }
+            }
             let payload_digest_path = if raw_late_callback.contains_key("payloadDigest")
                 || !raw_late_callback.contains_key("payload_digest")
             {

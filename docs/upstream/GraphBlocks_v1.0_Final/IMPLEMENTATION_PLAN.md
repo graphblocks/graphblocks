@@ -1912,6 +1912,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `lateCallback.nodeId` to be present and match `operation.nodeId` in both Rust and Python runners
   before a late callback can prove it belongs to the reconciled graph node.
 - Durable external-operation reconciliation shared TCK cases now require
+  `lateCallback.attemptId` to be present and match `operation.attemptId` in both Rust and Python runners
+  before a late callback can prove it belongs to the reconciled run attempt.
+- Durable external-operation reconciliation shared TCK cases now require
   `lateCallback.payloadDigest` to be a canonical `sha256:` digest in both Rust and Python runners
   before late callback content can prove reconciliation behavior.
 - Durable external-operation reconciliation shared TCK cases now require `lateCallback.status` to be
