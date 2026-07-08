@@ -1152,6 +1152,23 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def provider_operation_mismatch(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="provider_operation_mismatch",
+            received_at=submission.received_at,
+            **cls._receipt_metadata(submission),
+        )
+
+    @classmethod
     def scope_mismatch(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -2293,6 +2310,26 @@ class GraphBlocksServerApp:
                                 "error": "async callback operation is already bound to a different run node attempt",
                             },
                         )
+                    if previous.provider_operation_id != submission.provider_operation_id:
+                        rejection = ServerAsyncCallbackRejection.provider_operation_mismatch(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
+                        payload = {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "error": "async callback operation is already bound to a different provider operation",
+                        }
+                        if submission.run_id is not None:
+                            payload["runId"] = submission.run_id
+                        if submission.attempt_id is not None:
+                            payload["attemptId"] = submission.attempt_id
+                        if submission.node_id is not None:
+                            payload["nodeId"] = submission.node_id
+                        if submission.provider_operation_id is not None:
+                            payload["providerOperationId"] = submission.provider_operation_id
+                        return ServerResponse.json(409, payload)
                     rejection = ServerAsyncCallbackRejection.duplicate_operation_receipt(submission)
                     self._async_callback_rejections_by_operation_id[submission.operation_id] = (
                         *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),

@@ -1386,6 +1386,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async callback ingestion now treats `provider_operation_id` as fenced operation metadata and
   rejects callbacks that omit or contradict the registered provider operation before journaling
   receipt or resuming the run.
+- `graphblocks-server` now applies the same provider-operation fence at callback ingress for
+  repeated receipts on one operation, producing a dedicated `provider_operation_mismatch`
+  rejection before the generic duplicate-receipt path.
 - `graphblocks-server` run-control projections now reject pause/resume/cancel/expire commands
   when the authoritative event stream has already reached a terminal `RunSucceeded`,
   `RunCompleted`, `RunFailed`, `RunCancelled`, `RunPolicyStopped`, or `RunExpired` event,
