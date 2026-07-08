@@ -1600,6 +1600,68 @@ def test_client_package_rejects_malformed_http_run_id_arguments(
             getattr(client, method_name)(run_id)
 
 
+@pytest.mark.parametrize(
+    ("method_name", "field_name", "cursor"),
+    (
+        ("run_events", "cursor", "other-run:1"),
+        ("run_events", "cursor", "run-cursor-http-1:not-a-sequence"),
+        ("attach_to_run", "last_cursor", "other-run:1"),
+        ("attach_to_run", "last_cursor", "run-cursor-http-1:not-a-sequence"),
+        ("subscribe_events", "replay_from_cursor", "other-run:1"),
+        ("subscribe_events", "replay_from_cursor", "run-cursor-http-1:not-a-sequence"),
+        ("ack_event", "cursor", "other-run:1"),
+        ("ack_event", "cursor", "run-cursor-http-1:not-a-sequence"),
+        ("register_callback", "replay_from_cursor", "other-run:1"),
+        ("register_callback", "replay_from_cursor", "run-cursor-http-1:not-a-sequence"),
+    ),
+)
+def test_client_package_rejects_malformed_http_cursor_arguments(
+    monkeypatch,
+    method_name: str,
+    field_name: str,
+    cursor: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise AssertionError("transport should not be called for malformed run cursor")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+    expected = (
+        f"GraphBlocks HTTP {field_name} must belong to run 'run-cursor-http-1'"
+        if cursor.startswith("other-run:")
+        else (
+            f"GraphBlocks HTTP {field_name} must use '<run_id>:<sequence>' "
+            "with a non-negative integer sequence"
+        )
+    )
+
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        if method_name == "run_events":
+            client.run_events("run-cursor-http-1", cursor=cursor)
+        elif method_name == "attach_to_run":
+            client.attach_to_run("run-cursor-http-1", last_cursor=cursor)
+        elif method_name == "subscribe_events":
+            client.subscribe_events(
+                "run-cursor-http-1",
+                replay_from_cursor=cursor,
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+            )
+        elif method_name == "ack_event":
+            client.ack_event("run-cursor-http-1", "sub-1", cursor=cursor)
+        elif method_name == "register_callback":
+            client.register_callback(
+                scope="run",
+                scope_id="run-cursor-http-1",
+                replay_from_cursor=cursor,
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+            )
+
+
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
@@ -2237,14 +2299,14 @@ def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
     )
 
     events = client.run_events(
-        "run-events-http-1",
-        cursor="run-events-http-1:1/with?query#fragment",
+        "run/events?query#fragment",
+        cursor="run/events?query#fragment:1",
     )
 
     parsed = urlparse(requests[0].full_url)
     assert events == ()
-    assert parsed.path == "/api/runs/run-events-http-1/events"
-    assert parsed.query == "cursor=run-events-http-1%3A1%2Fwith%3Fquery%23fragment"
+    assert parsed.path == "/api/runs/run%2Fevents%3Fquery%23fragment/events"
+    assert parsed.query == "cursor=run%2Fevents%3Fquery%23fragment%3A1"
 
 
 def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) -> None:

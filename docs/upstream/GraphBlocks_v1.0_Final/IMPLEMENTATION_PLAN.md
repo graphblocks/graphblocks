@@ -1226,7 +1226,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   sequence before callers persist or replay from it. Run graph responses, stream snapshots,
   attach snapshots, and subscription snapshots must echo the requested `runId` before the client
   will attribute replay metadata to that run, and replayed events in run-scoped responses must
-  carry matching event metadata `runId` values. `LocalGraphBlocksClient` rejects non-`sync`
+  carry matching event metadata `runId` values. Outgoing run replay and acknowledgement cursor
+  arguments are also validated as `<run_id>:<sequence>` before the HTTP request is sent.
+  `LocalGraphBlocksClient` rejects non-`sync`
   response modes instead of pretending in-process execution has durable background-run lifetime.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
   subscriptions with replay cursor, filter, delivery target, and failure-policy configuration, and
@@ -1243,7 +1245,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback delivery registrations, including replayed run-scope events, delivery target config,
   failure policy, and dead-letter policy projection. Callback registration responses must echo the
   requested `scope` and `scopeId` before the client treats replayed events as a projection for that
-  subscription, and run-scoped callback registration replays reject events from any other run.
+  subscription, and run-scoped callback registration replays reject events from any other run. A
+  run-scoped callback registration `replayFromCursor` is validated against the requested run scope
+  before dispatch.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

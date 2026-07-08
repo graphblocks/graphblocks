@@ -970,7 +970,13 @@ class HttpGraphBlocksClient:
         run_id = quote(requested_run_id, safe="")
         url = f"{self.base_url.rstrip('/')}/runs/{run_id}/events"
         if cursor is not None:
-            url = f"{url}?{urlencode({'cursor': _http_non_empty_string('cursor', cursor)})}"
+            cursor = _validate_run_cursor(
+                "GraphBlocks HTTP",
+                "cursor",
+                requested_run_id,
+                _http_non_empty_string("cursor", cursor),
+            )
+            url = f"{url}?{urlencode({'cursor': cursor})}"
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1034,7 +1040,12 @@ class HttpGraphBlocksClient:
         requested_run_id = _http_non_empty_string("run_id", run_id)
         run_id = quote(requested_run_id, safe="")
         if last_cursor is not None:
-            last_cursor = _http_non_empty_string("last_cursor", last_cursor)
+            last_cursor = _validate_run_cursor(
+                "GraphBlocks HTTP",
+                "last_cursor",
+                requested_run_id,
+                _http_non_empty_string("last_cursor", last_cursor),
+            )
         if isinstance(capabilities, str):
             raise ValueError("GraphBlocks HTTP capabilities must be a sequence")
         try:
@@ -1128,7 +1139,12 @@ class HttpGraphBlocksClient:
         if subscription_id is not None:
             body["subscriptionId"] = _http_non_empty_string("subscription_id", subscription_id)
         if replay_from_cursor is not None:
-            body["replayFromCursor"] = _http_non_empty_string("replay_from_cursor", replay_from_cursor)
+            body["replayFromCursor"] = _validate_run_cursor(
+                "GraphBlocks HTTP",
+                "replay_from_cursor",
+                requested_run_id,
+                _http_non_empty_string("replay_from_cursor", replay_from_cursor),
+            )
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -1184,7 +1200,8 @@ class HttpGraphBlocksClient:
         event_id: object | None = None,
         cursor: object | None = None,
     ) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         subscription_id = _http_path_segment("subscription_id", subscription_id)
         if event_id is None and cursor is None:
             raise ValueError("GraphBlocks HTTP ack requires event_id or cursor")
@@ -1192,7 +1209,12 @@ class HttpGraphBlocksClient:
         if event_id is not None:
             body["eventId"] = _http_non_empty_string("event_id", event_id)
         if cursor is not None:
-            body["cursor"] = _http_non_empty_string("cursor", cursor)
+            body["cursor"] = _validate_run_cursor(
+                "GraphBlocks HTTP",
+                "cursor",
+                requested_run_id,
+                _http_non_empty_string("cursor", cursor),
+            )
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -1234,7 +1256,15 @@ class HttpGraphBlocksClient:
         if subscription_id is not None:
             body["subscriptionId"] = _http_non_empty_string("subscription_id", subscription_id)
         if replay_from_cursor is not None:
-            body["replayFromCursor"] = _http_non_empty_string("replay_from_cursor", replay_from_cursor)
+            replay_cursor = _http_non_empty_string("replay_from_cursor", replay_from_cursor)
+            if scope_value == "run":
+                replay_cursor = _validate_run_cursor(
+                    "GraphBlocks HTTP",
+                    "replay_from_cursor",
+                    scope_id_value,
+                    replay_cursor,
+                )
+            body["replayFromCursor"] = replay_cursor
         if dead_letter_policy is not None:
             body["deadLetterPolicy"] = _http_non_empty_string("dead_letter_policy", dead_letter_policy)
         headers = {
