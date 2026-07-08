@@ -1773,6 +1773,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run cursor-expiry evidence now requires a real boolean
   `attach.summaryOnExpiredCursor` value before proving compacted summary delivery for expired
   cursors.
+- Durable background-run accepted-invocation evidence now requires an object `initialResponse`
+  carrying a nonblank `runId`/`run_id`, preventing truthy placeholder values from satisfying
+  accepted response semantics.
 - Durable async callback resume-guard evidence now requires real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks, preventing truthy strings from satisfying callback resume conformance.

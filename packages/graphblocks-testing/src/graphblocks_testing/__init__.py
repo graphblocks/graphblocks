@@ -7030,6 +7030,33 @@ class TckRunner:
                     raw_retention = {}
                 lifetime = str(fixture.get("lifetime", ""))
                 response_mode = str(fixture.get("responseMode", fixture.get("response_mode", "")))
+                raw_initial_response = fixture.get(
+                    "initialResponse", fixture.get("initial_response", {})
+                )
+                accepted_response_has_run_id = False
+                if response_mode == "accepted":
+                    if not isinstance(raw_initial_response, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run accepted response requires object initialResponse",
+                                "path": "$.initialResponse",
+                            }
+                        )
+                    else:
+                        initial_run_id = raw_initial_response.get(
+                            "runId", raw_initial_response.get("run_id")
+                        )
+                        if not isinstance(initial_run_id, str) or not initial_run_id.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run accepted response requires runId",
+                                    "path": "$.initialResponse.runId",
+                                }
+                            )
+                        else:
+                            accepted_response_has_run_id = True
                 event_records = [event for event in raw_events if isinstance(event, Mapping)]
                 last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
                 replay_after_cursor = [
@@ -7079,7 +7106,7 @@ class TckRunner:
                     )
                 observed = {
                     "runContinuesAfterDetach": lifetime in {"background", "job"} and not cancel_run,
-                    "acceptedResponseReturnsRunId": response_mode == "accepted" and bool(fixture.get("initialResponse", fixture.get("initial_response", {}))),
+                    "acceptedResponseReturnsRunId": accepted_response_has_run_id,
                     "replayEventIds": replay_after_cursor,
                     "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),
                     "summaryIncluded": summary_included,
