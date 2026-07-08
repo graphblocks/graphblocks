@@ -7054,6 +7054,7 @@ class TckRunner:
                     raise ValueError("durable callback_delivery_projection case requires deliveries")
                 if not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
+                redrive_creates_application_event = True
                 if raw_redrive:
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7087,6 +7088,21 @@ class TckRunner:
                                 "code": "DurableCallbackRedriveInvalid",
                                 "message": "callback redrive must preserve originalEventId",
                                 "path": "$.redrive.eventId",
+                            }
+                        )
+                    raw_creates_application_event = raw_redrive.get(
+                        "createsApplicationEvent", raw_redrive.get("creates_application_event")
+                    )
+                    if raw_creates_application_event is None:
+                        redrive_creates_application_event = True
+                    elif isinstance(raw_creates_application_event, bool):
+                        redrive_creates_application_event = raw_creates_application_event
+                    else:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive requires boolean createsApplicationEvent",
+                                "path": "$.redrive.createsApplicationEvent",
                             }
                         )
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
@@ -7234,7 +7250,7 @@ class TckRunner:
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
                     "deadLetterPreservesEventId": raw_redrive.get("eventId", raw_redrive.get("event_id")) == raw_redrive.get("originalEventId", raw_redrive.get("original_event_id")),
-                    "redriveCreatesApplicationEvent": bool(raw_redrive.get("createsApplicationEvent", raw_redrive.get("creates_application_event", True))),
+                    "redriveCreatesApplicationEvent": redrive_creates_application_event,
                     "nonMandatoryOutageBlocksRun": bool(fixture.get("nonMandatoryOutageBlocksRun", fixture.get("non_mandatory_outage_blocks_run", True))),
                 }
             elif kind == "async_callback_resume_guards":

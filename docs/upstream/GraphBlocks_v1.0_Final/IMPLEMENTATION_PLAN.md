@@ -1747,6 +1747,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection redrive evidence now rejects mismatched `eventId` and
   `originalEventId`, making event identity preservation a mandatory redrive invariant instead of an
   optional observed flag.
+- Durable callback projection redrive evidence now requires `createsApplicationEvent` to be a real
+  boolean when present, preventing truthy string values from satisfying the no-duplicate-event
+  redrive invariant.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
