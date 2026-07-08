@@ -365,6 +365,13 @@ class AsyncOperation:
         if submitted_at is not None and expires_at is not None and expires_at <= submitted_at:
             raise ValueError("async operation expires_at must be after submitted_at")
         if (
+            self.state == "expired"
+            and completed_at is not None
+            and expires_at is not None
+            and completed_at < expires_at
+        ):
+            raise ValueError("async operation expired completed_at must not be before expires_at")
+        if (
             self.state == "callback_received"
             and callback_received_at is not None
             and expires_at is not None
