@@ -2104,6 +2104,22 @@ class GraphBlocksServerApp:
                     registration,
                     event_filter=_constrain_event_filter_visibility(registration.event_filter, auth_decision.principal),
                 )
+                if (
+                    auth_decision.principal is not None
+                    and auth_decision.principal.tenant_id is not None
+                    and registration.scope == "tenant"
+                    and registration.scope_id != auth_decision.principal.tenant_id
+                ):
+                    return ServerResponse.json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": (
+                                f"callback registration tenant scope {registration.scope_id!r} "
+                                f"is not allowed for principal tenant {auth_decision.principal.tenant_id!r}"
+                            ),
+                        },
+                    )
                 existing = self._callback_registrations.get(registration.subscription_id)
                 if existing is not None:
                     return ServerResponse.json(

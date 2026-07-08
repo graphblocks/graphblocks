@@ -1243,6 +1243,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   without making callback delivery authoritative. Callback registration validates the specification
   scope literals (`run`, `conversation`, `project`, `tenant`, `deployment`). Nested event filter and
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
+  For authenticated principals with a tenant claim, tenant-scope callback registrations are accepted
+  only when `scopeId` matches the principal tenant.
   Authenticated registration requests persist the authorized principal as the callback owner and
   project that owner through the registration response for later policy/audit decisions.
   `RevokeCallback` rejects requests from a different authenticated principal or tenant before mutating the

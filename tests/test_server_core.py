@@ -7018,6 +7018,40 @@ def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite
     )
 
 
+def test_server_app_rejects_callback_registration_for_different_principal_tenant_scope() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1", tenant_id="tenant-a")})
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-tenant-scope-auth",
+                    "scope": "tenant",
+                    "scopeId": "tenant-b",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 403
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback registration tenant scope 'tenant-b' is not allowed for principal tenant 'tenant-a'",
+    }
+    assert app.callback_registrations() == ()
+
+
 def test_server_app_treats_repeated_callback_revoke_as_idempotent() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app.handle(
