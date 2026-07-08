@@ -108,6 +108,8 @@ class RunGraphResponse:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"run graph response {field_name} must be a non-empty string")
+            if field_name == "initial_cursor":
+                _validate_run_cursor("run graph response", field_name, self.run_id, value)
         if not isinstance(self.outputs, Mapping):
             raise ValueError("run graph response outputs must be a JSON object")
         object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
@@ -1336,6 +1338,7 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         status = _payload_string(payload, "GraphBlocks HTTP response", "status", "status")
+        run_id = _payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id")
         response_kwargs: dict[str, object] = {}
         for field_name, payload_key in (
             ("event_stream_url", "eventStream"),
@@ -1347,11 +1350,13 @@ class HttpGraphBlocksClient:
             if value is not None:
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"GraphBlocks HTTP response {payload_key} must be a non-empty string")
+                if payload_key == "initialCursor":
+                    value = _validate_run_cursor("GraphBlocks HTTP response", payload_key, run_id, value)
                 response_kwargs[field_name] = value
             elif status in {"accepted", "background"}:
                 raise ValueError(f"GraphBlocks HTTP response {status} run handle requires {payload_key}")
         return RunGraphResponse(
-            run_id=_payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id"),
+            run_id=run_id,
             status=status,
             outputs=_payload_object(payload, "GraphBlocks HTTP response", "outputs", "outputs"),
             events=tuple(events),
@@ -1371,6 +1376,16 @@ def _http_path_segment(field_name: str, value: object) -> str:
 def _http_non_empty_string(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"GraphBlocks HTTP {field_name} must be a non-empty string")
+    return value
+
+
+def _validate_run_cursor(label: str, field_name: str, run_id: str, value: str) -> str:
+    prefix = f"{run_id}:"
+    if not value.startswith(prefix):
+        raise ValueError(f"{label} {field_name} must belong to run {run_id!r}")
+    sequence_text = value[len(prefix) :]
+    if not sequence_text.isdecimal():
+        raise ValueError(f"{label} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence")
     return value
 
 

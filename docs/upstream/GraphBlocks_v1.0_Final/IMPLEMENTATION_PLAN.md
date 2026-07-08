@@ -1220,7 +1220,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   identity and status plus JSON-object outputs, and preserves accepted/background run-handle links
   (`eventStream`, `websocket`, `cancel`) and `initialCursor`; accepted and background response
   objects must carry every handle field. The HTTP client rejects missing or blank durable handle
-  fields rather than dropping durable attach metadata. `LocalGraphBlocksClient` rejects non-`sync`
+  fields and validates that `initialCursor` belongs to the returned run id with a non-negative
+  sequence before callers persist or replay from it. `LocalGraphBlocksClient` rejects non-`sync`
   response modes instead of pretending in-process execution has durable background-run lifetime.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
   subscriptions with replay cursor, filter, delivery target, and failure-policy configuration, and

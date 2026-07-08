@@ -4,6 +4,7 @@ from dataclasses import replace
 import importlib
 import json
 import math
+import re
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -1028,6 +1029,52 @@ def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
     )
 
     with pytest.raises(ValueError, match="GraphBlocks HTTP response eventStream must be a non-empty string"):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                response_mode="accepted",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("initial_cursor", "message"),
+    (
+        ("other-run:0", "GraphBlocks HTTP response initialCursor must belong to run 'run-http-accepted-1'"),
+        (
+            "run-http-accepted-1:not-a-sequence",
+            "GraphBlocks HTTP response initialCursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
+        ),
+    ),
+)
+def test_client_package_rejects_malformed_run_handle_initial_cursor(
+    monkeypatch,
+    initial_cursor: str,
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "run-http-accepted-1",
+                    "status": "accepted",
+                    "eventStream": "/runs/run-http-accepted-1/events",
+                    "websocket": "/runs/run-http-accepted-1/ws",
+                    "cancel": "/runs/run-http-accepted-1/cancel",
+                    "initialCursor": initial_cursor,
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
