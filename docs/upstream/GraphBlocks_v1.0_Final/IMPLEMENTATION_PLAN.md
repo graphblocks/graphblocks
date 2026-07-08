@@ -1735,6 +1735,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - SQLite usage ledger replay now re-runs the normal Rust `UsageRecord` validation after parsing
   stored JSON, so malformed durable rows with negative amounts or blank amount fields cannot enter
   late usage totals after restart.
+- Python SQLite usage ledger replay now parses stored `amounts_json` and `metadata_json` with
+  strict JSON semantics, rejecting non-standard constants such as `NaN` before late provider usage
+  can re-enter reconciliation or totals after restart.
 - Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source
   usage record, preserving the amendment's late-final-usage ordering for in-memory and SQLite
   ledgers in both implementations.

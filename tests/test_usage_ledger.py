@@ -530,6 +530,44 @@ def test_sqlite_usage_ledger_rejects_reconciliation_before_source_record() -> No
     ledger.close()
 
 
+@pytest.mark.parametrize(
+    ("column", "payload", "field_name"),
+    (
+        (
+            "amounts_json",
+            '[{"kind":"model_output_tokens","amount":NaN,"unit":"tokens","dimensions":{}}]',
+            "amounts_json",
+        ),
+        ("metadata_json", '{"value": NaN}', "metadata_json"),
+    ),
+)
+def test_sqlite_usage_ledger_rejects_non_standard_json_constants_on_replay(
+    column: str,
+    payload: str,
+    field_name: str,
+) -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    ledger.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+    ledger._connection.execute(
+        f"UPDATE usage_records SET {column} = ? WHERE record_id = ?",
+        (payload, "usage-1"),
+    )
+    ledger._connection.commit()
+
+    with pytest.raises(ValueError, match=f"usage ledger {field_name} must be valid strict JSON"):
+        ledger.records_for_run("run-1")
+    ledger.close()
+
+
 def test_sqlite_usage_ledger_enforces_provider_dedupe_for_null_attempt_at_storage_boundary() -> None:
     ledger = SQLiteUsageLedger.in_memory()
     first = UsageRecord(

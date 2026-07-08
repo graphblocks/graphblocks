@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from .budget import UsageAmount
+from .canonical import canonical_dumps
 
 
 UsageSource = Literal[
@@ -69,6 +70,23 @@ def _validate_reconciliation_order(source: UsageRecord, occurred_at: str) -> Non
         source.occurred_at,
     ):
         raise ValueError("reconciled usage occurred_at must not precede source usage")
+
+
+def _loads_strict_json(field_name: str, value: str) -> object:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"usage ledger {field_name} must be valid strict JSON") from error
+
+
+def _dumps_strict_json(field_name: str, value: object) -> str:
+    try:
+        return canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"usage ledger {field_name} must be valid strict JSON") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,7 +352,8 @@ class SQLiteUsageLedger:
                     record.record_id,
                     record.source,
                     record.confidence,
-                    json.dumps(
+                    _dumps_strict_json(
+                        "amounts_json",
                         [
                             {
                                 "kind": amount.kind,
@@ -344,8 +363,6 @@ class SQLiteUsageLedger:
                             }
                             for amount in record.amounts
                         ],
-                        sort_keys=True,
-                        separators=(",", ":"),
                     ),
                     record.occurred_at,
                     record.run_id,
@@ -355,7 +372,7 @@ class SQLiteUsageLedger:
                     record.quota_window_id,
                     record.execution_scope,
                     record.reconciliation_of,
-                    json.dumps(dict(sorted(record.metadata.items())), sort_keys=True, separators=(",", ":")),
+                    _dumps_strict_json("metadata_json", dict(sorted(record.metadata.items()))),
                 ),
             )
             self._connection.commit()
@@ -451,7 +468,7 @@ class SQLiteUsageLedger:
 
     def _record_from_row(self, row: sqlite3.Row) -> UsageRecord:
         amounts = []
-        for amount in json.loads(row["amounts_json"]):
+        for amount in _loads_strict_json("amounts_json", row["amounts_json"]):
             amounts.append(
                 UsageAmount(
                     kind=str(amount["kind"]),
@@ -473,5 +490,5 @@ class SQLiteUsageLedger:
             quota_window_id=row["quota_window_id"],
             execution_scope=row["execution_scope"],
             reconciliation_of=row["reconciliation_of"],
-            metadata=dict(json.loads(row["metadata_json"])),
+            metadata=dict(_loads_strict_json("metadata_json", row["metadata_json"])),
         )
