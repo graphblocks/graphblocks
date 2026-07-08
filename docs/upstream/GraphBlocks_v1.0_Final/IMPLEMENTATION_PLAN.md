@@ -1158,7 +1158,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscription or returning an idempotent revoke projection.
 - `graphblocks-client` now exposes `UnsubscribeEvents` and `AckEvent` HTTP helpers for run-scoped
   subscriptions, preserving the server's idempotent revoke and event/cursor acknowledgement
-  projections.
+  projections. `AckEvent` rejects acknowledgements from a different authenticated principal before
+  recording delivery state for the subscription.
 - `graphblocks-client` now exposes `RegisterCallback` and `RevokeCallback` HTTP helpers for
   callback delivery registrations, including replayed run-scope events, delivery target config,
   failure policy, and dead-letter policy projection.
