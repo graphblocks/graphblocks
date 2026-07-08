@@ -7719,6 +7719,14 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].sequence",
                             }
                         )
+                    elif sequence == 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery requires positive integer sequence",
+                                "path": f"$.deliveries[{index}].sequence",
+                            }
+                        )
                     attempt = delivery.get("attempt")
                     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
                         diagnostics.append(

@@ -2150,6 +2150,37 @@
     }
   },
   {
+    "name": "webhook_delivery_zero_sequence_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-sequence-zero-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0093",
+        "runId": "run-coding-001",
+        "sequence": 0,
+        "cursor": "evt-0093",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0093",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:01Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery requires positive integer sequence",
+        "path": "$.deliveries[0].sequence"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_subscription_id_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

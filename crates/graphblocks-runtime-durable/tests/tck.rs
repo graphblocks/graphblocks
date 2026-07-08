@@ -1223,6 +1223,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "callback delivery requires integer sequence",
                         "path": format!("$.deliveries[{index}].sequence"),
                     }));
+                } else if delivery
+                    .get("sequence")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|sequence| sequence == 0)
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires positive integer sequence",
+                        "path": format!("$.deliveries[{index}].sequence"),
+                    }));
                 }
                 if delivery
                     .get("subscriptionId")

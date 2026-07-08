@@ -1781,6 +1781,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK fixtures now require delivery `attempt` values to be
   positive integers, preserving the one-based callback delivery attempt history used by retry,
   dead-letter, and redrive projections.
+- Durable callback projection shared TCK fixtures now require delivery `sequence` values to be
+  positive integers, preserving replayable per-run event ordering evidence for callback delivery
+  rows.
 - Durable callback projection shared TCK fixtures now reject delivery rows without nonblank
   `deliveryId`, `eventId`, or `runId` evidence, so callback redrive, dead-letter, deduplication,
   run ownership, and audit assertions always have stable identities in Rust and Python.
