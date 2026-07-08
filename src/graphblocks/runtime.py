@@ -11,6 +11,7 @@ import time
 from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
+from .canonical import canonical_dumps
 from .compiler import compile_graph
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
@@ -110,6 +111,23 @@ def _mutable_json_like(value: Any) -> Any:
     if isinstance(value, list):
         return [_mutable_json_like(nested) for nested in value]
     return value
+
+
+def _loads_strict_json(owner: str, value: str) -> Any:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{owner} must be valid strict JSON") from error
+
+
+def _dumps_strict_json(owner: str, value: Any) -> str:
+    try:
+        return canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{owner} must be valid strict JSON") from error
 
 
 @dataclass(slots=True)
@@ -229,7 +247,9 @@ class SQLiteExecutionJournal:
             JournalRecord(
                 int(row["sequence"]),
                 row["kind"],
-                json.loads(str(row["payload_json"])) if row["payload_json"] is not None else {},
+                _loads_strict_json("execution journal payload_json", str(row["payload_json"]))
+                if row["payload_json"] is not None
+                else {},
             )
             for row in rows
         ]
@@ -244,7 +264,7 @@ class SQLiteExecutionJournal:
             (self.run_id,),
         ).fetchone()
         sequence = int(row[0])
-        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        payload_json = _dumps_strict_json("execution journal payload", payload)
         columns = self._columns()
         if "record_id" in columns:
             self.connection.execute(

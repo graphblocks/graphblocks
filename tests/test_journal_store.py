@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from graphblocks.runtime import ExecutionJournal, JournalStateError, SQLiteExecutionJournal
@@ -45,6 +47,27 @@ def test_sqlite_execution_journal_persists_records_across_instances(tmp_path) ->
     assert [record.kind for record in second.records] == ["run_started", "node_started", "run_succeeded"]
     assert second.records[2].payload == {"outputs": {"answer": "ok"}}
     assert second.terminal_kind == "run_succeeded"
+
+
+def test_sqlite_execution_journal_rejects_non_standard_payload_json_on_replay(tmp_path) -> None:
+    database = tmp_path / "journal.sqlite3"
+    journal = SQLiteExecutionJournal(database, "run-000001")
+    journal.append("run_started", {"graphHash": "sha256:test"})
+    journal.connection.execute(
+        "UPDATE journal_records SET payload_json = ? WHERE run_id = ? AND sequence = ?",
+        ('{"value": NaN}', "run-000001", 1),
+    )
+    journal.connection.commit()
+
+    with pytest.raises(ValueError, match="execution journal payload_json must be valid strict JSON"):
+        journal.records
+
+
+def test_sqlite_execution_journal_rejects_non_finite_payloads_on_append(tmp_path) -> None:
+    journal = SQLiteExecutionJournal(tmp_path / "journal.sqlite3", "run-000001")
+
+    with pytest.raises(ValueError, match="execution journal payload must be valid strict JSON"):
+        journal.append("node_succeeded", {"value": math.nan})
 
 
 def test_sqlite_execution_journal_rejects_second_terminal(tmp_path) -> None:
