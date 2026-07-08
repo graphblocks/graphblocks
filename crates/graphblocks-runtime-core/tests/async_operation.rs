@@ -2108,6 +2108,113 @@ fn callback_missing_provider_operation_identity_does_not_resume_run() {
 }
 
 #[test]
+fn unauthenticated_callback_submission_does_not_resume_run() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-unauthenticated", "idem-unauthenticated");
+    submission.verified_by = "unauthenticated".to_owned();
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "async_callback".to_owned(),
+            reason: "unauthenticated_callback".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    verified_by,
+                    ..
+                } if callback_id == "cb-unauthenticated"
+                    && reason == "authentication_failed"
+                    && verified_by == "unauthenticated"
+            ))
+    );
+}
+
+#[test]
+fn unauthenticated_artifact_backed_callback_submission_does_not_resume_run() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission(
+        "cb-unauthenticated-artifact",
+        "idem-unauthenticated-artifact",
+    );
+    submission.verified_by = "unauthenticated".to_owned();
+    submission.payload = json!({
+        "status": "completed",
+        "workflow_run_id": "gha-run-1",
+        "log": "x".repeat(512),
+    });
+
+    assert_eq!(
+        store.accept_callback_with_artifact_on_payload_limit(
+            submission,
+            &callback_schema_registry(),
+            AsyncCallbackIngestionLimits {
+                max_payload_bytes: 128,
+            },
+            CallbackArtifactRef::new(
+                "artifact-ci-log",
+                "blob://callbacks/op-1/cb-unauthenticated.json"
+            ),
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "async_callback".to_owned(),
+            reason: "unauthenticated_callback".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-unauthenticated-artifact" && reason == "authentication_failed"
+            ))
+    );
+}
+
+#[test]
+fn unauthenticated_early_callback_is_not_quarantined() {
+    let store = AsyncOperationStore::new();
+    let mut submission = valid_submission("cb-early-unauthenticated", "idem-early-unauthenticated");
+    submission.verified_by = "unauthenticated".to_owned();
+
+    assert_eq!(
+        store.quarantine_callback_before_operation_commit(submission, 5_000),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "async_callback".to_owned(),
+            reason: "unauthenticated_callback".to_owned(),
+        })
+    );
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+}
+
+#[test]
 fn sqlite_callback_missing_provider_operation_identity_does_not_resume_run()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("missing-provider-operation");

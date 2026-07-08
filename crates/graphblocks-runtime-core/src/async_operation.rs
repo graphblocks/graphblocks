@@ -1772,6 +1772,7 @@ impl AsyncOperationStore {
             &submission,
             &AsyncCallbackResumeDecision::Resume,
         )?;
+        ensure_callback_submission_authenticated(&submission)?;
         if expires_at_unix_ms <= submission.received_at_unix_ms {
             return Err(AsyncOperationError::InvalidExpiration {
                 operation_id: submission.operation_id,
@@ -1981,6 +1982,10 @@ impl AsyncOperationStore {
             &submission,
             &AsyncCallbackResumeDecision::Resume,
         )?;
+        if let Err(error) = ensure_callback_submission_authenticated(&submission) {
+            self.record_callback_rejected(&submission, "authentication_failed");
+            return Err(error);
+        }
         let artifacts =
             if callback_payload_size_bytes(&submission.payload) > limits.max_payload_bytes {
                 artifact.validate()?;
@@ -2006,6 +2011,10 @@ impl AsyncOperationStore {
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
         validate_callback_submission_and_resume_decision(&submission, &resume_decision)?;
+        if let Err(error) = ensure_callback_submission_authenticated(&submission) {
+            self.record_callback_rejected(&submission, "authentication_failed");
+            return Err(error);
+        }
 
         let payload_size = callback_payload_size_bytes(&submission.payload);
         if payload_size > limits.max_payload_bytes {
@@ -3343,6 +3352,22 @@ fn validate_callback_submission_identity(
             operation_id: submission.operation_id.clone(),
             reason: "callback received_at_unix_ms must be non-zero".to_owned(),
         });
+    }
+    Ok(())
+}
+
+fn ensure_callback_submission_authenticated(
+    submission: &AsyncCallbackSubmission,
+) -> Result<(), AsyncOperationError> {
+    if submission
+        .verified_by
+        .trim()
+        .eq_ignore_ascii_case("unauthenticated")
+    {
+        return Err(callback_auth_failed(
+            "async_callback",
+            "unauthenticated_callback",
+        ));
     }
     Ok(())
 }

@@ -1389,6 +1389,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async callback ingestion now treats `provider_operation_id` as fenced operation metadata and
   rejects callbacks that omit or contradict the registered provider operation before journaling
   receipt or resuming the run.
+- `graphblocks-runtime-core` now rejects explicitly `unauthenticated` async callback submissions
+  before normal receipt journaling, artifact-backed callback compaction, or pre-operation
+  quarantine can create resumable state.
 - `graphblocks-server` now applies the same provider-operation fence at callback ingress for
   repeated receipts on one operation, producing a dedicated `provider_operation_mismatch`
   rejection before the generic duplicate-receipt path.

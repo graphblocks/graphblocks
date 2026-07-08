@@ -59,6 +59,9 @@ operation, later receipts for that operation must not omit or change it.
 Callback helper endpoint references may also pin the provider-operation
 identity so resume admission rejects stale provider callbacks even when the
 run, node, attempt, and operation ids still match.
+The Rust runtime rejects direct async callback submissions whose verifier is
+explicitly `unauthenticated` before normal receipt, artifact compaction, or
+pre-operation quarantine can create resumable state.
 Persisted run provenance is also replay-validated without type coercion so
 corrupted release or physical-plan identity cannot become authoritative state.
 
