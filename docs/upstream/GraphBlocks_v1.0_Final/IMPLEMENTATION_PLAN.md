@@ -1758,6 +1758,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   asserting `deadLetterPreservesEventId`; shared fixtures can express that requirement through
   `redriveAssertions`, preventing absent event ids from comparing equal and proving redrive
   preservation accidentally.
+- Durable callback projection shared TCK cases now reject malformed `redriveAssertions` values
+  when present in both Rust and Python runners, so assertion evidence cannot be silently discarded
+  by treating non-object data as an empty assertion block.
 - Durable callback projection redrive evidence now also requires an explicit `redrive` object
   before asserting `redriveCreatesApplicationEvent`, so redrive application-event behavior cannot
   be proven from the projection default.

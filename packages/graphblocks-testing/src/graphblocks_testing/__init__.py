@@ -7493,6 +7493,14 @@ class TckRunner:
                     "redriveAssertions", fixture.get("redrive_assertions", {})
                 )
                 if not isinstance(raw_redrive_assertions, Mapping):
+                    if "redriveAssertions" in fixture or "redrive_assertions" in fixture:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive assertions must be object",
+                                "path": "$.redriveAssertions",
+                            }
+                        )
                     raw_redrive_assertions = {}
                 redrive_creates_application_event = False
                 redrive_event_id_preserved = False

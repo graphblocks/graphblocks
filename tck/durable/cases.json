@@ -2805,6 +2805,38 @@
     }
   },
   {
+    "name": "webhook_delivery_non_object_redrive_assertions_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-assertions-shape-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0311",
+        "runId": "run-coding-001",
+        "sequence": 311,
+        "cursor": "evt-0311",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0311",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:11Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "redriveAssertions": "deadLetterPreservesEventId",
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive assertions must be object",
+        "path": "$.redriveAssertions"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_redrive_operator_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

@@ -925,9 +925,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                 }
             }
             let empty_redrive_assertions = Map::new();
-            let raw_redrive_assertions = case
+            let raw_redrive_assertions_value = case
                 .get("redriveAssertions")
-                .or_else(|| case.get("redrive_assertions"))
+                .or_else(|| case.get("redrive_assertions"));
+            if raw_redrive_assertions_value.is_some_and(|assertions| !assertions.is_object()) {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackRedriveInvalid",
+                    "message": "callback redrive assertions must be object",
+                    "path": "$.redriveAssertions",
+                }));
+            }
+            let raw_redrive_assertions = raw_redrive_assertions_value
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_redrive_assertions);
             let redrive_event_id = raw_redrive
