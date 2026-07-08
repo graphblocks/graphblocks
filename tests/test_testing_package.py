@@ -1820,6 +1820,47 @@ def test_testing_package_rejects_acknowledged_callback_delivery_without_acknowle
     )
 
 
+def test_testing_package_rejects_acknowledged_callback_delivery_before_delivered_at(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/callback-delivery-acknowledged-before-delivered",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 409,
+                    "status": "acknowledged",
+                    "deliveredAt": "2026-07-02T00:00:02Z",
+                    "acknowledgedAt": "2026-07-02T00:00:01Z",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "acknowledgedAt must not be before deliveredAt",
+            "path": "$.deliveries[0].acknowledgedAt",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

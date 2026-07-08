@@ -7293,6 +7293,7 @@ class TckRunner:
                             else:
                                 next_retry_at = raw_next_retry_at
                     next_retry_at_values.append(next_retry_at)
+                    delivered_at = None
                     if status in {"delivered", "acknowledged"}:
                         raw_delivered_at = delivery.get(
                             "deliveredAt", delivery.get("delivered_at")
@@ -7310,7 +7311,7 @@ class TckRunner:
                             if delivered_at_text.endswith("Z"):
                                 delivered_at_text = f"{delivered_at_text[:-1]}+00:00"
                             try:
-                                datetime.fromisoformat(delivered_at_text)
+                                delivered_at = datetime.fromisoformat(delivered_at_text)
                             except ValueError:
                                 diagnostics.append(
                                     {
@@ -7320,6 +7321,7 @@ class TckRunner:
                                     }
                                 )
                     if status == "acknowledged":
+                        acknowledged_at = None
                         raw_acknowledged_at = delivery.get(
                             "acknowledgedAt", delivery.get("acknowledged_at")
                         )
@@ -7339,7 +7341,7 @@ class TckRunner:
                             if acknowledged_at_text.endswith("Z"):
                                 acknowledged_at_text = f"{acknowledged_at_text[:-1]}+00:00"
                             try:
-                                datetime.fromisoformat(acknowledged_at_text)
+                                acknowledged_at = datetime.fromisoformat(acknowledged_at_text)
                             except ValueError:
                                 diagnostics.append(
                                     {
@@ -7348,6 +7350,18 @@ class TckRunner:
                                         "path": f"$.deliveries[{index}].acknowledgedAt",
                                     }
                                 )
+                        if (
+                            delivered_at is not None
+                            and acknowledged_at is not None
+                            and acknowledged_at < delivered_at
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "acknowledgedAt must not be before deliveredAt",
+                                    "path": f"$.deliveries[{index}].acknowledgedAt",
+                                }
+                            )
                     if status in {"failed", "dead_lettered", "cancelled", "expired"}:
                         last_error = delivery.get("lastError", delivery.get("last_error"))
                         if not isinstance(last_error, str) or not last_error.strip():
