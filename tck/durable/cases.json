@@ -2772,6 +2772,44 @@
     }
   },
   {
+    "name": "async_callback_resume_non_boolean_guard_rejected",
+    "kind": "async_callback_resume_guards",
+    "checks": {
+      "signatureFailureRevealsOperation": "false",
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume guard requires boolean signatureFailureRevealsOperation",
+        "path": "$.checks.signatureFailureRevealsOperation"
+      }
+    ],
+    "expected": {
+      "signatureFailureRevealsOperation": true,
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "callback_cancel_race_cancel_wins_and_blocks_resume",
     "kind": "async_callback_cancel_race",
     "operation": {

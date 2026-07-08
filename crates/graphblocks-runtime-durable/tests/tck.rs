@@ -1713,6 +1713,51 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_checks = required_object(case, "checks", name)?;
             let raw_callback = required_object(case, "callback", name)?;
             let raw_resume = required_object(case, "resume", name)?;
+            let mut guard_values = BTreeMap::new();
+            for (key, alias) in [
+                (
+                    "signatureFailureRevealsOperation",
+                    "signature_failure_reveals_operation",
+                ),
+                ("schemaFailureResumesRun", "schema_failure_resumes_run"),
+                (
+                    "timeoutCallbackResumesExpiredOperation",
+                    "timeout_callback_resumes_expired_operation",
+                ),
+                (
+                    "cancelledCallbackCommitsResult",
+                    "cancelled_callback_commits_result",
+                ),
+                ("staleAttemptCanResume", "stale_attempt_can_resume"),
+                (
+                    "unauthenticatedCallbackCanResume",
+                    "unauthenticated_callback_can_resume",
+                ),
+                (
+                    "nonExternalCallbackEventCanBecomeReceipt",
+                    "non_external_callback_event_can_become_receipt",
+                ),
+                (
+                    "providerOperationMismatchCanResume",
+                    "provider_operation_mismatch_can_resume",
+                ),
+            ] {
+                let raw_value = raw_checks.get(key).or_else(|| raw_checks.get(alias));
+                guard_values.insert(key, raw_value.and_then(Value::as_bool).unwrap_or(true));
+                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                    let path_key =
+                        if raw_checks.contains_key(key) || !raw_checks.contains_key(alias) {
+                            key
+                        } else {
+                            alias
+                        };
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": format!("async callback resume guard requires boolean {key}"),
+                        "path": format!("$.checks.{path_key}"),
+                    }));
+                }
+            }
             let reevaluates = raw_resume
                 .get("reevaluates")
                 .and_then(Value::as_array)
@@ -1721,45 +1766,37 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .filter_map(Value::as_str)
                 .collect::<BTreeSet<_>>();
             json!({
-                "signatureFailureRevealsOperation": raw_checks
+                "signatureFailureRevealsOperation": guard_values
                     .get("signatureFailureRevealsOperation")
-                    .or_else(|| raw_checks.get("signature_failure_reveals_operation"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "schemaFailureResumesRun": raw_checks
+                "schemaFailureResumesRun": guard_values
                     .get("schemaFailureResumesRun")
-                    .or_else(|| raw_checks.get("schema_failure_resumes_run"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "timeoutCallbackResumesExpiredOperation": raw_checks
+                "timeoutCallbackResumesExpiredOperation": guard_values
                     .get("timeoutCallbackResumesExpiredOperation")
-                    .or_else(|| raw_checks.get("timeout_callback_resumes_expired_operation"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "cancelledCallbackCommitsResult": raw_checks
+                "cancelledCallbackCommitsResult": guard_values
                     .get("cancelledCallbackCommitsResult")
-                    .or_else(|| raw_checks.get("cancelled_callback_commits_result"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "staleAttemptCanResume": raw_checks
+                "staleAttemptCanResume": guard_values
                     .get("staleAttemptCanResume")
-                    .or_else(|| raw_checks.get("stale_attempt_can_resume"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "unauthenticatedCallbackCanResume": raw_checks
+                "unauthenticatedCallbackCanResume": guard_values
                     .get("unauthenticatedCallbackCanResume")
-                    .or_else(|| raw_checks.get("unauthenticated_callback_can_resume"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "nonExternalCallbackEventCanBecomeReceipt": raw_checks
+                "nonExternalCallbackEventCanBecomeReceipt": guard_values
                     .get("nonExternalCallbackEventCanBecomeReceipt")
-                    .or_else(|| raw_checks.get("non_external_callback_event_can_become_receipt"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "providerOperationMismatchCanResume": raw_checks
+                "providerOperationMismatchCanResume": guard_values
                     .get("providerOperationMismatchCanResume")
-                    .or_else(|| raw_checks.get("provider_operation_mismatch_can_resume"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
                 "receiptJournaledBeforeResume": required_u64_map(raw_callback, "journalSequence", name)?
                     < required_u64_map(raw_resume, "resumeSequence", name)?,
