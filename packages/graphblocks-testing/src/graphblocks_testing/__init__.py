@@ -7185,6 +7185,16 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].cursor",
                             }
                         )
+                    event_type = raw_event.get("type")
+                    if not isinstance(event_type, str) or not event_type.strip():
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires type",
+                                "path": f"$.events[{event_index}].type",
+                            }
+                        )
                     occurred_at_path = (
                         "occurredAt"
                         if "occurredAt" in raw_event or "occurred_at" not in raw_event

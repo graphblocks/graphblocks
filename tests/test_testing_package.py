@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 170
+    assert [case.kind for case in cases] == ["durable"] * 171
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1233,6 +1233,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_event_missing_sequence_rejected",
         "background_run_event_sequence_regression_rejected",
         "background_run_event_missing_occurred_at_rejected",
+        "background_run_event_missing_type_rejected",
         "background_run_non_string_last_cursor_rejected",
         "background_run_non_string_expired_cursor_rejected",
         "background_run_non_string_retained_cursor_rejected",
@@ -1475,6 +1476,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "background_run_event_missing_occurred_at_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_event_missing_type_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -2193,6 +2199,7 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2235,6 +2242,7 @@ def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeyp
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
+                    "type": "JobProgress",
                 }
             ],
             "attach": {
@@ -2283,6 +2291,7 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2325,6 +2334,7 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2364,6 +2374,7 @@ def test_testing_package_rejects_non_object_background_run_initial_response(monk
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2406,6 +2417,7 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2448,6 +2460,7 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2490,6 +2503,7 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2532,6 +2546,7 @@ def test_testing_package_rejects_background_response_without_run_id(monkeypatch)
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2608,6 +2623,7 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2650,6 +2666,7 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": " ",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2692,6 +2709,7 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {
@@ -2736,6 +2754,7 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
+                    "type": "JobProgress",
                 }
             ],
             "attach": {
@@ -2784,6 +2803,7 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
+                    "type": "JobProgress",
                 }
             ],
             "attach": {
@@ -2831,6 +2851,7 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2873,6 +2894,7 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -2915,6 +2937,7 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
+                    "type": "RunStarted",
                 }
             ],
             "attach": {},
@@ -5451,6 +5474,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_event_missing_sequence_rejected",
         "background_run_event_sequence_regression_rejected",
         "background_run_event_missing_occurred_at_rejected",
+        "background_run_event_missing_type_rejected",
         "background_run_non_string_last_cursor_rejected",
         "background_run_non_string_expired_cursor_rejected",
         "background_run_non_string_retained_cursor_rejected",

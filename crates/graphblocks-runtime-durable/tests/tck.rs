@@ -513,6 +513,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.events[{index}].cursor"),
                     }));
                 }
+                if event
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_none_or(|event_type| event_type.trim().is_empty())
+                {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires type",
+                        "path": format!("$.events[{index}].type"),
+                    }));
+                }
                 let occurred_at_path =
                     if event.contains_key("occurredAt") || !event.contains_key("occurred_at") {
                         "occurredAt"
