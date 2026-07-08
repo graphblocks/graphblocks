@@ -228,9 +228,10 @@ Message
 - Rust `ToolExecutionPlan` validation now reports `UnsafeParallelEffects` when independent
   state-changing calls share an effect serialization key, so conflicting writes are rejected before
   scheduling unless an explicit dependency serializes them.
-- MCP and OpenAPI streaming tool-result adapters now force every delta content part to carry the
-  adapter-owned `untrusted_external` trust designation, preventing remote streamed output or
-  caller-supplied `ContentPart` metadata from self-labeling as trusted model context.
+- Remote-service, MCP, and OpenAPI streaming tool-result adapters now force every delta content
+  part to carry the adapter-owned `untrusted_external` trust designation, preventing streamed
+  tool output or caller-supplied `ContentPart` metadata from self-labeling as trusted model
+  context.
 - `PolicyRequest.enforcement_point`에 `on_generation_chunk`, `before_client_delivery`, `before_output_commit`, `before_tool_or_effect`를 추가한다.
 - `OutputPolicyDecision`, `OutputDeliveryPolicy`, `OutputCutoff` schema와 terminal semantics를 canonical contract로 추가한다.
 - `OutputPolicyDecision` redaction instructions validate replacement values at construction time,

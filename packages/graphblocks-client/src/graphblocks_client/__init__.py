@@ -415,8 +415,8 @@ def remote_tool_result_delta(
     for raw_part in raw_parts:
         if isinstance(raw_part, ContentPart):
             metadata = dict(raw_part.metadata)
-            metadata.setdefault("adapter", "remote")
-            metadata.setdefault("trust_designation", "untrusted_external")
+            metadata["adapter"] = "remote"
+            metadata["trust_designation"] = "untrusted_external"
             parts.append(replace(raw_part, metadata=metadata))
         elif isinstance(raw_part, str):
             parts.append(
@@ -432,8 +432,8 @@ def remote_tool_result_delta(
             if not isinstance(metadata, Mapping):
                 raise RemoteToolAdapterError("remote tool result delta metadata must be an object")
             metadata = dict(metadata)
-            metadata.setdefault("adapter", "remote")
-            metadata.setdefault("trust_designation", "untrusted_external")
+            metadata["adapter"] = "remote"
+            metadata["trust_designation"] = "untrusted_external"
             if kind is None:
                 kind = "text" if "text" in raw_part else "json" if "data" in raw_part else None
             if kind == "text":

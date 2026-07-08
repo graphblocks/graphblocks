@@ -637,6 +637,35 @@ def test_client_package_remote_adapter_builds_streaming_and_terminal_results(mon
     assert "remote_tool_result_terminal_event" in graphblocks_client.__all__
 
 
+def test_client_package_remote_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
+
+    delta = graphblocks_client.remote_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=(
+            graphblocks_client.ContentPart(
+                kind="text",
+                text="partial",
+                metadata={"adapter": "client", "trust_designation": "trusted"},
+            ),
+            {
+                "kind": "json",
+                "data": {"items": ["draft"]},
+                "metadata": {"adapter": "client", "trust_designation": "trusted"},
+            },
+        ),
+    )
+
+    assert [part.metadata for part in delta.output] == [
+        {"adapter": "remote", "trust_designation": "untrusted_external"},
+        {"adapter": "remote", "trust_designation": "untrusted_external"},
+    ]
+
+
 def test_client_package_remote_adapter_terminal_events_require_validation(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
