@@ -321,6 +321,12 @@ class AsyncOperation:
             raise ValueError(
                 f"async operation {wait_kind} state requires expires_at or explicit infinite_wait_policy"
             )
+        if (
+            self.state in {"waiting_callback", "callback_received", "polling"}
+            and self.expires_at is not None
+            and self.infinite_wait_policy is not None
+        ):
+            raise ValueError("async operation wait must not define both expires_at and infinite_wait_policy")
         if self.provider_operation_id is not None and self.submitted_at is None:
             raise ValueError("async operation provider_operation_id requires submitted_at")
         created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)

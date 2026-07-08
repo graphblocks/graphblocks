@@ -317,6 +317,19 @@ impl AsyncOperation {
                 field: "infinite_wait_policy".to_owned(),
             });
         }
+        if matches!(
+            self.state,
+            AsyncOperationState::WaitingCallback
+                | AsyncOperationState::CallbackReceived
+                | AsyncOperationState::Polling
+        ) && self.expires_at_unix_ms.is_some()
+            && self.infinite_wait_policy.is_some()
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "async operation wait must not define both expires_at_unix_ms and infinite_wait_policy".to_owned(),
+            });
+        }
 
         if self.state == AsyncOperationState::WaitingCallback
             && self.expires_at_unix_ms.is_none()

@@ -1149,6 +1149,44 @@ def test_async_operation_accepts_explicit_infinite_wait_policy() -> None:
         )
 
 
+def test_async_operation_rejects_ambiguous_deadline_and_infinite_wait_policy() -> None:
+    with raises_value_error(
+        "async operation wait must not define both expires_at and infinite_wait_policy"
+    ):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-ambiguous-wait",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-ci-ambiguous-wait",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-ambiguous",
+            expires_at="2026-07-02T00:30:00Z",
+            infinite_wait_policy="operator_review_required",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+
+    with raises_value_error(
+        "async operation wait must not define both expires_at and infinite_wait_policy"
+    ):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-batch-ambiguous-wait",
+            run_id="run-1",
+            node_id="waitBatch",
+            attempt_id="attempt-1",
+            kind="external_provider_job",
+            expected_schema="schemas/BatchResult@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-batch-ambiguous-wait",
+            created_at="2026-07-02T00:00:00Z",
+            polling_ref="poll-batch-ambiguous",
+            expires_at="2026-07-02T00:30:00Z",
+            infinite_wait_policy="provider_has_no_timeout",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling()
+
+
 def test_async_operation_wait_boundary_deterministic_fuzz() -> None:
     rng = random.Random(6001)
 
@@ -1179,7 +1217,12 @@ def test_async_operation_wait_boundary_deterministic_fuzz() -> None:
         submitted = graphblocks.AsyncOperation.created(**kwargs).mark_submitted(
             submitted_at="2026-07-02T00:00:01Z"
         )
-        if use_deadline or use_infinite_policy:
+        if use_deadline and use_infinite_policy:
+            with raises_value_error(
+                "async operation wait must not define both expires_at and infinite_wait_policy"
+            ):
+                submitted.wait_for_callback() if use_callback else submitted.start_polling()
+        elif use_deadline or use_infinite_policy:
             waiting = submitted.wait_for_callback() if use_callback else submitted.start_polling()
             assert waiting.state in {
                 graphblocks.AsyncOperationState.WAITING_CALLBACK,

@@ -756,7 +756,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust `AsyncOperation` records now carry optional `infinite_wait_policy` values through validation
   and JSON store projection; `GB6001` timeout diagnostics are suppressed only when a wait has either
   `expires_at_unix_ms` or an explicit infinite-wait policy, and callback receipt records can use the
-  same explicit infinite-wait boundary without requiring an expiration timestamp.
+  same explicit infinite-wait boundary without requiring an expiration timestamp. Runtime validation
+  rejects waits that define both fields, so deadline-bound waits and explicitly infinite waits cannot
+  be confused.
 - Callback-backed terminal transitions now reject `completed_at` values that precede the durable
   callback receipt timestamp, with deterministic transition fuzz coverage across completed, failed,
   cancelled, and expired outcomes.
@@ -764,9 +766,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.
 - The Python `AsyncOperation` facade now enforces the amendment's bounded-wait invariant at runtime:
-  callback and polling waits require either `expires_at` or an explicit `infinite_wait_policy`, with
-  deterministic fuzz coverage for deadline/policy combinations. Directly constructed wait states
-  enforce the same boundary so rehydrated operation records cannot bypass the helper path.
+  callback and polling waits require either `expires_at` or an explicit `infinite_wait_policy`, but
+  not both, with deterministic fuzz coverage for deadline/policy combinations. Directly constructed
+  wait states enforce the same boundary so rehydrated operation records cannot bypass the helper
+  path.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled`, `expired`, or `incomplete`; stdlib async
   terminal blocks can project `externalEffects` config into the final result instead of dropping

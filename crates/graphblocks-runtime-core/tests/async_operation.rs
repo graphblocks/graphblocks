@@ -998,6 +998,23 @@ fn async_operation_validate_accepts_callback_received_with_infinite_wait_policy(
 }
 
 #[test]
+fn async_operation_validate_rejects_ambiguous_expiration_and_infinite_wait_policy() {
+    let callback_wait = waiting_operation().with_infinite_wait_policy("operator_review_required");
+    let mut polling_wait = waiting_operation().with_infinite_wait_policy("provider_has_no_timeout");
+    polling_wait.state = AsyncOperationState::Polling;
+
+    for operation in [callback_wait, polling_wait] {
+        assert_eq!(
+            operation.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: "async operation wait must not define both expires_at_unix_ms and infinite_wait_policy".to_owned(),
+            })
+        );
+    }
+}
+
+#[test]
 fn async_operation_validate_rejects_polling_without_expiration() {
     let mut operation = waiting_operation();
     operation.state = AsyncOperationState::Polling;
