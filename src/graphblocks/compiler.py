@@ -76,6 +76,13 @@ def _has_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _is_canonical_sha256_digest(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+
+
 def _has_async_relative_timeout(config: dict[str, Any]) -> bool:
     timeout = (
         config.get("timeout")
@@ -266,6 +273,15 @@ def _diagnose_async_operation_config(
                 "InvalidAsyncOperation",
                 "async operation must not define both callback and polling completion refs",
                 path,
+            )
+        )
+    resume_token_hash = config.get("resumeTokenHash", config.get("resume_token_hash"))
+    if resume_token_hash is not None and not _is_canonical_sha256_digest(resume_token_hash):
+        diagnostics.append(
+            Diagnostic(
+                "InvalidAsyncOperation",
+                "async operation resumeTokenHash must be a canonical sha256 digest",
+                f"{path}.resumeTokenHash",
             )
         )
     has_relative_timeout = _has_async_relative_timeout(config)

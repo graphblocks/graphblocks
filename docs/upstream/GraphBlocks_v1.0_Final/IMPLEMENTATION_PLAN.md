@@ -643,6 +643,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `expiresAtUnixMs` now satisfies the bounded-wait contract as an absolute deadline, but compiler
   diagnostics reject configs that also define relative timeout fields so absolute and derived
   deadlines cannot silently diverge.
+  Python compiler diagnostics now also reject non-canonical `resumeTokenHash` values on async
+  operation configs as `InvalidAsyncOperation`, so malformed callback fencing digests are caught
+  before runtime admission.
   Async wait `onTimeout` actions are validated at compile time as `fail`, `cancel`, or `expire`,
   and poll `interval`/`maxInterval` duration fields are rejected before runtime when they are zero
   or unparsable. The Python authoring facade mirrors these diagnostics so shared compiler TCK

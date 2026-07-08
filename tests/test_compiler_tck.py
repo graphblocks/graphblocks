@@ -38,6 +38,8 @@ AMENDMENT_COMPILER_DIAGNOSTICS = {
     "GB6016",
 }
 
+VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
+
 
 def test_python_compiler_matches_shared_tck_cases() -> None:
     cases = json.loads((Path(__file__).parents[1] / "tck" / "compiler" / "cases.json").read_text())
@@ -89,7 +91,7 @@ def test_compiler_accepts_async_start_absolute_expiration_as_wait_bound() -> Non
                             "attemptId": "attempt-1",
                             "kind": "ci_job",
                             "providerOperationId": "gha-run-1",
-                            "resumeTokenHash": "sha256:resume-token",
+                            "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                             "idempotencyKey": "idem-op-ci-absolute",
                             "expectedSchema": "schemas/CICallback@1",
                             "createdAtUnixMs": 1_000,
@@ -116,6 +118,50 @@ def test_compiler_accepts_async_start_absolute_expiration_as_wait_bound() -> Non
     assert "InvalidAsyncOperation" not in error_codes
 
 
+def test_compiler_rejects_async_start_noncanonical_resume_token_hash() -> None:
+    plan = compile_graph(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "async-start-bad-resume-token"},
+            "spec": {
+                "nodes": {
+                    "startCI": {
+                        "block": "async.start_operation@1",
+                        "config": {
+                            "operationId": "op-ci-bad-resume-token",
+                            "runId": "run-coding-1",
+                            "nodeId": "startCI",
+                            "attemptId": "attempt-1",
+                            "kind": "ci_job",
+                            "providerOperationId": "gha-run-1",
+                            "resumeTokenHash": "sha256:resume-token",
+                            "idempotencyKey": "idem-op-ci-bad-resume-token",
+                            "expectedSchema": "schemas/CICallback@1",
+                            "createdAtUnixMs": 1_000,
+                            "submittedAtUnixMs": 1_050,
+                            "expiresAtUnixMs": 1_801_000,
+                            "callback": {"required": True, "schema": "schemas/CICallback@1"},
+                            "resume": {
+                                "requirePolicyReevaluation": True,
+                                "requireBudgetReservation": True,
+                                "requireReleaseCompatibility": True,
+                                "requireOwnershipFence": True,
+                            },
+                            "attemptFencing": True,
+                        },
+                    }
+                }
+            },
+        }
+    )
+
+    errors = [diagnostic for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"]
+
+    assert [diagnostic.code for diagnostic in errors] == ["InvalidAsyncOperation"]
+    assert errors[0].message == "async operation resumeTokenHash must be a canonical sha256 digest"
+
+
 def test_compiler_rejects_async_start_absolute_and_relative_wait_bounds() -> None:
     plan = compile_graph(
         {
@@ -133,7 +179,7 @@ def test_compiler_rejects_async_start_absolute_and_relative_wait_bounds() -> Non
                             "attemptId": "attempt-1",
                             "kind": "ci_job",
                             "providerOperationId": "gha-run-1",
-                            "resumeTokenHash": "sha256:resume-token",
+                            "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                             "idempotencyKey": "idem-op-ci-ambiguous",
                             "expectedSchema": "schemas/CICallback@1",
                             "createdAtUnixMs": 1_000,
