@@ -1871,6 +1871,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection validation now rejects malformed 410 receiver rows that are not
   recorded as cancelled `subscription_gone` deliveries, preventing subscription-gone evidence from
   being represented as a generic failed delivery.
+- The shared durable TCK now includes a non-retryable 4xx callback delivery case. Python and Rust
+  durable runners both report `nonRetryable4xxTerminal` only for non-409/410/429 4xx receiver
+  responses recorded as failed `non_retryable` deliveries.
 - The shared durable TCK now also includes a missing-redrive callback projection case. Python and
   Rust runners both observe `deadLetterPreservesEventId` and `redriveCreatesApplicationEvent` as
   false when no explicit `redrive` envelope is present, while Python still rejects attempts to

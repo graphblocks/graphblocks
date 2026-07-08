@@ -7791,6 +7791,7 @@ class TckRunner:
                 scheduled_retryable_status_ids = []
                 acknowledged_duplicates = []
                 subscription_gone_ids = []
+                non_retryable_4xx_ids = []
                 for index, delivery in enumerate(deliveries):
                     receiver_status = receiver_statuses[index]
                     next_retry_at = next_retry_at_values[index]
@@ -7819,6 +7820,15 @@ class TckRunner:
                         == "subscription_gone"
                     ):
                         subscription_gone_ids.append(delivery_id)
+                    if (
+                        receiver_status is not None
+                        and 400 <= receiver_status <= 499
+                        and receiver_status not in {409, 410, 429}
+                        and str(delivery.get("status", "")) == "failed"
+                        and str(delivery.get("lastError", delivery.get("last_error", "")))
+                        == "non_retryable"
+                    ):
+                        non_retryable_4xx_ids.append(delivery_id)
                 idempotency_keys = [
                     str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
                     for delivery in deliveries
@@ -7828,6 +7838,7 @@ class TckRunner:
                     "retryScheduledAfterRetryableStatus": bool(scheduled_retryable_status_ids),
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "subscriptionGoneAfter410": bool(subscription_gone_ids),
+                    "nonRetryable4xxTerminal": bool(non_retryable_4xx_ids),
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
                     "deadLetterPreservesEventId": redrive_event_id_preserved,
                     "redriveCreatesApplicationEvent": redrive_creates_application_event,

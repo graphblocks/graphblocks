@@ -561,6 +561,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut retry_scheduled_after_retryable_status = false;
             let mut duplicate_409_acknowledged = false;
             let mut subscription_gone_after_410 = false;
+            let mut non_retryable_4xx_terminal = false;
             for delivery in deliveries.iter().filter_map(Value::as_object) {
                 let receiver_status = delivery
                     .get("receiverStatus")
@@ -604,6 +605,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     subscription_gone_after_410 = true;
                 }
+                if (400..=499).contains(&receiver_status)
+                    && !matches!(receiver_status, 409 | 410 | 429)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "failed")
+                    && delivery
+                        .get("lastError")
+                        .or_else(|| delivery.get("last_error"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|last_error| last_error == "non_retryable")
+                {
+                    non_retryable_4xx_terminal = true;
+                }
                 if let Some(key) = delivery
                     .get("idempotencyKey")
                     .or_else(|| delivery.get("idempotency_key"))
@@ -618,6 +633,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
                 "subscriptionGoneAfter410": subscription_gone_after_410,
+                "nonRetryable4xxTerminal": non_retryable_4xx_terminal,
                 "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
                 "deadLetterPreservesEventId": dead_letter_preserves_event_id,
                 "redriveCreatesApplicationEvent": redrive_creates_application_event,
