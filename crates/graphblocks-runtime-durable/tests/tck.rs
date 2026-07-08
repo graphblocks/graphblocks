@@ -578,6 +578,15 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut duplicate_409_acknowledged = false;
             let mut subscription_gone_after_410 = false;
             let mut non_retryable_4xx_terminal = false;
+            for (index, delivery) in deliveries.iter().enumerate() {
+                if !delivery.is_object() {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery must be object",
+                        "path": format!("$.deliveries[{index}]"),
+                    }));
+                }
+            }
             for (index, delivery) in deliveries.iter().filter_map(Value::as_object).enumerate() {
                 let raw_receiver_status = delivery
                     .get("receiverStatus")

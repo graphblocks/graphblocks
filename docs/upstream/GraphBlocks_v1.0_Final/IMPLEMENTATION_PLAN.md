@@ -1727,7 +1727,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   conformance cannot pass without at least one durable `CallbackDelivery` row.
 - Durable callback projection TCK cases now reject non-object delivery entries before evaluating
   retry, duplicate, idempotency, or redrive evidence, preserving the `CallbackDelivery` envelope
-  shape in shared fixtures.
+  shape across the shared Rust and Python conformance harnesses.
 - Durable callback projection TCK cases now have shared expected-diagnostic coverage rejecting
   delivery rows without nonblank `idempotencyKey` evidence, preserving the callback protocol's
   at-least-once deduplication contract in shared MVP fixtures.

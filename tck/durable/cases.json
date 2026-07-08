@@ -629,6 +629,23 @@
     }
   },
   {
+    "name": "webhook_delivery_non_object_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      "del-object-invalid-001"
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery must be object",
+        "path": "$.deliveries[0]"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_idempotency_key_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
