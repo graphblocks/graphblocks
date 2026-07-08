@@ -1141,6 +1141,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .or_else(|| subscription.get("failure_policy"))
                 })
                 .and_then(Value::as_str);
+            let mut delivery_ids = BTreeSet::new();
             let mut idempotency_key_logical_deliveries = BTreeMap::new();
             let mut idempotency_keys_unique_per_subscription_event = true;
             let mut retry_scheduled_after_5xx = false;
@@ -1173,6 +1174,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "callback delivery requires deliveryId",
                         "path": format!("$.deliveries[{index}].deliveryId"),
                     }));
+                }
+                if let Some(delivery_id) = delivery
+                    .get("deliveryId")
+                    .or_else(|| delivery.get("delivery_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|delivery_id| !delivery_id.is_empty())
+                {
+                    if !delivery_ids.insert(delivery_id.to_owned()) {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackDeliveryInvalid",
+                            "message": "callback delivery deliveryId must be unique",
+                            "path": format!("$.deliveries[{index}].deliveryId"),
+                        }));
+                    }
                 }
                 if delivery
                     .get("eventId")

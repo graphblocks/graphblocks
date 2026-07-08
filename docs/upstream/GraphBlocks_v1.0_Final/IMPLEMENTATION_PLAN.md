@@ -1750,6 +1750,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK fixtures now reject delivery rows without nonblank
   `deliveryId`, `eventId`, or `runId` evidence, so callback redrive, dead-letter, deduplication,
   run ownership, and audit assertions always have stable identities in Rust and Python.
+- Durable callback projection shared TCK fixtures now reject duplicate nonblank `deliveryId`
+  values, preserving the protocol requirement that each `CallbackDelivery` row has a globally
+  unique delivery identity.
 - Durable callback projection shared TCK fixtures now validate explicit `subscription` envelopes,
   including nonblank `subscriptionId`, protocol-defined `failurePolicy`, and boolean `mandatory`,
   and reject mandatory subscriptions with omitted or `best_effort` failure policy, so

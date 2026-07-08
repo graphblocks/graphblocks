@@ -2014,6 +2014,51 @@
     }
   },
   {
+    "name": "webhook_delivery_duplicate_delivery_id_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-duplicate-id-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0086",
+        "runId": "run-coding-001",
+        "sequence": 86,
+        "cursor": "evt-0086",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0086",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:01Z",
+        "lastError": "receiver_error"
+      },
+      {
+        "deliveryId": "del-duplicate-id-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0087",
+        "runId": "run-coding-001",
+        "sequence": 87,
+        "cursor": "evt-0087",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0087",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:02Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery deliveryId must be unique",
+        "path": "$.deliveries[1].deliveryId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_run_id_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

@@ -7677,6 +7677,7 @@ class TckRunner:
                 }
                 receiver_statuses = []
                 next_retry_at_values = []
+                seen_delivery_ids = set()
                 seen_idempotency_keys: dict[str, tuple[str, str]] = {}
                 idempotency_keys_unique_per_subscription_event = True
                 for index, delivery in deliveries:
@@ -7696,6 +7697,19 @@ class TckRunner:
                                     "path": f"$.deliveries[{index}].{key}",
                                 }
                             )
+                    delivery_id = delivery.get("deliveryId", delivery.get("delivery_id"))
+                    if isinstance(delivery_id, str) and delivery_id.strip():
+                        normalized_delivery_id = delivery_id.strip()
+                        if normalized_delivery_id in seen_delivery_ids:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "callback delivery deliveryId must be unique",
+                                    "path": f"$.deliveries[{index}].deliveryId",
+                                }
+                            )
+                        else:
+                            seen_delivery_ids.add(normalized_delivery_id)
                     sequence = delivery.get("sequence")
                     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
                         diagnostics.append(
