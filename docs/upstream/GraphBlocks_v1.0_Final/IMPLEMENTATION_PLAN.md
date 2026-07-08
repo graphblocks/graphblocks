@@ -1914,6 +1914,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `lateCallback.idempotencyKey` evidence in both Rust and Python runners before a late callback can
   prove idempotent external-operation reconciliation.
+- Durable external-operation reconciliation shared TCK cases now require nonblank
+  `lateCallback.policySnapshotId` evidence in both Rust and Python runners before a late callback
+  can prove policy-governed reconciliation.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

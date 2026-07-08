@@ -8479,6 +8479,23 @@ class TckRunner:
                             "path": f"$.lateCallback.{idempotency_key_path}",
                         }
                     )
+                policy_snapshot_path = (
+                    "policySnapshotId"
+                    if "policySnapshotId" in raw_late_callback
+                    or "policy_snapshot_id" not in raw_late_callback
+                    else "policy_snapshot_id"
+                )
+                policy_snapshot_id = raw_late_callback.get(
+                    "policySnapshotId", raw_late_callback.get("policy_snapshot_id")
+                )
+                if not isinstance(policy_snapshot_id, str) or not policy_snapshot_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank policySnapshotId",
+                            "path": f"$.lateCallback.{policy_snapshot_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

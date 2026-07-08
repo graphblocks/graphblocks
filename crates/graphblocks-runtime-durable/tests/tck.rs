@@ -2326,6 +2326,27 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{idempotency_key_path}"),
                 }));
             }
+            let policy_snapshot_path = if raw_late_callback.contains_key("policySnapshotId")
+                || !raw_late_callback.contains_key("policy_snapshot_id")
+            {
+                "policySnapshotId"
+            } else {
+                "policy_snapshot_id"
+            };
+            if raw_late_callback
+                .get("policySnapshotId")
+                .or_else(|| raw_late_callback.get("policy_snapshot_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |policy_snapshot_id| {
+                    policy_snapshot_id.trim().is_empty()
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank policySnapshotId",
+                    "path": format!("$.lateCallback.{policy_snapshot_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {

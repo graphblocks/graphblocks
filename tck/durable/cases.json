@@ -3863,6 +3863,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -3901,6 +3902,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": "true",
       "payloadConvertedToArtifactRef": true
@@ -3941,6 +3943,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -3982,6 +3985,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4022,6 +4026,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4063,6 +4068,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4104,6 +4110,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4144,6 +4151,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4185,6 +4193,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4225,6 +4234,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4266,6 +4276,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4306,6 +4317,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4347,6 +4359,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4387,6 +4400,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4428,6 +4442,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4468,6 +4483,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4509,6 +4525,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4549,6 +4566,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4590,6 +4608,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4630,6 +4649,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4671,6 +4691,7 @@
       "status": "running",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4711,6 +4732,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4752,6 +4774,7 @@
       "status": "completed",
       "verifiedBy": "   ",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4792,6 +4815,7 @@
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4833,6 +4857,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "   ",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4858,6 +4883,89 @@
     }
   },
   {
+    "name": "external_operation_missing_callback_policy_snapshot_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank policySnapshotId",
+        "path": "$.lateCallback.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_blank_callback_policy_snapshot_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "   ",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank policySnapshotId",
+        "path": "$.lateCallback.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_commits_result_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -4874,6 +4982,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
     },
@@ -4914,6 +5023,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "payloadConvertedToArtifactRef": true
     },
@@ -4954,6 +5064,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true
     },
@@ -4994,6 +5105,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5034,6 +5146,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5069,6 +5182,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5109,6 +5223,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5150,6 +5265,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -5191,6 +5307,7 @@
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
