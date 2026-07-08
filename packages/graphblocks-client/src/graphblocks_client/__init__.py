@@ -1338,6 +1338,8 @@ class HttpGraphBlocksClient:
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"GraphBlocks HTTP response {payload_key} must be a non-empty string")
                 response_kwargs[field_name] = value
+            elif status in {"accepted", "background"}:
+                raise ValueError(f"GraphBlocks HTTP response {status} run handle requires {payload_key}")
         return RunGraphResponse(
             run_id=_payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id"),
             status=status,

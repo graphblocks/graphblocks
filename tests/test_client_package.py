@@ -993,6 +993,38 @@ def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
         )
 
 
+@pytest.mark.parametrize("status", ("accepted", "background"))
+def test_client_package_rejects_incomplete_durable_run_handle(monkeypatch, status: str) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "run-http-accepted-1",
+                    "status": status,
+                    "eventStream": "/runs/run-http-accepted-1/events",
+                    "cancel": "/runs/run-http-accepted-1/cancel",
+                    "initialCursor": "run-http-accepted-1:0",
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=f"GraphBlocks HTTP response {status} run handle requires websocket"):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                response_mode=status,
+            )
+        )
+
+
 def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
