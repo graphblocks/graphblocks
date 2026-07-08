@@ -9237,6 +9237,23 @@ class TckRunner:
                             "path": f"$.operation.{resume_token_hash_path}",
                         }
                     )
+                expected_schema_path = (
+                    "expectedSchema"
+                    if "expectedSchema" in raw_operation
+                    or "expected_schema" not in raw_operation
+                    else "expected_schema"
+                )
+                expected_schema = raw_operation.get(
+                    "expectedSchema", raw_operation.get("expected_schema")
+                )
+                if not isinstance(expected_schema, str) or not expected_schema.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank expectedSchema",
+                            "path": f"$.operation.{expected_schema_path}",
+                        }
+                    )
                 operation_state = raw_operation.get("state")
                 if operation_state not in {
                     "created",

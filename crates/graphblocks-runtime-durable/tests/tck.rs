@@ -3179,6 +3179,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{resume_token_hash_path}"),
                 }));
             }
+            let expected_schema_path = if raw_operation.contains_key("expectedSchema")
+                || !raw_operation.contains_key("expected_schema")
+            {
+                "expectedSchema"
+            } else {
+                "expected_schema"
+            };
+            if raw_operation
+                .get("expectedSchema")
+                .or_else(|| raw_operation.get("expected_schema"))
+                .and_then(Value::as_str)
+                .map_or(true, |expected_schema| expected_schema.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank expectedSchema",
+                    "path": format!("$.operation.{expected_schema_path}"),
+                }));
+            }
             if !raw_operation
                 .get("state")
                 .and_then(Value::as_str)
