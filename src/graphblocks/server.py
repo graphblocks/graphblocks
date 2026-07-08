@@ -387,6 +387,22 @@ def _constrain_event_filter_visibility(
     return MappingProxyType(constrained)
 
 
+def _principal_response_payload(owner: PrincipalRef) -> dict[str, object]:
+    return {
+        "principalId": owner.principal_id,
+        "tenantId": owner.tenant_id,
+        "groups": list(owner.groups),
+        "roles": list(owner.roles),
+        "attributes": _thaw_json_value(
+            _freeze_json_value(
+                "server principal",
+                "attributes",
+                owner.attributes,
+            )
+        ),
+    }
+
+
 def _thaw_json_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _thaw_json_value(item) for key, item in value.items()}
@@ -1246,6 +1262,7 @@ class ServerEventSubscription:
     failure_policy: str = "retry_then_dead_letter"
     replay_from_cursor: str | None = None
     created_at: str = ""
+    owner: PrincipalRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1300,6 +1317,8 @@ class ServerEventSubscription:
                 "created_at",
                 _validate_iso_datetime("server event subscription", "created_at", self.created_at),
             )
+        if self.owner is not None and not isinstance(self.owner, PrincipalRef):
+            raise ValueError("server event subscription owner must be a PrincipalRef")
 
     @classmethod
     def from_request(
@@ -1308,6 +1327,7 @@ class ServerEventSubscription:
         run_id: str,
         request: ServerRequest,
         ordinal: int,
+        owner: PrincipalRef | None = None,
     ) -> ServerEventSubscription:
         body = _server_request_json_body(request, "subscribe request")
         if not isinstance(body, Mapping):
@@ -1347,10 +1367,11 @@ class ServerEventSubscription:
                 else None
             ),
             created_at=request.requested_at or _utc_now_iso(),
+            owner=owner,
         )
 
     def response_payload(self, replayed_events: list[dict[str, object]], last_cursor: str) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "ok": True,
             "subscriptionId": self.subscription_id,
             "runId": self.run_id,
@@ -1362,6 +1383,9 @@ class ServerEventSubscription:
             "eventFilter": _thaw_json_value(self.event_filter),
             "events": replayed_events,
         }
+        if self.owner is not None:
+            payload["owner"] = _principal_response_payload(self.owner)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -1507,19 +1531,7 @@ class ServerCallbackRegistration:
             "events": replayed_events,
         }
         if self.owner is not None:
-            payload["owner"] = {
-                "principalId": self.owner.principal_id,
-                "tenantId": self.owner.tenant_id,
-                "groups": list(self.owner.groups),
-                "roles": list(self.owner.roles),
-                "attributes": _thaw_json_value(
-                    _freeze_json_value(
-                        "server callback registration",
-                        "owner.attributes",
-                        self.owner.attributes,
-                    )
-                ),
-            }
+            payload["owner"] = _principal_response_payload(self.owner)
         return payload
 
 
@@ -1911,6 +1923,7 @@ class GraphBlocksServerApp:
                     run_id=run_id,
                     request=request,
                     ordinal=len(existing) + 1,
+                    owner=auth_decision.principal,
                 )
                 subscription = replace(
                     subscription,

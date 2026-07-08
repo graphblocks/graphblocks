@@ -4651,6 +4651,13 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
     assert payload["failurePolicy"] == "best_effort"
     assert payload["replayFromCursor"] == "run-subscribe-1:1"
     assert payload["lastCursor"] == "run-subscribe-1:2"
+    assert payload["owner"] == {
+        "principalId": "user-1",
+        "tenantId": None,
+        "groups": [],
+        "roles": [],
+        "attributes": {},
+    }
     assert payload["eventFilter"] == {"types": ["RunSucceeded"], "visibility": ["client"]}
     assert payload["delivery"] == {
         "kind": "local_callback",
@@ -4672,6 +4679,7 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
             failure_policy="best_effort",
             replay_from_cursor="run-subscribe-1:1",
             created_at="2026-07-02T00:00:00Z",
+            owner=PrincipalRef("user-1"),
         ),
     )
     with pytest.raises(TypeError):
@@ -4766,6 +4774,7 @@ def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> Non
             status="active",
             failure_policy="retry_then_dead_letter",
             created_at="2026-07-03T00:00:00Z",
+            owner=PrincipalRef("user-1"),
         ),
     )
 

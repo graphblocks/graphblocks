@@ -1152,6 +1152,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
   subscriptions with replay cursor, filter, delivery target, and failure-policy configuration, and
   parses replayed events through the shared event-stream parser.
+- Run-scoped event subscriptions now persist the authenticated principal as the subscription owner
+  and project that owner in subscription creation responses for policy and audit follow-up.
 - `graphblocks-client` now exposes `UnsubscribeEvents` and `AckEvent` HTTP helpers for run-scoped
   subscriptions, preserving the server's idempotent revoke and event/cursor acknowledgement
   projections.
