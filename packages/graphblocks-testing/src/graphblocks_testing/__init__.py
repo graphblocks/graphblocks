@@ -8157,9 +8157,12 @@ class TckRunner:
                     successful_resume_count = 0
                 else:
                     successful_resume_count = raw_successful_resume_count
+                resume_reevaluates_missing = "reevaluates" not in raw_resume
                 raw_resume_reevaluates = raw_resume.get("reevaluates", ())
                 resume_reevaluates = ()
                 if (
+                    resume_reevaluates_missing
+                    or
                     isinstance(raw_resume_reevaluates, (str, bytes))
                     or isinstance(raw_resume_reevaluates, Mapping)
                     or not isinstance(raw_resume_reevaluates, Sequence)

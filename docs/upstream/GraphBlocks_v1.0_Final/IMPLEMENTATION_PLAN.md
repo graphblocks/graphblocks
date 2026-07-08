@@ -1872,7 +1872,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   missing fields as well as string coercion from satisfying durable ordering evidence.
 - Durable async callback resume-guard shared TCK cases now require `reevaluates` to be a sequence
   of nonblank strings in both Rust and Python runners before proving policy, budget, and release
-  compatibility re-evaluation, so object keys or malformed entries cannot satisfy
+  compatibility re-evaluation, so missing lists, object keys, or malformed entries cannot satisfy
   resume-admission conformance.
 - Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,

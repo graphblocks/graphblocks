@@ -1880,7 +1880,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": "$.resume.reevaluates",
                     }));
                 }
-                None => {}
+                None => {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume requires reevaluates sequence",
+                        "path": "$.resume.reevaluates",
+                    }));
+                }
             }
             let raw_callback_journal_sequence = raw_callback
                 .get("journalSequence")
