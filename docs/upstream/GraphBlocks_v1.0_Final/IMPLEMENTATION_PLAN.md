@@ -1238,6 +1238,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   without making callback delivery authoritative. Callback registration validates the specification
   scope literals (`run`, `conversation`, `project`, `tenant`, `deployment`). Nested event filter and
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
+  Authenticated registration requests persist the authorized principal as the callback owner and
+  project that owner through the registration response for later policy/audit decisions.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
   and does not rewrite the stored projection. Callback registrations share the same route-level

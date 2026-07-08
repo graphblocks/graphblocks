@@ -6527,6 +6527,13 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
     assert payload["scope"] == "run"
     assert payload["scopeId"] == "run-register-callback-1"
     assert payload["lastCursor"] == "run-register-callback-1:2"
+    assert payload["owner"] == {
+        "principalId": "user-1",
+        "tenantId": None,
+        "groups": [],
+        "roles": [],
+        "attributes": {},
+    }
     assert payload["delivery"] == {
         "kind": "webhook",
         "url": "https://relay.example/events",
@@ -6554,6 +6561,7 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
             failure_policy="retry_then_dead_letter",
             replay_from_cursor="run-register-callback-1:1",
             created_at="2026-07-02T00:00:00Z",
+            owner=PrincipalRef("user-1"),
         ),
     )
     with pytest.raises(TypeError):
@@ -6715,6 +6723,7 @@ def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite
             },
             failure_policy="retry_then_dead_letter",
             created_at="2026-07-03T00:00:00Z",
+            owner=PrincipalRef("user-1"),
         ),
     )
 

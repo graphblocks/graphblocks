@@ -1375,6 +1375,7 @@ class ServerCallbackRegistration:
     failure_policy: str = "retry_then_dead_letter"
     replay_from_cursor: str | None = None
     created_at: str = ""
+    owner: PrincipalRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1434,9 +1435,17 @@ class ServerCallbackRegistration:
                 "created_at",
                 _validate_iso_datetime("server callback registration", "created_at", self.created_at),
             )
+        if self.owner is not None and not isinstance(self.owner, PrincipalRef):
+            raise ValueError("server callback registration owner must be a PrincipalRef")
 
     @classmethod
-    def from_request(cls, *, request: ServerRequest, ordinal: int) -> ServerCallbackRegistration:
+    def from_request(
+        cls,
+        *,
+        request: ServerRequest,
+        ordinal: int,
+        owner: PrincipalRef | None = None,
+    ) -> ServerCallbackRegistration:
         body = _server_request_json_body(request, "register callback request")
         if not isinstance(body, Mapping):
             raise ValueError("register callback request body must be a JSON object")
@@ -1480,10 +1489,11 @@ class ServerCallbackRegistration:
                 else None
             ),
             created_at=request.requested_at or _utc_now_iso(),
+            owner=owner,
         )
 
     def response_payload(self, replayed_events: list[dict[str, object]], last_cursor: str | None) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "ok": True,
             "subscriptionId": self.subscription_id,
             "scope": self.scope,
@@ -1496,6 +1506,21 @@ class ServerCallbackRegistration:
             "eventFilter": _thaw_json_value(self.event_filter),
             "events": replayed_events,
         }
+        if self.owner is not None:
+            payload["owner"] = {
+                "principalId": self.owner.principal_id,
+                "tenantId": self.owner.tenant_id,
+                "groups": list(self.owner.groups),
+                "roles": list(self.owner.roles),
+                "attributes": _thaw_json_value(
+                    _freeze_json_value(
+                        "server callback registration",
+                        "owner.attributes",
+                        self.owner.attributes,
+                    )
+                ),
+            }
+        return payload
 
 
 def _callback_alias_value(
@@ -2025,6 +2050,7 @@ class GraphBlocksServerApp:
                 registration = ServerCallbackRegistration.from_request(
                     request=request,
                     ordinal=len(self._callback_registrations) + 1,
+                    owner=auth_decision.principal,
                 )
                 registration = replace(
                     registration,
