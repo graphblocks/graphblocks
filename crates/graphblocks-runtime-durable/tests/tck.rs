@@ -514,6 +514,28 @@ fn run_case(case: &Value) -> Result<(), String> {
                     false
                 }
             };
+            let response_mode = case
+                .get("responseMode")
+                .or_else(|| case.get("response_mode"))
+                .and_then(Value::as_str);
+            let response_mode_path =
+                if case.get("responseMode").is_some() || case.get("response_mode").is_none() {
+                    "responseMode"
+                } else {
+                    "response_mode"
+                };
+            let accepted_response_mode = match response_mode {
+                Some("accepted") => true,
+                Some("background") => false,
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run responseMode must be accepted or background",
+                        "path": format!("$.{response_mode_path}"),
+                    }));
+                    false
+                }
+            };
             let raw_cancel_run = raw_detach
                 .get("cancelRun")
                 .or_else(|| raw_detach.get("cancel_run"));
@@ -564,7 +586,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             };
             json!({
                 "runContinuesAfterDetach": lifetime_allows_detach && !cancel_run,
-                "acceptedResponseReturnsRunId": required_str(case, "responseMode", name)? == "accepted"
+                "acceptedResponseReturnsRunId": accepted_response_mode
                     && case
                         .get("initialResponse")
                         .or_else(|| case.get("initial_response"))

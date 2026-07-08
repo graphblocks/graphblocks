@@ -674,6 +674,82 @@
     }
   },
   {
+    "name": "background_run_non_string_response_mode_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": true,
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-invalid-response-mode-type",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-invalid-response-mode-type/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-invalid-response-mode-type-001",
+        "sequence": 1,
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": "evt_000000"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run responseMode must be accepted or background",
+        "path": "$.responseMode"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "background_run_sync_response_mode_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "sync",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-sync-response-mode",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-sync-response-mode/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-sync-response-mode-001",
+        "sequence": 1,
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": "evt_000000"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run responseMode must be accepted or background",
+        "path": "$.responseMode"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
     "kind": "callback_delivery_projection",
     "subscription": {
