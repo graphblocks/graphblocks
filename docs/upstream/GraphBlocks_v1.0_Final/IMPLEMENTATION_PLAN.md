@@ -1720,6 +1720,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-testing` durable callback projection cases now reject failed, dead-lettered,
   cancelled, or expired delivery rows that omit nonblank `lastError` evidence, so retry and
   dead-letter conformance cannot be proven from malformed failure records.
+- Durable callback projection terminal diagnostics now report the actual terminal delivery status
+  (`failed`, `dead_lettered`, `cancelled`, or `expired`) when `lastError` evidence is missing,
+  preventing cancelled or expired rows from being misreported as failed evidence.
 - Durable callback projection TCK cases now reject empty `deliveries` arrays, so callback delivery
   conformance cannot pass without at least one durable `CallbackDelivery` row.
 - Durable callback projection TCK cases now reject non-object delivery entries before evaluating

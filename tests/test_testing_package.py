@@ -2311,6 +2311,44 @@ def test_testing_package_rejects_failed_callback_delivery_without_error_evidence
     )
 
 
+def test_testing_package_rejects_cancelled_callback_delivery_without_error_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/missing-cancelled-callback-delivery-error",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "status": "cancelled",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "cancelled callback delivery requires lastError",
+            "path": "$.deliveries[0].lastError",
+        },
+    )
+
+
 def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

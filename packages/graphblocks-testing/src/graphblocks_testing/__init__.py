@@ -7698,7 +7698,7 @@ class TckRunner:
                             diagnostics.append(
                                 {
                                     "code": "DurableCallbackDeliveryInvalid",
-                                    "message": "failed callback delivery requires lastError",
+                                    "message": f"{status} callback delivery requires lastError",
                                     "path": f"$.deliveries[{index}].lastError",
                                 }
                             )
