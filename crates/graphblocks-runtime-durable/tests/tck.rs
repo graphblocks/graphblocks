@@ -719,6 +719,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].acknowledgedAt"),
                     }));
                 }
+                if delivery
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "acknowledged")
+                {
+                    let delivered_at = delivery
+                        .get("deliveredAt")
+                        .or_else(|| delivery.get("delivered_at"))
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty());
+                    let acknowledged_at = delivery
+                        .get("acknowledgedAt")
+                        .or_else(|| delivery.get("acknowledged_at"))
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty());
+                    if let (Some(delivered_at), Some(acknowledged_at)) =
+                        (delivered_at, acknowledged_at)
+                    {
+                        if acknowledged_at < delivered_at {
+                            diagnostics.push(json!({
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "acknowledgedAt must not be before deliveredAt",
+                                "path": format!("$.deliveries[{index}].acknowledgedAt"),
+                            }));
+                        }
+                    }
+                }
                 if receiver_status == 409
                     && delivery
                         .get("status")
