@@ -7169,17 +7169,35 @@ class TckRunner:
                             "websocket",
                             raw_initial_response.get("web_socket"),
                         )
-                        if not isinstance(initial_websocket, str) or not initial_websocket.strip():
-                            websocket_path = (
-                                "websocket"
-                                if "websocket" in raw_initial_response
-                                or "web_socket" not in raw_initial_response
-                                else "web_socket"
-                            )
+                        valid_initial_websocket = (
+                            initial_websocket.strip()
+                            if isinstance(initial_websocket, str)
+                            and initial_websocket.strip()
+                            else None
+                        )
+                        websocket_path = (
+                            "websocket"
+                            if "websocket" in raw_initial_response
+                            or "web_socket" not in raw_initial_response
+                            else "web_socket"
+                        )
+                        if valid_initial_websocket is None:
                             diagnostics.append(
                                 {
                                     "code": "DurableBackgroundRunInvalid",
                                     "message": f"background run {response_mode} response requires websocket",
+                                    "path": f"$.initialResponse.{websocket_path}",
+                                }
+                            )
+                        elif (
+                            valid_initial_run_id is not None
+                            and f"/runs/{valid_initial_run_id}/"
+                            not in valid_initial_websocket
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run websocket must include runId",
                                     "path": f"$.initialResponse.{websocket_path}",
                                 }
                             )

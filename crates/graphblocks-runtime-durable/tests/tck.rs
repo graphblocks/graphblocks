@@ -846,17 +846,29 @@ fn run_case(case: &Value) -> Result<(), String> {
                     } else {
                         "web_socket"
                     };
-                    if response
+                    let response_websocket = response
                         .get("websocket")
                         .or_else(|| response.get("web_socket"))
                         .and_then(Value::as_str)
-                        .is_none_or(|websocket| websocket.trim().is_empty())
-                    {
+                        .map(str::trim)
+                        .filter(|websocket| !websocket.is_empty());
+                    if response_websocket.is_none() {
                         diagnostics.push(json!({
                             "code": "DurableBackgroundRunInvalid",
                             "message": format!("background run {mode} response requires websocket"),
                             "path": format!("$.initialResponse.{websocket_path}"),
                         }));
+                    } else if let (Some(run_id), Some(websocket)) =
+                        (response_run_id, response_websocket)
+                    {
+                        let run_id_path_segment = format!("/runs/{run_id}/");
+                        if !websocket.contains(&run_id_path_segment) {
+                            diagnostics.push(json!({
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run websocket must include runId",
+                                "path": format!("$.initialResponse.{websocket_path}"),
+                            }));
+                        }
                     }
                     let cancel_path = if response.contains_key("cancel")
                         || !response.contains_key("cancel_route")
