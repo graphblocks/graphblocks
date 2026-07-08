@@ -7065,6 +7065,7 @@ class TckRunner:
                     "cancelled",
                     "expired",
                 }
+                receiver_statuses = []
                 for index, delivery in enumerate(deliveries):
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7119,6 +7120,32 @@ class TckRunner:
                             }
                         )
                     status = raw_status if isinstance(raw_status, str) else ""
+                    raw_receiver_status = delivery.get(
+                        "receiverStatus", delivery.get("receiver_status")
+                    )
+                    receiver_status = None
+                    if raw_receiver_status is not None:
+                        if isinstance(raw_receiver_status, bool) or not isinstance(
+                            raw_receiver_status, int
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "callback delivery requires integer receiverStatus",
+                                    "path": f"$.deliveries[{index}].receiverStatus",
+                                }
+                            )
+                        elif raw_receiver_status < 100 or raw_receiver_status > 599:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "callback delivery receiverStatus must be an HTTP status code",
+                                    "path": f"$.deliveries[{index}].receiverStatus",
+                                }
+                            )
+                        else:
+                            receiver_status = raw_receiver_status
+                    receiver_statuses.append(receiver_status)
                     if status in {"failed", "dead_lettered", "cancelled", "expired"}:
                         last_error = delivery.get("lastError", delivery.get("last_error"))
                         if not isinstance(last_error, str) or not last_error.strip():
@@ -7129,18 +7156,22 @@ class TckRunner:
                                     "path": f"$.deliveries[{index}].lastError",
                                 }
                             )
-                scheduled_retry_ids = [
-                    str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
-                    for delivery in deliveries
-                    if int(delivery.get("receiverStatus", delivery.get("receiver_status", 0))) >= 500
-                    and delivery.get("nextRetryAt", delivery.get("next_retry_at")) is not None
-                ]
-                acknowledged_duplicates = [
-                    str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
-                    for delivery in deliveries
-                    if int(delivery.get("receiverStatus", delivery.get("receiver_status", 0))) == 409
-                    and str(delivery.get("status", "")) == "acknowledged"
-                ]
+                scheduled_retry_ids = []
+                acknowledged_duplicates = []
+                for index, delivery in enumerate(deliveries):
+                    receiver_status = receiver_statuses[index]
+                    delivery_id = str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
+                    if (
+                        receiver_status is not None
+                        and receiver_status >= 500
+                        and delivery.get("nextRetryAt", delivery.get("next_retry_at")) is not None
+                    ):
+                        scheduled_retry_ids.append(delivery_id)
+                    if (
+                        receiver_status == 409
+                        and str(delivery.get("status", "")) == "acknowledged"
+                    ):
+                        acknowledged_duplicates.append(delivery_id)
                 idempotency_keys = [
                     str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
                     for delivery in deliveries

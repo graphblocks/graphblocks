@@ -1732,6 +1732,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection cases now reject delivery rows whose `status` is not one of the
   protocol-defined `CallbackDelivery.status` terminal or in-flight values, preventing arbitrary
   strings from satisfying callback-delivery TCK evidence.
+- Durable callback projection retry and duplicate evidence now uses only typed integer
+  `receiverStatus` values in the HTTP status-code range, preventing string coercion from proving
+  webhook retry or duplicate-acknowledgement behavior.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
