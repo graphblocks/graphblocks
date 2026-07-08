@@ -2245,6 +2245,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{release_id_path}"),
                 }));
             }
+            let tenant_id_path = if raw_operation.contains_key("tenantId")
+                || !raw_operation.contains_key("tenant_id")
+            {
+                "tenantId"
+            } else {
+                "tenant_id"
+            };
+            if raw_operation
+                .get("tenantId")
+                .or_else(|| raw_operation.get("tenant_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |tenant_id| tenant_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank tenantId",
+                    "path": format!("$.operation.{tenant_id_path}"),
+                }));
+            }
             let operation_policy_snapshot_path = if raw_operation.contains_key("policySnapshotId")
                 || !raw_operation.contains_key("policy_snapshot_id")
             {
@@ -2462,6 +2481,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "code": "DurableExternalOperationInvalid",
                         "message": "external operation reconciliation requires callback releaseId",
                         "path": format!("$.lateCallback.{callback_release_id_path}"),
+                    }));
+                }
+            }
+            let callback_tenant_id_path = if raw_late_callback.contains_key("tenantId")
+                || !raw_late_callback.contains_key("tenant_id")
+            {
+                "tenantId"
+            } else {
+                "tenant_id"
+            };
+            match raw_late_callback
+                .get("tenantId")
+                .or_else(|| raw_late_callback.get("tenant_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_tenant_id) if !callback_tenant_id.is_empty() => {
+                    let tenant_id = raw_operation
+                        .get("tenantId")
+                        .or_else(|| raw_operation.get("tenant_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !tenant_id.is_empty() && callback_tenant_id != tenant_id {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback tenantId must match operation",
+                            "path": format!("$.lateCallback.{callback_tenant_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback tenantId",
+                        "path": format!("$.lateCallback.{callback_tenant_id_path}"),
                     }));
                 }
             }

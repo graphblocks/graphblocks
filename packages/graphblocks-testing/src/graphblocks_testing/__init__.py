@@ -8403,6 +8403,20 @@ class TckRunner:
                             "path": f"$.operation.{release_id_path}",
                         }
                     )
+                tenant_id_path = (
+                    "tenantId"
+                    if "tenantId" in raw_operation or "tenant_id" not in raw_operation
+                    else "tenant_id"
+                )
+                tenant_id = raw_operation.get("tenantId", raw_operation.get("tenant_id"))
+                if not isinstance(tenant_id, str) or not tenant_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank tenantId",
+                            "path": f"$.operation.{tenant_id_path}",
+                        }
+                    )
                 operation_policy_snapshot_path = (
                     "policySnapshotId"
                     if "policySnapshotId" in raw_operation
@@ -8583,6 +8597,35 @@ class TckRunner:
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation callback releaseId must match operation",
                             "path": f"$.lateCallback.{callback_release_id_path}",
+                        }
+                    )
+                callback_tenant_id_path = (
+                    "tenantId"
+                    if "tenantId" in raw_late_callback
+                    or "tenant_id" not in raw_late_callback
+                    else "tenant_id"
+                )
+                callback_tenant_id = raw_late_callback.get(
+                    "tenantId", raw_late_callback.get("tenant_id")
+                )
+                if not isinstance(callback_tenant_id, str) or not callback_tenant_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires callback tenantId",
+                            "path": f"$.lateCallback.{callback_tenant_id_path}",
+                        }
+                    )
+                elif (
+                    isinstance(tenant_id, str)
+                    and tenant_id.strip()
+                    and callback_tenant_id.strip() != tenant_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback tenantId must match operation",
+                            "path": f"$.lateCallback.{callback_tenant_id_path}",
                         }
                     )
                 payload_digest_path = (
