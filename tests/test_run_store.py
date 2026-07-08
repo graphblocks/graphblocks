@@ -394,6 +394,31 @@ def test_sqlite_run_store_rejects_malformed_model_visible_tools_on_replay(tmp_pa
         store.get_run(record.run_id)
 
 
+@pytest.mark.parametrize(
+    ("column", "field_name"),
+    (
+        ("inputs_json", "stored inputs_json"),
+        ("state_json", "stored state_json"),
+    ),
+)
+def test_sqlite_run_store_rejects_non_standard_json_constants_on_replay(
+    tmp_path,
+    column: str,
+    field_name: str,
+) -> None:
+    database = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(database)
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        f"UPDATE runs SET {column} = ? WHERE run_id = ?",
+        ('{"value": NaN}', record.run_id),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match=f"run store {field_name} must be valid strict JSON"):
+        store.get_run(record.run_id)
+
+
 def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_path) -> None:
     store = SQLiteRunStore(tmp_path / "runs.sqlite3")
     record = store.create_run("sha256:test", {})

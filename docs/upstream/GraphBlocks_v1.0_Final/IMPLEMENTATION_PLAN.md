@@ -456,6 +456,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `invocation_mode` field.
 - Python run-store records now recursively validate inputs, state, and patches as JSON values,
   rejecting arbitrary objects and non-finite numbers before durable replay or SQLite persistence.
+- Python SQLite run-store replay now parses stored `inputs_json`, `state_json`, deployment
+  provenance, and model-visible tool provenance with strict JSON semantics, rejecting non-standard
+  constants such as `NaN` before a corrupted snapshot can be treated as durable run state.
 - Rust SQLite run-store replay now rejects malformed model-visible tool provenance fields such as
   non-integer `valid_until_unix_ms`, and the Python SQLite run store rejects malformed
   `model_visible_tools_json` shape, item type, boolean permission, required string identity, and

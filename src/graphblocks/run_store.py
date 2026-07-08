@@ -116,6 +116,20 @@ def _validate_json_value(owner: str, path: str, value: object) -> Any:
     raise ValueError(f"{owner} {path} must contain only JSON values")
 
 
+def _loads_strict_json(owner: str, field_name: str, value: str) -> Any:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be valid strict JSON") from error
+
+
+def _dumps_strict_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
 def _validate_invocation_mode(owner: str, value: object) -> RunInvocationMode:
     if not isinstance(value, str):
         raise ValueError(f"{owner} invocation_mode must be a string")
@@ -479,12 +493,12 @@ class SQLiteRunStore:
                 record.run_id,
                 sequence,
                 record.graph_hash,
-                json.dumps(record.inputs, sort_keys=True, separators=(",", ":")),
+                _dumps_strict_json(record.inputs),
                 _deployment_provenance_json(record.deployment_provenance),
                 record.invocation_mode,
                 _model_visible_tools_json(record.model_visible_tools),
                 record.status,
-                json.dumps(record.state, sort_keys=True, separators=(",", ":")),
+                _dumps_strict_json(record.state),
                 record.state_revision,
             ),
         )
@@ -515,7 +529,7 @@ class SQLiteRunStore:
         return RunRecord(
             run_id=str(row["run_id"]),
             graph_hash=str(row["graph_hash"]),
-            inputs=json.loads(str(row["inputs_json"])),
+            inputs=_loads_strict_json("run store", "stored inputs_json", str(row["inputs_json"])),
             deployment_provenance=_parse_deployment_provenance_json(
                 str(row["deployment_provenance_json"] or "{}")
             ),
@@ -524,7 +538,7 @@ class SQLiteRunStore:
                 str(row["model_visible_tools_json"] or "[]")
             ),
             status=row["status"],
-            state=json.loads(str(row["state_json"])),
+            state=_loads_strict_json("run store", "stored state_json", str(row["state_json"])),
             state_revision=int(row["state_revision"]),
         )
 
@@ -561,7 +575,7 @@ class SQLiteRunStore:
             WHERE run_id = ? AND state_revision = ?
             """,
             (
-                json.dumps(next_state, sort_keys=True, separators=(",", ":")),
+                _dumps_strict_json(next_state),
                 updated_revision,
                 run_id,
                 expected_revision,
@@ -610,11 +624,11 @@ class SQLiteRunStore:
 
 
 def _deployment_provenance_json(provenance: RunDeploymentProvenance) -> str:
-    return json.dumps(provenance.canonical_value(), sort_keys=True, separators=(",", ":"))
+    return _dumps_strict_json(provenance.canonical_value())
 
 
 def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
-    return json.dumps(
+    return _dumps_strict_json(
         [
             {
                 "tool_name": tool.tool_name,
@@ -626,21 +640,19 @@ def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
                 "valid_until": tool.valid_until,
             }
             for tool in sorted(tools)
-        ],
-        sort_keys=True,
-        separators=(",", ":"),
+        ]
     )
 
 
 def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
-    parsed = json.loads(value)
+    parsed = _loads_strict_json("run store", "stored deployment_provenance_json", value)
     if not isinstance(parsed, dict):
         raise ValueError("run deployment provenance mapping must be an object")
     return RunDeploymentProvenance.from_mapping(parsed)
 
 
 def _parse_model_visible_tools_json(value: str) -> tuple[ModelVisibleToolRef, ...]:
-    parsed = json.loads(value)
+    parsed = _loads_strict_json("run store", "stored model_visible_tools_json", value)
     if not isinstance(parsed, list):
         raise ValueError("run model visible tools must be a list")
     tools: list[ModelVisibleToolRef] = []
