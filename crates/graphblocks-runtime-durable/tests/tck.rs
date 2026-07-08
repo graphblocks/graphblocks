@@ -1997,30 +1997,99 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_object)
                 .ok_or_else(|| format!("{name} requires late callback"))?;
             let raw_usage = required_object(case, "usage", name)?;
+            let mut reconciliation_values = BTreeMap::new();
+            for (source_name, source, key, alias, default) in [
+                (
+                    "lateCallback",
+                    raw_late_callback,
+                    "commitsResult",
+                    "commits_result",
+                    true,
+                ),
+                (
+                    "lateCallback",
+                    raw_late_callback,
+                    "diagnosticRecorded",
+                    "diagnostic_recorded",
+                    false,
+                ),
+                (
+                    "lateCallback",
+                    raw_late_callback,
+                    "payloadConvertedToArtifactRef",
+                    "payload_converted_to_artifact_ref",
+                    false,
+                ),
+                ("usage", raw_usage, "reconciled", "reconciled", false),
+            ] {
+                let raw_value = source.get(key).or_else(|| source.get(alias));
+                reconciliation_values.insert(
+                    (source_name, key),
+                    raw_value.and_then(Value::as_bool).unwrap_or(default),
+                );
+                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                    let path_key = if source.contains_key(key) || !source.contains_key(alias) {
+                        key
+                    } else {
+                        alias
+                    };
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": format!("external operation reconciliation requires boolean {key}"),
+                        "path": format!("$.{source_name}.{path_key}"),
+                    }));
+                }
+            }
+            if reconciliation_values
+                .get(&("usage", "reconciled"))
+                .copied()
+                .unwrap_or(false)
+            {
+                match raw_usage
+                    .get("providerUsageRecords")
+                    .or_else(|| raw_usage.get("provider_usage_records"))
+                {
+                    Some(Value::Array(records)) if !records.is_empty() => {
+                        for (index, record) in records.iter().enumerate() {
+                            if !record.is_object() {
+                                diagnostics.push(json!({
+                                    "code": "DurableExternalOperationInvalid",
+                                    "message": "external operation reconciliation usage record must be object",
+                                    "path": format!("$.usage.providerUsageRecords[{index}]"),
+                                }));
+                            }
+                        }
+                    }
+                    _ => {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires providerUsageRecords when reconciled",
+                            "path": "$.usage.providerUsageRecords",
+                        }));
+                    }
+                }
+            }
             json!({
                 "sideEffectCommitPreserved": raw_operation
                     .get("effectState")
                     .or_else(|| raw_operation.get("effect_state"))
                     .and_then(Value::as_str)
                     .is_some_and(|state| state == "committed"),
-                "lateCallbackCommitsResult": raw_late_callback
-                    .get("commitsResult")
-                    .or_else(|| raw_late_callback.get("commits_result"))
-                    .and_then(Value::as_bool)
+                "lateCallbackCommitsResult": reconciliation_values
+                    .get(&("lateCallback", "commitsResult"))
+                    .copied()
                     .unwrap_or(true),
-                "lateCallbackRecordedDiagnostic": raw_late_callback
-                    .get("diagnosticRecorded")
-                    .or_else(|| raw_late_callback.get("diagnostic_recorded"))
-                    .and_then(Value::as_bool)
+                "lateCallbackRecordedDiagnostic": reconciliation_values
+                    .get(&("lateCallback", "diagnosticRecorded"))
+                    .copied()
                     .unwrap_or(false),
-                "lateUsageReconciled": raw_usage
-                    .get("reconciled")
-                    .and_then(Value::as_bool)
+                "lateUsageReconciled": reconciliation_values
+                    .get(&("usage", "reconciled"))
+                    .copied()
                     .unwrap_or(false),
-                "largePayloadUsesArtifactRef": raw_late_callback
-                    .get("payloadConvertedToArtifactRef")
-                    .or_else(|| raw_late_callback.get("payload_converted_to_artifact_ref"))
-                    .and_then(Value::as_bool)
+                "largePayloadUsesArtifactRef": reconciliation_values
+                    .get(&("lateCallback", "payloadConvertedToArtifactRef"))
+                    .copied()
                     .unwrap_or(false),
             })
         }

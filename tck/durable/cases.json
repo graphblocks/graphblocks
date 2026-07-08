@@ -3133,5 +3133,61 @@
       "lateUsageReconciled": true,
       "largePayloadUsesArtifactRef": true
     }
+  },
+  {
+    "name": "external_operation_non_boolean_diagnostic_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": "true",
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean diagnosticRecorded",
+        "path": "$.lateCallback.diagnosticRecorded"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_reconciled_without_usage_records_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires providerUsageRecords when reconciled",
+        "path": "$.usage.providerUsageRecords"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
   }
 ]

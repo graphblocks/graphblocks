@@ -1873,11 +1873,13 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.
-- Durable external-operation reconciliation evidence now requires real boolean values for late
-  callback commit/diagnostic/artifact-reference flags and late usage reconciliation, preventing
-  truthy strings from proving cancellation, payload extraction, or billing reconciliation behavior.
-- Durable external-operation reconciliation evidence now requires nonempty provider usage records
-  when late usage is marked reconciled, so billing reconciliation cannot be proven from a bare flag.
+- Durable external-operation reconciliation shared TCK cases now require real boolean values for
+  late callback commit/diagnostic/artifact-reference flags and late usage reconciliation in both
+  Rust and Python runners, preventing truthy strings from proving cancellation, payload extraction,
+  or billing reconciliation behavior.
+- Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
+  provider usage records in both Rust and Python runners when late usage is marked reconciled, so
+  billing reconciliation cannot be proven from a bare flag.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
