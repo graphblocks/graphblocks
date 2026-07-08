@@ -706,6 +706,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].subscriptionId"),
                     }));
                 }
+                if delivery
+                    .get("cursor")
+                    .and_then(Value::as_str)
+                    .map_or(true, |cursor| cursor.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires cursor",
+                        "path": format!("$.deliveries[{index}].cursor"),
+                    }));
+                }
                 if let Some(subscription_id) = subscription_id {
                     if delivery
                         .get("subscriptionId")
