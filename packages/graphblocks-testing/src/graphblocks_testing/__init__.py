@@ -7594,7 +7594,7 @@ class TckRunner:
                     next_retry_at_values.append(next_retry_at)
                     if (
                         receiver_status is not None
-                        and receiver_status >= 500
+                        and (receiver_status == 429 or receiver_status >= 500)
                         and next_retry_at is not None
                         and status != "failed"
                     ):
@@ -7624,7 +7624,7 @@ class TckRunner:
                         in {"delivered", "acknowledged", "dead_lettered", "cancelled", "expired"}
                         and not (
                             receiver_status is not None
-                            and receiver_status >= 500
+                            and (receiver_status == 429 or receiver_status >= 500)
                         )
                     ):
                         diagnostics.append(
@@ -7637,7 +7637,7 @@ class TckRunner:
                     if (
                         subscription_failure_policy == "retry_then_dead_letter"
                         and receiver_status is not None
-                        and receiver_status >= 500
+                        and (receiver_status == 429 or receiver_status >= 500)
                         and status == "failed"
                         and raw_next_retry_at is None
                     ):
