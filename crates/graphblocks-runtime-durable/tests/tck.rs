@@ -648,6 +648,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                     && delivery
                         .get("status")
                         .and_then(Value::as_str)
+                        .is_some_and(|status| status != "failed")
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "non-retryable 4xx callback delivery requires failed status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
+                }
+                if (400..=499).contains(&receiver_status)
+                    && !matches!(receiver_status, 409 | 410 | 429)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
                         .is_some_and(|status| status == "failed")
                     && delivery
                         .get("lastError")

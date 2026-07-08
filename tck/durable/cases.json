@@ -711,6 +711,35 @@
     }
   },
   {
+    "name": "webhook_delivery_non_special_4xx_cancelled_status_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-4xx-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0276",
+        "runId": "run-coding-001",
+        "sequence": 276,
+        "cursor": "evt-0276",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0276",
+        "receiverStatus": 403,
+        "status": "cancelled",
+        "lastError": "non_retryable"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "non-retryable 4xx callback delivery requires failed status",
+        "path": "$.deliveries[0].status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_without_redrive_does_not_prove_redrive",
     "kind": "callback_delivery_projection",
     "deliveries": [
