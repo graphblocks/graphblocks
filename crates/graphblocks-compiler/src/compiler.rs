@@ -289,15 +289,16 @@ fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
     }
 }
 
-fn has_async_timeout(config: &Map<String, Value>) -> bool {
+fn has_async_bounded_timeout(config: &Map<String, Value>) -> bool {
     let timeout = config
         .get("timeout")
         .or_else(|| config.get("timeoutMs"))
         .or_else(|| config.get("timeout_ms"))
         .or_else(|| config.get("deadline"));
-    if duration_milliseconds(timeout).is_some_and(|timeout_ms| timeout_ms > 0) {
-        return true;
-    }
+    duration_milliseconds(timeout).is_some_and(|timeout_ms| timeout_ms > 0)
+}
+
+fn has_async_explicit_infinite_wait(config: &Map<String, Value>) -> bool {
     config
         .get("infiniteWait")
         .or_else(|| config.get("infinite_wait"))
@@ -502,7 +503,16 @@ fn diagnose_async_operation_config(
             path,
         ));
     }
-    if !has_async_timeout(config) {
+    let has_bounded_timeout = has_async_bounded_timeout(config);
+    let has_infinite_wait = has_async_explicit_infinite_wait(config);
+    if has_bounded_timeout && has_infinite_wait {
+        diagnostics.push(Diagnostic::error(
+            "InvalidAsyncOperation",
+            "async operation wait must not define both timeout and infinite-wait policy",
+            path,
+        ));
+    }
+    if !has_bounded_timeout && !has_infinite_wait {
         diagnostics.push(Diagnostic::error(
             "GB6001",
             "async operation callback waits require a timeout or explicit infinite-wait policy",
@@ -770,15 +780,13 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         } else {
             None
         };
-        return numeric_ipv4
-            .map(Ipv4Addr::from)
-            .is_some_and(|address| {
-                address.is_loopback()
-                    || address.is_private()
-                    || address.is_link_local()
-                    || address.is_multicast()
-                    || address.is_unspecified()
-            });
+        return numeric_ipv4.map(Ipv4Addr::from).is_some_and(|address| {
+            address.is_loopback()
+                || address.is_private()
+                || address.is_link_local()
+                || address.is_multicast()
+                || address.is_unspecified()
+        });
     };
     match address {
         IpAddr::V4(address) => {

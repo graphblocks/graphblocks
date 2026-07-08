@@ -1436,6 +1436,46 @@
     }
   },
   {
+    "name": "async_operation_ambiguous_timeout_and_infinite_wait_policy",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-ambiguous-wait-bound"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "infiniteWaitPolicy": "operator_review_required",
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:5983b34a66fb0a6121da4ddcc235386c4392cf020736905e48eb7459a89e0b63",
+      "error_codes": ["InvalidAsyncOperation"]
+    }
+  },
+  {
     "name": "callback_subscription_safety_diagnostics",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

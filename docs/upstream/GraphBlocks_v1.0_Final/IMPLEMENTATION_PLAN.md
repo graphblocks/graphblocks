@@ -636,10 +636,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   async/callback diagnostics as the Python authoring facade and passes the shared compiler TCK for
   these cases. `async.poll_operation@1` node configs participate in the same `GB6001` timeout
   diagnostics as callback-backed async waits, and timeout fields must parse to positive durations
-  rather than merely being non-empty strings. Async wait `onTimeout` actions are also validated at
-  compile time as `fail`, `cancel`, or `expire`, and poll `interval`/`maxInterval` duration fields
-  are rejected before runtime when they are zero or unparsable. The Python authoring facade mirrors
-  these diagnostics so shared compiler TCK results stay aligned with the Rust normative compiler.
+  rather than merely being non-empty strings. The compilers also reject graph-authored waits that
+  define both a bounded timeout and an explicit infinite-wait policy as `InvalidAsyncOperation`.
+  Async wait `onTimeout` actions are validated at compile time as `fail`, `cancel`, or `expire`,
+  and poll `interval`/`maxInterval` duration fields are rejected before runtime when they are zero
+  or unparsable. The Python authoring facade mirrors these diagnostics so shared compiler TCK
+  results stay aligned with the Rust normative compiler.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - SQLite async operation replay validates that each stored operation JSON identity matches its
@@ -1418,6 +1420,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python and Rust compilers now reject graph-authored async operation configs that define both
   callback and polling completion refs as `InvalidAsyncOperation`, catching ambiguous external
   completion authority before deployment.
+- Python and Rust compilers now also reject graph-authored async waits that define both a bounded
+  timeout and an explicit infinite-wait policy as `InvalidAsyncOperation`, so the runtime never has
+  to choose between contradictory wait-bound semantics.
 - `graphblocks-runtime-core` now keeps the callback wait expiration boundary through
   `CallbackReceived`, rejecting callback receipts that have no expiration even before scheduler
   resume is attempted.

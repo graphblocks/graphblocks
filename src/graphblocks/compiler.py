@@ -76,7 +76,7 @@ def _has_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _has_async_timeout(config: dict[str, Any]) -> bool:
+def _has_async_bounded_timeout(config: dict[str, Any]) -> bool:
     timeout = (
         config.get("timeout")
         or config.get("timeoutMs")
@@ -84,8 +84,10 @@ def _has_async_timeout(config: dict[str, Any]) -> bool:
         or config.get("deadline")
     )
     timeout_ms = _duration_milliseconds(timeout)
-    if timeout_ms is not None and timeout_ms > 0:
-        return True
+    return timeout_ms is not None and timeout_ms > 0
+
+
+def _has_async_explicit_infinite_wait(config: dict[str, Any]) -> bool:
     infinite_wait = config.get("infiniteWait", config.get("infinite_wait", False))
     explicit_infinite_wait_policy = config.get("infiniteWaitPolicy") or config.get("infinite_wait_policy")
     return infinite_wait is True or _has_non_empty_string(explicit_infinite_wait_policy)
@@ -260,7 +262,17 @@ def _diagnose_async_operation_config(
                 path,
             )
         )
-    if not _has_async_timeout(config):
+    has_bounded_timeout = _has_async_bounded_timeout(config)
+    has_infinite_wait = _has_async_explicit_infinite_wait(config)
+    if has_bounded_timeout and has_infinite_wait:
+        diagnostics.append(
+            Diagnostic(
+                "InvalidAsyncOperation",
+                "async operation wait must not define both timeout and infinite-wait policy",
+                path,
+            )
+        )
+    if not has_bounded_timeout and not has_infinite_wait:
         diagnostics.append(
             Diagnostic(
                 "GB6001",
