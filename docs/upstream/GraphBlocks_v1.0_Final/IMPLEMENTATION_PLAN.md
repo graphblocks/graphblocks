@@ -100,6 +100,9 @@ graphblocks-cli
   the envelope after creation.
 - Python canonical JSON serialization now rejects mappings with non-string object keys before
   hashing or schema-envelope storage, preventing Python's JSON encoder from silently coercing keys.
+- Python `SchemaManifest.from_directory` now parses schema documents with strict JSON semantics,
+  rejecting non-standard constants such as `NaN` before schema digests or manifest entries are
+  produced.
 - `graphblocks-testing` can load and run the typed-value schema fixture through the shared schema
   TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
   relying on package-local tests only. TCK suite manifests now surface auxiliary suite fixtures such

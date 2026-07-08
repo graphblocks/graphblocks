@@ -166,9 +166,12 @@ class SchemaManifest:
         entries: list[SchemaManifestEntry] = []
         for path in sorted(root_path.rglob("*.json")):
             try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as error:
-                raise SchemaManifestError(f"{path}: invalid JSON schema document: {error.msg}") from error
+                document = json.loads(
+                    path.read_text(encoding="utf-8"),
+                    parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+                )
+            except ValueError as error:
+                raise SchemaManifestError(f"{path}: invalid strict JSON schema document") from error
             if not isinstance(document, Mapping):
                 raise SchemaManifestError(f"{path}: JSON schema document must be an object")
             schema_id = document.get("$id")

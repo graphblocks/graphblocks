@@ -183,6 +183,14 @@ def test_schema_manifest_rejects_missing_and_duplicate_schema_ids(tmp_path: Path
         SchemaManifest.from_directory(tmp_path)
 
 
+def test_schema_manifest_rejects_non_standard_json_constants(tmp_path: Path) -> None:
+    schema = tmp_path / "bad.schema.json"
+    schema.write_text('{"$id":"example.com/Bad.schema.json","type":"object","ignored":NaN}', encoding="utf-8")
+
+    with pytest.raises(SchemaManifestError, match="strict JSON"):
+        SchemaManifest.from_directory(tmp_path)
+
+
 def test_checked_in_schema_manifest_digest_is_golden() -> None:
     schema_root = Path(__file__).resolve().parents[1] / "schemas"
 
