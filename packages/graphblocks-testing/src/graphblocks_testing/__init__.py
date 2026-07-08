@@ -7071,6 +7071,24 @@ class TckRunner:
                                     "path": f"$.redrive.{key}",
                                 }
                             )
+                    redrive_event_id = raw_redrive.get("eventId", raw_redrive.get("event_id"))
+                    original_event_id = raw_redrive.get(
+                        "originalEventId", raw_redrive.get("original_event_id")
+                    )
+                    if (
+                        isinstance(redrive_event_id, str)
+                        and redrive_event_id.strip()
+                        and isinstance(original_event_id, str)
+                        and original_event_id.strip()
+                        and redrive_event_id != original_event_id
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive must preserve originalEventId",
+                                "path": "$.redrive.eventId",
+                            }
+                        )
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
                 valid_delivery_statuses = {
                     "pending",
