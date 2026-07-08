@@ -675,13 +675,11 @@ class ServerResponse:
     def json(cls, status_code: int, payload: Mapping[str, object]) -> ServerResponse:
         if not isinstance(payload, Mapping):
             raise ValueError("server response JSON payload must be a mapping")
-        payload_copy = dict(payload)
-        if any(not isinstance(key, str) or not key.strip() for key in payload_copy):
-            raise ValueError("server response JSON payload keys must be non-empty strings")
+        payload_copy = _response_json_object(_freeze_json_value("server response JSON", "payload", payload))
         return cls(
             status_code=status_code,
             headers={"content-type": "application/json"},
-            body=json.dumps(payload_copy, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+            body=json.dumps(payload_copy, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8"),
         )
 
 

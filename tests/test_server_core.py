@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from itertools import permutations
 import json
+import math
 
 import graphblocks
 import pytest
@@ -361,6 +362,12 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse.json(200, {object(): True})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="server response JSON payload keys must be non-empty strings"):
         ServerResponse.json(200, {" ": True})
+    with pytest.raises(ValueError, match="server response JSON payload.score must be finite"):
+        ServerResponse.json(200, {"score": math.nan})
+    with pytest.raises(ValueError, match="server response JSON payload.nested.score must be finite"):
+        ServerResponse.json(200, {"nested": {"score": math.inf}})
+    with pytest.raises(ValueError, match="server response JSON payload.nested keys must be non-empty strings"):
+        ServerResponse.json(200, {"nested": {1: "coerced"}})  # type: ignore[dict-item]
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
