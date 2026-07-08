@@ -27,7 +27,7 @@ class LangfuseGenerationProjection:
     generation_json: str
 
     def generation_contract(self) -> dict[str, object]:
-        return json.loads(self.generation_json)
+        return _strict_json_contract("Langfuse generation projection", self.generation_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +35,7 @@ class LangfusePromptProjection:
     prompt_json: str
 
     def prompt_contract(self) -> dict[str, object]:
-        return json.loads(self.prompt_json)
+        return _strict_json_contract("Langfuse prompt projection", self.prompt_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class LangfuseScoreProjection:
     score_json: str
 
     def score_contract(self) -> dict[str, object]:
-        return json.loads(self.score_json)
+        return _strict_json_contract("Langfuse score projection", self.score_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +51,7 @@ class LangfuseDatasetItemProjection:
     dataset_item_json: str
 
     def dataset_item_contract(self) -> dict[str, object]:
-        return json.loads(self.dataset_item_json)
+        return _strict_json_contract("Langfuse dataset item projection", self.dataset_item_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ class LangfuseEventProjection:
     event_json: str
 
     def event_contract(self) -> dict[str, object]:
-        return json.loads(self.event_json)
+        return _strict_json_contract("Langfuse event projection", self.event_json)
 
 
 def langfuse_generation_from_observation(
@@ -288,6 +288,21 @@ def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"Langfuse {field_name} must be a non-empty string")
     return value
+
+
+def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(
+            payload,
+            parse_constant=lambda constant: (_ for _ in ()).throw(
+                ValueError(f"non-standard JSON constant {constant}")
+            ),
+        )
+    except ValueError as error:
+        raise ValueError(f"{contract_name} must be valid strict JSON") from error
+    if not isinstance(parsed, Mapping):
+        raise ValueError(f"{contract_name} must be a JSON object")
+    return dict(parsed)
 
 
 __all__ = [

@@ -32,7 +32,7 @@ class OtlpSpanProjection:
     span_json: str
 
     def span_contract(self) -> dict[str, object]:
-        return json.loads(self.span_json)
+        return _strict_json_contract("OTLP span projection", self.span_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +46,7 @@ class OtelCollectorTemplate:
         return cls(name=name, config_json=canonical_dumps(dict(config)))
 
     def config_contract(self) -> dict[str, object]:
-        return json.loads(self.config_json)
+        return _strict_json_contract("OTel collector template", self.config_json)
 
     def template_contract(self) -> dict[str, object]:
         return {
@@ -252,6 +252,21 @@ def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OtelCollectorTemplateError(f"{field_name} must be a non-empty string")
     return value
+
+
+def _strict_json_contract(contract_name: str, payload: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(
+            payload,
+            parse_constant=lambda constant: (_ for _ in ()).throw(
+                ValueError(f"non-standard JSON constant {constant}")
+            ),
+        )
+    except ValueError as error:
+        raise OtelCollectorTemplateError(f"{contract_name} must be valid strict JSON") from error
+    if not isinstance(parsed, Mapping):
+        raise OtelCollectorTemplateError(f"{contract_name} must be a JSON object")
+    return dict(parsed)
 
 
 __all__ = [

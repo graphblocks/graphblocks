@@ -611,6 +611,22 @@ def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch
     }
 
 
+def test_otel_projection_contracts_reject_non_standard_json_constants(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+
+    span = graphblocks_otel.OtlpSpanProjection(span_json='{"metric": NaN}')
+    template = graphblocks_otel.OtelCollectorTemplate(
+        name="collector",
+        config_json='{"receivers": Infinity}',
+    )
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="strict JSON"):
+        span.span_contract()
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="strict JSON"):
+        template.config_contract()
+
+
 def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
@@ -884,6 +900,30 @@ def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None
         },
         "usage": {"input_tokens": 20, "output_tokens": 8},
     }
+
+
+def test_langfuse_projection_contracts_reject_non_standard_json_constants(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+
+    projections = (
+        graphblocks_langfuse.LangfuseGenerationProjection(generation_json='{"usage": NaN}'),
+        graphblocks_langfuse.LangfusePromptProjection(prompt_json='{"metadata": Infinity}'),
+        graphblocks_langfuse.LangfuseScoreProjection(score_json='{"value": -Infinity}'),
+        graphblocks_langfuse.LangfuseDatasetItemProjection(dataset_item_json='{"input": NaN}'),
+        graphblocks_langfuse.LangfuseEventProjection(event_json='{"metadata": Infinity}'),
+    )
+    contract_methods = (
+        "generation_contract",
+        "prompt_contract",
+        "score_contract",
+        "dataset_item_contract",
+        "event_contract",
+    )
+
+    for projection, method_name in zip(projections, contract_methods, strict=True):
+        with pytest.raises(ValueError, match="strict JSON"):
+            getattr(projection, method_name)()
 
 
 def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -> None:

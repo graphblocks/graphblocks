@@ -1833,6 +1833,9 @@ interoperability: Haystack Component/Pipeline adapter
 - Runtime-core observability now records telemetry export outcomes with an explicit
   `run_impact = none` contract. Exporter failures can be retryable and diagnostic, but any exporter
   outcome that claims to fail, pause, bill, quota, or otherwise affect run correctness is rejected.
+- Python OTLP and Langfuse projection contracts now parse stored exporter payloads with strict JSON
+  semantics and require JSON object roots, rejecting non-standard constants such as `NaN` before
+  telemetry payloads are handed to lossy observability exporters.
 
 ## 8. Phase 5 — Remote Workers, Release, Deployment (`GB-C4-PRODUCTION`)
 
