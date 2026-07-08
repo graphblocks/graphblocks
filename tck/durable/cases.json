@@ -1618,6 +1618,7 @@
       }
     ],
     "redrive": "del-dead-001",
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -1653,6 +1654,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackProjectionInvalid",
@@ -1688,6 +1690,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackProjectionInvalid",
@@ -1723,6 +1726,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1753,6 +1757,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1783,6 +1788,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1812,6 +1818,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1842,6 +1849,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1872,6 +1880,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1902,6 +1911,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1932,6 +1942,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -1976,6 +1987,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2004,6 +2016,7 @@
         "status": "queued"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2021,6 +2034,7 @@
     "deliveries": [
       "del-object-invalid-001"
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2036,6 +2050,7 @@
     "name": "webhook_delivery_empty_deliveries_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2065,6 +2080,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2094,6 +2110,7 @@
         "lastError": "duplicate"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2123,6 +2140,7 @@
         "deliveredAt": "2026-07-02T00:00:03Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2153,6 +2171,7 @@
         "acknowledgedAt": "eventually"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2183,6 +2202,7 @@
         "acknowledgedAt": "2026-07-02T00:00:03Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2212,6 +2232,7 @@
         "deliveredAt": "2026-07-02T00:00:30Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "deliveredAfter2xx": true,
       "idempotencyKeysUniquePerSubscriptionEvent": true
@@ -2236,6 +2257,7 @@
         "nextRetryAt": "2026-07-02T00:01:31Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2264,6 +2286,7 @@
         "status": "delivered"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2293,6 +2316,7 @@
         "deliveredAt": "eventually"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2322,6 +2346,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2352,6 +2377,7 @@
         "lastError": "rate_limited"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "retryScheduledAfter5xx": false,
       "retryScheduledAfterRetryableStatus": true,
@@ -2381,6 +2407,7 @@
         "lastError": "rate_limited"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2411,6 +2438,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2440,6 +2468,7 @@
         "nextRetryAt": "2026-07-02T00:01:45Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2470,6 +2499,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2500,6 +2530,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2530,6 +2561,7 @@
         "deliveredAt": "2026-07-02T00:01:00Z"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2560,6 +2592,7 @@
         "lastError": "subscription_gone"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "subscriptionGoneAfter410": true,
       "idempotencyKeysUniquePerSubscriptionEvent": true
@@ -2583,6 +2616,7 @@
         "lastError": "subscription_gone"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2613,6 +2647,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2643,6 +2678,7 @@
         "lastError": "non_retryable"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "nonRetryable4xxTerminal": true,
       "idempotencyKeysUniquePerSubscriptionEvent": true
@@ -2666,6 +2702,7 @@
         "lastError": "non_retryable"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2695,6 +2732,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackDeliveryInvalid",
@@ -2725,6 +2763,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "idempotencyKeysUniquePerSubscriptionEvent": true,
       "deadLetterPreservesEventId": false,
@@ -2750,6 +2789,7 @@
         "lastError": "receiver_error"
       }
     ],
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2791,6 +2831,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2829,6 +2870,7 @@
       "reason": " ",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2867,6 +2909,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2905,6 +2948,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2943,6 +2987,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -2981,6 +3026,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": false
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -3020,6 +3066,7 @@
       "reason": "operator redrive",
       "createsApplicationEvent": "false"
     },
+    "nonMandatoryOutageBlocksRun": false,
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackRedriveInvalid",
@@ -3052,6 +3099,36 @@
       }
     ],
     "nonMandatoryOutageBlocksRun": "false",
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackProjectionInvalid",
+        "message": "callback projection requires boolean nonMandatoryOutageBlocksRun",
+        "path": "$.nonMandatoryOutageBlocksRun"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_missing_outage_flag_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-missing-outage-flag-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0310",
+        "runId": "run-coding-001",
+        "sequence": 310,
+        "cursor": "evt-0310",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0310",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:10Z",
+        "lastError": "receiver_error"
+      }
+    ],
     "expectedDiagnostics": [
       {
         "code": "DurableCallbackProjectionInvalid",

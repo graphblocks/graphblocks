@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 166
+    assert [case.kind for case in cases] == ["durable"] * 167
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1288,6 +1288,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_redrive_event_identity_mismatch_rejected",
         "webhook_delivery_redrive_application_event_flag_rejected",
         "webhook_delivery_non_boolean_outage_flag_rejected",
+        "webhook_delivery_missing_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "async_callback_resume_non_boolean_guard_rejected",
         "async_callback_resume_missing_guard_rejected",
@@ -1740,6 +1741,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "webhook_delivery_non_boolean_outage_flag_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_missing_outage_flag_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -3299,6 +3305,7 @@ def test_testing_package_rejects_failed_callback_delivery_without_error_evidence
         case_id="durable/missing-callback-delivery-error",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3340,6 +3347,7 @@ def test_testing_package_rejects_cancelled_callback_delivery_without_error_evide
         case_id="durable/missing-cancelled-callback-delivery-error",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3376,6 +3384,7 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
         case_id="durable/missing-callback-delivery-idempotency",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3415,6 +3424,7 @@ def test_testing_package_rejects_duplicate_callback_delivery_idempotency_keys(mo
         case_id="durable/duplicate-callback-delivery-idempotency",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3468,6 +3478,7 @@ def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypat
         case_id="durable/non-object-callback-delivery",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": ["del-001"],
         },
     )
@@ -3492,6 +3503,7 @@ def test_testing_package_rejects_empty_callback_delivery_evidence(monkeypatch) -
         case_id="durable/empty-callback-deliveries",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [],
         },
     )
@@ -3516,6 +3528,7 @@ def test_testing_package_rejects_non_object_callback_subscription_evidence(monke
         case_id="durable/non-object-callback-subscription",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": "sub-ide-001",
             "deliveries": [
                 {
@@ -3558,6 +3571,7 @@ def test_testing_package_rejects_invalid_callback_subscription_failure_policy(
         case_id="durable/invalid-callback-subscription-failure-policy",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": {
                 "subscriptionId": "sub-ide-001",
                 "failurePolicy": "retry_forever",
@@ -3604,6 +3618,7 @@ def test_testing_package_rejects_non_boolean_callback_subscription_mandatory_fla
         case_id="durable/non-boolean-callback-subscription-mandatory",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": {
                 "subscriptionId": "sub-ide-001",
                 "failurePolicy": "retry_then_dead_letter",
@@ -3650,6 +3665,7 @@ def test_testing_package_rejects_callback_delivery_for_different_subscription(
         case_id="durable/callback-delivery-subscription-mismatch",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": {
                 "subscriptionId": "sub-ide-001",
                 "failurePolicy": "retry_then_dead_letter",
@@ -3694,6 +3710,7 @@ def test_testing_package_rejects_non_object_callback_redrive_evidence(monkeypatc
         case_id="durable/non-object-callback-redrive",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3736,6 +3753,7 @@ def test_testing_package_rejects_redrive_assertion_without_redrive_evidence(
         case_id="durable/missing-callback-redrive-evidence",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3778,6 +3796,7 @@ def test_testing_package_rejects_redrive_event_assertion_without_redrive_evidenc
         case_id="durable/missing-callback-redrive-event-evidence",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -3884,6 +3903,7 @@ def test_testing_package_rejects_callback_delivery_without_identity_evidence(
         case_id=f"durable/missing-callback-delivery-{field}",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [delivery],
             "expected": {"retryScheduledAfter5xx": True},
         },
@@ -3934,6 +3954,7 @@ def test_testing_package_rejects_callback_delivery_without_envelope_evidence(
         case_id=f"durable/missing-callback-delivery-{field}",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [delivery],
             "expected": {"retryScheduledAfter5xx": True},
         },
@@ -4000,6 +4021,7 @@ def test_testing_package_observes_delivery_after_2xx_receiver_status(
         case_id="durable/callback-2xx-delivered",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4035,6 +4057,7 @@ def test_testing_package_rejects_successful_receiver_status_with_failed_delivery
         case_id="durable/successful-callback-receiver-status-with-failed-delivery",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4075,6 +4098,7 @@ def test_testing_package_rejects_callback_retry_scheduled_for_non_failed_deliver
         case_id="durable/callback-retry-scheduled-for-non-failed-delivery",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4116,6 +4140,7 @@ def test_testing_package_rejects_terminal_callback_delivery_with_next_retry(
         case_id="durable/terminal-callback-delivery-with-next-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4157,6 +4182,7 @@ def test_testing_package_rejects_callback_duplicate_409_without_acknowledged_sta
         case_id="durable/callback-duplicate-409-without-acknowledged-status",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4197,6 +4223,7 @@ def test_testing_package_observes_subscription_gone_after_410_delivery(
         case_id="durable/callback-410-subscription-gone",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4240,6 +4267,7 @@ def test_testing_package_rejects_malformed_410_callback_delivery(
         case_id="durable/malformed-callback-410-subscription-gone",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4281,6 +4309,7 @@ def test_testing_package_observes_non_retryable_4xx_terminal_delivery(
         case_id="durable/callback-4xx-non-retryable-terminal",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4324,6 +4353,7 @@ def test_testing_package_rejects_malformed_non_retryable_4xx_callback_delivery(
         case_id="durable/malformed-callback-4xx-non-retryable-terminal",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4363,6 +4393,7 @@ def test_testing_package_rejects_callback_delivery_with_non_integer_receiver_sta
         case_id="durable/non-integer-callback-delivery-receiver-status",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4402,6 +4433,7 @@ def test_testing_package_rejects_callback_delivery_with_blank_next_retry_at(monk
         case_id="durable/blank-callback-delivery-next-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4443,6 +4475,7 @@ def test_testing_package_rejects_retry_policy_failed_delivery_without_next_retry
         case_id="durable/retry-policy-failed-delivery-without-next-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": {
                 "subscriptionId": "sub-ide-001",
                 "failurePolicy": "retry_then_dead_letter",
@@ -4488,6 +4521,7 @@ def test_testing_package_rejects_rate_limited_callback_delivery_without_next_ret
         case_id="durable/rate-limited-callback-delivery-without-next-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "subscription": {
                 "subscriptionId": "sub-ide-001",
                 "failurePolicy": "retry_then_dead_letter",
@@ -4533,6 +4567,7 @@ def test_testing_package_observes_retry_scheduled_after_rate_limited_delivery(
         case_id="durable/rate-limited-callback-delivery-schedules-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4571,6 +4606,7 @@ def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(mo
         case_id="durable/invalid-callback-delivery-next-retry",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4612,6 +4648,7 @@ def test_testing_package_rejects_delivered_callback_delivery_without_delivered_a
         case_id="durable/missing-callback-delivery-delivered-at",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4651,6 +4688,7 @@ def test_testing_package_rejects_acknowledged_callback_delivery_without_acknowle
         case_id="durable/missing-callback-delivery-acknowledged-at",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4691,6 +4729,7 @@ def test_testing_package_rejects_acknowledged_callback_delivery_before_delivered
         case_id="durable/callback-delivery-acknowledged-before-delivered",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4748,6 +4787,7 @@ def test_testing_package_rejects_callback_redrive_without_audit_evidence(
         case_id=f"durable/missing-callback-redrive-{field}",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4807,6 +4847,7 @@ def test_testing_package_rejects_callback_redrive_without_identity_evidence(
         case_id=f"durable/missing-callback-redrive-{field}",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4847,6 +4888,7 @@ def test_testing_package_rejects_callback_redrive_that_changes_event_identity(mo
         case_id="durable/callback-redrive-event-identity-mismatch",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -4896,6 +4938,7 @@ def test_testing_package_rejects_callback_redrive_with_non_boolean_application_e
         case_id="durable/callback-redrive-application-event-flag",
         fixture={
             "kind": "callback_delivery_projection",
+            "nonMandatoryOutageBlocksRun": False,
             "deliveries": [
                 {
                     "deliveryId": "del-001",
@@ -5444,6 +5487,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_redrive_event_identity_mismatch_rejected",
         "webhook_delivery_redrive_application_event_flag_rejected",
         "webhook_delivery_non_boolean_outage_flag_rejected",
+        "webhook_delivery_missing_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "async_callback_resume_non_boolean_guard_rejected",
         "async_callback_resume_missing_guard_rejected",

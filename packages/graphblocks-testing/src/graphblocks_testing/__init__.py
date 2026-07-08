@@ -7498,7 +7498,7 @@ class TckRunner:
                 redrive_event_id_preserved = False
                 raw_non_mandatory_outage_blocks_run = fixture.get(
                     "nonMandatoryOutageBlocksRun",
-                    fixture.get("non_mandatory_outage_blocks_run", True),
+                    fixture.get("non_mandatory_outage_blocks_run"),
                 )
                 if isinstance(raw_non_mandatory_outage_blocks_run, bool):
                     non_mandatory_outage_blocks_run = raw_non_mandatory_outage_blocks_run

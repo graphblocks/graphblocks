@@ -1790,7 +1790,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         true
                     }
                 },
-                None => true,
+                None => {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackProjectionInvalid",
+                        "message": "callback projection requires boolean nonMandatoryOutageBlocksRun",
+                        "path": "$.nonMandatoryOutageBlocksRun",
+                    }));
+                    true
+                }
             };
             json!({
                 "retryScheduledAfter5xx": retry_scheduled_after_5xx,
