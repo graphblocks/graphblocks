@@ -906,6 +906,16 @@ class HttpGraphBlocksClient:
             canonical_dumps(dict(payload))
         except (TypeError, ValueError):
             raise ValueError("GraphBlocks HTTP callback payload must contain canonical JSON values") from None
+        pending_payload_values: list[object] = [payload]
+        while pending_payload_values:
+            current_value = pending_payload_values.pop()
+            if isinstance(current_value, Mapping):
+                for key, value in current_value.items():
+                    if not isinstance(key, str) or not key.strip():
+                        raise ValueError("GraphBlocks HTTP callback payload object keys must be non-empty strings")
+                    pending_payload_values.append(value)
+            elif isinstance(current_value, list | tuple):
+                pending_payload_values.extend(current_value)
         body: dict[str, object] = {
             "callbackId": callback_id,
             "payload": deepcopy(dict(payload)),

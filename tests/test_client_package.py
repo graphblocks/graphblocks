@@ -1585,6 +1585,24 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
             },
             "GraphBlocks HTTP callback payload must contain canonical JSON values",
         ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {1: "completed"},
+            },
+            "GraphBlocks HTTP callback payload object keys must be non-empty strings",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {"result": {"": "completed"}},
+            },
+            "GraphBlocks HTTP callback payload object keys must be non-empty strings",
+        ),
     ),
 )
 def test_client_package_rejects_malformed_async_callback_arguments(
