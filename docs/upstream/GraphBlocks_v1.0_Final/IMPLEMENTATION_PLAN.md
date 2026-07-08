@@ -1776,6 +1776,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run accepted-invocation evidence now requires an object `initialResponse`
   carrying a nonblank `runId`/`run_id`, preventing truthy placeholder values from satisfying
   accepted response semantics.
+- Durable background-run replay evidence now rejects non-object event-stream entries instead of
+  silently dropping them before replay/cursor assertions.
 - Durable async callback resume-guard evidence now requires real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks, preventing truthy strings from satisfying callback resume conformance.

@@ -1385,6 +1385,40 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
     )
 
 
+def test_testing_package_rejects_non_object_background_run_event(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-object-background-run-event",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": ["evt-000001"],
+            "attach": {},
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run event must be object",
+            "path": "$.events[0]",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

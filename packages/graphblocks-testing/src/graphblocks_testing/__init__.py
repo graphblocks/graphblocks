@@ -7057,6 +7057,15 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                for event_index, raw_event in enumerate(raw_events):
+                    if not isinstance(raw_event, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event must be object",
+                                "path": f"$.events[{event_index}]",
+                            }
+                        )
                 event_records = [event for event in raw_events if isinstance(event, Mapping)]
                 last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
                 replay_after_cursor = [
