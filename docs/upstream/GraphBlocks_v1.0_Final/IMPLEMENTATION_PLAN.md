@@ -1746,6 +1746,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection fixtures now reject delivery rows whose `subscriptionId` differs
   from the explicit subscription envelope, ensuring retry, duplicate, and redrive evidence belongs
   to the projected subscription.
+- Durable callback projection redrive evidence now requires an explicit `redrive` object before
+  asserting `deadLetterPreservesEventId`, preventing absent event ids from comparing equal and
+  proving redrive preservation accidentally.
 - Durable callback projection cases now reject delivery rows whose `status` is not one of the
   protocol-defined `CallbackDelivery.status` terminal or in-flight values, preventing arbitrary
   strings from satisfying callback-delivery TCK evidence.

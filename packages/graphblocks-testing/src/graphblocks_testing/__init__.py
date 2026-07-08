@@ -6390,6 +6390,7 @@ class TckRunner:
                     "path": "$.expected",
                 }
             )
+        expected_keys_with_structural_diagnostics: set[str] = set()
 
         try:
             durable = importlib.import_module("graphblocks_durable")
@@ -7351,6 +7352,7 @@ class TckRunner:
                 elif not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
                 redrive_creates_application_event = True
+                redrive_event_id_preserved = False
                 raw_non_mandatory_outage_blocks_run = fixture.get(
                     "nonMandatoryOutageBlocksRun",
                     fixture.get("non_mandatory_outage_blocks_run", True),
@@ -7392,15 +7394,16 @@ class TckRunner:
                         and redrive_event_id.strip()
                         and isinstance(original_event_id, str)
                         and original_event_id.strip()
-                        and redrive_event_id != original_event_id
                     ):
-                        diagnostics.append(
-                            {
-                                "code": "DurableCallbackRedriveInvalid",
-                                "message": "callback redrive must preserve originalEventId",
-                                "path": "$.redrive.eventId",
-                            }
-                        )
+                        redrive_event_id_preserved = redrive_event_id == original_event_id
+                        if not redrive_event_id_preserved:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackRedriveInvalid",
+                                    "message": "callback redrive must preserve originalEventId",
+                                    "path": "$.redrive.eventId",
+                                }
+                            )
                     raw_creates_application_event = raw_redrive.get(
                         "createsApplicationEvent", raw_redrive.get("creates_application_event")
                     )
@@ -7416,6 +7419,17 @@ class TckRunner:
                                 "path": "$.redrive.createsApplicationEvent",
                             }
                         )
+                elif "deadLetterPreservesEventId" in expected:
+                    diagnostics.append(
+                        {
+                            "code": "DurableCallbackRedriveInvalid",
+                            "message": "callback redrive evidence required for deadLetterPreservesEventId",
+                            "path": "$.redrive",
+                        }
+                    )
+                    expected_keys_with_structural_diagnostics.add(
+                        "deadLetterPreservesEventId"
+                    )
                 for index, raw_delivery in enumerate(raw_deliveries):
                     if not isinstance(raw_delivery, Mapping):
                         diagnostics.append(
@@ -7760,7 +7774,7 @@ class TckRunner:
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
-                    "deadLetterPreservesEventId": raw_redrive.get("eventId", raw_redrive.get("event_id")) == raw_redrive.get("originalEventId", raw_redrive.get("original_event_id")),
+                    "deadLetterPreservesEventId": redrive_event_id_preserved,
                     "redriveCreatesApplicationEvent": redrive_creates_application_event,
                     "nonMandatoryOutageBlocksRun": non_mandatory_outage_blocks_run,
                 }
@@ -8069,6 +8083,8 @@ class TckRunner:
             )
 
         for key, expected_value in expected.items():
+            if str(key) in expected_keys_with_structural_diagnostics:
+                continue
             if observed.get(str(key)) != expected_value:
                 diagnostics.append(
                     {
