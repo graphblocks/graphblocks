@@ -7566,20 +7566,38 @@ class TckRunner:
                     for entry in journal_entries
                     if entry.get("ownershipFence", entry.get("ownership_fence")) is not None
                 }
+                cancel_race_boolean_values = {}
+                for key, alias, default in (
+                    ("callbackReceiptRecorded", "callback_receipt_recorded", False),
+                    ("resumeAttempted", "resume_attempted", True),
+                    ("resultCommitted", "result_committed", True),
+                    ("usageReconciled", "usage_reconciled", False),
+                ):
+                    raw_value = raw_race.get(key, raw_race.get(alias, default))
+                    cancel_race_boolean_values[key] = raw_value if isinstance(raw_value, bool) else default
+                    if not isinstance(raw_value, bool):
+                        path_key = key if key in raw_race or alias not in raw_race else alias
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": f"async cancel race requires boolean {key}",
+                                "path": f"$.race.{path_key}",
+                            }
+                        )
                 observed = {
                     "journalOrderingDecidesRace": (
                         str(raw_race.get("winner", "")) == "cancel"
                         and cancel_sequence > 0
                         and callback_sequence > cancel_sequence
                     ),
-                    "callbackReceiptRecorded": bool(raw_race.get("callbackReceiptRecorded", raw_race.get("callback_receipt_recorded", False)))
+                    "callbackReceiptRecorded": cancel_race_boolean_values["callbackReceiptRecorded"]
                     and bool(callback_entries),
                     "cancelWinsBlocksResume": (
                         str(raw_race.get("winner", "")) == "cancel"
-                        and not bool(raw_race.get("resumeAttempted", raw_race.get("resume_attempted", True)))
+                        and not cancel_race_boolean_values["resumeAttempted"]
                     ),
-                    "lateCallbackCommitsResult": bool(raw_race.get("resultCommitted", raw_race.get("result_committed", True))),
-                    "lateUsageReconciled": bool(raw_race.get("usageReconciled", raw_race.get("usage_reconciled", False))),
+                    "lateCallbackCommitsResult": cancel_race_boolean_values["resultCommitted"],
+                    "lateUsageReconciled": cancel_race_boolean_values["usageReconciled"],
                     "ownershipFenceStable": len(fences) == 1 and "" not in fences,
                 }
             elif kind == "external_operation_reconciliation":

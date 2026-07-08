@@ -1397,6 +1397,48 @@ def test_testing_package_rejects_non_sequence_async_resume_reevaluates(monkeypat
     )
 
 
+def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-async-cancel-race-evidence",
+        fixture={
+            "kind": "async_callback_cancel_race",
+            "journal": [
+                {
+                    "sequence": 50,
+                    "kind": "CancelRun",
+                    "ownershipFence": "lease-1:7",
+                },
+                {
+                    "sequence": 51,
+                    "kind": "ExternalCallbackReceived",
+                    "ownershipFence": "lease-1:7",
+                },
+            ],
+            "race": {
+                "winner": "cancel",
+                "callbackReceiptRecorded": "true",
+                "resumeAttempted": False,
+                "resultCommitted": False,
+                "usageReconciled": True,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableAsyncCancelRaceInvalid",
+            "message": "async cancel race requires boolean callbackReceiptRecorded",
+            "path": "$.race.callbackReceiptRecorded",
+        },
+    )
+
+
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
