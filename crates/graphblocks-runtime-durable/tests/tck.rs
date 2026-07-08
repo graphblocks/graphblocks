@@ -2226,6 +2226,27 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{attempt_id_path}"),
                 }));
             }
+            let operation_policy_snapshot_path = if raw_operation.contains_key("policySnapshotId")
+                || !raw_operation.contains_key("policy_snapshot_id")
+            {
+                "policySnapshotId"
+            } else {
+                "policy_snapshot_id"
+            };
+            if raw_operation
+                .get("policySnapshotId")
+                .or_else(|| raw_operation.get("policy_snapshot_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |policy_snapshot_id| {
+                    policy_snapshot_id.trim().is_empty()
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank operation policySnapshotId",
+                    "path": format!("$.operation.{operation_policy_snapshot_path}"),
+                }));
+            }
             let callback_id_path = if raw_late_callback.contains_key("callbackId")
                 || !raw_late_callback.contains_key("callback_id")
             {
@@ -2477,19 +2498,36 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 "policy_snapshot_id"
             };
-            if raw_late_callback
+            match raw_late_callback
                 .get("policySnapshotId")
                 .or_else(|| raw_late_callback.get("policy_snapshot_id"))
                 .and_then(Value::as_str)
-                .map_or(true, |policy_snapshot_id| {
-                    policy_snapshot_id.trim().is_empty()
-                })
+                .map(str::trim)
             {
-                diagnostics.push(json!({
-                    "code": "DurableExternalOperationInvalid",
-                    "message": "external operation reconciliation requires nonblank policySnapshotId",
-                    "path": format!("$.lateCallback.{policy_snapshot_path}"),
-                }));
+                Some(policy_snapshot_id) if !policy_snapshot_id.is_empty() => {
+                    let operation_policy_snapshot_id = raw_operation
+                        .get("policySnapshotId")
+                        .or_else(|| raw_operation.get("policy_snapshot_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !operation_policy_snapshot_id.is_empty()
+                        && policy_snapshot_id != operation_policy_snapshot_id
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback policySnapshotId must match operation",
+                            "path": format!("$.lateCallback.{policy_snapshot_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires nonblank policySnapshotId",
+                        "path": format!("$.lateCallback.{policy_snapshot_path}"),
+                    }));
+                }
             }
             let received_at_path = if raw_late_callback.contains_key("receivedAt")
                 || !raw_late_callback.contains_key("received_at")

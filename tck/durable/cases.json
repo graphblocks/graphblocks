@@ -3852,6 +3852,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
@@ -3897,6 +3898,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -3944,6 +3946,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectJournaled": true
     },
@@ -3990,6 +3993,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "pending",
       "effectJournaled": true
@@ -4037,6 +4041,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed"
     },
@@ -4083,6 +4088,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": "true"
@@ -4130,6 +4136,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": false
@@ -4176,6 +4183,7 @@
     "operation": {
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4223,6 +4231,7 @@
       "operationId": "   ",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4269,6 +4278,7 @@
     "operation": {
       "operationId": "op-ci-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4316,6 +4326,7 @@
       "operationId": "op-ci-002",
       "runId": "   ",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4363,6 +4374,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "attemptId": "attempt-ci-001",
+      "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4409,6 +4421,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "   ",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4456,6 +4469,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4502,6 +4516,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "   ",
       "effectState": "committed",
       "effectJournaled": true
@@ -4543,12 +4558,156 @@
     }
   },
   {
+    "name": "external_operation_missing_policy_snapshot_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank operation policySnapshotId",
+        "path": "$.operation.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_blank_policy_snapshot_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "policySnapshotId": "   ",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank operation policySnapshotId",
+        "path": "$.operation.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_mismatched_callback_policy_snapshot_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "policySnapshotId": "pol-operation-other",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation callback policySnapshotId must match operation",
+        "path": "$.lateCallback.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_id_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4595,6 +4754,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4642,6 +4802,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4688,6 +4849,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4735,6 +4897,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4781,6 +4944,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4828,6 +4992,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4874,6 +5039,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4921,6 +5087,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -4967,6 +5134,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5014,6 +5182,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5060,6 +5229,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5107,6 +5277,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5153,6 +5324,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5200,6 +5372,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5246,6 +5419,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5293,6 +5467,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5339,6 +5514,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5386,6 +5562,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5432,6 +5609,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5479,6 +5657,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5525,6 +5704,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5572,6 +5752,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5618,6 +5799,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5664,6 +5846,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5710,6 +5893,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5756,6 +5940,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5797,6 +5982,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5843,6 +6029,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5890,6 +6077,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
@@ -5937,6 +6125,7 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "nodeId": "runExternalCI",
+      "policySnapshotId": "pol-callback-001",
       "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true

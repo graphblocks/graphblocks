@@ -8389,6 +8389,26 @@ class TckRunner:
                             "path": f"$.operation.{attempt_id_path}",
                         }
                     )
+                operation_policy_snapshot_path = (
+                    "policySnapshotId"
+                    if "policySnapshotId" in raw_operation
+                    or "policy_snapshot_id" not in raw_operation
+                    else "policy_snapshot_id"
+                )
+                operation_policy_snapshot_id = raw_operation.get(
+                    "policySnapshotId", raw_operation.get("policy_snapshot_id")
+                )
+                if (
+                    not isinstance(operation_policy_snapshot_id, str)
+                    or not operation_policy_snapshot_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank operation policySnapshotId",
+                            "path": f"$.operation.{operation_policy_snapshot_path}",
+                        }
+                    )
                 callback_id_path = (
                     "callbackId"
                     if "callbackId" in raw_late_callback
@@ -8609,6 +8629,18 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank policySnapshotId",
+                            "path": f"$.lateCallback.{policy_snapshot_path}",
+                        }
+                    )
+                elif (
+                    isinstance(operation_policy_snapshot_id, str)
+                    and operation_policy_snapshot_id.strip()
+                    and policy_snapshot_id.strip() != operation_policy_snapshot_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback policySnapshotId must match operation",
                             "path": f"$.lateCallback.{policy_snapshot_path}",
                         }
                     )
