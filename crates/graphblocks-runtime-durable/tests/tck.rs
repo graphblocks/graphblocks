@@ -2111,6 +2111,47 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.callback.{verified_by_path}"),
                     }));
                 }
+                if let Some(operation) = case.get("operation").and_then(Value::as_object) {
+                    for (key, alias) in [
+                        ("operationId", "operation_id"),
+                        ("runId", "run_id"),
+                        ("nodeId", "node_id"),
+                        ("attemptId", "attempt_id"),
+                        ("policySnapshotId", "policy_snapshot_id"),
+                    ] {
+                        let callback_value = raw_callback
+                            .get(key)
+                            .or_else(|| raw_callback.get(alias))
+                            .and_then(Value::as_str);
+                        let operation_value = operation
+                            .get(key)
+                            .or_else(|| operation.get(alias))
+                            .and_then(Value::as_str);
+                        if let (Some(callback_value), Some(operation_value)) =
+                            (callback_value, operation_value)
+                        {
+                            let callback_value = callback_value.trim();
+                            let operation_value = operation_value.trim();
+                            if !callback_value.is_empty()
+                                && !operation_value.is_empty()
+                                && callback_value != operation_value
+                            {
+                                let path_key = if raw_callback.contains_key(key)
+                                    || !raw_callback.contains_key(alias)
+                                {
+                                    key
+                                } else {
+                                    alias
+                                };
+                                diagnostics.push(json!({
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": format!("async callback resume callback {key} must match operation {key}"),
+                                    "path": format!("$.callback.{path_key}"),
+                                }));
+                            }
+                        }
+                    }
+                }
             }
             let mut guard_values = BTreeMap::new();
             for (key, alias) in [

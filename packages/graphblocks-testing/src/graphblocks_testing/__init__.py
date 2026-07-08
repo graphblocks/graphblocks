@@ -8287,6 +8287,39 @@ class TckRunner:
                                 "path": f"$.callback.{verified_by_path}",
                             }
                         )
+                    if isinstance(raw_operation, Mapping):
+                        for key, alias in (
+                            ("operationId", "operation_id"),
+                            ("runId", "run_id"),
+                            ("nodeId", "node_id"),
+                            ("attemptId", "attempt_id"),
+                            ("policySnapshotId", "policy_snapshot_id"),
+                        ):
+                            callback_value = raw_callback.get(
+                                key, raw_callback.get(alias)
+                            )
+                            operation_value = raw_operation.get(
+                                key, raw_operation.get(alias)
+                            )
+                            if (
+                                isinstance(callback_value, str)
+                                and isinstance(operation_value, str)
+                                and callback_value.strip()
+                                and operation_value.strip()
+                                and callback_value.strip() != operation_value.strip()
+                            ):
+                                path_key = (
+                                    key
+                                    if key in raw_callback or alias not in raw_callback
+                                    else alias
+                                )
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableAsyncCallbackResumeInvalid",
+                                        "message": f"async callback resume callback {key} must match operation {key}",
+                                        "path": f"$.callback.{path_key}",
+                                    }
+                                )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),

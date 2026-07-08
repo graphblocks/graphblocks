@@ -762,6 +762,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   envelopes, requiring nonblank `callbackId`, canonical `payloadDigest`, and nonblank
   `verifiedBy` evidence before journal-before-resume conformance can be proven from callback
   receipt metadata.
+- Shared durable async callback resume TCK fixtures now compare supplied callback receipt
+  `operationId`, `runId`, `nodeId`, `attemptId`, and `policySnapshotId` values against the
+  waiting `AsyncOperation` envelope, so stale, misrouted, or policy-snapshot-mismatched callbacks
+  cannot satisfy resume conformance.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
   through `waiting_callback` before `callback_received`, polling must be explicit before terminal
   poll results, terminal operations cannot transition again, and direct construction rejects
