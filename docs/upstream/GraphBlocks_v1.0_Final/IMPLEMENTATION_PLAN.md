@@ -1739,8 +1739,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   identity or non-integer sequence metadata, so replay, deduplication, and redrive assertions are
   grounded in valid `CallbackDelivery` envelopes.
 - Durable callback projection fixtures now carry and validate `subscriptionId`, cursor, and
-  delivery-attempt metadata, and shared TCK fixtures now reject non-integer `sequence` evidence,
-  aligning callback conformance with the protocol's at-least-once delivery envelope.
+  delivery-attempt metadata, and shared TCK fixtures now reject missing `subscriptionId` and
+  non-integer `sequence` evidence, aligning callback conformance with the protocol's at-least-once
+  delivery envelope.
 - Durable callback projection shared TCK fixtures now reject delivery rows without nonblank
   `deliveryId`, `eventId`, or `runId` evidence, so callback redrive, dead-letter, deduplication,
   run ownership, and audit assertions always have stable identities in Rust and Python.
