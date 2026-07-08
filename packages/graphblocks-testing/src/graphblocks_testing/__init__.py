@@ -7474,6 +7474,24 @@ class TckRunner:
                     resume_sequence = 0
                 else:
                     resume_sequence = raw_resume_sequence
+                raw_successful_resume_count = raw_resume.get(
+                    "successfulResumeCount", raw_resume.get("successful_resume_count", 0)
+                )
+                if (
+                    isinstance(raw_successful_resume_count, bool)
+                    or not isinstance(raw_successful_resume_count, int)
+                    or raw_successful_resume_count < 0
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer successfulResumeCount",
+                            "path": "$.resume.successfulResumeCount",
+                        }
+                    )
+                    successful_resume_count = 0
+                else:
+                    successful_resume_count = raw_successful_resume_count
                 observed = {
                     "signatureFailureRevealsOperation": async_resume_guard_values["signatureFailureRevealsOperation"],
                     "schemaFailureResumesRun": async_resume_guard_values["schemaFailureResumesRun"],
@@ -7486,7 +7504,7 @@ class TckRunner:
                     "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
                     "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
-                    "coordinatorFailoverResumesOnce": int(raw_resume.get("successfulResumeCount", raw_resume.get("successful_resume_count", 0))) == 1,
+                    "coordinatorFailoverResumesOnce": successful_resume_count == 1,
                 }
             elif kind == "async_callback_cancel_race":
                 raw_journal = fixture.get("journal", ())

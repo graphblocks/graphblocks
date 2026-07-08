@@ -1309,6 +1309,48 @@ def test_testing_package_rejects_non_integer_async_resume_journal_sequence(monke
     )
 
 
+def test_testing_package_rejects_non_integer_async_resume_success_count(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-integer-async-resume-success-count",
+        fixture={
+            "kind": "async_callback_resume_guards",
+            "checks": {
+                "signatureFailureRevealsOperation": False,
+                "schemaFailureResumesRun": False,
+                "timeoutCallbackResumesExpiredOperation": False,
+                "cancelledCallbackCommitsResult": False,
+                "staleAttemptCanResume": False,
+                "unauthenticatedCallbackCanResume": False,
+                "nonExternalCallbackEventCanBecomeReceipt": False,
+                "providerOperationMismatchCanResume": False,
+            },
+            "callback": {
+                "journalSequence": 41,
+            },
+            "resume": {
+                "resumeSequence": 42,
+                "reevaluates": ["policy", "budget", "release"],
+                "budgetExhaustionState": "paused_budget",
+                "successfulResumeCount": "1",
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableAsyncCallbackResumeInvalid",
+            "message": "async callback resume requires integer successfulResumeCount",
+            "path": "$.resume.successfulResumeCount",
+        },
+    )
+
+
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
