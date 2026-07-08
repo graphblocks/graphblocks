@@ -3571,8 +3571,11 @@ class GraphBlocksServerApp:
 
     def _event_matches_subscription_filter(self, event: Mapping[str, object], event_filter: Mapping[str, object]) -> bool:
         event_kind = event.get("kind")
+        metadata = event.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
         payload = event.get("payload")
         payload = payload if isinstance(payload, Mapping) else {}
+        event_sources = (event, metadata, payload)
         visibility_filter = event_filter.get("visibility")
         if visibility_filter is not None:
             allowed_visibility = _validate_string_sequence(
@@ -3581,12 +3584,12 @@ class GraphBlocksServerApp:
                 visibility_filter,
             )
             visibility_matches = False
-            for source in (event, payload):
+            for source in event_sources:
                 value = source.get("visibility")
                 if isinstance(value, str) and value in allowed_visibility:
                     visibility_matches = True
             if "client" in allowed_visibility and not any(
-                isinstance(source.get("visibility"), str) for source in (event, payload)
+                isinstance(source.get("visibility"), str) for source in event_sources
             ):
                 visibility_matches = True
             if not visibility_matches:
@@ -3595,7 +3598,7 @@ class GraphBlocksServerApp:
         if node_filter is not None:
             allowed_nodes = _validate_string_sequence("server event subscription", "event_filter.node_ids", node_filter)
             node_matches = False
-            for source in (event, payload):
+            for source in event_sources:
                 for field_name in ("nodeId", "node_id"):
                     value = source.get(field_name)
                     if isinstance(value, str) and value in allowed_nodes:
@@ -3610,7 +3613,7 @@ class GraphBlocksServerApp:
                 operation_filter,
             )
             operation_matches = False
-            for source in (event, payload):
+            for source in event_sources:
                 for field_name in ("operationId", "operation_id"):
                     value = source.get(field_name)
                     if isinstance(value, str) and value in allowed_operations:

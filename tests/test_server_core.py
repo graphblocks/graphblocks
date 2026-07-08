@@ -7060,6 +7060,90 @@ def test_server_app_constrains_callback_registration_visibility_to_principal_aut
     }
 
 
+def test_server_app_callback_registration_filters_async_events_by_metadata() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "relay-token": PrincipalRef("callback-relay", roles=("operator",)),
+                "operator-token": PrincipalRef("operator-1", roles=("operator",)),
+            }
+        )
+    )
+    app._events_by_run_id["run-callback-filter-metadata-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-callback-filter-metadata-1"},
+            "metadata": {
+                "eventId": "run-callback-filter-metadata-1:run-started",
+                "runId": "run-callback-filter-metadata-1",
+                "sequence": 1,
+                "cursor": "run-callback-filter-metadata-1:1",
+                "releaseId": "release-callback-filter-metadata-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+                "visibility": "client",
+            },
+        },
+    )
+
+    callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-filter-metadata-1",
+            headers={"Authorization": "Bearer relay-token", "GraphBlocks-Idempotency-Key": "idem-filter-metadata-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "cb-filter-metadata-1",
+                    "runId": "run-callback-filter-metadata-1",
+                    "nodeId": "waitCI",
+                    "attemptId": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+    registered = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer operator-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-filter-metadata-1",
+                    "scope": "run",
+                    "scopeId": "run-callback-filter-metadata-1",
+                    "eventFilter": {
+                        "types": ["ExternalCallbackReceived"],
+                        "visibility": ["operator"],
+                        "operationIds": ["op-ci-filter-metadata-1"],
+                        "nodeIds": ["waitCI"],
+                    },
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                    "replayFromCursor": "run-callback-filter-metadata-1:1",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    payload = json.loads(registered.body.decode("utf-8"))
+    assert callback.status_code == 202
+    assert registered.status_code == 201
+    assert payload["lastCursor"] == "run-callback-filter-metadata-1:2"
+    assert [event["kind"] for event in payload["events"]] == ["ExternalCallbackReceived"]
+    event = payload["events"][0]
+    assert event["metadata"]["visibility"] == "operator"
+    assert event["metadata"]["operationId"] == "op-ci-filter-metadata-1"
+    assert event["metadata"]["nodeId"] == "waitCI"
+    assert "operationId" not in event["payload"]
+    assert "nodeId" not in event["payload"]
+
+
 def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 

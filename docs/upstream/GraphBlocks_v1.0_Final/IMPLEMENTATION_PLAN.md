@@ -675,6 +675,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   or policy stop remain inspectable without creating an accepted callback receipt or resume signal.
   These diagnostics are appended to the run's authoritative `ApplicationEventStream` after the
   terminal event while preserving the run's terminal status.
+- Server callback registration replay now evaluates `visibility`, `nodeIds`, and `operationIds`
+  filters against canonical application-event metadata as well as legacy payload fields, so
+  metadata-only async callback receipt/rejection events route to operator subscriptions without
+  duplicating routing identity in the payload.
 - Async callback ingestion now supports durable pre-operation quarantine for the race where an
   external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate
