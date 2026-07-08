@@ -525,6 +525,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                 },
                 None => false,
             };
+            let raw_summary_on_expired_cursor = raw_attach
+                .get("summaryOnExpiredCursor")
+                .or_else(|| raw_attach.get("summary_on_expired_cursor"));
+            let summary_on_expired_cursor_path = if raw_attach
+                .contains_key("summaryOnExpiredCursor")
+                || !raw_attach.contains_key("summary_on_expired_cursor")
+            {
+                "summaryOnExpiredCursor"
+            } else {
+                "summary_on_expired_cursor"
+            };
+            let summary_on_expired_cursor = match raw_summary_on_expired_cursor {
+                Some(value) => match value.as_bool() {
+                    Some(flag) => flag,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires boolean summaryOnExpiredCursor",
+                            "path": format!("$.attach.{summary_on_expired_cursor_path}"),
+                        }));
+                        false
+                    }
+                },
+                None => false,
+            };
             json!({
                 "runContinuesAfterDetach": matches!(required_str(case, "lifetime", name)?, "background" | "job")
                     && !cancel_run,
@@ -538,11 +563,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "cursorExpired": !expired_cursor.is_empty()
                     && !retained_from.is_empty()
                     && expired_cursor < retained_from,
-                "summaryIncluded": raw_attach
-                    .get("summaryOnExpiredCursor")
-                    .or_else(|| raw_attach.get("summary_on_expired_cursor"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
+                "summaryIncluded": summary_on_expired_cursor,
                 "authoritativeStream": required_str(case, "sourceOfTruth", name)? == "ApplicationEventStream",
             })
         }

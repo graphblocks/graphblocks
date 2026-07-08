@@ -1834,9 +1834,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   preventing truthy strings from satisfying run-lifetime behavior.
 - Durable background-run lifetime evidence now requires `lifetime` to be exactly `background` or
   `job`, preventing client-bound or coerced lifetimes from satisfying detach-survival assertions.
-- Durable background-run cursor-expiry evidence now requires a real boolean
-  `attach.summaryOnExpiredCursor` value before proving compacted summary delivery for expired
-  cursors.
+- Durable background-run shared TCK cases now require a real boolean
+  `attach.summaryOnExpiredCursor` value in both Rust and Python runners before proving compacted
+  summary delivery for expired cursors.
 - Durable background-run replay and retention evidence now requires present cursor fields
   (`attach.lastCursor`, `attach.expiredCursor`, and `retention.retainedFromCursor`) to be nonblank
   strings before they can drive replay or cursor-expiry assertions.
