@@ -9353,6 +9353,7 @@ class TckRunner:
                     else "expires_at"
                 )
                 expires_at = raw_operation.get("expiresAt", raw_operation.get("expires_at"))
+                expires_at_value = None
                 if not isinstance(expires_at, str) or not expires_at.strip():
                     diagnostics.append(
                         {
@@ -9363,7 +9364,7 @@ class TckRunner:
                     )
                 else:
                     try:
-                        datetime.fromisoformat(
+                        expires_at_value = datetime.fromisoformat(
                             expires_at.replace("Z", "+00:00")
                             if expires_at.endswith("Z")
                             else expires_at
@@ -9376,6 +9377,18 @@ class TckRunner:
                                 "path": f"$.operation.{expires_at_path}",
                             }
                         )
+                if (
+                    submitted_at_value is not None
+                    and expires_at_value is not None
+                    and expires_at_value <= submitted_at_value
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation expiresAt must be after submittedAt",
+                            "path": f"$.operation.{expires_at_path}",
+                        }
+                    )
                 operation_state = raw_operation.get("state")
                 if operation_state not in {
                     "created",

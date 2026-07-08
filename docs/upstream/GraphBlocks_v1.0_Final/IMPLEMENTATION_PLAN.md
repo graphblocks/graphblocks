@@ -1984,7 +1984,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   ISO `operation.expiresAt` timestamp, and a valid AsyncOperation `operation.state` literal in both
   Rust and Python runners before accepting late side-effect, callback, or usage reconciliation
   evidence. The same TCK path rejects `operation.submittedAt` values that precede
-  `operation.createdAt`, preserving the async operation lifecycle ordering.
+  `operation.createdAt` and `operation.expiresAt` values that do not follow `operation.submittedAt`,
+  preserving the async operation lifecycle ordering and positive bounded-wait window.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `operation.providerOperationId` evidence in both Rust and Python runners before accepting
   provider-backed late callback reconciliation.

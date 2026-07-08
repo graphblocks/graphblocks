@@ -3340,6 +3340,11 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_operation.get("submitted_at"))
                 .and_then(Value::as_str)
                 .map(str::trim);
+            let expires_at_text = raw_operation
+                .get("expiresAt")
+                .or_else(|| raw_operation.get("expires_at"))
+                .and_then(Value::as_str)
+                .map(str::trim);
             if created_at_is_iso
                 && submitted_at_is_iso
                 && created_at_text.is_some_and(|created_at| {
@@ -3350,6 +3355,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "code": "DurableExternalOperationInvalid",
                     "message": "external operation reconciliation submittedAt must not precede createdAt",
                     "path": format!("$.operation.{submitted_at_path}"),
+                }));
+            }
+            if submitted_at_is_iso
+                && expires_at_is_iso
+                && submitted_at_text.is_some_and(|submitted_at| {
+                    expires_at_text.is_some_and(|expires_at| expires_at <= submitted_at)
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation expiresAt must be after submittedAt",
+                    "path": format!("$.operation.{expires_at_path}"),
                 }));
             }
             if !raw_operation
