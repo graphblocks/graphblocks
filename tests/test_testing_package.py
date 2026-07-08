@@ -1264,6 +1264,51 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
     )
 
 
+def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-background-run-summary",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "run_id": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000002",
+                    "cursor": "evt-000002",
+                }
+            ],
+            "attach": {
+                "expiredCursor": "evt-000001",
+                "summaryOnExpiredCursor": "true",
+            },
+            "retention": {
+                "retainedFromCursor": "evt-000002",
+            },
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run attach requires boolean summaryOnExpiredCursor",
+            "path": "$.attach.summaryOnExpiredCursor",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

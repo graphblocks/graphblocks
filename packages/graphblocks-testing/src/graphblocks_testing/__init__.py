@@ -7056,12 +7056,33 @@ class TckRunner:
                             "path": f"$.detach.{cancel_run_path}",
                         }
                     )
+                raw_summary_included = raw_attach.get(
+                    "summaryOnExpiredCursor",
+                    raw_attach.get("summary_on_expired_cursor", False),
+                )
+                if isinstance(raw_summary_included, bool):
+                    summary_included = raw_summary_included
+                else:
+                    summary_included = False
+                    summary_path = (
+                        "summaryOnExpiredCursor"
+                        if "summaryOnExpiredCursor" in raw_attach
+                        or "summary_on_expired_cursor" not in raw_attach
+                        else "summary_on_expired_cursor"
+                    )
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires boolean summaryOnExpiredCursor",
+                            "path": f"$.attach.{summary_path}",
+                        }
+                    )
                 observed = {
                     "runContinuesAfterDetach": lifetime in {"background", "job"} and not cancel_run,
                     "acceptedResponseReturnsRunId": response_mode == "accepted" and bool(fixture.get("initialResponse", fixture.get("initial_response", {}))),
                     "replayEventIds": replay_after_cursor,
                     "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),
-                    "summaryIncluded": bool(raw_attach.get("summaryOnExpiredCursor", raw_attach.get("summary_on_expired_cursor", False))),
+                    "summaryIncluded": summary_included,
                     "authoritativeStream": str(fixture.get("sourceOfTruth", fixture.get("source_of_truth", ""))) == "ApplicationEventStream",
                 }
             elif kind == "callback_delivery_projection":
