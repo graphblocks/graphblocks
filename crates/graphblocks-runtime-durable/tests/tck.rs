@@ -2252,6 +2252,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.callback.{tenant_id_path}"),
                     }));
                 }
+                for (key, alias) in [
+                    ("operationId", "operation_id"),
+                    ("runId", "run_id"),
+                    ("nodeId", "node_id"),
+                    ("attemptId", "attempt_id"),
+                    ("policySnapshotId", "policy_snapshot_id"),
+                ] {
+                    let path_key =
+                        if raw_callback.contains_key(key) || !raw_callback.contains_key(alias) {
+                            key
+                        } else {
+                            alias
+                        };
+                    if raw_callback
+                        .get(key)
+                        .or_else(|| raw_callback.get(alias))
+                        .and_then(Value::as_str)
+                        .map_or(true, |value| value.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": format!("async callback resume callback requires nonblank {key}"),
+                            "path": format!("$.callback.{path_key}"),
+                        }));
+                    }
+                }
                 if let Some(operation_provider_operation_id) = operation_provider_operation_id {
                     let provider_operation_id_path = if raw_callback
                         .contains_key("providerOperationId")

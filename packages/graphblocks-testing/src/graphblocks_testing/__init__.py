@@ -8400,6 +8400,27 @@ class TckRunner:
                                 "path": f"$.callback.{tenant_id_path}",
                             }
                         )
+                    for key, alias in (
+                        ("operationId", "operation_id"),
+                        ("runId", "run_id"),
+                        ("nodeId", "node_id"),
+                        ("attemptId", "attempt_id"),
+                        ("policySnapshotId", "policy_snapshot_id"),
+                    ):
+                        path_key = (
+                            key
+                            if key in raw_callback or alias not in raw_callback
+                            else alias
+                        )
+                        value = raw_callback.get(key, raw_callback.get(alias))
+                        if not isinstance(value, str) or not value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": f"async callback resume callback requires nonblank {key}",
+                                    "path": f"$.callback.{path_key}",
+                                }
+                            )
                     if operation_provider_operation_id is not None:
                         provider_operation_id_path = (
                             "providerOperationId"
