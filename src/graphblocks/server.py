@@ -3751,6 +3751,18 @@ class GraphBlocksServerApp:
                     "error": "ack event_id and cursor refer to different retained events",
                 },
             )
+        if not _event_visible_to_principal(matched_event, subscription.owner):
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "subscriptionId": subscription_id,
+                    "eventId": str(matched_event_id) if isinstance(matched_event_id, str) else event_id_text,
+                    "cursor": matched_cursor,
+                    "error": "acknowledged event is not visible to the subscription principal",
+                },
+            )
         if not self._event_matches_subscription_filter(matched_event, subscription.event_filter):
             return ServerResponse.json(
                 409,

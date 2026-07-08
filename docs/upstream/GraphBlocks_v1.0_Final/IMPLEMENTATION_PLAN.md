@@ -1262,7 +1262,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   lookup. Retained event `sequence` metadata must also be a non-boolean non-negative integer before
   acknowledgement matching. When a request supplies both event id and cursor, both identifiers must
   resolve to the same retained event before an acknowledgement is recorded. Acknowledged events must
-  also match the active subscription's event filter.
+  also be visible to the subscription owner and match the active subscription's event filter, so
+  malformed or unauthorized event visibility cannot be acknowledged through the control route.
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events
