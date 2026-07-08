@@ -470,13 +470,58 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("retention")
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_retention);
+            let mut event_records = Vec::new();
+            for (index, raw_event) in raw_events.iter().enumerate() {
+                let Some(event) = raw_event.as_object() else {
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event must be object",
+                        "path": format!("$.events[{index}]"),
+                    }));
+                    continue;
+                };
+                let mut event_valid = true;
+                let event_id_path =
+                    if event.contains_key("eventId") || !event.contains_key("event_id") {
+                        "eventId"
+                    } else {
+                        "event_id"
+                    };
+                if event
+                    .get("eventId")
+                    .or_else(|| event.get("event_id"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|event_id| event_id.trim().is_empty())
+                {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires eventId",
+                        "path": format!("$.events[{index}].{event_id_path}"),
+                    }));
+                }
+                if event
+                    .get("cursor")
+                    .and_then(Value::as_str)
+                    .is_none_or(|cursor| cursor.trim().is_empty())
+                {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires cursor",
+                        "path": format!("$.events[{index}].cursor"),
+                    }));
+                }
+                if event_valid {
+                    event_records.push(event);
+                }
+            }
             let last_cursor = raw_attach
                 .get("lastCursor")
                 .or_else(|| raw_attach.get("last_cursor"))
                 .and_then(Value::as_str);
-            let replay_event_ids = raw_events
+            let replay_event_ids = event_records
                 .iter()
-                .filter_map(Value::as_object)
                 .filter(|event| {
                     last_cursor.is_none_or(|cursor| {
                         event

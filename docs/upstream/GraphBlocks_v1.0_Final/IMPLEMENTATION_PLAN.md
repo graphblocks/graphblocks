@@ -1847,11 +1847,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run shared TCK cases now require `responseMode`/`response_mode` to be exactly
   `accepted` or `background` in both Rust and Python runners, and apply the durable run-id handle
   requirement to background responses as well as accepted responses.
-- Durable background-run replay evidence now rejects non-object event-stream entries instead of
-  silently dropping them before replay/cursor assertions.
-- Durable background-run replay evidence now requires nonblank event `eventId`/`event_id` and
-  `cursor` fields before proving cursor replay, preventing anonymous or cursorless events from
-  satisfying replay assertions.
+- Durable background-run shared TCK cases now reject non-object event-stream entries in both Rust
+  and Python runners instead of silently dropping them before replay/cursor assertions.
+- Durable background-run shared TCK cases now require nonblank event `eventId`/`event_id` and
+  `cursor` fields in both Rust and Python runners before proving cursor replay, preventing
+  anonymous or cursorless events from satisfying replay assertions.
 - Durable background-run authority evidence now requires `sourceOfTruth`/`source_of_truth` to be
   exactly `ApplicationEventStream`, preventing callback subscriptions or truthy placeholders from
   satisfying the authoritative-event-stream invariant.
