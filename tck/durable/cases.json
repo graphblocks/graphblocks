@@ -3448,6 +3448,35 @@
     }
   },
   {
+    "name": "callback_cancel_race_non_object_journal_entry_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      "cancelled",
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "callbackReceiptRecorded": true,
+      "resumeAttempted": false,
+      "resultCommitted": false,
+      "usageReconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race journal entry must be object",
+        "path": "$.journal[0]"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_late_side_effect_usage_reconciliation",
     "kind": "external_operation_reconciliation",
     "operation": {

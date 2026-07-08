@@ -1880,6 +1880,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.
+- Durable async cancel-race shared TCK cases now reject non-object journal entries in both Rust and
+  Python runners before evaluating cancel/callback ordering, preventing placeholder rows from being
+  silently dropped from race evidence.
 - Durable external-operation reconciliation shared TCK cases now require real boolean values for
   late callback commit/diagnostic/artifact-reference flags and late usage reconciliation in both
   Rust and Python runners, preventing truthy strings from proving cancellation, payload extraction,

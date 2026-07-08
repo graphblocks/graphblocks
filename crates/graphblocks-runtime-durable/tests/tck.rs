@@ -1984,8 +1984,15 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut cancel_sequence = None;
             let mut callback_sequence = None;
             let mut fences = BTreeSet::new();
-            for (entry_index, entry) in raw_journal.iter().filter_map(Value::as_object).enumerate()
-            {
+            for (entry_index, raw_entry) in raw_journal.iter().enumerate() {
+                let Some(entry) = raw_entry.as_object() else {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCancelRaceInvalid",
+                        "message": "async cancel race journal entry must be object",
+                        "path": format!("$.journal[{entry_index}]"),
+                    }));
+                    continue;
+                };
                 if let Some(fence) = entry
                     .get("ownershipFence")
                     .or_else(|| entry.get("ownership_fence"))

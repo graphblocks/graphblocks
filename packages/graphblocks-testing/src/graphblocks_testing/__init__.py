@@ -8176,20 +8176,31 @@ class TckRunner:
                     raise ValueError("durable async_callback_cancel_race case requires journal")
                 if not isinstance(raw_race, Mapping):
                     raise ValueError("durable async_callback_cancel_race case requires race")
-                journal_entries = [entry for entry in raw_journal if isinstance(entry, Mapping)]
+                journal_entries = []
+                for entry_index, entry in enumerate(raw_journal):
+                    if not isinstance(entry, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": "async cancel race journal entry must be object",
+                                "path": f"$.journal[{entry_index}]",
+                            }
+                        )
+                        continue
+                    journal_entries.append((entry_index, entry))
                 cancel_entries = [
                     entry
-                    for entry in journal_entries
+                    for _, entry in journal_entries
                     if str(entry.get("kind", "")).lower() in {"cancelrun", "run_cancelled", "cancelled"}
                 ]
                 callback_entries = [
                     entry
-                    for entry in journal_entries
+                    for _, entry in journal_entries
                     if str(entry.get("kind", "")).lower()
                     in {"externalcallbackreceived", "external_callback_received"}
                 ]
                 journal_sequences = {}
-                for entry_index, entry in enumerate(journal_entries):
+                for entry_index, entry in journal_entries:
                     sequence = entry.get("sequence")
                     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
                         diagnostics.append(
@@ -8215,7 +8226,7 @@ class TckRunner:
                 )
                 fences = {
                     str(entry.get("ownershipFence", entry.get("ownership_fence", "")))
-                    for entry in journal_entries
+                    for _, entry in journal_entries
                     if entry.get("ownershipFence", entry.get("ownership_fence")) is not None
                 }
                 cancel_race_boolean_values = {}
