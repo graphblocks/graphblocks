@@ -118,6 +118,8 @@ graphblocks-cli
   blocked dependency policy, so `name @ URL` and optional extra direct references cannot bypass the
   license/vulnerability gate. The same audit path now strips parenthesized PEP 508 version clauses
   such as `name (>=1.0)` before comparing dependency names to the blocked list.
+  Python `build-system.requires` entries are now audited through the same blocked-dependency policy,
+  so vulnerable build backends cannot bypass package manifest checks.
 - Package catalog loading now validates catalog shape at the file boundary, rejecting non-mapping
   documents, invalid catalog versions, blank spec versions, non-list package collections, malformed
   entries, and missing distribution names before CLI package inspection or lock generation can

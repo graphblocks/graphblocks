@@ -1651,3 +1651,29 @@ model = ["Vulnerable_SDK[client] (==2.0)"]
         ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]"),
         ("PackageBlockedDependency", "$.pyproject.toml.project.optional-dependencies.model[0]"),
     ]
+
+
+def test_package_manifest_audit_reports_blocked_build_system_dependencies(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[build-system]
+requires = ["vulnerable-builder>=1"]
+build-backend = "vulnerable_builder.backend"
+
+[project]
+name = "unsafe-python"
+version = "0.1.0"
+license = "Apache-2.0"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-builder",)),
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("PackageBlockedDependency", "$.pyproject.toml.build-system.requires[0]"),
+    ]

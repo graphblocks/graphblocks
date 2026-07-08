@@ -790,6 +790,22 @@ def audit_package_manifests(
                                 f"$.{relative_path}.project.optional-dependencies.{extra}[{index}]",
                             )
                         )
+        build_system = manifest.get("build-system", {})
+        if isinstance(build_system, dict):
+            requirements = build_system.get("requires", [])
+            if isinstance(requirements, list):
+                for index, dependency in enumerate(requirements):
+                    if not isinstance(dependency, str):
+                        continue
+                    dependency_name = _python_dependency_name(dependency)
+                    if dependency_name in blocked_dependencies:
+                        diagnostics.append(
+                            Diagnostic(
+                                "PackageBlockedDependency",
+                                f"dependency {dependency_name!r} is blocked by vulnerability policy",
+                                f"$.{relative_path}.build-system.requires[{index}]",
+                            )
+                        )
 
     workspace_license: str | None = None
     workspace_manifest_path = root_path / "Cargo.toml"
