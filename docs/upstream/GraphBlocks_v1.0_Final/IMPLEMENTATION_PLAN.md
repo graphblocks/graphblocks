@@ -1863,9 +1863,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `journalSequence`, `resumeSequence`, and `successfulResumeCount` values in both Rust and Python
   runners before proving journal-before-resume and coordinator failover invariants, preventing
   string coercion from satisfying durable ordering evidence.
-- Durable async callback resume-guard evidence now requires `reevaluates` to be a sequence of
-  nonblank strings before proving policy, budget, and release compatibility re-evaluation, so
-  object keys or malformed entries cannot satisfy resume-admission conformance.
+- Durable async callback resume-guard shared TCK cases now require `reevaluates` to be a sequence
+  of nonblank strings in both Rust and Python runners before proving policy, budget, and release
+  compatibility re-evaluation, so object keys or malformed entries cannot satisfy
+  resume-admission conformance.
 - Durable async cancel-race evidence now requires real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags, preventing truthy strings from
   proving cancellation/resume race behavior.

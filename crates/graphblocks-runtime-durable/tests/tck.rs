@@ -1758,13 +1758,34 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
-            let reevaluates = raw_resume
-                .get("reevaluates")
-                .and_then(Value::as_array)
-                .ok_or_else(|| format!("{name} resume requires reevaluates"))?
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<BTreeSet<_>>();
+            let mut reevaluates = BTreeSet::new();
+            match raw_resume.get("reevaluates") {
+                Some(Value::Array(entries)) => {
+                    for (index, entry) in entries.iter().enumerate() {
+                        if let Some(reevaluate) = entry
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            reevaluates.insert(reevaluate.to_owned());
+                        } else {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires string reevaluates entry",
+                                "path": format!("$.resume.reevaluates[{index}]"),
+                            }));
+                        }
+                    }
+                }
+                Some(_) => {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume requires reevaluates sequence",
+                        "path": "$.resume.reevaluates",
+                    }));
+                }
+                None => {}
+            }
             let raw_callback_journal_sequence = raw_callback
                 .get("journalSequence")
                 .or_else(|| raw_callback.get("journal_sequence"));
