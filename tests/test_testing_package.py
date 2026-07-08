@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 61
+    assert [case.kind for case in cases] == ["durable"] * 62
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1214,6 +1214,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "tool_terminal_rejects_expired_committed_effect",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
         "background_run_detach_replay_and_cursor_expiry",
+        "background_run_non_boolean_detach_cancel_rejected",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_non_object_redrive_rejected",
         "webhook_delivery_invalid_subscription_failure_policy_rejected",
@@ -1271,6 +1272,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(result.observed.get("lateDurableResultError") == "response_policy_stopped" for result in report.results)
     assert any(
         result.case_id == "webhook_delivery_non_object_redrive_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_non_boolean_detach_cancel_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -4643,6 +4649,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool_terminal_rejects_expired_committed_effect",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
         "background_run_detach_replay_and_cursor_expiry",
+        "background_run_non_boolean_detach_cancel_rejected",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_non_object_redrive_rejected",
         "webhook_delivery_invalid_subscription_failure_policy_rejected",

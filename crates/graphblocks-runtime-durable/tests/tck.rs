@@ -502,13 +502,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_retention.get("retained_from_cursor"))
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let raw_cancel_run = raw_detach
+                .get("cancelRun")
+                .or_else(|| raw_detach.get("cancel_run"));
+            let cancel_run_path =
+                if raw_detach.contains_key("cancelRun") || !raw_detach.contains_key("cancel_run") {
+                    "cancelRun"
+                } else {
+                    "cancel_run"
+                };
+            let cancel_run = match raw_cancel_run {
+                Some(value) => match value.as_bool() {
+                    Some(flag) => flag,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run detach requires boolean cancelRun",
+                            "path": format!("$.detach.{cancel_run_path}"),
+                        }));
+                        false
+                    }
+                },
+                None => false,
+            };
             json!({
                 "runContinuesAfterDetach": matches!(required_str(case, "lifetime", name)?, "background" | "job")
-                    && !raw_detach
-                        .get("cancelRun")
-                        .or_else(|| raw_detach.get("cancel_run"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    && !cancel_run,
                 "acceptedResponseReturnsRunId": required_str(case, "responseMode", name)? == "accepted"
                     && case
                         .get("initialResponse")

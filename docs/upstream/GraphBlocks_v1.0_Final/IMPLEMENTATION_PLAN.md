@@ -1829,9 +1829,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now require fixture-level outage evidence
   `nonMandatoryOutageBlocksRun` to be a real boolean in both Rust and Python runners, preventing
   string coercion from satisfying non-mandatory webhook outage behavior.
-- Durable background-run event-stream evidence now requires a real boolean `detach.cancelRun`
-  value before proving that background/job lifetimes outlive client detach, preventing truthy
-  strings from satisfying run-lifetime behavior.
+- Durable background-run shared TCK cases now require a real boolean `detach.cancelRun` value in
+  both Rust and Python runners before proving that background/job lifetimes outlive client detach,
+  preventing truthy strings from satisfying run-lifetime behavior.
 - Durable background-run lifetime evidence now requires `lifetime` to be exactly `background` or
   `job`, preventing client-bound or coerced lifetimes from satisfying detach-survival assertions.
 - Durable background-run cursor-expiry evidence now requires a real boolean
