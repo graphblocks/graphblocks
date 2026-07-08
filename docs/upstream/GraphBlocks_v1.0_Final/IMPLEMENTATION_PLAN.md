@@ -913,7 +913,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   re-enter the worker or ordered-delivery state machines.
 - Callback delivery persistence also rejects terminal failure records without a nonblank
   `last_error`, so failed, dead-lettered, cancelled, or expired delivery records keep the reason
-  needed for mandatory pause/fail actions, operator redrive, and audit review.
+  needed for mandatory pause/fail actions, operator redrive, and audit review. The Python core
+  callback facade now enforces the same `last_error` requirement before a terminal failure
+  projection can be represented.
 - Runtime record-store operations now reject whitespace-only collection names and record keys
   before writes, reads, queries, or deletes. This keeps durable record identities usable as stable
   row keys, cursors, compare-and-swap targets, and audit references rather than admitting visually

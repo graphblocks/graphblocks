@@ -331,6 +331,20 @@ def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
             acknowledged_at="2026-07-02T00:00:02Z",
         )
 
+    for status in ("failed", "dead_lettered", "cancelled", "expired"):
+        with raises_value_error("terminal failure callback delivery requires last_error"):
+            graphblocks.CallbackDelivery(
+                delivery_id=f"del-{status}",
+                subscription_id="sub-1",
+                event_id=f"evt-{status}",
+                run_id="run-1",
+                sequence=12,
+                cursor=f"run-1:{status}",
+                attempt=1,
+                idempotency_key=f"sub-1:evt-{status}",
+                status=status,
+            )
+
 
 def test_callback_schema_exports_are_available() -> None:
     assert "EventFilter" in graphblocks.__all__
