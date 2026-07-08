@@ -7055,6 +7055,16 @@ class TckRunner:
                 if not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
+                valid_delivery_statuses = {
+                    "pending",
+                    "delivering",
+                    "delivered",
+                    "acknowledged",
+                    "failed",
+                    "dead_lettered",
+                    "cancelled",
+                    "expired",
+                }
                 for index, delivery in enumerate(deliveries):
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7099,7 +7109,16 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].idempotencyKey",
                             }
                         )
-                    status = str(delivery.get("status", ""))
+                    raw_status = delivery.get("status")
+                    if not isinstance(raw_status, str) or raw_status not in valid_delivery_statuses:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery has invalid status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
+                    status = raw_status if isinstance(raw_status, str) else ""
                     if status in {"failed", "dead_lettered", "cancelled", "expired"}:
                         last_error = delivery.get("lastError", delivery.get("last_error"))
                         if not isinstance(last_error, str) or not last_error.strip():
