@@ -1740,6 +1740,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection fixtures now validate explicit `subscription` envelopes, including
   nonblank `subscriptionId`, protocol-defined `failurePolicy`, and boolean `mandatory`, so
   subscription-level delivery policy evidence cannot be silently ignored.
+- Durable callback projection fixtures now reject delivery rows whose `subscriptionId` differs
+  from the explicit subscription envelope, ensuring retry, duplicate, and redrive evidence belongs
+  to the projected subscription.
 - Durable callback projection cases now reject delivery rows whose `status` is not one of the
   protocol-defined `CallbackDelivery.status` terminal or in-flight values, preventing arbitrary
   strings from satisfying callback-delivery TCK evidence.

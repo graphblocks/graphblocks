@@ -7296,6 +7296,7 @@ class TckRunner:
                     raw_subscription = {}
                 elif not isinstance(raw_subscription, Mapping):
                     raw_subscription = {}
+                subscription_identity = None
                 if raw_subscription:
                     subscription_id = raw_subscription.get(
                         "subscriptionId", raw_subscription.get("subscription_id")
@@ -7308,6 +7309,8 @@ class TckRunner:
                                 "path": "$.subscription.subscriptionId",
                             }
                         )
+                    else:
+                        subscription_identity = subscription_id.strip()
                     failure_policy = raw_subscription.get(
                         "failurePolicy", raw_subscription.get("failure_policy")
                     )
@@ -7500,6 +7503,22 @@ class TckRunner:
                                     "path": f"$.deliveries[{index}].idempotencyKey",
                                 }
                             )
+                    delivery_subscription_id = delivery.get(
+                        "subscriptionId", delivery.get("subscription_id")
+                    )
+                    if (
+                        subscription_identity is not None
+                        and isinstance(delivery_subscription_id, str)
+                        and delivery_subscription_id.strip()
+                        and delivery_subscription_id.strip() != subscription_identity
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery subscriptionId must match subscription",
+                                "path": f"$.deliveries[{index}].subscriptionId",
+                            }
+                        )
                     raw_status = delivery.get("status")
                     if not isinstance(raw_status, str) or raw_status not in valid_delivery_statuses:
                         diagnostics.append(
