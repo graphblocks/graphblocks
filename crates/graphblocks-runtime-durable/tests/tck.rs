@@ -1198,7 +1198,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 }
                 if delivery
                     .get("sequence")
-                    .is_some_and(|sequence| sequence.as_bool().is_some() || !sequence.is_u64())
+                    .is_none_or(|sequence| sequence.as_bool().is_some() || !sequence.is_u64())
                 {
                     diagnostics.push(json!({
                         "code": "DurableCallbackDeliveryInvalid",

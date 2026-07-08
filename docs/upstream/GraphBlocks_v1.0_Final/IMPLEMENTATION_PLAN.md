@@ -1740,7 +1740,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   grounded in valid `CallbackDelivery` envelopes.
 - Durable callback projection fixtures now carry and validate `subscriptionId`, cursor, and
   delivery-attempt metadata, and shared TCK fixtures now reject missing `subscriptionId`, missing
-  cursor, non-integer `sequence`, and non-integer `attempt` evidence, aligning callback
+  cursor, missing or non-integer `sequence`, and non-integer `attempt` evidence, aligning callback
   conformance with the protocol's at-least-once delivery envelope.
 - Durable callback projection shared TCK fixtures now reject delivery rows without nonblank
   `deliveryId`, `eventId`, or `runId` evidence, so callback redrive, dead-letter, deduplication,
