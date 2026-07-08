@@ -2158,6 +2158,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "async callback resume callback requires nonblank verifiedBy",
                         "path": format!("$.callback.{verified_by_path}"),
                     }));
+                } else if raw_callback
+                    .get("verifiedBy")
+                    .or_else(|| raw_callback.get("verified_by"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|verified_by| {
+                        verified_by.trim().eq_ignore_ascii_case("unauthenticated")
+                    })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires authenticated verifiedBy",
+                        "path": format!("$.callback.{verified_by_path}"),
+                    }));
                 }
                 let idempotency_key_path = if raw_callback.contains_key("idempotencyKey")
                     || !raw_callback.contains_key("idempotency_key")

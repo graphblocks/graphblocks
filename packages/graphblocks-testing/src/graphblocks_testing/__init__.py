@@ -8322,6 +8322,14 @@ class TckRunner:
                                 "path": f"$.callback.{verified_by_path}",
                             }
                         )
+                    elif verified_by.strip().lower() == "unauthenticated":
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires authenticated verifiedBy",
+                                "path": f"$.callback.{verified_by_path}",
+                            }
+                        )
                     idempotency_key_path = (
                         "idempotencyKey"
                         if "idempotencyKey" in raw_callback or "idempotency_key" not in raw_callback
