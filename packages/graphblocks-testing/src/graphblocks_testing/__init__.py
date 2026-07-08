@@ -7678,6 +7678,7 @@ class TckRunner:
                 receiver_statuses = []
                 next_retry_at_values = []
                 seen_idempotency_keys: dict[str, tuple[str, str]] = {}
+                idempotency_keys_unique_per_subscription_event = True
                 for index, delivery in deliveries:
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
@@ -7738,6 +7739,7 @@ class TckRunner:
                         if previous_delivery is None:
                             seen_idempotency_keys[normalized_idempotency_key] = logical_delivery
                         elif previous_delivery != logical_delivery:
+                            idempotency_keys_unique_per_subscription_event = False
                             diagnostics.append(
                                 {
                                     "code": "DurableCallbackDeliveryInvalid",
@@ -8082,10 +8084,6 @@ class TckRunner:
                         == "non_retryable"
                     ):
                         non_retryable_4xx_ids.append(delivery_id)
-                idempotency_keys = [
-                    str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
-                    for _index, delivery in deliveries
-                ]
                 observed = {
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),
                     "retryScheduledAfterRetryableStatus": bool(scheduled_retryable_status_ids),
@@ -8093,7 +8091,7 @@ class TckRunner:
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "subscriptionGoneAfter410": bool(subscription_gone_ids),
                     "nonRetryable4xxTerminal": bool(non_retryable_4xx_ids),
-                    "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
+                    "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys_unique_per_subscription_event,
                     "deadLetterPreservesEventId": redrive_event_id_preserved,
                     "redriveCreatesApplicationEvent": redrive_creates_application_event,
                     "nonMandatoryOutageBlocksRun": non_mandatory_outage_blocks_run,

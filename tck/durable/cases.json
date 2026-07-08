@@ -2302,6 +2302,48 @@
     }
   },
   {
+    "name": "webhook_delivery_duplicate_attempt_idempotency_key_allowed",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-idem-duplicate-attempt-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0117",
+        "runId": "run-coding-001",
+        "sequence": 117,
+        "cursor": "evt-0117",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0117",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:30Z",
+        "lastError": "receiver_error"
+      },
+      {
+        "deliveryId": "del-idem-duplicate-attempt-002",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0117",
+        "runId": "run-coding-001",
+        "sequence": 117,
+        "cursor": "evt-0117",
+        "attempt": 2,
+        "idempotencyKey": "sub-ide-001:evt-0117",
+        "receiverStatus": 409,
+        "status": "acknowledged",
+        "deliveredAt": "2026-07-02T00:00:31Z",
+        "acknowledgedAt": "2026-07-02T00:00:32Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expected": {
+      "retryScheduledAfter5xx": true,
+      "retryScheduledAfterRetryableStatus": true,
+      "duplicate409Acknowledged": true,
+      "idempotencyKeysUniquePerSubscriptionEvent": true,
+      "nonMandatoryOutageBlocksRun": false
+    }
+  },
+  {
     "name": "webhook_delivery_non_object_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

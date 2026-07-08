@@ -1141,9 +1141,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .or_else(|| subscription.get("failure_policy"))
                 })
                 .and_then(Value::as_str);
-            let mut idempotency_keys = BTreeSet::new();
             let mut idempotency_key_logical_deliveries = BTreeMap::new();
-            let mut idempotency_key_count = 0usize;
+            let mut idempotency_keys_unique_per_subscription_event = true;
             let mut retry_scheduled_after_5xx = false;
             let mut retry_scheduled_after_retryable_status = false;
             let mut delivered_after_2xx = false;
@@ -1825,9 +1824,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .or_else(|| delivery.get("idempotency_key"))
                     .and_then(Value::as_str)
                 {
-                    idempotency_key_count += 1;
                     let normalized_key = key.trim().to_owned();
-                    idempotency_keys.insert(normalized_key.clone());
                     let subscription_id = delivery
                         .get("subscriptionId")
                         .or_else(|| delivery.get("subscription_id"))
@@ -1847,6 +1844,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         idempotency_key_logical_deliveries.get(&normalized_key)
                     {
                         if previous_delivery != &logical_delivery {
+                            idempotency_keys_unique_per_subscription_event = false;
                             diagnostics.push(json!({
                                 "code": "DurableCallbackDeliveryInvalid",
                                 "message": "callback delivery idempotencyKey must be unique",
@@ -1889,7 +1887,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
                 "subscriptionGoneAfter410": subscription_gone_after_410,
                 "nonRetryable4xxTerminal": non_retryable_4xx_terminal,
-                "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
+                "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys_unique_per_subscription_event,
                 "deadLetterPreservesEventId": dead_letter_preserves_event_id,
                 "redriveCreatesApplicationEvent": redrive_creates_application_event,
                 "nonMandatoryOutageBlocksRun": non_mandatory_outage_blocks_run,
