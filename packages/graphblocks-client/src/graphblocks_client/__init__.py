@@ -983,7 +983,8 @@ class HttpGraphBlocksClient:
         return _events_from_payload(payload, "GraphBlocks run events response")
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         headers = {
             "Accept": "application/json",
             "Connection": "Upgrade",
@@ -1004,7 +1005,11 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         return RunStreamSnapshot(
-            run_id=_payload_string(payload, "GraphBlocks run stream response", "run_id", "runId", "run_id"),
+            run_id=_validate_response_run_id(
+                "GraphBlocks run stream response",
+                requested_run_id,
+                _payload_string(payload, "GraphBlocks run stream response", "run_id", "runId", "run_id"),
+            ),
             stream=stream_payload,
             events=events,
             event_stream=stream_state,
@@ -1017,7 +1022,8 @@ class HttpGraphBlocksClient:
         last_cursor: object | None = None,
         capabilities: Iterable[object] = (),
     ) -> RunStreamSnapshot:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         if last_cursor is not None:
             last_cursor = _http_non_empty_string("last_cursor", last_cursor)
         if isinstance(capabilities, str):
@@ -1051,7 +1057,11 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         return RunStreamSnapshot(
-            run_id=_payload_string(payload, "GraphBlocks attach response", "run_id", "runId", "run_id"),
+            run_id=_validate_response_run_id(
+                "GraphBlocks attach response",
+                requested_run_id,
+                _payload_string(payload, "GraphBlocks attach response", "run_id", "runId", "run_id"),
+            ),
             stream={key: deepcopy(value) for key, value in payload.items() if key != "events"},
             events=events,
             event_stream=stream_state,
@@ -1093,7 +1103,8 @@ class HttpGraphBlocksClient:
         replay_from_cursor: object | None = None,
         failure_policy: object = "retry_then_dead_letter",
     ) -> RunStreamSnapshot:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         if event_filter is None:
             event_filter = {}
         body: dict[str, object] = {
@@ -1124,7 +1135,11 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         return RunStreamSnapshot(
-            run_id=_payload_string(payload, "GraphBlocks subscribe response", "run_id", "runId", "run_id"),
+            run_id=_validate_response_run_id(
+                "GraphBlocks subscribe response",
+                requested_run_id,
+                _payload_string(payload, "GraphBlocks subscribe response", "run_id", "runId", "run_id"),
+            ),
             stream={key: deepcopy(value) for key, value in payload.items() if key != "events"},
             events=events,
             event_stream=stream_state,
@@ -1338,7 +1353,11 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         status = _payload_string(payload, "GraphBlocks HTTP response", "status", "status")
-        run_id = _payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id")
+        run_id = _validate_response_run_id(
+            "GraphBlocks HTTP response",
+            command.run_id,
+            _payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id"),
+        )
         response_kwargs: dict[str, object] = {}
         for field_name, payload_key in (
             ("event_stream_url", "eventStream"),
@@ -1386,6 +1405,12 @@ def _validate_run_cursor(label: str, field_name: str, run_id: str, value: str) -
     sequence_text = value[len(prefix) :]
     if not sequence_text.isdecimal():
         raise ValueError(f"{label} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence")
+    return value
+
+
+def _validate_response_run_id(label: str, expected_run_id: str, value: str) -> str:
+    if value != expected_run_id:
+        raise ValueError(f"{label} run_id must match requested run {expected_run_id!r}")
     return value
 
 

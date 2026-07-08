@@ -1032,6 +1032,7 @@ def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                run_id="run-http-accepted-1",
                 response_mode="accepted",
             )
         )
@@ -1078,7 +1079,39 @@ def test_client_package_rejects_malformed_run_handle_initial_cursor(
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                run_id="run-http-accepted-1",
                 response_mode="accepted",
+            )
+        )
+
+
+def test_client_package_rejects_mismatched_run_graph_response_id(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "runId": "other-run",
+                    "status": "succeeded",
+                    "outputs": {},
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape("GraphBlocks HTTP response run_id must match requested run 'run-requested-1'"),
+    ):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+                run_id="run-requested-1",
             )
         )
 
@@ -1110,6 +1143,7 @@ def test_client_package_rejects_incomplete_durable_run_handle(monkeypatch, statu
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+                run_id="run-http-accepted-1",
                 response_mode=status,
             )
         )
@@ -1150,6 +1184,52 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
         "/runs/id%2Fwith%3Fquery%23fragment/subscriptions/id%2Fwith%3Fquery%23fragment",
         "/callbacks/deliveries/id%2Fwith%3Fquery%23fragment/redrive",
     ]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "payload", "message"),
+    (
+        (
+            "run_stream",
+            {},
+            {"runId": "other-run", "stream": {"status": "accepted"}},
+            "GraphBlocks run stream response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "attach_to_run",
+            {},
+            {"runId": "other-run", "lastCursor": "other-run:0"},
+            "GraphBlocks attach response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "subscribe_events",
+            {"delivery": {"kind": "local_callback", "callback_name": "ide"}},
+            {"runId": "other-run", "lastCursor": "other-run:0"},
+            "GraphBlocks subscribe response run_id must match requested run 'run-requested-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_mismatched_run_snapshot_response_id(
+    monkeypatch,
+    method_name: str,
+    kwargs: dict[str, object],
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        getattr(client, method_name)("run-requested-1", **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -1199,6 +1279,7 @@ def test_client_package_rejects_malformed_http_event_metadata(
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+                run_id="run-http-1",
             )
         )
 
@@ -1270,6 +1351,7 @@ def test_client_package_rejects_malformed_http_event_payloads(
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+                run_id="run-http-1",
             )
         )
 
@@ -1310,6 +1392,7 @@ def test_client_package_rejects_malformed_http_run_response(
         client.run_graph(
             graphblocks_client.RunGraphCommand(
                 graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+                run_id="run-http-1",
             )
         )
 
