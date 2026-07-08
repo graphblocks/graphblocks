@@ -811,9 +811,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   derived expiration that would exceed the timestamp range. Provider submissions whose
   `submittedAtUnixMs` precedes `createdAtUnixMs` are rejected before returning a graph-visible
   operation projection, callback expiration must remain after the submission timestamp, and no
-  `waiting_callback` projection is produced without submitted provider metadata. It also accepts an
-  explicit `infiniteWaitPolicy`, producing a `waiting_callback` operation with no expiration only
-  when that unbounded wait policy is declared.
+  `waiting_callback` projection is produced without submitted provider metadata. Python runtime
+  stdlib async blocks now also reject non-canonical `resumeTokenHash` values in both start-operation
+  configs and projected operation inputs. It also accepts an explicit `infiniteWaitPolicy`,
+  producing a `waiting_callback` operation with no expiration only when that unbounded wait policy
+  is declared.
   Direct stdlib invocation in both Rust and Python now rejects configurations that define both a
   deadline/timeout and `infiniteWaitPolicy`, preserving the bounded-wait invariant even outside the
   compiler path.

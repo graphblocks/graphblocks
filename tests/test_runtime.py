@@ -13,6 +13,9 @@ from graphblocks.runtime import (
 from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore
 
 
+VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
+
+
 def test_runtime_executes_conversation_vertical_slice() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -715,7 +718,7 @@ def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "gha-run-1",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -763,6 +766,72 @@ def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:
     assert result.outputs["wait"]["operation"]["operation_id"] == "op-ci-1"
 
 
+def test_stdlib_async_start_operation_rejects_noncanonical_resume_token_hash() -> None:
+    with pytest.raises(ValueError, match="resumeTokenHash must be a canonical sha256 digest"):
+        stdlib_registry().resolve("async.start_operation@1")(
+            {},
+            {
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "timeoutMs": 1_800_000,
+                "resume": {
+                    "requirePolicyReevaluation": True,
+                    "requireBudgetReservation": True,
+                    "requireReleaseCompatibility": True,
+                    "requireOwnershipFence": True,
+                },
+                "attemptFencing": True,
+            },
+            {},
+        )
+
+
+def test_stdlib_async_await_callback_rejects_noncanonical_operation_resume_token_hash() -> None:
+    operation = {
+        "operation_id": "op-ci-1",
+        "run_id": "run-coding-1",
+        "node_id": "startCI",
+        "attempt_id": "attempt-1",
+        "kind": "ci_job",
+        "state": "waiting_callback",
+        "resume_token_hash": "sha256:resume-token",
+        "idempotency_key": "idem-op-ci-1",
+        "expected_schema": "schemas/CICallback@1",
+        "created_at_unix_ms": 1_000,
+        "submitted_at_unix_ms": 1_050,
+        "expires_at_unix_ms": 1_801_000,
+    }
+
+    with pytest.raises(ValueError, match="input operation resume_token_hash must be a canonical sha256 digest"):
+        stdlib_registry().resolve("async.await_callback@1")(
+            {"operation": operation},
+            {
+                "checkpoint": True,
+                "onTimeout": "fail",
+                "timeout": "30m",
+                "idempotencyKey": "idem-op-ci-1",
+                "callback": {"schema": "schemas/CICallback@1"},
+                "resume": {
+                    "requirePolicyReevaluation": True,
+                    "requireBudgetReservation": True,
+                    "requireReleaseCompatibility": True,
+                    "requireOwnershipFence": True,
+                },
+                "attemptFencing": True,
+            },
+            {},
+        )
+
+
 def test_stdlib_async_start_operation_rejects_ambiguous_wait_bounds() -> None:
     with pytest.raises(ValueError, match="must not define both timeout and infiniteWaitPolicy"):
         stdlib_registry().resolve("async.start_operation@1")(
@@ -774,7 +843,7 @@ def test_stdlib_async_start_operation_rejects_ambiguous_wait_bounds() -> None:
                 "attemptId": "attempt-1",
                 "kind": "ci_job",
                 "providerOperationId": "gha-run-1",
-                "resumeTokenHash": "sha256:resume-token",
+                "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                 "idempotencyKey": "idem-op-ci-1",
                 "expectedSchema": "schemas/CICallback@1",
                 "createdAtUnixMs": 1_000,
@@ -804,7 +873,7 @@ def test_stdlib_async_start_operation_rejects_absolute_and_relative_wait_bounds(
                 "attemptId": "attempt-1",
                 "kind": "ci_job",
                 "providerOperationId": "gha-run-1",
-                "resumeTokenHash": "sha256:resume-token",
+                "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                 "idempotencyKey": "idem-op-ci-1",
                 "expectedSchema": "schemas/CICallback@1",
                 "createdAtUnixMs": 1_000,
@@ -834,7 +903,7 @@ def test_stdlib_async_await_callback_rejects_ambiguous_wait_bounds() -> None:
             "attemptId": "attempt-1",
             "kind": "ci_job",
             "providerOperationId": "gha-run-1",
-            "resumeTokenHash": "sha256:resume-token",
+            "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
             "idempotencyKey": "idem-op-ci-1",
             "expectedSchema": "schemas/CICallback@1",
             "createdAtUnixMs": 1_000,
@@ -872,7 +941,7 @@ def test_stdlib_async_await_callback_rejects_operation_without_expected_schema()
         "attempt_id": "attempt-1",
         "kind": "ci_job",
         "state": "waiting_callback",
-        "resume_token_hash": "sha256:resume-token",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
         "idempotency_key": "idem-op-ci-1",
     }
 
@@ -892,7 +961,7 @@ def test_stdlib_async_await_callback_accepts_camel_case_operation_input() -> Non
         "attemptId": "attempt-1",
         "kind": "ci_job",
         "state": "waiting_callback",
-        "resumeTokenHash": "sha256:resume-token",
+        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
         "idempotencyKey": "idem-op-ci-1",
         "expectedSchema": "schemas/CICallback@1",
         "submittedAtUnixMs": 1_050,
@@ -921,7 +990,7 @@ def test_stdlib_async_operation_consumers_accept_protocol_operation_projection()
         "kind": "ci_job",
         "providerOperationId": "gha-run-1",
         "state": "waiting_callback",
-        "resumeTokenHash": "sha256:resume-token",
+        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
         "idempotencyKey": "idem-op-ci-1",
         "expectedSchema": "schemas/CICallback@1",
         "createdAtUnixMs": 1_000,
@@ -972,7 +1041,7 @@ def test_stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() -> None:
             "attemptId": "attempt-1",
             "kind": "external_provider_job",
             "providerOperationId": "batch-1",
-            "resumeTokenHash": "sha256:resume-token",
+            "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
             "idempotencyKey": "idem-op-poll-1",
             "expectedSchema": "schemas/PollResult@1",
             "createdAtUnixMs": 1_000,
@@ -1021,7 +1090,7 @@ def test_stdlib_async_terminal_blocks_reject_invalid_terminal_timestamps() -> No
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-cancel",
-                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-cancel",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1075,7 +1144,7 @@ def test_stdlib_async_terminal_blocks_reject_non_mapping_config() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-cancel",
-                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-cancel",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1128,7 +1197,7 @@ def test_stdlib_async_terminal_blocks_reject_terminal_after_expiration() -> None
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-cancel",
-                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-cancel",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1170,7 +1239,7 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
         "attemptId": "attempt-1",
         "kind": "ci_job",
         "providerOperationId": "provider-placeholder",
-        "resumeTokenHash": "sha256:resume-token-placeholder",
+        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
         "idempotencyKey": "idem-placeholder",
         "expectedSchema": "schemas/CICallback@1",
         "createdAtUnixMs": 1_000,
@@ -1190,7 +1259,7 @@ def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_deta
         configured["operationId"] = operation_id
         configured["nodeId"] = node_id
         configured["providerOperationId"] = f"provider-{operation_id}"
-        configured["resumeTokenHash"] = f"sha256:resume-token-{operation_id}"
+        configured["resumeTokenHash"] = VALID_RESUME_TOKEN_HASH
         configured["idempotencyKey"] = f"idem-{operation_id}"
         return configured
 
@@ -1339,7 +1408,7 @@ def test_stdlib_async_terminal_effects_reject_provider_identity_without_committe
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-cancel",
-                        "resumeTokenHash": "sha256:resume-token-op-cancel",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-cancel",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1403,7 +1472,7 @@ def test_stdlib_async_terminal_blocks_reject_invalid_projection_entries() -> Non
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-complete",
-                        "resumeTokenHash": "sha256:resume-token-op-complete",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-complete",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1459,7 +1528,7 @@ def test_stdlib_async_terminal_blocks_reject_invalid_artifact_entries() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-complete",
-                        "resumeTokenHash": "sha256:resume-token-op-complete",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-complete",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1515,7 +1584,7 @@ def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-poll",
-                        "resumeTokenHash": "sha256:resume-token-op-poll",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-poll",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1581,7 +1650,7 @@ def test_stdlib_async_poll_rejects_oversized_string_duration() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "provider-op-poll",
-                        "resumeTokenHash": "sha256:resume-token-op-poll",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-poll",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1646,7 +1715,7 @@ def test_stdlib_async_await_callback_rejects_non_boolean_checkpoint() -> None:
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "gha-run-1",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1712,7 +1781,7 @@ def test_stdlib_async_start_operation_rejects_timeout_expiration_overflow() -> N
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "gha-run-1",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": (1 << 64) - 10,
@@ -1759,7 +1828,7 @@ def test_stdlib_async_start_operation_rejects_submitted_before_created() -> None
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "gha-run-1",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 2_000,
@@ -1806,7 +1875,7 @@ def test_stdlib_async_start_operation_rejects_expiry_before_submission() -> None
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
                         "providerOperationId": "gha-run-1",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
@@ -1852,7 +1921,7 @@ def test_stdlib_async_start_operation_rejects_wait_without_submission() -> None:
                         "nodeId": "startCI",
                         "attemptId": "attempt-1",
                         "kind": "ci_job",
-                        "resumeTokenHash": "sha256:resume-token",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
                         "idempotencyKey": "idem-op-ci-1",
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,

@@ -1058,6 +1058,11 @@ def stdlib_registry() -> RuntimeRegistry:
             "resume_token_hash",
             "resumeTokenHash",
         )
+        resume_token_hash = _validate_async_resume_token_hash(
+            "async.start_operation@1 config",
+            "resumeTokenHash",
+            resume_token_hash,
+        )
         idempotency_key = _required_async_string(
             config,
             "idempotencyKey",
@@ -1347,6 +1352,14 @@ def stdlib_registry() -> RuntimeRegistry:
             raise TypeError(f"async.start_operation@1 config.{label} must be a non-empty string")
         return value
 
+    def _validate_async_resume_token_hash(owner: str, field_name: str, value: str) -> str:
+        if not value.startswith("sha256:"):
+            raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
+        digest = value.removeprefix("sha256:")
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
+        return value
+
     def _optional_async_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str | None:
         found, value = _config_value(config, camel_key, snake_key)
         if not found or value is None:
@@ -1414,6 +1427,12 @@ def stdlib_registry() -> RuntimeRegistry:
             value = normalized.get(snake_key, normalized.get(camel_key))
             if not isinstance(value, str) or not value.strip():
                 raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
+            if snake_key == "resume_token_hash":
+                value = _validate_async_resume_token_hash(
+                    f"{block_label} input operation",
+                    snake_key,
+                    value,
+                )
             normalized[snake_key] = value
         for snake_key, camel_key in (
             ("provider_operation_id", "providerOperationId"),
