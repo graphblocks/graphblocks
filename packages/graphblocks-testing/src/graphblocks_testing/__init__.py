@@ -7055,6 +7055,18 @@ class TckRunner:
                 if not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
+                for index, delivery in enumerate(deliveries):
+                    status = str(delivery.get("status", ""))
+                    if status in {"failed", "dead_lettered", "cancelled", "expired"}:
+                        last_error = delivery.get("lastError", delivery.get("last_error"))
+                        if not isinstance(last_error, str) or not last_error.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "failed callback delivery requires lastError",
+                                    "path": f"$.deliveries[{index}].lastError",
+                                }
+                            )
                 scheduled_retry_ids = [
                     str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
                     for delivery in deliveries

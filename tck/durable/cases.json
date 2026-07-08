@@ -516,7 +516,8 @@
         "idempotencyKey": "sub-ide-001:evt-0100",
         "receiverStatus": 500,
         "status": "failed",
-        "nextRetryAt": "2026-07-02T00:00:10Z"
+        "nextRetryAt": "2026-07-02T00:00:10Z",
+        "lastError": "receiver_error"
       },
       {
         "deliveryId": "del-002",

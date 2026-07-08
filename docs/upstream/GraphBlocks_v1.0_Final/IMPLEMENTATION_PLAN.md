@@ -1717,6 +1717,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   assert cursor, graph/node/operation ids, and visibility directly.
 - `graphblocks-testing` now loads every JSON TCK fixture with strict JSON semantics, rejecting
   non-standard constants such as `NaN` before fixture data can become conformance evidence.
+- `graphblocks-testing` durable callback projection cases now reject failed, dead-lettered,
+  cancelled, or expired delivery rows that omit nonblank `lastError` evidence, so retry and
+  dead-letter conformance cannot be proven from malformed failure records.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
