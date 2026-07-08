@@ -1038,6 +1038,23 @@ def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> N
         client.run_stream("run-http-1")
 
 
+def test_client_package_rejects_non_standard_http_json_constants(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return b'{"ok": NaN}'
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match="GraphBlocks health response must be valid JSON"):
+        client.health()
+
+
 @pytest.mark.parametrize("status_code", (True, "500"))
 def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_code: object) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))

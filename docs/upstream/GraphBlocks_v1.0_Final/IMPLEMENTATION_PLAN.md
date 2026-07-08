@@ -1508,6 +1508,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `RunGraphCommand` now applies the same canonical JSON and object-key checks to graph documents
   and input objects before local or HTTP execution, so malformed run invocations fail at the client
   boundary rather than being coerced by a downstream serializer.
+  `graphblocks-client` now also parses HTTP response bodies as strict JSON, rejecting non-standard
+  constants such as `NaN` before response payloads enter application-event or run-status models.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
   application events, matching the replay contract used by server attach/event-stream routes.
 - `graphblocks-testing` now preserves and reports authoritative event metadata when running

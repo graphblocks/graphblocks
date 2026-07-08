@@ -1341,7 +1341,13 @@ def _canonical_json_mapping(label: str, field_name: str, value: object) -> dict[
 
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:
-    payload = json.loads(response.read().decode("utf-8"))
+    try:
+        payload = json.loads(
+            response.read().decode("utf-8"),
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{label} must be valid JSON") from error
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a JSON object")
     status_code = getattr(response, "status", getattr(response, "status_code", None))
