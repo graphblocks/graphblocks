@@ -285,9 +285,23 @@ def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
         delivered_at="2026-07-02T00:00:01Z",
         acknowledged_at="2026-07-02T00:00:02Z",
     )
+    retry_scheduled = graphblocks.CallbackDelivery(
+        delivery_id="del-retry-1",
+        subscription_id="sub-1",
+        event_id="evt-retry-1",
+        run_id="run-1",
+        sequence=9,
+        cursor="run-1:9",
+        attempt=2,
+        idempotency_key="sub-1:evt-retry-1",
+        status="failed",
+        next_retry_at="2026-07-02T00:00:30Z",
+        last_error="receiver returned 503",
+    )
 
     assert delivered.to_json()["status"] == "delivered"
     assert acknowledged.to_json()["acknowledged_at"] == "2026-07-02T00:00:02Z"
+    assert retry_scheduled.to_json()["next_retry_at"] == "2026-07-02T00:00:30Z"
 
     with raises_value_error("delivered callback delivery requires delivered_at"):
         graphblocks.CallbackDelivery(
@@ -343,6 +357,24 @@ def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
                 attempt=1,
                 idempotency_key=f"sub-1:evt-{status}",
                 status=status,
+            )
+
+    for status in ("delivered", "acknowledged", "dead_lettered", "cancelled", "expired"):
+        with raises_value_error("terminal callback delivery must not have next_retry_at"):
+            graphblocks.CallbackDelivery(
+                delivery_id=f"del-terminal-retry-{status}",
+                subscription_id="sub-1",
+                event_id=f"evt-terminal-retry-{status}",
+                run_id="run-1",
+                sequence=13,
+                cursor=f"run-1:terminal-retry-{status}",
+                attempt=1,
+                idempotency_key=f"sub-1:evt-terminal-retry-{status}",
+                status=status,
+                delivered_at="2026-07-02T00:00:01Z" if status in {"delivered", "acknowledged"} else None,
+                acknowledged_at="2026-07-02T00:00:02Z" if status == "acknowledged" else None,
+                next_retry_at="2026-07-02T00:00:30Z",
+                last_error="terminal delivery cannot retry" if status not in {"delivered", "acknowledged"} else None,
             )
 
 

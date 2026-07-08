@@ -1039,6 +1039,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reject `acknowledged_at` on any delivery whose status is not `acknowledged`.
   The optional `graphblocks-callbacks` projection mirrors the core facade by also requiring
   nonblank `last_error` values on failed, dead-lettered, cancelled, or expired deliveries.
+- The Python `CallbackDelivery` facade now preserves retry-scheduled failed attempts by allowing
+  `failed` deliveries to carry `next_retry_at` with a nonblank `last_error`, while delivered,
+  acknowledged, dead-lettered, cancelled, and expired records remain non-retryable terminal
+  projections.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection. Replay scheduling now resolves the requested cursor against retained run events and
@@ -1535,8 +1539,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   delivery projections, preventing late webhook responses from mutating a delivery after the
   runtime has already produced the mandatory pause/fail/no-op failure action.
 - `graphblocks-callbacks` callback delivery projections now reject status/timestamp conflicts
-  such as pending deliveries that already have a delivered timestamp or terminal deliveries that
-  still carry a future retry timestamp, keeping retry metadata scoped to live retry attempts.
+  such as pending deliveries that already have a delivered timestamp or non-retryable terminal
+  deliveries that still carry a future retry timestamp, keeping retry metadata scoped to live retry
+  attempts.
 - Callback delivery success projections now require delivered/acknowledged timestamps at direct
   construction time, preserving an inspectable audit trail for accepted and duplicate webhook
   deliveries.

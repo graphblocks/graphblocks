@@ -67,7 +67,6 @@ TERMINAL_APPLICATION_EVENT_KINDS = frozenset({
 TERMINAL_CALLBACK_DELIVERY_STATUSES = frozenset({
     "delivered",
     "acknowledged",
-    "failed",
     "dead_lettered",
     "cancelled",
     "expired",
