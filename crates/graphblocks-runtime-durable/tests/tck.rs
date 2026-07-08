@@ -2535,6 +2535,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                     0
                 }
             };
+            if callback_journal_sequence > 0
+                && resume_sequence > 0
+                && callback_journal_sequence >= resume_sequence
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCallbackResumeInvalid",
+                    "message": "async callback resume requires callback journalSequence before resumeSequence",
+                    "path": "$.resume.resumeSequence",
+                }));
+            }
             let raw_successful_resume_count = raw_resume
                 .get("successfulResumeCount")
                 .or_else(|| raw_resume.get("successful_resume_count"));

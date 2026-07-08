@@ -8613,6 +8613,18 @@ class TckRunner:
                     resume_sequence = raw_resume_sequence
                 else:
                     resume_sequence = raw_resume_sequence
+                if (
+                    callback_journal_sequence > 0
+                    and resume_sequence > 0
+                    and callback_journal_sequence >= resume_sequence
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires callback journalSequence before resumeSequence",
+                            "path": "$.resume.resumeSequence",
+                        }
+                    )
                 successful_resume_count_missing = False
                 if "successfulResumeCount" in raw_resume:
                     raw_successful_resume_count = raw_resume["successfulResumeCount"]
