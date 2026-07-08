@@ -5304,6 +5304,43 @@ def test_server_app_subscription_replay_filters_top_level_visibility_field() -> 
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-operator"]
 
 
+def test_server_app_subscription_replay_rejects_malformed_visibility_as_hidden() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-malformed-visibility-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-invalid-visibility", "sequence": 1, "visibility": True},
+            "payload": {"severity": "info"},
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-client", "sequence": 2, "visibility": "client"},
+            "payload": {"severity": "info"},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-malformed-visibility-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-malformed-visibility-1",
+                    "eventFilter": {"types": ["JobProgress"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-client"]
+
+
 def test_server_app_subscription_replay_includes_terminal_events_by_default() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-terminal-1"] = (

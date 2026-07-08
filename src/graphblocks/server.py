@@ -3595,7 +3595,10 @@ class GraphBlocksServerApp:
                 raise ValueError("server event subscription sequence must be non-negative")
             if sequence <= replay_after_sequence:
                 continue
-            if self._event_matches_subscription_filter(event, subscription.event_filter):
+            if (
+                _event_visible_to_principal(event, subscription.owner)
+                and self._event_matches_subscription_filter(event, subscription.event_filter)
+            ):
                 replayed_events.append(_response_json_object(event))
         return replayed_events
 
@@ -3844,6 +3847,7 @@ class GraphBlocksServerApp:
             failure_policy=registration.failure_policy,
             replay_from_cursor=registration.replay_from_cursor,
             created_at=registration.created_at,
+            owner=registration.owner,
         )
         replay = self._subscription_replay(subscription, events)
         if isinstance(replay, ServerResponse):

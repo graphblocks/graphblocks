@@ -1231,7 +1231,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   specification's top-level `visibility`, `nodeId`, and `operationId` event fields and legacy
   payload fields. Visibility filters validate the specification's `client`, `operator`,
   `internal`, and `audit_only` literals. Nested event filter and delivery configs are immutable
-  snapshots and are thawed back to plain JSON for response payloads.
+  snapshots and are thawed back to plain JSON for response payloads. Subscription and
+  callback-registration replay also apply the subscriber principal visibility boundary before filter
+  matching, so malformed or unauthorized event visibility cannot be promoted to client-visible
+  replay output.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription replay cursors must belong to the subscribed run before retention
   lookup and must use a non-negative integer sequence. Retained event `sequence` metadata must also
