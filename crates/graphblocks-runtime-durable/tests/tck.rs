@@ -9,7 +9,7 @@ use graphblocks_runtime_durable::{
     SinkCommitError, SinkCommitRequest, SourceCursor, SourceEvent, ToolTerminalStoreError,
     Watermark, WindowAccumulator, WindowPolicy,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
@@ -621,6 +621,11 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "staleAttemptCanResume": raw_checks
                     .get("staleAttemptCanResume")
                     .or_else(|| raw_checks.get("stale_attempt_can_resume"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                "providerOperationMismatchCanResume": raw_checks
+                    .get("providerOperationMismatchCanResume")
+                    .or_else(|| raw_checks.get("provider_operation_mismatch_can_resume"))
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
                 "receiptJournaledBeforeResume": required_u64_map(raw_callback, "journalSequence", name)?

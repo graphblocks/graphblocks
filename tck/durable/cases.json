@@ -561,7 +561,8 @@
       "schemaFailureResumesRun": false,
       "timeoutCallbackResumesExpiredOperation": false,
       "cancelledCallbackCommitsResult": false,
-      "staleAttemptCanResume": false
+      "staleAttemptCanResume": false,
+      "providerOperationMismatchCanResume": false
     },
     "callback": {
       "callbackId": "cb-ci-001",
@@ -587,6 +588,7 @@
       "timeoutCallbackResumesExpiredOperation": false,
       "cancelledCallbackCommitsResult": false,
       "staleAttemptCanResume": false,
+      "providerOperationMismatchCanResume": false,
       "receiptJournaledBeforeResume": true,
       "resumeReevaluatesPolicyBudgetRelease": true,
       "budgetExhaustionPausesResume": true,
