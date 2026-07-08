@@ -1755,9 +1755,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection cases now reject delivery rows whose `status` is not one of the
   protocol-defined `CallbackDelivery.status` terminal or in-flight values, preventing arbitrary
   strings from satisfying callback-delivery TCK evidence.
-- Durable callback projection retry and duplicate evidence now uses only typed integer
-  `receiverStatus` values in the HTTP status-code range, preventing string coercion from proving
-  webhook retry or duplicate-acknowledgement behavior.
+- Durable callback projection retry and duplicate evidence now has shared expected-diagnostic
+  coverage requiring typed integer `receiverStatus` values, preventing string coercion from
+  proving webhook retry or duplicate-acknowledgement behavior.
 - Durable callback projection receiver evidence now requires 2xx webhook responses to be recorded
   as `delivered` or `acknowledged`, preventing successful receiver acknowledgements from being
   represented as failed delivery rows.

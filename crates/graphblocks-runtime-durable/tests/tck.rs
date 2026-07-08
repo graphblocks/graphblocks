@@ -579,11 +579,19 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut subscription_gone_after_410 = false;
             let mut non_retryable_4xx_terminal = false;
             for (index, delivery) in deliveries.iter().filter_map(Value::as_object).enumerate() {
-                let receiver_status = delivery
+                let raw_receiver_status = delivery
                     .get("receiverStatus")
-                    .or_else(|| delivery.get("receiver_status"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
+                    .or_else(|| delivery.get("receiver_status"));
+                if raw_receiver_status
+                    .is_some_and(|status| status.as_bool().is_some() || !status.is_u64())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires integer receiverStatus",
+                        "path": format!("$.deliveries[{index}].receiverStatus"),
+                    }));
+                }
+                let receiver_status = raw_receiver_status.and_then(Value::as_u64).unwrap_or(0);
                 if let Some(next_retry_at) = delivery
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))
