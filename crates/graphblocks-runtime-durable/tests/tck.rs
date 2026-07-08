@@ -701,6 +701,24 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     duplicate_409_acknowledged = true;
                 }
+                if delivery
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "acknowledged")
+                    && delivery
+                        .get("acknowledgedAt")
+                        .or_else(|| delivery.get("acknowledged_at"))
+                        .and_then(Value::as_str)
+                        .map_or(true, |acknowledged_at| {
+                            acknowledged_at.trim().is_empty()
+                        })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "acknowledged callback delivery requires acknowledgedAt",
+                        "path": format!("$.deliveries[{index}].acknowledgedAt"),
+                    }));
+                }
                 if receiver_status == 409
                     && delivery
                         .get("status")
