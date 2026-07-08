@@ -1080,10 +1080,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": "$.subscription.subscriptionId",
                     }));
                 }
-                let mandatory = subscription
-                    .get("mandatory")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let raw_mandatory = subscription.get("mandatory");
+                let mandatory = raw_mandatory.and_then(Value::as_bool).unwrap_or(false);
                 let failure_policy = subscription
                     .get("failurePolicy")
                     .or_else(|| subscription.get("failure_policy"))
@@ -1116,10 +1114,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": "$.subscription.failurePolicy",
                     }));
                 }
-                if subscription
-                    .get("mandatory")
-                    .is_some_and(|mandatory| mandatory.as_bool().is_none())
-                {
+                if raw_mandatory.and_then(Value::as_bool).is_none() {
                     diagnostics.push(json!({
                         "code": "DurableCallbackProjectionInvalid",
                         "message": "callback subscription requires boolean mandatory",
