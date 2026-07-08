@@ -1900,10 +1900,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `attach.expiredCursor`, and `retention.retainedFromCursor`) to be nonblank strings in both Rust
   and Python runners before they can drive replay or cursor-expiry assertions.
 - Durable background-run shared TCK cases now require an object `initialResponse` carrying
-  nonblank `runId`/`run_id`, `eventStream`/`event_stream`, and
+  nonblank `runId`/`run_id`, `eventStream`/`event_stream`, `websocket`/`web_socket`, and
   `initialCursor`/`initial_cursor` values in both Rust and Python runners, and require the
-  event-stream handle to encode the returned run id, preventing truthy placeholder values or
-  mismatched run links from satisfying durable response and replay-handle semantics.
+  event-stream handle to encode the returned run id, preventing truthy placeholder values,
+  missing websocket attach links, or mismatched run links from satisfying durable response and
+  replay-handle semantics.
 - Durable background-run shared TCK cases now require `responseMode`/`response_mode` to be exactly
   `accepted` or `background` in both Rust and Python runners, and apply the durable run-id handle
   requirement to background responses as well as accepted responses.

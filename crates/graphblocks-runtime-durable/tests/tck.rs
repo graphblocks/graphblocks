@@ -839,6 +839,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                             }));
                         }
                     }
+                    let websocket_path = if response.contains_key("websocket")
+                        || !response.contains_key("web_socket")
+                    {
+                        "websocket"
+                    } else {
+                        "web_socket"
+                    };
+                    if response
+                        .get("websocket")
+                        .or_else(|| response.get("web_socket"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|websocket| websocket.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response requires websocket"),
+                            "path": format!("$.initialResponse.{websocket_path}"),
+                        }));
+                    }
                     if response
                         .get("initialCursor")
                         .or_else(|| response.get("initial_cursor"))

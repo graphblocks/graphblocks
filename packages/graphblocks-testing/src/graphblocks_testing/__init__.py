@@ -7165,6 +7165,24 @@ class TckRunner:
                                     "path": f"$.initialResponse.{event_stream_path}",
                                 }
                             )
+                        initial_websocket = raw_initial_response.get(
+                            "websocket",
+                            raw_initial_response.get("web_socket"),
+                        )
+                        if not isinstance(initial_websocket, str) or not initial_websocket.strip():
+                            websocket_path = (
+                                "websocket"
+                                if "websocket" in raw_initial_response
+                                or "web_socket" not in raw_initial_response
+                                else "web_socket"
+                            )
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run {response_mode} response requires websocket",
+                                    "path": f"$.initialResponse.{websocket_path}",
+                                }
+                            )
                         initial_cursor_value = raw_initial_response.get(
                             "initialCursor",
                             raw_initial_response.get("initial_cursor"),
