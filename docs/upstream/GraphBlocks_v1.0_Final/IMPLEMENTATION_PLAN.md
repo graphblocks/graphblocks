@@ -1778,6 +1778,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   accepted response semantics.
 - Durable background-run replay evidence now rejects non-object event-stream entries instead of
   silently dropping them before replay/cursor assertions.
+- Durable background-run replay evidence now requires nonblank event `eventId`/`event_id` and
+  `cursor` fields before proving cursor replay, preventing anonymous or cursorless events from
+  satisfying replay assertions.
 - Durable async callback resume-guard evidence now requires real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks, preventing truthy strings from satisfying callback resume conformance.

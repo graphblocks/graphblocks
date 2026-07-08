@@ -7057,6 +7057,7 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                event_records = []
                 for event_index, raw_event in enumerate(raw_events):
                     if not isinstance(raw_event, Mapping):
                         diagnostics.append(
@@ -7066,7 +7067,35 @@ class TckRunner:
                                 "path": f"$.events[{event_index}]",
                             }
                         )
-                event_records = [event for event in raw_events if isinstance(event, Mapping)]
+                        continue
+                    event_valid = True
+                    event_id = raw_event.get("eventId", raw_event.get("event_id"))
+                    event_id_path = (
+                        "eventId"
+                        if "eventId" in raw_event or "event_id" not in raw_event
+                        else "event_id"
+                    )
+                    if not isinstance(event_id, str) or not event_id.strip():
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires eventId",
+                                "path": f"$.events[{event_index}].{event_id_path}",
+                            }
+                        )
+                    cursor = raw_event.get("cursor")
+                    if not isinstance(cursor, str) or not cursor.strip():
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires cursor",
+                                "path": f"$.events[{event_index}].cursor",
+                            }
+                        )
+                    if event_valid:
+                        event_records.append(raw_event)
                 last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
                 replay_after_cursor = [
                     str(event.get("eventId", event.get("event_id", "")))
