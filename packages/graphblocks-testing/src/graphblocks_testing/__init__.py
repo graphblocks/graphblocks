@@ -8228,6 +8228,14 @@ class TckRunner:
                                             "path": f"$.usage.providerUsageRecords[{usage_index}].amount",
                                         }
                                     )
+                                elif amount < 0:
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record amount must be non-negative",
+                                            "path": f"$.usage.providerUsageRecords[{usage_index}].amount",
+                                        }
+                                    )
                 observed = {
                     "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
                     "lateCallbackCommitsResult": external_reconciliation_values[("lateCallback", "commitsResult")],

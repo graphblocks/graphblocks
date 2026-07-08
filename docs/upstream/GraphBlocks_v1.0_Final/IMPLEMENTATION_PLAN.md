@@ -1878,9 +1878,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Rust and Python runners, preventing truthy strings from proving cancellation, payload extraction,
   or billing reconciliation behavior.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
-  provider usage records with nonblank `metric` and numeric `amount` fields in both Rust and
-  Python runners when late usage is marked reconciled, so billing reconciliation cannot be proven
-  from a bare flag or placeholder usage object.
+  provider usage records with nonblank `metric` and non-negative numeric `amount` fields in both
+  Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be
+  proven from a bare flag or placeholder usage object.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

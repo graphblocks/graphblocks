@@ -2063,12 +2063,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                                         "path": format!("$.usage.providerUsageRecords[{index}].metric"),
                                     }));
                                 }
-                                if record.get("amount").and_then(Value::as_f64).is_none() {
-                                    diagnostics.push(json!({
-                                        "code": "DurableExternalOperationInvalid",
-                                        "message": "external operation reconciliation usage record requires numeric amount",
-                                        "path": format!("$.usage.providerUsageRecords[{index}].amount"),
-                                    }));
+                                match record.get("amount").and_then(Value::as_f64) {
+                                    Some(amount) if amount >= 0.0 => {}
+                                    Some(_) => {
+                                        diagnostics.push(json!({
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record amount must be non-negative",
+                                            "path": format!("$.usage.providerUsageRecords[{index}].amount"),
+                                        }));
+                                    }
+                                    None => {
+                                        diagnostics.push(json!({
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record requires numeric amount",
+                                            "path": format!("$.usage.providerUsageRecords[{index}].amount"),
+                                        }));
+                                    }
                                 }
                             } else {
                                 diagnostics.push(json!({
