@@ -8755,6 +8755,15 @@ class TckRunner:
                                 "path": f"$.journal[{entry_index}].sequence",
                             }
                         )
+                    elif sequence == 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": "async cancel race journal entry requires positive integer sequence",
+                                "path": f"$.journal[{entry_index}].sequence",
+                            }
+                        )
+                        journal_sequences[id(entry)] = sequence
                     else:
                         journal_sequences[id(entry)] = sequence
                 if len(fences) > 1:

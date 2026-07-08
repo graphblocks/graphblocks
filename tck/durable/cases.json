@@ -6528,6 +6528,39 @@
     }
   },
   {
+    "name": "callback_cancel_race_zero_sequence_rejected",
+    "kind": "async_callback_cancel_race",
+    "journal": [
+      {
+        "sequence": 0,
+        "kind": "CancelRun",
+        "ownershipFence": "lease-1:7"
+      },
+      {
+        "sequence": 51,
+        "kind": "ExternalCallbackReceived",
+        "ownershipFence": "lease-1:7"
+      }
+    ],
+    "race": {
+      "winner": "cancel",
+      "callbackReceiptRecorded": true,
+      "resumeAttempted": false,
+      "resultCommitted": false,
+      "usageReconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCancelRaceInvalid",
+        "message": "async cancel race journal entry requires positive integer sequence",
+        "path": "$.journal[0].sequence"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "callback_cancel_race_non_object_journal_entry_rejected",
     "kind": "async_callback_cancel_race",
     "journal": [

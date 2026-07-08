@@ -2655,7 +2655,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }
                 }
                 let sequence = match entry.get("sequence").and_then(Value::as_u64) {
-                    Some(sequence) => sequence,
+                    Some(sequence) => {
+                        if sequence == 0 {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": "async cancel race journal entry requires positive integer sequence",
+                                "path": format!("$.journal[{entry_index}].sequence"),
+                            }));
+                        }
+                        sequence
+                    }
                     None => {
                         diagnostics.push(json!({
                             "code": "DurableAsyncCancelRaceInvalid",
