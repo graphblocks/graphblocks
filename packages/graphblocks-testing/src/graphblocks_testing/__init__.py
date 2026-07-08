@@ -7438,6 +7438,42 @@ class TckRunner:
                                 "path": f"$.checks.{path_key}",
                             }
                         )
+                raw_callback_journal_sequence = raw_callback.get(
+                    "journalSequence", raw_callback.get("journal_sequence", 0)
+                )
+                if (
+                    isinstance(raw_callback_journal_sequence, bool)
+                    or not isinstance(raw_callback_journal_sequence, int)
+                    or raw_callback_journal_sequence < 0
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer callback journalSequence",
+                            "path": "$.callback.journalSequence",
+                        }
+                    )
+                    callback_journal_sequence = 0
+                else:
+                    callback_journal_sequence = raw_callback_journal_sequence
+                raw_resume_sequence = raw_resume.get(
+                    "resumeSequence", raw_resume.get("resume_sequence", 0)
+                )
+                if (
+                    isinstance(raw_resume_sequence, bool)
+                    or not isinstance(raw_resume_sequence, int)
+                    or raw_resume_sequence < 0
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires integer resumeSequence",
+                            "path": "$.resume.resumeSequence",
+                        }
+                    )
+                    resume_sequence = 0
+                else:
+                    resume_sequence = raw_resume_sequence
                 observed = {
                     "signatureFailureRevealsOperation": async_resume_guard_values["signatureFailureRevealsOperation"],
                     "schemaFailureResumesRun": async_resume_guard_values["schemaFailureResumesRun"],
@@ -7447,7 +7483,7 @@ class TckRunner:
                     "unauthenticatedCallbackCanResume": async_resume_guard_values["unauthenticatedCallbackCanResume"],
                     "nonExternalCallbackEventCanBecomeReceipt": async_resume_guard_values["nonExternalCallbackEventCanBecomeReceipt"],
                     "providerOperationMismatchCanResume": async_resume_guard_values["providerOperationMismatchCanResume"],
-                    "receiptJournaledBeforeResume": int(raw_callback.get("journalSequence", raw_callback.get("journal_sequence", 0))) < int(raw_resume.get("resumeSequence", raw_resume.get("resume_sequence", 0))),
+                    "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
                     "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
                     "coordinatorFailoverResumesOnce": int(raw_resume.get("successfulResumeCount", raw_resume.get("successful_resume_count", 0))) == 1,
