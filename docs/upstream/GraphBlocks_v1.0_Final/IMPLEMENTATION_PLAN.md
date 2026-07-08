@@ -1783,10 +1783,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection duplicate evidence now requires receiver `409` rows to be in
   `acknowledged` status, preventing duplicate-acknowledgement behavior from being proven by merely
   delivered rows.
-- Durable callback projection delivery evidence now requires parseable `deliveredAt` for
-  `delivered`/`acknowledged` rows and parseable `acknowledgedAt` for acknowledged duplicate rows,
-  while rejecting acknowledgements that precede delivery time, aligning the shared TCK projection
-  with durable callback terminal timestamp invariants.
+- Durable callback projection delivery evidence now has shared expected-diagnostic coverage
+  requiring parseable `deliveredAt` for `delivered`/`acknowledged` rows and parseable
+  `acknowledgedAt` for acknowledged duplicate rows, while rejecting acknowledgements that precede
+  delivery time, aligning the shared TCK projection with durable callback terminal timestamp
+  invariants.
 - Durable callback projection redrive evidence now requires nonblank operator and reason audit
   metadata, so dead-letter redrive conformance preserves the operator action context required for
   durable audit and redrive review.

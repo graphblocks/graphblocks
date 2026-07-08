@@ -665,6 +665,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     delivered_after_2xx = true;
                 }
+                if delivery
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "delivered")
+                    && delivery
+                        .get("deliveredAt")
+                        .or_else(|| delivery.get("delivered_at"))
+                        .and_then(Value::as_str)
+                        .map_or(true, |delivered_at| delivered_at.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "delivered callback delivery requires deliveredAt",
+                        "path": format!("$.deliveries[{index}].deliveredAt"),
+                    }));
+                }
                 if (200..=299).contains(&receiver_status)
                     && delivery
                         .get("status")
