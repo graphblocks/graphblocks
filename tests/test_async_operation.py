@@ -7,6 +7,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 
 import graphblocks
+import pytest
 
 
 VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
@@ -213,6 +214,21 @@ def test_async_operation_result_deep_copies_json_output_and_projection_sequences
     assert result.to_json()["artifacts"] == [{"artifact_id": "artifact-1", "uri": "blob://ci/log"}]
 
 
+def test_async_operation_result_freezes_internal_json_mappings() -> None:
+    result = graphblocks.AsyncOperationResult.completed(
+        "op-1",
+        output={"summary": {"passed": True, "checks": ["lint"]}},
+    ).with_projections(artifacts=[{"artifact_id": "artifact-1", "uri": "blob://ci/log"}])
+
+    assert result.output["summary"]["checks"] == ("lint",)  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.output["summary"] = {"passed": False}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.output["summary"]["passed"] = False  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.artifacts[0]["uri"] = "blob://ci/mutated"  # type: ignore[index]
+
+
 def test_async_operation_result_rejects_non_json_output_and_projection_values() -> None:
     with raises_value_error("async operation result output must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1", output=object())
@@ -376,6 +392,30 @@ def test_external_callback_received_schema_freezes_payload_and_artifacts() -> No
         "verified_by": "hmac-sha256:callback-endpoint-1",
         "policy_snapshot_id": "policy-1",
     }
+
+
+def test_external_callback_received_freezes_internal_payload_and_artifacts() -> None:
+    payload = {"status": "completed", "checks": ["lint"]}
+    receipt = graphblocks.ExternalCallbackReceived(
+        callback_id="cb-1",
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        idempotency_key="idem-callback-1",
+        payload=payload,
+        payload_digest=graphblocks.canonical_hash(payload),
+        received_at="2026-07-02T00:10:00Z",
+        verified_by="hmac-sha256:callback-endpoint-1",
+        policy_snapshot_id="policy-1",
+        artifacts=[{"artifact_id": "artifact-ci-log", "uri": "blob://ci/log"}],
+    )
+
+    assert receipt.payload["checks"] == ("lint",)  # type: ignore[index]
+    with pytest.raises(TypeError):
+        receipt.payload["status"] = "failed"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        receipt.artifacts[0]["uri"] = "blob://ci/mutated"  # type: ignore[index]
 
 
 def test_external_callback_received_accepts_camel_case_artifacts() -> None:

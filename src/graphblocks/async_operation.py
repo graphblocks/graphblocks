@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import math
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -136,20 +137,20 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
         return _FrozenJsonArray(_freeze_json_value(owner, field_name, item) for item in value)
     if isinstance(value, tuple):
         raise ValueError(f"{owner} {field_name} must contain only JSON values")
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         frozen: dict[str, object] = {}
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError(f"{owner} {field_name} must contain only string object keys")
             frozen[key] = _freeze_json_value(owner, field_name, item)
-        return frozen
+        return MappingProxyType(frozen)
     raise ValueError(f"{owner} {field_name} must contain only JSON values")
 
 
 def _thaw_json_value(value: object) -> object:
     if isinstance(value, _FrozenJsonArray):
         return [_thaw_json_value(item) for item in value]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {key: _thaw_json_value(item) for key, item in value.items()}
     return deepcopy(value)
 

@@ -696,7 +696,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `media_type` and `checksum` values must also be non-empty when present, and duplicate
   `artifact_id` values are rejected at receipt construction. Optional `size_bytes` values must be
   non-negative integers. Artifact refs accept `artifactId`, `mediaType`, and `sizeBytes` aliases at
-  ingress and project canonical snake_case fields.
+  ingress and project canonical snake_case fields. Receipt payloads and artifact objects are stored
+  as immutable JSON snapshots and thawed into fresh plain JSON values for `to_json()` callers.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
@@ -749,13 +750,13 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including
   validation that provider effect identity is only attached to committed external effects.
 - Python `AsyncOperationResult` now validates output, artifacts, diagnostics, metrics, checks, and
-  usage projections as strict JSON-compatible values, deep-freezes them on construction, and
-  returns thawed copies from `to_json()` so untrusted callback/result payloads cannot be mutated
-  after journaling. Caller-supplied tuples are rejected rather than accepted as JSON arrays, while
-  real JSON lists still freeze internally for immutability. Projection helpers reject malformed
-  non-sequence and string inputs, require each projection entry to be a JSON object, and reject
-  malformed external-effect sequences before validating individual projection items or effect
-  records.
+  usage projections as strict JSON-compatible values, deep-freezes arrays and object mappings on
+  construction, and returns thawed copies from `to_json()` so untrusted callback/result payloads
+  cannot be mutated after journaling. Caller-supplied tuples are rejected rather than accepted as
+  JSON arrays, while real JSON lists still freeze internally for immutability. Projection helpers
+  reject malformed non-sequence and string inputs, require each projection entry to be a JSON
+  object, and reject malformed external-effect sequences before validating individual projection
+  items or effect records.
 - Python `AsyncOperationResult.from_operation` now projects durable results only from terminal
   `AsyncOperation` records, mapping terminal state to result status while preserving the operation
   id and rejecting non-terminal waits or resumes.
