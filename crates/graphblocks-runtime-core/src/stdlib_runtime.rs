@@ -2798,6 +2798,7 @@ fn validate_async_terminal_timestamp(
     }
     if let Some(submitted_at_unix_ms) = operation
         .get("submitted_at_unix_ms")
+        .or_else(|| operation.get("submittedAtUnixMs"))
         .and_then(Value::as_u64)
         && completed_at_unix_ms < submitted_at_unix_ms
     {
@@ -2810,7 +2811,10 @@ fn validate_async_terminal_timestamp(
             false,
         ));
     }
-    if let Some(expires_at_unix_ms) = operation.get("expires_at_unix_ms").and_then(Value::as_u64)
+    if let Some(expires_at_unix_ms) = operation
+        .get("expires_at_unix_ms")
+        .or_else(|| operation.get("expiresAtUnixMs"))
+        .and_then(Value::as_u64)
         && completed_at_unix_ms > expires_at_unix_ms
     {
         return Err(BlockError::new(
@@ -3009,6 +3013,38 @@ mod tests {
             error
                 .message
                 .contains("input operation.expected_schema must be a non-empty string"),
+            "unexpected error: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn stdlib_async_terminal_timestamp_validation_accepts_protocol_operation_projection() {
+        let operation = json!({
+            "operationId": "op-ci-1",
+            "runId": "run-coding-1",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "kind": "ci_job",
+            "state": "waiting_callback",
+            "resumeTokenHash": "sha256:resume-token",
+            "idempotencyKey": "idem-op-ci-1",
+            "expectedSchema": "schemas/CICallback@1",
+            "submittedAtUnixMs": 1_050,
+            "expiresAtUnixMs": 1_800,
+        });
+        let error = super::execute_stdlib_block(
+            "async.complete_operation@1",
+            &json!({"operation": operation}),
+            &json!({"completedAtUnixMs": 1_801}),
+        )
+        .expect_err("camelCase operation expiration should be enforced");
+
+        assert_eq!(error.code, "async.complete_operation.invalid_config");
+        assert!(
+            error
+                .message
+                .contains("terminal timestamp must not exceed expires_at_unix_ms"),
             "unexpected error: {:?}",
             error
         );

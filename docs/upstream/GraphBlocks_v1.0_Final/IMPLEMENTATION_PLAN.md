@@ -823,7 +823,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and expected-schema fields before accepting an externally supplied operation projection. The
   Python stdlib boundary normalizes spec camelCase operation identity, provider, wait-policy, and
   timestamp fields to the same canonical snake_case projection that Rust already accepts, keeping
-  direct local tests and protocol-shaped operation payloads interoperable.
+  direct local tests and protocol-shaped operation payloads interoperable. Rust terminal async
+  blocks enforce submitted/expiration timestamp bounds against both canonical snake_case and
+  protocol camelCase operation projections.
 - The stdlib runtime also exposes `async.poll_operation@1`, `async.complete_operation@1`,
   `async.cancel_operation@1`, and `async.expire_operation@1` projections for polling and terminal
   async operation results. `async.poll_operation@1` requires a timeout in its block config so
