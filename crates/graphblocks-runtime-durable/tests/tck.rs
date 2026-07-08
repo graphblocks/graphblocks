@@ -599,6 +599,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     retry_scheduled_after_retryable_status = true;
                 }
+                if (receiver_status == 429 || receiver_status >= 500)
+                    && delivery
+                        .get("nextRetryAt")
+                        .or_else(|| delivery.get("next_retry_at"))
+                        .is_some()
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status != "failed")
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery retry requires failed status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
+                }
                 if subscription_failure_policy == Some("retry_then_dead_letter")
                     && (receiver_status == 429 || receiver_status >= 500)
                     && delivery

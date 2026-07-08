@@ -1774,8 +1774,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `retry_then_dead_letter` subscriptions to include `nextRetryAt` on failed 429/5xx deliveries,
   ensuring retry scheduling is proven from the subscription's failure policy rather than inferred
   from status alone.
-- Durable callback projection retry evidence now requires 5xx retry-scheduled deliveries to remain
-  in `failed` status, preventing delivered or acknowledged rows from proving retry behavior.
+- Durable callback projection retry evidence now has shared expected-diagnostic coverage requiring
+  429/5xx retry-scheduled deliveries to remain in `failed` status, preventing delivered or
+  acknowledged rows from proving retry behavior.
 - Durable callback projection terminal-state evidence now rejects `nextRetryAt` on delivered,
   acknowledged, dead-lettered, cancelled, or expired deliveries, keeping terminal delivery rows
   non-retryable.

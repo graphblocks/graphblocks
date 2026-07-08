@@ -697,6 +697,36 @@
     }
   },
   {
+    "name": "webhook_delivery_429_delivered_retry_status_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-rate-status-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0202",
+        "runId": "run-coding-001",
+        "sequence": 202,
+        "cursor": "evt-0202",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0202",
+        "receiverStatus": 429,
+        "status": "delivered",
+        "nextRetryAt": "2026-07-02T00:01:30Z",
+        "deliveredAt": "2026-07-02T00:01:00Z"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery retry requires failed status",
+        "path": "$.deliveries[0].status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_subscription_gone_410",
     "kind": "callback_delivery_projection",
     "deliveries": [
