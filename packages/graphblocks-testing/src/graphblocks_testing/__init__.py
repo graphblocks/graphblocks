@@ -9302,6 +9302,37 @@ class TckRunner:
                                 "path": f"$.operation.{created_at_path}",
                             }
                         )
+                submitted_at_path = (
+                    "submittedAt"
+                    if "submittedAt" in raw_operation or "submitted_at" not in raw_operation
+                    else "submitted_at"
+                )
+                submitted_at = raw_operation.get(
+                    "submittedAt", raw_operation.get("submitted_at")
+                )
+                if not isinstance(submitted_at, str) or not submitted_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires ISO submittedAt",
+                            "path": f"$.operation.{submitted_at_path}",
+                        }
+                    )
+                else:
+                    try:
+                        datetime.fromisoformat(
+                            submitted_at.replace("Z", "+00:00")
+                            if submitted_at.endswith("Z")
+                            else submitted_at
+                        )
+                    except ValueError:
+                        diagnostics.append(
+                            {
+                                "code": "DurableExternalOperationInvalid",
+                                "message": "external operation reconciliation requires ISO submittedAt",
+                                "path": f"$.operation.{submitted_at_path}",
+                            }
+                        )
                 expires_at_path = (
                     "expiresAt"
                     if "expiresAt" in raw_operation or "expires_at" not in raw_operation

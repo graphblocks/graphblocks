@@ -3258,6 +3258,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{created_at_path}"),
                 }));
             }
+            let submitted_at_path = if raw_operation.contains_key("submittedAt")
+                || !raw_operation.contains_key("submitted_at")
+            {
+                "submittedAt"
+            } else {
+                "submitted_at"
+            };
+            let submitted_at_is_iso = raw_operation
+                .get("submittedAt")
+                .or_else(|| raw_operation.get("submitted_at"))
+                .and_then(Value::as_str)
+                .is_some_and(|submitted_at| {
+                    let submitted_at = submitted_at.trim();
+                    let bytes = submitted_at.as_bytes();
+                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                    bytes.len() >= 20
+                        && digit_positions
+                            .into_iter()
+                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                        && bytes.get(4) == Some(&b'-')
+                        && bytes.get(7) == Some(&b'-')
+                        && bytes.get(10) == Some(&b'T')
+                        && bytes.get(13) == Some(&b':')
+                        && bytes.get(16) == Some(&b':')
+                        && (submitted_at.ends_with('Z')
+                            || submitted_at
+                                .get(19..)
+                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
+                });
+            if !submitted_at_is_iso {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires ISO submittedAt",
+                    "path": format!("$.operation.{submitted_at_path}"),
+                }));
+            }
             let expires_at_path = if raw_operation.contains_key("expiresAt")
                 || !raw_operation.contains_key("expires_at")
             {

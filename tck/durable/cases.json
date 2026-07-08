@@ -7955,7 +7955,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8013,7 +8014,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8073,7 +8075,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8134,7 +8137,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8194,7 +8198,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8255,7 +8260,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8316,7 +8322,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8376,7 +8383,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8437,7 +8445,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8497,7 +8506,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8558,7 +8568,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8618,7 +8629,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8678,7 +8690,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8738,7 +8751,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8798,7 +8812,8 @@
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8858,7 +8873,8 @@
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8918,7 +8934,8 @@
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -8978,7 +8995,8 @@
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
-      "kind": "ci_job"
+      "kind": "ci_job",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9020,6 +9038,67 @@
     }
   },
   {
+    "name": "external_operation_missing_submitted_at_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "idempotencyKey": "idem-ci-operation-001",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "policySnapshotId": "pol-callback-001",
+      "effectState": "committed",
+      "effectJournaled": true,
+      "state": "cancelled",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1",
+      "createdAt": "2026-06-23T00:00:00Z",
+      "kind": "ci_job",
+      "expiresAt": "2026-06-23T00:30:00Z"
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
+      "providerOperationId": "gh-run-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "releaseId": "release-2026-06-23",
+      "tenantId": "tenant-support-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires ISO submittedAt",
+        "path": "$.operation.submittedAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_provider_operation_id_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -9039,7 +9118,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9099,7 +9179,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9159,7 +9240,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9220,7 +9302,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9280,7 +9363,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9341,7 +9425,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9401,7 +9486,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9462,7 +9548,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9522,7 +9609,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9583,7 +9671,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9644,7 +9733,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9704,7 +9794,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9764,7 +9855,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9825,7 +9917,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9886,7 +9979,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -9946,7 +10040,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10006,7 +10101,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10067,7 +10163,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10128,7 +10225,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10189,7 +10287,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "operationId": "op-ci-002",
@@ -10249,7 +10348,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "   ",
@@ -10310,7 +10410,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10370,7 +10471,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10431,7 +10533,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10491,7 +10594,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10552,7 +10656,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10612,7 +10717,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10673,7 +10779,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10733,7 +10840,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10794,7 +10902,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10854,7 +10963,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10915,7 +11025,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -10975,7 +11086,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11036,7 +11148,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11096,7 +11209,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11157,7 +11271,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11218,7 +11333,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11278,7 +11394,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11339,7 +11456,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11399,7 +11517,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11460,7 +11579,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11520,7 +11640,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11581,7 +11702,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11641,7 +11763,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11701,7 +11824,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11761,7 +11885,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11821,7 +11946,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11876,7 +12002,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11936,7 +12063,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -11997,7 +12125,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -12058,7 +12187,8 @@
       "expectedSchema": "schemas/CICallback@1",
       "createdAt": "2026-06-23T00:00:00Z",
       "kind": "ci_job",
-      "expiresAt": "2026-06-23T00:30:00Z"
+      "expiresAt": "2026-06-23T00:30:00Z",
+      "submittedAt": "2026-06-23T00:00:01Z"
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
