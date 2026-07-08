@@ -1826,9 +1826,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now require `createsApplicationEvent` to be a real
   boolean when present in both Rust and Python runners, preventing truthy string values from
   satisfying the no-duplicate-event redrive invariant.
-- Durable callback projection fixture-level outage evidence now requires a real boolean
-  `nonMandatoryOutageBlocksRun`, preventing string coercion from satisfying non-mandatory webhook
-  outage behavior.
+- Durable callback projection shared TCK cases now require fixture-level outage evidence
+  `nonMandatoryOutageBlocksRun` to be a real boolean in both Rust and Python runners, preventing
+  string coercion from satisfying non-mandatory webhook outage behavior.
 - Durable background-run event-stream evidence now requires a real boolean `detach.cancelRun`
   value before proving that background/job lifetimes outlive client detach, preventing truthy
   strings from satisfying run-lifetime behavior.

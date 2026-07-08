@@ -1991,6 +1991,37 @@
     }
   },
   {
+    "name": "webhook_delivery_non_boolean_outage_flag_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-non-boolean-outage-flag-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0309",
+        "runId": "run-coding-001",
+        "sequence": 309,
+        "cursor": "evt-0309",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0309",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:09Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": "false",
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackProjectionInvalid",
+        "message": "callback projection requires boolean nonMandatoryOutageBlocksRun",
+        "path": "$.nonMandatoryOutageBlocksRun"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
     "kind": "async_callback_resume_guards",
     "operation": {

@@ -1459,6 +1459,23 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }
                 }
             }
+            let raw_non_mandatory_outage_blocks_run = case
+                .get("nonMandatoryOutageBlocksRun")
+                .or_else(|| case.get("non_mandatory_outage_blocks_run"));
+            let non_mandatory_outage_blocks_run = match raw_non_mandatory_outage_blocks_run {
+                Some(value) => match value.as_bool() {
+                    Some(flag) => flag,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackProjectionInvalid",
+                            "message": "callback projection requires boolean nonMandatoryOutageBlocksRun",
+                            "path": "$.nonMandatoryOutageBlocksRun",
+                        }));
+                        true
+                    }
+                },
+                None => true,
+            };
             json!({
                 "retryScheduledAfter5xx": retry_scheduled_after_5xx,
                 "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
@@ -1469,11 +1486,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
                 "deadLetterPreservesEventId": dead_letter_preserves_event_id,
                 "redriveCreatesApplicationEvent": redrive_creates_application_event,
-                "nonMandatoryOutageBlocksRun": case
-                    .get("nonMandatoryOutageBlocksRun")
-                    .or_else(|| case.get("non_mandatory_outage_blocks_run"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
+                "nonMandatoryOutageBlocksRun": non_mandatory_outage_blocks_run,
             })
         }
         "async_callback_resume_guards" => {

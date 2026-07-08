@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 60
+    assert [case.kind for case in cases] == ["durable"] * 61
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1262,6 +1262,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_missing_redrive_original_event_id_rejected",
         "webhook_delivery_redrive_event_identity_mismatch_rejected",
         "webhook_delivery_redrive_application_event_flag_rejected",
+        "webhook_delivery_non_boolean_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
@@ -1504,6 +1505,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.case_id == "webhook_delivery_redrive_application_event_flag_rejected"
         and result.observed.get("redriveCreatesApplicationEvent") is False
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_non_boolean_outage_flag_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -4685,6 +4691,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_missing_redrive_original_event_id_rejected",
         "webhook_delivery_redrive_event_identity_mismatch_rejected",
         "webhook_delivery_redrive_application_event_flag_rejected",
+        "webhook_delivery_non_boolean_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
