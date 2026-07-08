@@ -3852,7 +3852,8 @@
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
       "state": "cancelled",
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
@@ -3882,7 +3883,8 @@
     "name": "external_operation_non_boolean_diagnostic_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -3912,7 +3914,9 @@
   {
     "name": "external_operation_missing_effect_state_rejected",
     "kind": "external_operation_reconciliation",
-    "operation": {},
+    "operation": {
+      "effectJournaled": true
+    },
     "lateCallback": {
       "commitsResult": false,
       "diagnosticRecorded": true,
@@ -3942,7 +3946,8 @@
     "name": "external_operation_non_committed_effect_state_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "pending"
+      "effectState": "pending",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -3970,10 +3975,106 @@
     }
   },
   {
-    "name": "external_operation_missing_commits_result_rejected",
+    "name": "external_operation_missing_effect_journal_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
       "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean effectJournaled",
+        "path": "$.operation.effectJournaled"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_non_boolean_effect_journal_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed",
+      "effectJournaled": "true"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean effectJournaled",
+        "path": "$.operation.effectJournaled"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_unjournaled_effect_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed",
+      "effectJournaled": false
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires committed effect journal record",
+        "path": "$.operation.effectJournaled"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_missing_commits_result_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "diagnosticRecorded": true,
@@ -4003,7 +4104,8 @@
     "name": "external_operation_missing_diagnostic_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4033,7 +4135,8 @@
     "name": "external_operation_missing_artifact_projection_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4063,7 +4166,8 @@
     "name": "external_operation_missing_usage_reconciled_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4093,7 +4197,8 @@
     "name": "external_operation_reconciled_without_usage_records_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4118,7 +4223,8 @@
     "name": "external_operation_usage_record_missing_metric_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4148,7 +4254,8 @@
     "name": "external_operation_usage_record_non_numeric_amount_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4179,7 +4286,8 @@
     "name": "external_operation_usage_record_fractional_amount_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,
@@ -4210,7 +4318,8 @@
     "name": "external_operation_usage_record_negative_amount_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
-      "effectState": "committed"
+      "effectState": "committed",
+      "effectJournaled": true
     },
     "lateCallback": {
       "commitsResult": false,

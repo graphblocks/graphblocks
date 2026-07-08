@@ -1892,6 +1892,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   cancellation, payload extraction, or billing reconciliation behavior.
 - Durable external-operation reconciliation shared TCK cases now require `operation.effectState` to
   be `committed` in both Rust and Python runners before accepting side-effect preservation evidence.
+- Durable external-operation reconciliation shared TCK cases now also require
+  `operation.effectJournaled` to be a real `true` boolean before accepting side-effect preservation
+  evidence, tying late cancellation reconciliation to an auditable EffectJournal record.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

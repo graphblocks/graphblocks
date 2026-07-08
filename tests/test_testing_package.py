@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 118
+    assert [case.kind for case in cases] == ["durable"] * 121
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1314,6 +1314,9 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_missing_effect_state_rejected",
         "external_operation_non_committed_effect_state_rejected",
+        "external_operation_missing_effect_journal_rejected",
+        "external_operation_non_boolean_effect_journal_rejected",
+        "external_operation_unjournaled_effect_rejected",
         "external_operation_missing_commits_result_rejected",
         "external_operation_missing_diagnostic_rejected",
         "external_operation_missing_artifact_projection_rejected",
@@ -1808,6 +1811,21 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "external_operation_non_committed_effect_state_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_missing_effect_journal_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_non_boolean_effect_journal_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_unjournaled_effect_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -2891,6 +2909,7 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
             "kind": "external_operation_reconciliation",
             "operation": {
                 "effectState": "committed",
+                "effectJournaled": True,
             },
             "lateCallback": {
                 "commitsResult": False,
@@ -2933,6 +2952,7 @@ def test_testing_package_rejects_external_operation_reconciliation_without_usage
             "kind": "external_operation_reconciliation",
             "operation": {
                 "effectState": "committed",
+                "effectJournaled": True,
             },
             "lateCallback": {
                 "commitsResult": False,
@@ -5136,6 +5156,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_missing_effect_state_rejected",
         "external_operation_non_committed_effect_state_rejected",
+        "external_operation_missing_effect_journal_rejected",
+        "external_operation_non_boolean_effect_journal_rejected",
+        "external_operation_unjournaled_effect_rejected",
         "external_operation_missing_commits_result_rejected",
         "external_operation_missing_diagnostic_rejected",
         "external_operation_missing_artifact_projection_rejected",

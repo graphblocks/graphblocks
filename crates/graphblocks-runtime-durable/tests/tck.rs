@@ -2171,6 +2171,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{effect_state_path}"),
                 }));
             }
+            let effect_journaled_path = if raw_operation.contains_key("effectJournaled")
+                || !raw_operation.contains_key("effect_journaled")
+            {
+                "effectJournaled"
+            } else {
+                "effect_journaled"
+            };
+            let raw_effect_journaled = raw_operation
+                .get("effectJournaled")
+                .or_else(|| raw_operation.get("effect_journaled"));
+            let effect_journaled = raw_effect_journaled
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if raw_effect_journaled.is_none_or(|value| !value.is_boolean()) {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires boolean effectJournaled",
+                    "path": format!("$.operation.{effect_journaled_path}"),
+                }));
+            } else if !effect_journaled {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires committed effect journal record",
+                    "path": format!("$.operation.{effect_journaled_path}"),
+                }));
+            }
             let mut reconciliation_values = BTreeMap::new();
             for (source_name, source, key, alias, default) in [
                 (
@@ -2293,7 +2319,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .get("effectState")
                     .or_else(|| raw_operation.get("effect_state"))
                     .and_then(Value::as_str)
-                    .is_some_and(|state| state == "committed"),
+                    .is_some_and(|state| state == "committed")
+                    && effect_journaled,
                 "lateCallbackCommitsResult": reconciliation_values
                     .get(&("lateCallback", "commitsResult"))
                     .copied()

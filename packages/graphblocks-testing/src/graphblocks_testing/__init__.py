@@ -8349,6 +8349,30 @@ class TckRunner:
                             "path": f"$.operation.{effect_state_path}",
                         }
                     )
+                effect_journaled_path = (
+                    "effectJournaled"
+                    if "effectJournaled" in raw_operation or "effect_journaled" not in raw_operation
+                    else "effect_journaled"
+                )
+                raw_effect_journaled = raw_operation.get(
+                    "effectJournaled", raw_operation.get("effect_journaled")
+                )
+                if not isinstance(raw_effect_journaled, bool):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires boolean effectJournaled",
+                            "path": f"$.operation.{effect_journaled_path}",
+                        }
+                    )
+                elif raw_effect_journaled is False:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires committed effect journal record",
+                            "path": f"$.operation.{effect_journaled_path}",
+                        }
+                    )
                 external_reconciliation_values = {}
                 for source_name, source, key, alias, default in (
                     ("lateCallback", raw_late_callback, "commitsResult", "commits_result", True),
@@ -8452,7 +8476,8 @@ class TckRunner:
                                         }
                                     )
                 observed = {
-                    "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
+                    "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed"
+                    and raw_effect_journaled is True,
                     "lateCallbackCommitsResult": external_reconciliation_values[("lateCallback", "commitsResult")],
                     "lateCallbackRecordedDiagnostic": external_reconciliation_values[("lateCallback", "diagnosticRecorded")],
                     "lateUsageReconciled": external_reconciliation_values[("usage", "reconciled")],
