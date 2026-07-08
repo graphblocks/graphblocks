@@ -602,6 +602,30 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].receiverStatus"),
                     }));
                 }
+                let status_valid =
+                    delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| {
+                            matches!(
+                                status,
+                                "pending"
+                                    | "delivering"
+                                    | "delivered"
+                                    | "acknowledged"
+                                    | "failed"
+                                    | "dead_lettered"
+                                    | "cancelled"
+                                    | "expired"
+                            )
+                        });
+                if !status_valid {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery has invalid status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
+                }
                 if let Some(next_retry_at) = delivery
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))

@@ -1752,9 +1752,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection redrive evidence now also requires an explicit `redrive` object
   before asserting `redriveCreatesApplicationEvent`, so redrive application-event behavior cannot
   be proven from the projection default.
-- Durable callback projection cases now reject delivery rows whose `status` is not one of the
-  protocol-defined `CallbackDelivery.status` terminal or in-flight values, preventing arbitrary
-  strings from satisfying callback-delivery TCK evidence.
+- Durable callback projection cases now have shared expected-diagnostic coverage rejecting delivery
+  rows whose `status` is not one of the protocol-defined `CallbackDelivery.status` terminal or
+  in-flight values, preventing arbitrary strings from satisfying callback-delivery TCK evidence.
 - Durable callback projection retry and duplicate evidence now has shared expected-diagnostic
   coverage requiring typed integer `receiverStatus` values in the HTTP status-code range,
   preventing string coercion or non-HTTP codes from proving webhook retry or

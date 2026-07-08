@@ -602,6 +602,33 @@
     }
   },
   {
+    "name": "webhook_delivery_invalid_status_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-status-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0108",
+        "runId": "run-coding-001",
+        "sequence": 108,
+        "cursor": "evt-0108",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0108",
+        "status": "queued"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery has invalid status",
+        "path": "$.deliveries[0].status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_409_failed_status_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
