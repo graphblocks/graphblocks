@@ -35,7 +35,15 @@ def _freeze_metadata(owner: str, metadata: object) -> MappingProxyType[str, obje
     metadata_copy = dict(metadata)
     if any(not isinstance(key, str) or not key.strip() for key in metadata_copy):
         raise ValueError(f"{owner} metadata keys must be non-empty strings")
-    return MappingProxyType(metadata_copy)
+    return MappingProxyType({key: _freeze_metadata_value(owner, value) for key, value in metadata_copy.items()})
+
+
+def _freeze_metadata_value(owner: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_metadata(owner, value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_metadata_value(owner, item) for item in value)
+    return value
 
 
 def _parse_datetime(value: str) -> datetime:

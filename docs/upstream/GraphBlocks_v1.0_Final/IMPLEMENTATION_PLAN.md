@@ -1521,6 +1521,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   gates, preserving the approval-bound-to-call contract for effectful tools.
 - Expired approval records are covered by the shared tool-lifecycle TCK, proving that approval
   validity is rechecked at admission time rather than treated as a permanent grant.
+- Python approval request and approval record metadata now deep-freeze nested mappings and
+  sequences, so audit/review annotations attached to an approval cannot be mutated after approval
+  admission decisions are constructed.
 - Required idempotency keys are covered by the shared tool-lifecycle TCK after approval succeeds,
   proving that state-changing tools still cannot admit without retry-safe operation identity.
 - Blank idempotency keys are covered in the same TCK suite, so whitespace-only operation identity

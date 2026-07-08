@@ -91,7 +91,7 @@ def test_approval_request_rejects_invalid_identity_fields() -> None:
 
 
 def test_approval_request_metadata_is_copied_and_read_only() -> None:
-    metadata = {"ticket": "T-1"}
+    metadata = {"ticket": "T-1", "scope": {"labels": ["approval"]}}
     request = ApprovalRequest.from_arguments(
         "approval-1",
         run_id="run-1",
@@ -103,10 +103,15 @@ def test_approval_request_metadata_is_copied_and_read_only() -> None:
         metadata=metadata,
     )
     metadata["ticket"] = "mutated"
+    metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
-    assert request.metadata == {"ticket": "T-1"}
+    assert request.metadata == {"ticket": "T-1", "scope": {"labels": ("approval",)}}
     with pytest.raises(TypeError):
         request.metadata["ticket"] = "direct"
+    with pytest.raises(TypeError):
+        request.metadata["scope"]["labels"] = ("mutated",)  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        request.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
     with pytest.raises(ValueError, match="approval request metadata must be a mapping"):
         ApprovalRequest.from_arguments(
             "approval-1",
@@ -240,6 +245,33 @@ def test_approval_record_rejects_invalid_state() -> None:
         ApprovalRecord("approval-1", request, "requested", metadata={object(): "T-1"})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="approval record metadata keys must be non-empty strings"):
         ApprovalRecord("approval-1", request, "requested", metadata={" ": "T-1"})
+
+
+def test_approval_record_metadata_is_copied_and_read_only() -> None:
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+    )
+    metadata = {"review": {"labels": ["security"]}}
+
+    record = ApprovalRecord.approve(
+        request,
+        approver=PrincipalRef("admin-1"),
+        decided_at="2026-06-22T00:00:00Z",
+        metadata=metadata,
+    )
+    metadata["review"]["labels"].append("mutated")  # type: ignore[index, union-attr]
+
+    assert record.metadata == {"review": {"labels": ("security",)}}
+    with pytest.raises(TypeError):
+        record.metadata["review"]["labels"] = ("mutated",)  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        record.metadata["review"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
 
 def test_denied_approval_record_never_authorizes_action() -> None:
