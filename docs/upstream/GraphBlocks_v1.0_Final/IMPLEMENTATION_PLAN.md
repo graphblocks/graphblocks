@@ -1720,6 +1720,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-testing` durable callback projection cases now reject failed, dead-lettered,
   cancelled, or expired delivery rows that omit nonblank `lastError` evidence, so retry and
   dead-letter conformance cannot be proven from malformed failure records.
+- Durable callback projection TCK cases also reject delivery rows without nonblank `idempotencyKey`
+  evidence, preserving the callback protocol's at-least-once deduplication contract in shared MVP
+  fixtures.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.
