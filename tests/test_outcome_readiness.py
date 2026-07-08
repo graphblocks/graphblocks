@@ -70,17 +70,24 @@ def test_readiness_reports_all_missing_dependencies_in_input_order() -> None:
 
 
 def test_outcome_records_validate_identity_status_and_metadata() -> None:
+    metadata = {"attempt": 1, "scope": {"labels": ["runtime"]}}
     outcome = Outcome(
         "failed",
         code="provider.timeout",
         message="provider timed out",
         retryable=True,
-        metadata={"attempt": 1},
+        metadata=metadata,
     )
+    metadata["attempt"] = 2
+    metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
-    assert outcome.metadata == {"attempt": 1}
+    assert outcome.metadata == {"attempt": 1, "scope": {"labels": ("runtime",)}}
     with pytest.raises(TypeError):
         outcome.metadata["attempt"] = 2
+    with pytest.raises(TypeError):
+        outcome.metadata["scope"]["labels"] = ("mutated",)  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        outcome.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
     with pytest.raises(ValueError, match="invalid outcome status"):
         Outcome("unknown")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="requires code"):

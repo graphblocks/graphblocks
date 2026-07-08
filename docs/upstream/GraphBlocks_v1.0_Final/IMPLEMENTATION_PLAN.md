@@ -184,6 +184,8 @@ graphblocks-cli
     run, exposing terminal kind and ordered records as JSON for CLI-level acceptance evidence.
     The Python observer understands both the Python `sequence` journal schema and the Rust
     `run_sequence`/`record_id` schema emitted by native runtime evidence.
+  - Python `Outcome` records now deep-freeze nested metadata mappings and sequences, so terminal
+    readiness decisions cannot be changed through retained caller references after publication.
 - state patch와 CAS
 - finite sequence map/batch/task group
 - Python binding과 Python in-process/worker adapter

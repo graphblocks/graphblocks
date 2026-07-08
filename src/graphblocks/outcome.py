@@ -47,8 +47,16 @@ def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
     snapshot: dict[str, object] = {}
     for key, value in metadata.items():
         key_text = _validate_non_empty_string(owner, "metadata key", key)
-        snapshot[key_text] = value
+        snapshot[key_text] = _freeze_metadata_value(owner, value)
     return MappingProxyType(snapshot)
+
+
+def _freeze_metadata_value(owner: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_metadata(owner, value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_metadata_value(owner, item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, order=True, slots=True)
