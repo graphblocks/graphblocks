@@ -864,6 +864,26 @@ def test_stdlib_async_await_callback_rejects_ambiguous_wait_bounds() -> None:
         )
 
 
+def test_stdlib_async_await_callback_rejects_operation_without_expected_schema() -> None:
+    operation = {
+        "operation_id": "op-ci-1",
+        "run_id": "run-coding-1",
+        "node_id": "waitCI",
+        "attempt_id": "attempt-1",
+        "kind": "ci_job",
+        "state": "waiting_callback",
+        "resume_token_hash": "sha256:resume-token",
+        "idempotency_key": "idem-op-ci-1",
+    }
+
+    with pytest.raises(TypeError, match="input operation.expected_schema must be a non-empty string"):
+        stdlib_registry().resolve("async.await_callback@1")(
+            {"operation": operation},
+            {"checkpoint": True, "onTimeout": "fail", "timeout": "30m"},
+            {},
+        )
+
+
 def test_stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() -> None:
     registry = stdlib_registry()
     operation = registry.resolve("async.start_operation@1")(

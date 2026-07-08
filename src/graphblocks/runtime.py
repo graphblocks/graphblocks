@@ -1401,6 +1401,18 @@ def stdlib_registry() -> RuntimeRegistry:
             raise TypeError(f"{block_label} requires operation input")
         if not isinstance(operation.get("operation_id"), str) or not str(operation.get("operation_id")).strip():
             raise TypeError(f"{block_label} input operation.operation_id must be a non-empty string")
+        for field_name in (
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "kind",
+            "state",
+            "resume_token_hash",
+            "idempotency_key",
+            "expected_schema",
+        ):
+            if not isinstance(operation.get(field_name), str) or not str(operation.get(field_name)).strip():
+                raise TypeError(f"{block_label} input operation.{field_name} must be a non-empty string")
         return operation
 
     def _validate_async_terminal_timestamp(

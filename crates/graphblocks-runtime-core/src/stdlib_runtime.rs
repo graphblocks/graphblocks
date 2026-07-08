@@ -802,22 +802,10 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
 }
 
 fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let operation = inputs.get("operation").ok_or_else(|| {
-        BlockError::new(
-            "async.await_callback.missing_operation",
-            ErrorCategory::Configuration,
-            "async.await_callback@1 requires operation input",
-            false,
-        )
-    })?;
-    let Some(operation_object) = operation.as_object() else {
-        return Err(BlockError::new(
-            "async.await_callback.invalid_operation",
-            ErrorCategory::Configuration,
-            "async.await_callback@1 input operation must be an object",
-            false,
-        ));
-    };
+    let operation = required_async_operation_input(inputs, "async.await_callback@1")?;
+    let operation_object = operation
+        .as_object()
+        .expect("required_async_operation_input returns an object");
     let state = operation_object
         .get("state")
         .and_then(Value::as_str)
@@ -2446,6 +2434,34 @@ fn required_async_operation_input<'a>(
             false,
         ));
     }
+    let operation_object = operation
+        .as_object()
+        .expect("operation object was checked above");
+    for (primary, alternate, label) in [
+        ("operation_id", "operationId", "operation_id"),
+        ("run_id", "runId", "run_id"),
+        ("node_id", "nodeId", "node_id"),
+        ("attempt_id", "attemptId", "attempt_id"),
+        ("kind", "kind", "kind"),
+        ("state", "state", "state"),
+        ("resume_token_hash", "resumeTokenHash", "resume_token_hash"),
+        ("idempotency_key", "idempotencyKey", "idempotency_key"),
+        ("expected_schema", "expectedSchema", "expected_schema"),
+    ] {
+        if !operation_object
+            .get(primary)
+            .or_else(|| operation_object.get(alternate))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(BlockError::new(
+                format!("{block_label}.invalid_operation"),
+                ErrorCategory::Configuration,
+                format!("{block_label} input operation.{label} must be a non-empty string"),
+                false,
+            ));
+        }
+    }
     Ok(operation)
 }
 
@@ -2964,6 +2980,35 @@ mod tests {
             error
                 .message
                 .contains("must not define both timeout and infiniteWaitPolicy"),
+            "unexpected error: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn stdlib_async_await_callback_rejects_operation_without_expected_schema() {
+        let operation = json!({
+            "operation_id": "op-ci-1",
+            "run_id": "run-coding-1",
+            "node_id": "waitCI",
+            "attempt_id": "attempt-1",
+            "kind": "ci_job",
+            "state": "waiting_callback",
+            "resume_token_hash": "sha256:resume-token",
+            "idempotency_key": "idem-op-ci-1"
+        });
+        let error = super::execute_stdlib_block(
+            "async.await_callback@1",
+            &json!({"operation": operation}),
+            &json!({"checkpoint": true, "onTimeout": "fail", "timeout": "30m"}),
+        )
+        .expect_err("operation without expected schema should fail");
+
+        assert_eq!(error.code, "async.await_callback@1.invalid_operation");
+        assert!(
+            error
+                .message
+                .contains("input operation.expected_schema must be a non-empty string"),
             "unexpected error: {:?}",
             error
         );
