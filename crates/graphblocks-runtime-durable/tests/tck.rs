@@ -560,6 +560,15 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 false
             };
+            let subscription_failure_policy = case
+                .get("subscription")
+                .and_then(Value::as_object)
+                .and_then(|subscription| {
+                    subscription
+                        .get("failurePolicy")
+                        .or_else(|| subscription.get("failure_policy"))
+                })
+                .and_then(Value::as_str);
             let mut idempotency_keys = BTreeSet::new();
             let mut idempotency_key_count = 0usize;
             let mut retry_scheduled_after_5xx = false;
@@ -589,6 +598,23 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .is_some()
                 {
                     retry_scheduled_after_retryable_status = true;
+                }
+                if subscription_failure_policy == Some("retry_then_dead_letter")
+                    && (receiver_status == 429 || receiver_status >= 500)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "failed")
+                    && delivery
+                        .get("nextRetryAt")
+                        .or_else(|| delivery.get("next_retry_at"))
+                        .is_none()
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "retry_then_dead_letter callback delivery requires nextRetryAt",
+                        "path": format!("$.deliveries[{index}].nextRetryAt"),
+                    }));
                 }
                 if (200..=299).contains(&receiver_status)
                     && delivery
