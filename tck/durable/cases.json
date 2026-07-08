@@ -553,7 +553,7 @@
       "runId": "run-coding-001",
       "nodeId": "waitCI",
       "attemptId": "attempt-1",
-      "resumeTokenHash": "sha256:resume-token",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
     "checks": {
@@ -607,7 +607,7 @@
       "runId": "run-coding-race-001",
       "nodeId": "waitCI",
       "attemptId": "attempt-1",
-      "resumeTokenHash": "sha256:resume-token-race",
+      "resumeTokenHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "expectedSchema": "schemas/CICallback@1"
     },
     "journal": [

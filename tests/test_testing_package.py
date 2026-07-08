@@ -1182,10 +1182,27 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
+    raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text(encoding="utf-8"))
+    resume_token_hashes = [
+        case["operation"]["resumeTokenHash"]
+        for case in raw_cases
+        if isinstance(case, dict)
+        and isinstance(case.get("operation"), dict)
+        and "resumeTokenHash" in case["operation"]
+    ]
+
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
     assert [case.kind for case in cases] == ["durable"] * 13
+    assert resume_token_hashes
+    assert all(
+        isinstance(token_hash, str)
+        and token_hash.startswith("sha256:")
+        and len(token_hash.removeprefix("sha256:")) == 64
+        and all(character in "0123456789abcdef" for character in token_hash.removeprefix("sha256:"))
+        for token_hash in resume_token_hashes
+    )
     assert report.ok
     assert {case.case_id for case in cases} == {
         "source_cursor_replay_and_commit_advances",
