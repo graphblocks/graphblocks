@@ -7246,7 +7246,16 @@ class TckRunner:
                         )
                     else:
                         event_sequence = sequence
-                        if (
+                        if event_sequence == 0:
+                            event_valid = False
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run event requires positive integer sequence",
+                                    "path": f"$.events[{event_index}].sequence",
+                                }
+                            )
+                        elif (
                             previous_event_sequence is not None
                             and event_sequence <= previous_event_sequence
                         ):

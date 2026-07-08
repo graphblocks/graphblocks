@@ -564,7 +564,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                 let sequence = event.get("sequence").and_then(Value::as_u64);
                 match sequence {
                     Some(sequence) => {
-                        if previous_event_sequence.is_some_and(|previous| sequence <= previous) {
+                        if sequence == 0 {
+                            event_valid = false;
+                            diagnostics.push(json!({
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires positive integer sequence",
+                                "path": format!("$.events[{index}].sequence"),
+                            }));
+                        } else if previous_event_sequence
+                            .is_some_and(|previous| sequence <= previous)
+                        {
                             event_valid = false;
                             diagnostics.push(json!({
                                 "code": "DurableBackgroundRunInvalid",
