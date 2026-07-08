@@ -592,6 +592,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
                 let receiver_status = raw_receiver_status.and_then(Value::as_u64).unwrap_or(0);
+                if raw_receiver_status
+                    .and_then(Value::as_u64)
+                    .is_some_and(|status| !(100..=599).contains(&status))
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery receiverStatus must be an HTTP status code",
+                        "path": format!("$.deliveries[{index}].receiverStatus"),
+                    }));
+                }
                 if let Some(next_retry_at) = delivery
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))

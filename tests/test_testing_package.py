@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 36
+    assert [case.kind for case in cases] == ["durable"] * 37
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1230,6 +1230,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_invalid_next_retry_rejected",
         "webhook_delivery_failed_missing_last_error_rejected",
         "webhook_delivery_non_integer_receiver_status_rejected",
+        "webhook_delivery_out_of_range_receiver_status_rejected",
         "webhook_delivery_429_delivered_retry_status_rejected",
         "webhook_delivery_subscription_gone_410",
         "webhook_delivery_410_failed_status_rejected",
@@ -1317,6 +1318,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "webhook_delivery_non_integer_receiver_status_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_out_of_range_receiver_status_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -4507,6 +4513,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_invalid_next_retry_rejected",
         "webhook_delivery_failed_missing_last_error_rejected",
         "webhook_delivery_non_integer_receiver_status_rejected",
+        "webhook_delivery_out_of_range_receiver_status_rejected",
         "webhook_delivery_429_delivered_retry_status_rejected",
         "webhook_delivery_subscription_gone_410",
         "webhook_delivery_410_failed_status_rejected",

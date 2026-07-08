@@ -1007,6 +1007,36 @@
     }
   },
   {
+    "name": "webhook_delivery_out_of_range_receiver_status_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-receiver-status-range-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0206",
+        "runId": "run-coding-001",
+        "sequence": 206,
+        "cursor": "evt-0206",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0206",
+        "receiverStatus": 700,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:01:55Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery receiverStatus must be an HTTP status code",
+        "path": "$.deliveries[0].receiverStatus"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_429_delivered_retry_status_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
