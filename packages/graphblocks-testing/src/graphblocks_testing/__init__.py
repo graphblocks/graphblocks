@@ -7297,6 +7297,7 @@ class TckRunner:
                 elif not isinstance(raw_subscription, Mapping):
                     raw_subscription = {}
                 subscription_identity = None
+                subscription_failure_policy = None
                 if raw_subscription:
                     subscription_id = raw_subscription.get(
                         "subscriptionId", raw_subscription.get("subscription_id")
@@ -7314,12 +7315,14 @@ class TckRunner:
                     failure_policy = raw_subscription.get(
                         "failurePolicy", raw_subscription.get("failure_policy")
                     )
-                    if failure_policy not in {
+                    if failure_policy in {
                         "best_effort",
                         "retry_then_dead_letter",
                         "pause_run_on_failure",
                         "fail_run_on_failure",
                     }:
+                        subscription_failure_policy = failure_policy
+                    else:
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackProjectionInvalid",
@@ -7596,6 +7599,20 @@ class TckRunner:
                                 "code": "DurableCallbackDeliveryInvalid",
                                 "message": "callback delivery retry requires failed status",
                                 "path": f"$.deliveries[{index}].status",
+                            }
+                        )
+                    if (
+                        subscription_failure_policy == "retry_then_dead_letter"
+                        and receiver_status is not None
+                        and receiver_status >= 500
+                        and status == "failed"
+                        and raw_next_retry_at is None
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "retry_then_dead_letter callback delivery requires nextRetryAt",
+                                "path": f"$.deliveries[{index}].nextRetryAt",
                             }
                         )
                     if receiver_status == 409 and status != "acknowledged":

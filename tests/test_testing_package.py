@@ -3008,6 +3008,51 @@ def test_testing_package_rejects_callback_delivery_with_blank_next_retry_at(monk
     )
 
 
+def test_testing_package_rejects_retry_policy_failed_delivery_without_next_retry(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/retry-policy-failed-delivery-without-next-retry",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "subscription": {
+                "subscriptionId": "sub-ide-001",
+                "failurePolicy": "retry_then_dead_letter",
+                "mandatory": False,
+            },
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "lastError": "receiver_error",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "retry_then_dead_letter callback delivery requires nextRetryAt",
+            "path": "$.deliveries[0].nextRetryAt",
+        },
+    )
+
+
 def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
