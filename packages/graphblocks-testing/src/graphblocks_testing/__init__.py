@@ -8389,6 +8389,23 @@ class TckRunner:
                             "path": f"$.operation.{attempt_id_path}",
                         }
                     )
+                callback_id_path = (
+                    "callbackId"
+                    if "callbackId" in raw_late_callback
+                    or "callback_id" not in raw_late_callback
+                    else "callback_id"
+                )
+                callback_id = raw_late_callback.get(
+                    "callbackId", raw_late_callback.get("callback_id")
+                )
+                if not isinstance(callback_id, str) or not callback_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank callbackId",
+                            "path": f"$.lateCallback.{callback_id_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

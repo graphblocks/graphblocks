@@ -2226,6 +2226,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{attempt_id_path}"),
                 }));
             }
+            let callback_id_path = if raw_late_callback.contains_key("callbackId")
+                || !raw_late_callback.contains_key("callback_id")
+            {
+                "callbackId"
+            } else {
+                "callback_id"
+            };
+            if raw_late_callback
+                .get("callbackId")
+                .or_else(|| raw_late_callback.get("callback_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |callback_id| callback_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank callbackId",
+                    "path": format!("$.lateCallback.{callback_id_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
