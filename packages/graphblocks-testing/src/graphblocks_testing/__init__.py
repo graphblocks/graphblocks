@@ -7148,6 +7148,7 @@ class TckRunner:
                     if isinstance(raw_initial_cursor, str) and raw_initial_cursor.strip():
                         initial_cursor = raw_initial_cursor
                 event_records = []
+                previous_event_sequence = None
                 for event_index, raw_event in enumerate(raw_events):
                     if not isinstance(raw_event, Mapping):
                         diagnostics.append(
@@ -7185,6 +7186,7 @@ class TckRunner:
                             }
                         )
                     sequence = raw_event.get("sequence")
+                    event_sequence = None
                     if (
                         isinstance(sequence, bool)
                         or not isinstance(sequence, int)
@@ -7198,7 +7200,22 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].sequence",
                             }
                         )
+                    else:
+                        event_sequence = sequence
+                        if (
+                            previous_event_sequence is not None
+                            and event_sequence <= previous_event_sequence
+                        ):
+                            event_valid = False
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run event sequence must be strictly increasing",
+                                    "path": f"$.events[{event_index}].sequence",
+                                }
+                            )
                     if event_valid:
+                        previous_event_sequence = event_sequence
                         event_records.append(raw_event)
                 cursor_positions = {}
                 if initial_cursor is not None:

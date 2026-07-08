@@ -471,6 +471,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_retention);
             let mut event_records = Vec::new();
+            let mut previous_event_sequence = None;
             for (index, raw_event) in raw_events.iter().enumerate() {
                 let Some(event) = raw_event.as_object() else {
                     diagnostics.push(json!({
@@ -512,15 +513,29 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.events[{index}].cursor"),
                     }));
                 }
-                if event.get("sequence").and_then(Value::as_u64).is_none() {
-                    event_valid = false;
-                    diagnostics.push(json!({
-                        "code": "DurableBackgroundRunInvalid",
-                        "message": "background run event requires integer sequence",
-                        "path": format!("$.events[{index}].sequence"),
-                    }));
+                let sequence = event.get("sequence").and_then(Value::as_u64);
+                match sequence {
+                    Some(sequence) => {
+                        if previous_event_sequence.is_some_and(|previous| sequence <= previous) {
+                            event_valid = false;
+                            diagnostics.push(json!({
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event sequence must be strictly increasing",
+                                "path": format!("$.events[{index}].sequence"),
+                            }));
+                        }
+                    }
+                    None => {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run event requires integer sequence",
+                            "path": format!("$.events[{index}].sequence"),
+                        }));
+                    }
                 }
                 if event_valid {
+                    previous_event_sequence = sequence;
                     event_records.push(event);
                 }
             }
