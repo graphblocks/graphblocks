@@ -720,6 +720,26 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     (
         ({"graph": []}, "run graph command graph must be a JSON object"),
         ({"inputs": []}, "run graph command inputs must be a JSON object"),
+        (
+            {"graph": {"kind": "Graph", "metadata": {"score": math.nan}}},
+            "run graph command graph must contain canonical JSON values",
+        ),
+        (
+            {"inputs": {"message": {"score": math.nan}}},
+            "run graph command inputs must contain canonical JSON values",
+        ),
+        (
+            {"inputs": {"message": object()}},
+            "run graph command inputs must contain canonical JSON values",
+        ),
+        (
+            {"graph": {"kind": "Graph", "spec": {"nodes": {1: {}}}}},
+            "run graph command graph object keys must be non-empty strings",
+        ),
+        (
+            {"inputs": {"message": {"": "blank"}}},
+            "run graph command inputs object keys must be non-empty strings",
+        ),
         ({"run_id": True}, "run graph command run_id must be a non-empty string"),
         ({"response_id": " "}, "run graph command response_id must be a non-empty string"),
         ({"turn_id": ""}, "run graph command turn_id must be a non-empty string"),

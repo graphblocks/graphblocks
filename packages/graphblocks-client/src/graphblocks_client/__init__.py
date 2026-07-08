@@ -66,10 +66,8 @@ class RunGraphCommand:
     occurred_at: str = field(default_factory=_utc_now_iso)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.graph, Mapping):
-            raise ValueError("run graph command graph must be a JSON object")
-        if not isinstance(self.inputs, Mapping):
-            raise ValueError("run graph command inputs must be a JSON object")
+        graph = _canonical_json_mapping("run graph command", "graph", self.graph)
+        inputs = _canonical_json_mapping("run graph command", "inputs", self.inputs)
         for field_name, value in (
             ("run_id", self.run_id),
             ("response_id", self.response_id),
@@ -84,8 +82,8 @@ class RunGraphCommand:
             raise ValueError("run graph command occurred_at must be a string")
         if not self.occurred_at.strip():
             raise ValueError("run graph command occurred_at must be a non-empty string")
-        object.__setattr__(self, "graph", deepcopy(dict(self.graph)))
-        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
+        object.__setattr__(self, "graph", graph)
+        object.__setattr__(self, "inputs", inputs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1319,22 +1317,26 @@ def _http_non_empty_string(field_name: str, value: object) -> str:
 
 
 def _http_canonical_json_mapping(field_name: str, value: object) -> dict[str, object]:
+    return _canonical_json_mapping("GraphBlocks HTTP", field_name, value)
+
+
+def _canonical_json_mapping(label: str, field_name: str, value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
-        raise ValueError(f"GraphBlocks HTTP {field_name} must be a JSON object")
-    try:
-        canonical_dumps(dict(value))
-    except (TypeError, ValueError):
-        raise ValueError(f"GraphBlocks HTTP {field_name} must contain canonical JSON values") from None
+        raise ValueError(f"{label} {field_name} must be a JSON object")
     pending_values: list[object] = [value]
     while pending_values:
         current_value = pending_values.pop()
         if isinstance(current_value, Mapping):
             for key, child_value in current_value.items():
                 if not isinstance(key, str) or not key.strip():
-                    raise ValueError(f"GraphBlocks HTTP {field_name} object keys must be non-empty strings")
+                    raise ValueError(f"{label} {field_name} object keys must be non-empty strings")
                 pending_values.append(child_value)
         elif isinstance(current_value, list | tuple):
             pending_values.extend(current_value)
+    try:
+        canonical_dumps(dict(value))
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} {field_name} must contain canonical JSON values") from None
     return deepcopy(dict(value))
 
 
