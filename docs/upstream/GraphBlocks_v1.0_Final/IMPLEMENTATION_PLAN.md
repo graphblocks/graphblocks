@@ -1738,6 +1738,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection retry evidence now rejects blank or non-string `nextRetryAt`
   timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook retry evidence
   tied to durable retry metadata.
+- Durable callback projection redrive evidence now requires nonblank operator and reason audit
+  metadata, so dead-letter redrive conformance preserves the operator action context required for
+  durable audit and redrive review.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

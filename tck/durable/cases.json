@@ -540,6 +540,7 @@
       "eventId": "evt-0100",
       "originalEventId": "evt-0100",
       "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
       "createsApplicationEvent": false
     },
     "nonMandatoryOutageBlocksRun": false,

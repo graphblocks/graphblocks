@@ -7054,6 +7054,20 @@ class TckRunner:
                     raise ValueError("durable callback_delivery_projection case requires deliveries")
                 if not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
+                if raw_redrive:
+                    for key, alias in (
+                        ("operatorPrincipal", "operator_principal"),
+                        ("reason", "redrive_reason"),
+                    ):
+                        value = raw_redrive.get(key, raw_redrive.get(alias))
+                        if not isinstance(value, str) or not value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackRedriveInvalid",
+                                    "message": f"callback redrive requires {key}",
+                                    "path": f"$.redrive.{key}",
+                                }
+                            )
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
                 valid_delivery_statuses = {
                     "pending",
