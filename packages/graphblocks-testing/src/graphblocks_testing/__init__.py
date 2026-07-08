@@ -8124,6 +8124,7 @@ class TckRunner:
                         ("nodeId", "node_id"),
                         ("attemptId", "attempt_id"),
                         ("releaseId", "release_id"),
+                        ("tenantId", "tenant_id"),
                         ("policySnapshotId", "policy_snapshot_id"),
                     ):
                         path_key = (
@@ -8234,6 +8235,8 @@ class TckRunner:
                         "received_at",
                         "releaseId",
                         "release_id",
+                        "tenantId",
+                        "tenant_id",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8355,6 +8358,22 @@ class TckRunner:
                                 "path": f"$.callback.{release_id_path}",
                             }
                         )
+                    tenant_id_path = (
+                        "tenantId"
+                        if "tenantId" in raw_callback or "tenant_id" not in raw_callback
+                        else "tenant_id"
+                    )
+                    tenant_id = raw_callback.get(
+                        "tenantId", raw_callback.get("tenant_id")
+                    )
+                    if not isinstance(tenant_id, str) or not tenant_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires nonblank tenantId",
+                                "path": f"$.callback.{tenant_id_path}",
+                            }
+                        )
                     if isinstance(raw_operation, Mapping):
                         for key, alias in (
                             ("operationId", "operation_id"),
@@ -8362,6 +8381,7 @@ class TckRunner:
                             ("nodeId", "node_id"),
                             ("attemptId", "attempt_id"),
                             ("releaseId", "release_id"),
+                            ("tenantId", "tenant_id"),
                             ("policySnapshotId", "policy_snapshot_id"),
                         ):
                             callback_value = raw_callback.get(

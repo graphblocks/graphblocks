@@ -1920,6 +1920,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     ("nodeId", "node_id"),
                     ("attemptId", "attempt_id"),
                     ("releaseId", "release_id"),
+                    ("tenantId", "tenant_id"),
                     ("policySnapshotId", "policy_snapshot_id"),
                 ] {
                     let path_key = if operation.contains_key(key) || !operation.contains_key(alias)
@@ -2048,6 +2049,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "received_at",
                 "releaseId",
                 "release_id",
+                "tenantId",
+                "tenant_id",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2191,6 +2194,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.callback.{release_id_path}"),
                     }));
                 }
+                let tenant_id_path = if raw_callback.contains_key("tenantId")
+                    || !raw_callback.contains_key("tenant_id")
+                {
+                    "tenantId"
+                } else {
+                    "tenant_id"
+                };
+                if raw_callback
+                    .get("tenantId")
+                    .or_else(|| raw_callback.get("tenant_id"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |tenant_id| tenant_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires nonblank tenantId",
+                        "path": format!("$.callback.{tenant_id_path}"),
+                    }));
+                }
                 if let Some(operation) = case.get("operation").and_then(Value::as_object) {
                     for (key, alias) in [
                         ("operationId", "operation_id"),
@@ -2198,6 +2220,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         ("nodeId", "node_id"),
                         ("attemptId", "attempt_id"),
                         ("releaseId", "release_id"),
+                        ("tenantId", "tenant_id"),
                         ("policySnapshotId", "policy_snapshot_id"),
                     ] {
                         let callback_value = raw_callback
