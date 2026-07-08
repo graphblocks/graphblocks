@@ -3198,6 +3198,30 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{expected_schema_path}"),
                 }));
             }
+            if !raw_operation
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        "tool"
+                            | "sandbox_task"
+                            | "ci_job"
+                            | "browser_task"
+                            | "workspace_trial"
+                            | "external_provider_job"
+                            | "document_job"
+                            | "research_task"
+                            | "custom"
+                    )
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires valid operation kind",
+                    "path": "$.operation.kind",
+                }));
+            }
             let created_at_path = if raw_operation.contains_key("createdAt")
                 || !raw_operation.contains_key("created_at")
             {

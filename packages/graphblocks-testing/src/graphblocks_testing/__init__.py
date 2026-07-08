@@ -9254,6 +9254,25 @@ class TckRunner:
                             "path": f"$.operation.{expected_schema_path}",
                         }
                     )
+                operation_kind = raw_operation.get("kind")
+                if operation_kind not in {
+                    "tool",
+                    "sandbox_task",
+                    "ci_job",
+                    "browser_task",
+                    "workspace_trial",
+                    "external_provider_job",
+                    "document_job",
+                    "research_task",
+                    "custom",
+                }:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires valid operation kind",
+                            "path": "$.operation.kind",
+                        }
+                    )
                 created_at_path = (
                     "createdAt"
                     if "createdAt" in raw_operation or "created_at" not in raw_operation
