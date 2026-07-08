@@ -492,6 +492,28 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert "ServerResponse" in graphblocks.__all__
 
 
+def test_server_app_rejects_non_standard_request_json_constants() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=b'{"graph": NaN}',
+            requested_at="2026-06-24T00:00:02Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request body must be valid JSON",
+    }
+
+
 def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

@@ -111,8 +111,18 @@ def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object
     if not sequence_text.isdecimal():
         raise ValueError(
             f"{owner} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence"
-        )
+    )
     return cursor
+
+
+def _server_request_json_body(request: ServerRequest, owner: str) -> object:
+    try:
+        return json.loads(
+            request.body.decode("utf-8") or "{}",
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"{owner} body must be valid JSON") from error
 
 
 def _validate_callback_subscription_scope(value: object) -> str:
@@ -810,7 +820,7 @@ class ServerAsyncCallbackSubmission:
         request: ServerRequest,
         verified_by: str = "unauthenticated",
     ) -> ServerAsyncCallbackSubmission:
-        body = json.loads(request.body.decode("utf-8") or "{}")
+        body = _server_request_json_body(request, "server async callback")
         if not isinstance(body, Mapping):
             raise ValueError("server async callback body must be a JSON object")
         declared_operation_id = _callback_alias_value(body, "operation_id", "operationId")
@@ -1301,7 +1311,7 @@ class ServerEventSubscription:
         request: ServerRequest,
         ordinal: int,
     ) -> ServerEventSubscription:
-        body = json.loads(request.body.decode("utf-8") or "{}")
+        body = _server_request_json_body(request, "subscribe request")
         if not isinstance(body, Mapping):
             raise ValueError("subscribe request body must be a JSON object")
         event_filter = body.get("event_filter", body.get("eventFilter", {}))
@@ -1429,7 +1439,7 @@ class ServerCallbackRegistration:
 
     @classmethod
     def from_request(cls, *, request: ServerRequest, ordinal: int) -> ServerCallbackRegistration:
-        body = json.loads(request.body.decode("utf-8") or "{}")
+        body = _server_request_json_body(request, "register callback request")
         if not isinstance(body, Mapping):
             raise ValueError("register callback request body must be a JSON object")
         event_filter = body.get("event_filter", body.get("eventFilter", {}))
@@ -1774,7 +1784,7 @@ class GraphBlocksServerApp:
                             "error": f"run control stream not found for run {run_id!r}",
                         },
                     )
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "run control request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("run control request body must be a JSON object")
                 return self._run_control_response(
@@ -1825,7 +1835,7 @@ class GraphBlocksServerApp:
                             "error": f"run attach stream not found for run {run_id!r}",
                         },
                     )
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "attach request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("attach request body must be a JSON object")
                 return self._attach_to_run_response(run_id, events, payload)
@@ -1849,7 +1859,7 @@ class GraphBlocksServerApp:
                             "error": f"run detach stream not found for run {run_id!r}",
                         },
                     )
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "detach request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("detach request body must be a JSON object")
                 return self._detach_from_run_response(run_id, events, payload, request.requested_at or _utc_now_iso())
@@ -1993,7 +2003,7 @@ class GraphBlocksServerApp:
                             "error": f"subscription {subscription_id!r} for run {run_id!r} is {subscription.status}",
                         },
                     )
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "ack request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("ack request body must be a JSON object")
                 return self._ack_event_response(
@@ -2081,7 +2091,7 @@ class GraphBlocksServerApp:
         if route.operation in {"redrive_callback_delivery", "move_callback_to_dead_letter"}:
             try:
                 delivery_id = route_match.path_params.get("delivery_id", "")
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "callback delivery control request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("callback delivery control request body must be a JSON object")
                 return self._callback_delivery_control_response(
@@ -2352,7 +2362,7 @@ class GraphBlocksServerApp:
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if str(error) == "server async callback operation_id must match callback endpoint operation_id":
                     try:
-                        body = json.loads(request.body.decode("utf-8") or "{}")
+                        body = _server_request_json_body(request, "server async callback")
                         if not isinstance(body, Mapping):
                             raise ValueError("server async callback body must be a JSON object")
                         payload = body.get("payload")
@@ -2551,7 +2561,7 @@ class GraphBlocksServerApp:
             )
         if route.operation == "invoke_graph":
             try:
-                payload = json.loads(request.body.decode("utf-8") or "{}")
+                payload = _server_request_json_body(request, "run request")
                 if not isinstance(payload, dict):
                     raise ValueError("run request body must be a JSON object")
                 graph = payload.get("graph")
