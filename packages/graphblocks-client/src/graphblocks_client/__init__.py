@@ -902,6 +902,10 @@ class HttpGraphBlocksClient:
         idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
         if not isinstance(payload, Mapping):
             raise ValueError("GraphBlocks HTTP callback payload must be a JSON object")
+        try:
+            canonical_dumps(dict(payload))
+        except (TypeError, ValueError):
+            raise ValueError("GraphBlocks HTTP callback payload must contain canonical JSON values") from None
         body: dict[str, object] = {
             "callbackId": callback_id,
             "payload": deepcopy(dict(payload)),

@@ -1500,6 +1500,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Client package protocol tests now assert the enriched server contract for callback receipts
   (payload digest, verifier, policy snapshot, run/node/attempt/provider fences) and constrained
   subscription visibility, rather than treating those server-owned fields as optional noise.
+  `submit_async_callback` now validates callback payloads with the canonical JSON encoder before
+  transport, so `NaN` or non-serializable values cannot be sent as callback content.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
   application events, matching the replay contract used by server attach/event-stream routes.
 - `graphblocks-testing` now preserves and reports authoritative event metadata when running

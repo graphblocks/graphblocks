@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import importlib
 import json
+import math
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -1565,6 +1566,24 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
                 "payload": ["completed"],
             },
             "GraphBlocks HTTP callback payload must be a JSON object",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {"score": math.nan},
+            },
+            "GraphBlocks HTTP callback payload must contain canonical JSON values",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {"status": object()},
+            },
+            "GraphBlocks HTTP callback payload must contain canonical JSON values",
         ),
     ),
 )
