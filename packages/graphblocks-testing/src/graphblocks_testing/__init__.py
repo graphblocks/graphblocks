@@ -9192,6 +9192,26 @@ class TckRunner:
                             "path": f"$.operation.{provider_operation_id_path}",
                         }
                     )
+                operation_idempotency_key_path = (
+                    "idempotencyKey"
+                    if "idempotencyKey" in raw_operation
+                    or "idempotency_key" not in raw_operation
+                    else "idempotency_key"
+                )
+                operation_idempotency_key = raw_operation.get(
+                    "idempotencyKey", raw_operation.get("idempotency_key")
+                )
+                if (
+                    not isinstance(operation_idempotency_key, str)
+                    or not operation_idempotency_key.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank operation idempotencyKey",
+                            "path": f"$.operation.{operation_idempotency_key_path}",
+                        }
+                    )
                 run_id_path = (
                     "runId"
                     if "runId" in raw_operation or "run_id" not in raw_operation

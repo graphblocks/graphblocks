@@ -3133,6 +3133,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{provider_operation_id_path}"),
                 }));
             }
+            let operation_idempotency_key_path = if raw_operation.contains_key("idempotencyKey")
+                || !raw_operation.contains_key("idempotency_key")
+            {
+                "idempotencyKey"
+            } else {
+                "idempotency_key"
+            };
+            if raw_operation
+                .get("idempotencyKey")
+                .or_else(|| raw_operation.get("idempotency_key"))
+                .and_then(Value::as_str)
+                .map_or(true, |idempotency_key| idempotency_key.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank operation idempotencyKey",
+                    "path": format!("$.operation.{operation_idempotency_key_path}"),
+                }));
+            }
             let run_id_path =
                 if raw_operation.contains_key("runId") || !raw_operation.contains_key("run_id") {
                     "runId"

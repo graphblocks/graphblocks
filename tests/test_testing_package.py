@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 249
+    assert [case.kind for case in cases] == ["durable"] * 250
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1408,6 +1408,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_blank_operation_id_rejected",
         "external_operation_missing_provider_operation_id_rejected",
         "external_operation_blank_provider_operation_id_rejected",
+        "external_operation_missing_idempotency_key_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",
@@ -2391,6 +2392,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "external_operation_blank_provider_operation_id_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_missing_idempotency_key_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -3832,6 +3838,7 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
             "operation": {
                 "operationId": "op-ci-002",
                 "providerOperationId": "gh-run-002",
+                "idempotencyKey": "idem-ci-operation-001",
                 "runId": "run-coding-002",
                 "nodeId": "runExternalCI",
                 "attemptId": "attempt-ci-001",
@@ -3897,6 +3904,7 @@ def test_testing_package_rejects_external_operation_reconciliation_without_usage
             "operation": {
                 "operationId": "op-ci-002",
                 "providerOperationId": "gh-run-002",
+                "idempotencyKey": "idem-ci-operation-001",
                 "runId": "run-coding-002",
                 "nodeId": "runExternalCI",
                 "attemptId": "attempt-ci-001",
@@ -6248,6 +6256,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_blank_operation_id_rejected",
         "external_operation_missing_provider_operation_id_rejected",
         "external_operation_blank_provider_operation_id_rejected",
+        "external_operation_missing_idempotency_key_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
         "external_operation_missing_run_id_rejected",
