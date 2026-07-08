@@ -3896,6 +3896,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": "true",
       "payloadConvertedToArtifactRef": true
@@ -3933,6 +3934,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -3971,6 +3973,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4008,6 +4011,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4046,6 +4050,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4084,6 +4089,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4121,6 +4127,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4159,6 +4166,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4196,6 +4204,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4234,6 +4243,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4271,6 +4281,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4309,6 +4320,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4346,6 +4358,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4384,6 +4397,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4421,6 +4435,7 @@
     },
     "lateCallback": {
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4459,6 +4474,7 @@
     "lateCallback": {
       "callbackId": "   ",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4496,6 +4512,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4534,6 +4551,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:not-a-digest",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4559,6 +4577,83 @@
     }
   },
   {
+    "name": "external_operation_missing_callback_status_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires terminal callback status",
+        "path": "$.lateCallback.status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_invalid_callback_status_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "running",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires terminal callback status",
+        "path": "$.lateCallback.status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_commits_result_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -4572,6 +4667,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
     },
@@ -4609,6 +4705,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "payloadConvertedToArtifactRef": true
     },
@@ -4646,6 +4743,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true
     },
@@ -4683,6 +4781,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4720,6 +4819,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4752,6 +4852,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4789,6 +4890,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4827,6 +4929,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true
@@ -4865,6 +4968,7 @@
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true

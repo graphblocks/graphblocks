@@ -8431,6 +8431,20 @@ class TckRunner:
                             "path": f"$.lateCallback.{payload_digest_path}",
                         }
                     )
+                if raw_late_callback.get("status") not in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "expired",
+                    "incomplete",
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires terminal callback status",
+                            "path": "$.lateCallback.status",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

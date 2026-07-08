@@ -2272,6 +2272,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{payload_digest_path}"),
                 }));
             }
+            if !raw_late_callback
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| {
+                    matches!(
+                        status,
+                        "completed" | "failed" | "cancelled" | "expired" | "incomplete"
+                    )
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires terminal callback status",
+                    "path": "$.lateCallback.status",
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
