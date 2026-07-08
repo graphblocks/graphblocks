@@ -2182,7 +2182,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     (source_name, key),
                     raw_value.and_then(Value::as_bool).unwrap_or(default),
                 );
-                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                if raw_value.is_none_or(|value| !value.is_boolean()) {
                     let path_key = if source.contains_key(key) || !source.contains_key(alias) {
                         key
                     } else {

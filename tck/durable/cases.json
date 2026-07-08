@@ -3910,6 +3910,126 @@
     }
   },
   {
+    "name": "external_operation_missing_commits_result_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean commitsResult",
+        "path": "$.lateCallback.commitsResult"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_missing_diagnostic_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean diagnosticRecorded",
+        "path": "$.lateCallback.diagnosticRecorded"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_missing_artifact_projection_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean payloadConvertedToArtifactRef",
+        "path": "$.lateCallback.payloadConvertedToArtifactRef"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_missing_usage_reconciled_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ]
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires boolean reconciled",
+        "path": "$.usage.reconciled"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_reconciled_without_usage_records_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {

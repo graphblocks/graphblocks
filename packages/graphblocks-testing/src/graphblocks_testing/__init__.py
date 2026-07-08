@@ -8352,12 +8352,21 @@ class TckRunner:
                     ),
                     ("usage", raw_usage, "reconciled", "reconciled", False),
                 ):
-                    raw_value = source.get(key, source.get(alias, default))
+                    raw_value_missing = False
+                    if key in source:
+                        raw_value = source[key]
+                        path_key = key
+                    elif alias in source:
+                        raw_value = source[alias]
+                        path_key = alias
+                    else:
+                        raw_value = default
+                        path_key = key
+                        raw_value_missing = True
                     external_reconciliation_values[(source_name, key)] = (
                         raw_value if isinstance(raw_value, bool) else default
                     )
-                    if not isinstance(raw_value, bool):
-                        path_key = key if key in source or alias not in source else alias
+                    if raw_value_missing or not isinstance(raw_value, bool):
                         diagnostics.append(
                             {
                                 "code": "DurableExternalOperationInvalid",
