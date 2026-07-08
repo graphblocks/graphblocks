@@ -559,6 +559,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut idempotency_key_count = 0usize;
             let mut retry_scheduled_after_5xx = false;
             let mut retry_scheduled_after_retryable_status = false;
+            let mut delivered_after_2xx = false;
             let mut duplicate_409_acknowledged = false;
             let mut subscription_gone_after_410 = false;
             let mut non_retryable_4xx_terminal = false;
@@ -583,6 +584,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .is_some()
                 {
                     retry_scheduled_after_retryable_status = true;
+                }
+                if (200..=299).contains(&receiver_status)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "delivered")
+                {
+                    delivered_after_2xx = true;
                 }
                 if receiver_status == 409
                     && delivery
@@ -631,6 +640,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             json!({
                 "retryScheduledAfter5xx": retry_scheduled_after_5xx,
                 "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
+                "deliveredAfter2xx": delivered_after_2xx,
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
                 "subscriptionGoneAfter410": subscription_gone_after_410,
                 "nonRetryable4xxTerminal": non_retryable_4xx_terminal,

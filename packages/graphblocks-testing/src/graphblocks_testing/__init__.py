@@ -7822,6 +7822,7 @@ class TckRunner:
                             )
                 scheduled_retry_ids = []
                 scheduled_retryable_status_ids = []
+                delivered_after_2xx_ids = []
                 acknowledged_duplicates = []
                 subscription_gone_ids = []
                 non_retryable_4xx_ids = []
@@ -7841,6 +7842,12 @@ class TckRunner:
                         and next_retry_at is not None
                     ):
                         scheduled_retryable_status_ids.append(delivery_id)
+                    if (
+                        receiver_status is not None
+                        and 200 <= receiver_status <= 299
+                        and str(delivery.get("status", "")) == "delivered"
+                    ):
+                        delivered_after_2xx_ids.append(delivery_id)
                     if (
                         receiver_status == 409
                         and str(delivery.get("status", "")) == "acknowledged"
@@ -7869,6 +7876,7 @@ class TckRunner:
                 observed = {
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),
                     "retryScheduledAfterRetryableStatus": bool(scheduled_retryable_status_ids),
+                    "deliveredAfter2xx": bool(delivered_after_2xx_ids),
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
                     "subscriptionGoneAfter410": bool(subscription_gone_ids),
                     "nonRetryable4xxTerminal": bool(non_retryable_4xx_ids),

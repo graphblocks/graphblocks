@@ -557,6 +557,29 @@
     }
   },
   {
+    "name": "webhook_delivery_success_2xx_delivered",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-success-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0150",
+        "runId": "run-coding-001",
+        "sequence": 150,
+        "cursor": "evt-0150",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0150",
+        "receiverStatus": 204,
+        "status": "delivered",
+        "deliveredAt": "2026-07-02T00:00:30Z"
+      }
+    ],
+    "expected": {
+      "deliveredAfter2xx": true,
+      "idempotencyKeysUniquePerSubscriptionEvent": true
+    }
+  },
+  {
     "name": "webhook_delivery_rate_limit_schedules_retry",
     "kind": "callback_delivery_projection",
     "deliveries": [
