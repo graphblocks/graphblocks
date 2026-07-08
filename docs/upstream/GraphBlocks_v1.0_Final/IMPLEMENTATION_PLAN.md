@@ -1743,9 +1743,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection retry and duplicate evidence now uses only typed integer
   `receiverStatus` values in the HTTP status-code range, preventing string coercion from proving
   webhook retry or duplicate-acknowledgement behavior.
-- Durable callback projection retry evidence now rejects blank or non-string `nextRetryAt`
-  timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook retry evidence
-  tied to durable retry metadata.
+- Durable callback projection retry evidence now rejects blank, non-string, or unparsable
+  `nextRetryAt` timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook
+  retry evidence tied to durable retry metadata.
 - Durable callback projection redrive evidence now requires nonblank operator and reason audit
   metadata, so dead-letter redrive conformance preserves the operator action context required for
   durable audit and redrive review.

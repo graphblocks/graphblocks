@@ -7277,7 +7277,21 @@ class TckRunner:
                                 }
                             )
                         else:
-                            next_retry_at = raw_next_retry_at
+                            next_retry_at_text = raw_next_retry_at.strip()
+                            if next_retry_at_text.endswith("Z"):
+                                next_retry_at_text = f"{next_retry_at_text[:-1]}+00:00"
+                            try:
+                                datetime.fromisoformat(next_retry_at_text)
+                            except ValueError:
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableCallbackDeliveryInvalid",
+                                        "message": "callback delivery requires nextRetryAt timestamp",
+                                        "path": f"$.deliveries[{index}].nextRetryAt",
+                                    }
+                                )
+                            else:
+                                next_retry_at = raw_next_retry_at
                     next_retry_at_values.append(next_retry_at)
                     if status in {"failed", "dead_lettered", "cancelled", "expired"}:
                         last_error = delivery.get("lastError", delivery.get("last_error"))
