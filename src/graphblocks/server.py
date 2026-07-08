@@ -1828,6 +1828,7 @@ class GraphBlocksServerApp:
                     events,
                     payload,
                     request.requested_at or _utc_now_iso(),
+                    auth_decision.principal,
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
@@ -2972,6 +2973,7 @@ class GraphBlocksServerApp:
         events: tuple[dict[str, object], ...],
         payload: Mapping[str, object],
         occurred_at: str,
+        actor: PrincipalRef | None,
     ) -> ServerResponse:
         occurred_at = _validate_iso_datetime("run control request", "occurred_at", occurred_at)
         control_states = {
@@ -3105,13 +3107,16 @@ class GraphBlocksServerApp:
                         "error": f"run {run_id} is not paused or waiting and cannot be resumed",
                     },
                 )
-        record = _freeze_json_value("run control record", "record", {
+        record_payload: dict[str, object] = {
             "operation": operation,
             "status": status,
             "reason": reason,
             "occurredAt": occurred_at,
             "lastCursor": f"{run_id}:{self._last_event_sequence(events)}",
-        })
+        }
+        if actor is not None:
+            record_payload["actor"] = _principal_response_payload(actor)
+        record = _freeze_json_value("run control record", "record", record_payload)
         self._run_controls_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(
             202,

@@ -768,6 +768,13 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
             "reason": None,
             "occurredAt": "2026-06-24T00:00:03Z",
             "lastCursor": "run-server-1:1",
+            "actor": {
+                "principalId": "user-1",
+                "tenantId": None,
+                "groups": (),
+                "roles": (),
+                "attributes": {},
+            },
         },
     )
     status = app.handle(
@@ -977,6 +984,13 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
             "reason": "operator_hold",
             "occurredAt": "2026-06-24T00:01:01Z",
             "lastCursor": "run-control-1:1",
+            "actor": {
+                "principalId": "user-1",
+                "tenantId": None,
+                "groups": (),
+                "roles": (),
+                "attributes": {},
+            },
         },
         {
             "operation": "resume_run",
@@ -984,6 +998,13 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
             "reason": None,
             "occurredAt": "2026-06-24T00:01:03Z",
             "lastCursor": "run-control-1:1",
+            "actor": {
+                "principalId": "user-1",
+                "tenantId": None,
+                "groups": (),
+                "roles": (),
+                "attributes": {},
+            },
         },
         {
             "operation": "expire_run",
@@ -991,6 +1012,13 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
             "reason": "retention_deadline",
             "occurredAt": "2026-06-24T00:01:04Z",
             "lastCursor": "run-control-1:1",
+            "actor": {
+                "principalId": "user-1",
+                "tenantId": None,
+                "groups": (),
+                "roles": (),
+                "attributes": {},
+            },
         },
     )
     with pytest.raises(TypeError):

@@ -1261,9 +1261,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   recording run-control projections and reflecting the latest control state in `GetRunStatus`
   while preserving the authoritative event stream. `CancelRun` projects terminal `cancelled`, and
   both cancelled and expired controls set `completedAt` in status snapshots. Stored run-control
-  projection records are immutable snapshots with ISO-validated timestamps, and `PauseRun` accepts
-  `pauseKind` values `operator`, `budget`, `policy`, and `callback_delivery` to project the
-  corresponding wait reason.
+  projection records are immutable snapshots with ISO-validated timestamps and authenticated actor
+  principal snapshots, and `PauseRun` accepts `pauseKind` values `operator`, `budget`, `policy`,
+  and `callback_delivery` to project the corresponding wait reason.
   Runtime run status snapshots reject zero `started_at` or `updated_at` timestamps and retained
   events without non-boolean integer `sequence` or ISO-valid `occurredAt` metadata before exposing
   status to attach/replay, `GetRunStatus`, or `ListRuns` callers.
