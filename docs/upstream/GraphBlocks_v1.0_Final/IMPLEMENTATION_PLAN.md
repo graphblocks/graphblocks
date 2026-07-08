@@ -1642,7 +1642,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   within their intended route component. `GraphBlocksServerApp` decodes those encoded path
   parameters at route-match time, so handlers receive the authoritative identifier rather than a
   transport-escaped surrogate. `HttpGraphBlocksClient.run_events` now accepts a cursor query
-  parameter for replaying `/runs/{run_id}/events` from a retained event-stream position.
+  parameter for replaying `/runs/{run_id}/events` from a retained event-stream position. Accepted
+  and background run handles now encode run ids in their returned event-stream, websocket, and
+  cancel route links while preserving the canonical run id and initial cursor values.
   CLI JSON ingress now uses the same strict parsing for `run --input-json`, native runtime result
   decoding, GraphRelease bundle verification, and Kubernetes deploy-plan rendering.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local

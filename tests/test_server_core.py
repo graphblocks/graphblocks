@@ -615,6 +615,56 @@ def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
 
 
+def test_server_app_accepted_invoke_encodes_run_handle_route_links() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-accepted-encoded-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Accepted encoded {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run/accepted?query#fragment",
+                    "responseId": "response-accepted-encoded-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run/accepted?query#fragment",
+        "status": "accepted",
+        "eventStream": "/runs/run%2Faccepted%3Fquery%23fragment/events",
+        "websocket": "/runs/run%2Faccepted%3Fquery%23fragment/ws",
+        "cancel": "/runs/run%2Faccepted%3Fquery%23fragment/cancel",
+        "initialCursor": "run/accepted?query#fragment:0",
+    }
+
+
 def test_server_app_rejects_duplicate_invoke_run_id_without_overwriting_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

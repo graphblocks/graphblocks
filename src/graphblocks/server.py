@@ -8,7 +8,7 @@ import json
 import math
 from types import MappingProxyType
 from typing import Literal, Protocol
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
@@ -2882,15 +2882,16 @@ class GraphBlocksServerApp:
                     for event in events
                 )
                 if response_mode in {"accepted", "background"}:
+                    route_run_id = quote(result.run_id, safe="")
                     return ServerResponse.json(
                         202,
                         {
                             "ok": True,
                             "runId": result.run_id,
                             "status": response_mode,
-                            "eventStream": f"/runs/{result.run_id}/events",
-                            "websocket": f"/runs/{result.run_id}/ws",
-                            "cancel": f"/runs/{result.run_id}/cancel",
+                            "eventStream": f"/runs/{route_run_id}/events",
+                            "websocket": f"/runs/{route_run_id}/ws",
+                            "cancel": f"/runs/{route_run_id}/cancel",
                             "initialCursor": f"{result.run_id}:0",
                         },
                     )
