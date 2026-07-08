@@ -1767,6 +1767,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection fixture-level outage evidence now requires a real boolean
   `nonMandatoryOutageBlocksRun`, preventing string coercion from satisfying non-mandatory webhook
   outage behavior.
+- Durable async callback resume-guard evidence now requires real boolean values for the
+  authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
+  safety checks, preventing truthy strings from satisfying callback resume conformance.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

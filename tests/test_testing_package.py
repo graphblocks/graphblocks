@@ -1225,6 +1225,48 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert "load_durable_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-async-resume-guard",
+        fixture={
+            "kind": "async_callback_resume_guards",
+            "checks": {
+                "signatureFailureRevealsOperation": "false",
+                "schemaFailureResumesRun": False,
+                "timeoutCallbackResumesExpiredOperation": False,
+                "cancelledCallbackCommitsResult": False,
+                "staleAttemptCanResume": False,
+                "unauthenticatedCallbackCanResume": False,
+                "nonExternalCallbackEventCanBecomeReceipt": False,
+                "providerOperationMismatchCanResume": False,
+            },
+            "callback": {
+                "journalSequence": 41,
+            },
+            "resume": {
+                "resumeSequence": 42,
+                "reevaluates": ["policy", "budget", "release"],
+                "budgetExhaustionState": "paused_budget",
+                "successfulResumeCount": 1,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableAsyncCallbackResumeInvalid",
+            "message": "async callback resume guard requires boolean signatureFailureRevealsOperation",
+            "path": "$.checks.signatureFailureRevealsOperation",
+        },
+    )
+
+
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

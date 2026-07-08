@@ -7407,15 +7407,46 @@ class TckRunner:
                 raw_callback = fixture.get("callback", {})
                 if not isinstance(raw_checks, Mapping) or not isinstance(raw_resume, Mapping) or not isinstance(raw_callback, Mapping):
                     raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
+                async_resume_guard_values = {}
+                for key, alias in (
+                    ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),
+                    ("schemaFailureResumesRun", "schema_failure_resumes_run"),
+                    (
+                        "timeoutCallbackResumesExpiredOperation",
+                        "timeout_callback_resumes_expired_operation",
+                    ),
+                    ("cancelledCallbackCommitsResult", "cancelled_callback_commits_result"),
+                    ("staleAttemptCanResume", "stale_attempt_can_resume"),
+                    ("unauthenticatedCallbackCanResume", "unauthenticated_callback_can_resume"),
+                    (
+                        "nonExternalCallbackEventCanBecomeReceipt",
+                        "non_external_callback_event_can_become_receipt",
+                    ),
+                    (
+                        "providerOperationMismatchCanResume",
+                        "provider_operation_mismatch_can_resume",
+                    ),
+                ):
+                    raw_value = raw_checks.get(key, raw_checks.get(alias, True))
+                    async_resume_guard_values[key] = raw_value if isinstance(raw_value, bool) else True
+                    if not isinstance(raw_value, bool):
+                        path_key = key if key in raw_checks or alias not in raw_checks else alias
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": f"async callback resume guard requires boolean {key}",
+                                "path": f"$.checks.{path_key}",
+                            }
+                        )
                 observed = {
-                    "signatureFailureRevealsOperation": bool(raw_checks.get("signatureFailureRevealsOperation", raw_checks.get("signature_failure_reveals_operation", True))),
-                    "schemaFailureResumesRun": bool(raw_checks.get("schemaFailureResumesRun", raw_checks.get("schema_failure_resumes_run", True))),
-                    "timeoutCallbackResumesExpiredOperation": bool(raw_checks.get("timeoutCallbackResumesExpiredOperation", raw_checks.get("timeout_callback_resumes_expired_operation", True))),
-                    "cancelledCallbackCommitsResult": bool(raw_checks.get("cancelledCallbackCommitsResult", raw_checks.get("cancelled_callback_commits_result", True))),
-                    "staleAttemptCanResume": bool(raw_checks.get("staleAttemptCanResume", raw_checks.get("stale_attempt_can_resume", True))),
-                    "unauthenticatedCallbackCanResume": bool(raw_checks.get("unauthenticatedCallbackCanResume", raw_checks.get("unauthenticated_callback_can_resume", True))),
-                    "nonExternalCallbackEventCanBecomeReceipt": bool(raw_checks.get("nonExternalCallbackEventCanBecomeReceipt", raw_checks.get("non_external_callback_event_can_become_receipt", True))),
-                    "providerOperationMismatchCanResume": bool(raw_checks.get("providerOperationMismatchCanResume", raw_checks.get("provider_operation_mismatch_can_resume", True))),
+                    "signatureFailureRevealsOperation": async_resume_guard_values["signatureFailureRevealsOperation"],
+                    "schemaFailureResumesRun": async_resume_guard_values["schemaFailureResumesRun"],
+                    "timeoutCallbackResumesExpiredOperation": async_resume_guard_values["timeoutCallbackResumesExpiredOperation"],
+                    "cancelledCallbackCommitsResult": async_resume_guard_values["cancelledCallbackCommitsResult"],
+                    "staleAttemptCanResume": async_resume_guard_values["staleAttemptCanResume"],
+                    "unauthenticatedCallbackCanResume": async_resume_guard_values["unauthenticatedCallbackCanResume"],
+                    "nonExternalCallbackEventCanBecomeReceipt": async_resume_guard_values["nonExternalCallbackEventCanBecomeReceipt"],
+                    "providerOperationMismatchCanResume": async_resume_guard_values["providerOperationMismatchCanResume"],
                     "receiptJournaledBeforeResume": int(raw_callback.get("journalSequence", raw_callback.get("journal_sequence", 0))) < int(raw_resume.get("resumeSequence", raw_resume.get("resume_sequence", 0))),
                     "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
