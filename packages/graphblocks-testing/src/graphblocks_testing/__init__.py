@@ -8464,6 +8464,35 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_run_id_path}",
                         }
                     )
+                callback_node_id_path = (
+                    "nodeId"
+                    if "nodeId" in raw_late_callback
+                    or "node_id" not in raw_late_callback
+                    else "node_id"
+                )
+                callback_node_id = raw_late_callback.get(
+                    "nodeId", raw_late_callback.get("node_id")
+                )
+                if not isinstance(callback_node_id, str) or not callback_node_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires callback nodeId",
+                            "path": f"$.lateCallback.{callback_node_id_path}",
+                        }
+                    )
+                elif (
+                    isinstance(node_id, str)
+                    and node_id.strip()
+                    and callback_node_id.strip() != node_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback nodeId must match operation",
+                            "path": f"$.lateCallback.{callback_node_id_path}",
+                        }
+                    )
                 payload_digest_path = (
                     "payloadDigest"
                     if "payloadDigest" in raw_late_callback
