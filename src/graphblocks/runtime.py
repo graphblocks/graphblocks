@@ -1114,6 +1114,8 @@ def stdlib_registry() -> RuntimeRegistry:
             "infinite_wait_policy",
             "infiniteWaitPolicy",
         )
+        if expires_at_unix_ms is not None and infinite_wait_policy is not None:
+            raise ValueError("async.start_operation@1 must not define both timeout and infiniteWaitPolicy")
         if infinite_wait_policy is not None:
             operation["infinite_wait_policy"] = infinite_wait_policy
         if expires_at_unix_ms is not None:
@@ -1162,6 +1164,8 @@ def stdlib_registry() -> RuntimeRegistry:
             "infinite_wait_policy",
             "infiniteWaitPolicy",
         )
+        if timeout_ms is not None and infinite_wait_policy is not None:
+            raise ValueError("async.await_callback@1 must not define both timeout and infiniteWaitPolicy")
         if infinite_wait_policy is not None:
             wait["infiniteWaitPolicy"] = infinite_wait_policy
         return {"wait": wait}
@@ -1184,6 +1188,8 @@ def stdlib_registry() -> RuntimeRegistry:
         )
         if timeout_ms is None and infinite_wait_policy is None:
             raise ValueError("async.poll_operation@1 requires timeoutMs")
+        if timeout_ms is not None and infinite_wait_policy is not None:
+            raise ValueError("async.poll_operation@1 must not define both timeout and infiniteWaitPolicy")
         operation["state"] = "polling"
         poll = {
             "state": "polling",

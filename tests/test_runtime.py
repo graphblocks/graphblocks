@@ -763,6 +763,118 @@ def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:
     assert result.outputs["wait"]["operation"]["operation_id"] == "op-ci-1"
 
 
+def test_stdlib_async_start_operation_rejects_ambiguous_wait_bounds() -> None:
+    with pytest.raises(ValueError, match="must not define both timeout and infiniteWaitPolicy"):
+        stdlib_registry().resolve("async.start_operation@1")(
+            {},
+            {
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "timeoutMs": 1_800_000,
+                "infiniteWaitPolicy": "operator_review_required",
+                "resume": {
+                    "requirePolicyReevaluation": True,
+                    "requireBudgetReservation": True,
+                    "requireReleaseCompatibility": True,
+                    "requireOwnershipFence": True,
+                },
+                "attemptFencing": True,
+            },
+            {},
+        )
+
+
+def test_stdlib_async_await_callback_rejects_ambiguous_wait_bounds() -> None:
+    registry = stdlib_registry()
+    operation = registry.resolve("async.start_operation@1")(
+        {},
+        {
+            "operationId": "op-ci-1",
+            "runId": "run-coding-1",
+            "nodeId": "startCI",
+            "attemptId": "attempt-1",
+            "kind": "ci_job",
+            "providerOperationId": "gha-run-1",
+            "resumeTokenHash": "sha256:resume-token",
+            "idempotencyKey": "idem-op-ci-1",
+            "expectedSchema": "schemas/CICallback@1",
+            "createdAtUnixMs": 1_000,
+            "submittedAtUnixMs": 1_050,
+            "infiniteWaitPolicy": "operator_review_required",
+            "resume": {
+                "requirePolicyReevaluation": True,
+                "requireBudgetReservation": True,
+                "requireReleaseCompatibility": True,
+                "requireOwnershipFence": True,
+            },
+            "attemptFencing": True,
+        },
+        {},
+    )["operation"]
+
+    with pytest.raises(ValueError, match="must not define both timeout and infiniteWaitPolicy"):
+        registry.resolve("async.await_callback@1")(
+            {"operation": operation},
+            {
+                "checkpoint": True,
+                "onTimeout": "fail",
+                "timeout": "30m",
+                "infiniteWaitPolicy": "operator_review_required",
+            },
+            {},
+        )
+
+
+def test_stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() -> None:
+    registry = stdlib_registry()
+    operation = registry.resolve("async.start_operation@1")(
+        {},
+        {
+            "operationId": "op-poll-1",
+            "runId": "run-coding-1",
+            "nodeId": "startPoll",
+            "attemptId": "attempt-1",
+            "kind": "external_provider_job",
+            "providerOperationId": "batch-1",
+            "resumeTokenHash": "sha256:resume-token",
+            "idempotencyKey": "idem-op-poll-1",
+            "expectedSchema": "schemas/PollResult@1",
+            "createdAtUnixMs": 1_000,
+            "submittedAtUnixMs": 1_050,
+            "timeoutMs": 1_800_000,
+            "resume": {
+                "requirePolicyReevaluation": True,
+                "requireBudgetReservation": True,
+                "requireReleaseCompatibility": True,
+                "requireOwnershipFence": True,
+            },
+            "attemptFencing": True,
+        },
+        {},
+    )["operation"]
+
+    with pytest.raises(ValueError, match="must not define both timeout and infiniteWaitPolicy"):
+        registry.resolve("async.poll_operation@1")(
+            {"operation": operation},
+            {
+                "interval": "30s",
+                "maxInterval": "5m",
+                "timeout": "2h",
+                "infiniteWaitPolicy": "provider_has_no_timeout",
+            },
+            {},
+        )
+
+
 def test_stdlib_async_terminal_blocks_reject_invalid_terminal_timestamps() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

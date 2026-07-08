@@ -806,6 +806,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `waiting_callback` projection is produced without submitted provider metadata. It also accepts an
   explicit `infiniteWaitPolicy`, producing a `waiting_callback` operation with no expiration only
   when that unbounded wait policy is declared.
+  Direct stdlib invocation in both Rust and Python now rejects configurations that define both a
+  deadline/timeout and `infiniteWaitPolicy`, preserving the bounded-wait invariant even outside the
+  compiler path.
   `async.await_callback@1` carries parsed timeout duration config or an explicit
   `infiniteWaitPolicy` into the wait projection so the scheduler can enforce the same boundary it
   compiled, and validates `onTimeout` as one of `fail`, `cancel`, or `expire` rather than accepting

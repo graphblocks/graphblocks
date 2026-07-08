@@ -762,6 +762,14 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
         "async.start_operation.invalid_config",
         "async.start_operation@1",
     )?;
+    if expires_at_unix_ms.is_some() && infinite_wait_policy.is_some() {
+        return Err(BlockError::new(
+            "async.start_operation.invalid_config",
+            ErrorCategory::Configuration,
+            "async.start_operation@1 must not define both timeout and infiniteWaitPolicy",
+            false,
+        ));
+    }
     if let Some(infinite_wait_policy) = infinite_wait_policy {
         operation = operation.with_infinite_wait_policy(infinite_wait_policy);
     }
@@ -867,6 +875,14 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
         })
         .transpose()?
         .flatten();
+    if timeout_ms.is_some() && infinite_wait_policy.is_some() {
+        return Err(BlockError::new(
+            "async.await_callback.invalid_config",
+            ErrorCategory::Configuration,
+            "async.await_callback@1 must not define both timeout and infiniteWaitPolicy",
+            false,
+        ));
+    }
 
     let mut wait = json!({
         "state": "waiting_callback",
@@ -939,6 +955,14 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
             "async.poll_operation.missing_timeout",
             ErrorCategory::Configuration,
             "async.poll_operation@1 requires timeoutMs",
+            false,
+        ));
+    }
+    if timeout_ms.is_some() && infinite_wait_policy.is_some() {
+        return Err(BlockError::new(
+            "async.poll_operation.invalid_config",
+            ErrorCategory::Configuration,
+            "async.poll_operation@1 must not define both timeout and infiniteWaitPolicy",
             false,
         ));
     }
@@ -2791,7 +2815,7 @@ mod tests {
 
     use crate::journal::SqliteExecutionJournal;
     use crate::run_store::{RunStatus, SqliteRunStore};
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use super::run_stdlib_graph_with_options_json;
 
@@ -2804,6 +2828,146 @@ mod tests {
                 .expect("system clock should be after epoch")
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn stdlib_async_start_operation_rejects_ambiguous_wait_bounds() {
+        let error = super::execute_stdlib_block(
+            "async.start_operation@1",
+            &json!({}),
+            &json!({
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "timeoutMs": 1_800_000,
+                "infiniteWaitPolicy": "operator_review_required",
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }),
+        )
+        .expect_err("ambiguous async start wait bounds should fail");
+
+        assert_eq!(error.code, "async.start_operation.invalid_config");
+        assert!(
+            error
+                .message
+                .contains("must not define both timeout and infiniteWaitPolicy"),
+            "unexpected error: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn stdlib_async_await_callback_rejects_ambiguous_wait_bounds() {
+        let started = super::execute_stdlib_block(
+            "async.start_operation@1",
+            &json!({}),
+            &json!({
+                "operationId": "op-ci-1",
+                "runId": "run-coding-1",
+                "nodeId": "startCI",
+                "attemptId": "attempt-1",
+                "kind": "ci_job",
+                "providerOperationId": "gha-run-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-ci-1",
+                "expectedSchema": "schemas/CICallback@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "infiniteWaitPolicy": "operator_review_required",
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }),
+        )
+        .expect("valid infinite async start should succeed");
+        let error = super::execute_stdlib_block(
+            "async.await_callback@1",
+            &json!({"operation": started["operation"].clone()}),
+            &json!({
+                "checkpoint": true,
+                "onTimeout": "fail",
+                "timeout": "30m",
+                "infiniteWaitPolicy": "operator_review_required"
+            }),
+        )
+        .expect_err("ambiguous async await wait bounds should fail");
+
+        assert_eq!(error.code, "async.await_callback.invalid_config");
+        assert!(
+            error
+                .message
+                .contains("must not define both timeout and infiniteWaitPolicy"),
+            "unexpected error: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() {
+        let started = super::execute_stdlib_block(
+            "async.start_operation@1",
+            &json!({}),
+            &json!({
+                "operationId": "op-poll-1",
+                "runId": "run-coding-1",
+                "nodeId": "startPoll",
+                "attemptId": "attempt-1",
+                "kind": "external_provider_job",
+                "providerOperationId": "batch-1",
+                "resumeTokenHash": "sha256:resume-token",
+                "idempotencyKey": "idem-op-poll-1",
+                "expectedSchema": "schemas/PollResult@1",
+                "createdAtUnixMs": 1_000,
+                "submittedAtUnixMs": 1_050,
+                "timeoutMs": 1_800_000,
+                "resume": {
+                    "requirePolicyReevaluation": true,
+                    "requireBudgetReservation": true,
+                    "requireReleaseCompatibility": true,
+                    "requireOwnershipFence": true
+                },
+                "attemptFencing": true
+            }),
+        )
+        .expect("valid bounded async start should succeed");
+        let error = super::execute_stdlib_block(
+            "async.poll_operation@1",
+            &json!({"operation": started["operation"].clone()}),
+            &json!({
+                "interval": "30s",
+                "maxInterval": "5m",
+                "timeout": "2h",
+                "infiniteWaitPolicy": "provider_has_no_timeout"
+            }),
+        )
+        .expect_err("ambiguous async poll wait bounds should fail");
+
+        assert_eq!(error.code, "async.poll_operation.invalid_config");
+        assert!(
+            error
+                .message
+                .contains("must not define both timeout and infiniteWaitPolicy"),
+            "unexpected error: {:?}",
+            error
+        );
     }
 
     #[test]
