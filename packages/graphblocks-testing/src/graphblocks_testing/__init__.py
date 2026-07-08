@@ -9279,6 +9279,7 @@ class TckRunner:
                     else "created_at"
                 )
                 created_at = raw_operation.get("createdAt", raw_operation.get("created_at"))
+                created_at_value = None
                 if not isinstance(created_at, str) or not created_at.strip():
                     diagnostics.append(
                         {
@@ -9289,7 +9290,7 @@ class TckRunner:
                     )
                 else:
                     try:
-                        datetime.fromisoformat(
+                        created_at_value = datetime.fromisoformat(
                             created_at.replace("Z", "+00:00")
                             if created_at.endswith("Z")
                             else created_at
@@ -9310,6 +9311,7 @@ class TckRunner:
                 submitted_at = raw_operation.get(
                     "submittedAt", raw_operation.get("submitted_at")
                 )
+                submitted_at_value = None
                 if not isinstance(submitted_at, str) or not submitted_at.strip():
                     diagnostics.append(
                         {
@@ -9320,7 +9322,7 @@ class TckRunner:
                     )
                 else:
                     try:
-                        datetime.fromisoformat(
+                        submitted_at_value = datetime.fromisoformat(
                             submitted_at.replace("Z", "+00:00")
                             if submitted_at.endswith("Z")
                             else submitted_at
@@ -9333,6 +9335,18 @@ class TckRunner:
                                 "path": f"$.operation.{submitted_at_path}",
                             }
                         )
+                if (
+                    created_at_value is not None
+                    and submitted_at_value is not None
+                    and submitted_at_value < created_at_value
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation submittedAt must not precede createdAt",
+                            "path": f"$.operation.{submitted_at_path}",
+                        }
+                    )
                 expires_at_path = (
                     "expiresAt"
                     if "expiresAt" in raw_operation or "expires_at" not in raw_operation
