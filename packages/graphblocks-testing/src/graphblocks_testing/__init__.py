@@ -7101,6 +7101,7 @@ class TckRunner:
                     "initialResponse", fixture.get("initial_response", {})
                 )
                 accepted_response_has_run_id = False
+                initial_response_run_id = None
                 if response_mode in {"accepted", "background"}:
                     if not isinstance(raw_initial_response, Mapping):
                         diagnostics.append(
@@ -7143,6 +7144,7 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                            initial_response_run_id = valid_initial_run_id
                         initial_event_stream = raw_initial_response.get(
                             "eventStream",
                             raw_initial_response.get("event_stream"),
@@ -7341,6 +7343,38 @@ class TckRunner:
                         )
                     else:
                         event_ids.add(event_id.strip())
+                    event_run_id = raw_event.get("runId", raw_event.get("run_id"))
+                    event_run_id_path = (
+                        "runId"
+                        if "runId" in raw_event or "run_id" not in raw_event
+                        else "run_id"
+                    )
+                    valid_event_run_id = (
+                        event_run_id.strip()
+                        if isinstance(event_run_id, str) and event_run_id.strip()
+                        else None
+                    )
+                    if valid_event_run_id is None:
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires runId",
+                                "path": f"$.events[{event_index}].{event_run_id_path}",
+                            }
+                        )
+                    elif (
+                        initial_response_run_id is not None
+                        and valid_event_run_id != initial_response_run_id
+                    ):
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event runId must match initial response runId",
+                                "path": f"$.events[{event_index}].{event_run_id_path}",
+                            }
+                        )
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False

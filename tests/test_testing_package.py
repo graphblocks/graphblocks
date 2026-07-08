@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 237
+    assert [case.kind for case in cases] == ["durable"] * 239
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1243,6 +1243,8 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",
+        "background_run_event_missing_run_id_rejected",
+        "background_run_event_run_id_mismatch_rejected",
         "background_run_event_missing_event_id_rejected",
         "background_run_duplicate_event_id_rejected",
         "background_run_event_missing_cursor_rejected",
@@ -1572,6 +1574,16 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "background_run_non_object_event_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_event_missing_run_id_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_event_run_id_mismatch_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -2602,6 +2614,7 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2649,6 +2662,7 @@ def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeyp
             "events": [
                 {
                     "eventId": "evt-000002",
+                    "runId": "run-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -2702,6 +2716,7 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2749,6 +2764,7 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2789,6 +2805,7 @@ def test_testing_package_rejects_non_object_background_run_initial_response(monk
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2835,6 +2852,7 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2882,6 +2900,7 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2929,6 +2948,7 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -2975,6 +2995,7 @@ def test_testing_package_rejects_background_response_without_run_id(monkeypatch)
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3060,6 +3081,7 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
             },
             "events": [
                 {
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3107,6 +3129,7 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": " ",
@@ -3154,6 +3177,7 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3203,6 +3227,7 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
             "events": [
                 {
                     "eventId": "evt-000002",
+                    "runId": "run-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -3256,6 +3281,7 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
             "events": [
                 {
                     "eventId": "evt-000002",
+                    "runId": "run-001",
                     "sequence": 2,
                     "occurredAt": "2026-06-23T00:00:02Z",
                     "cursor": "evt-000002",
@@ -3308,6 +3334,7 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3355,6 +3382,7 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -3402,6 +3430,7 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
             "events": [
                 {
                     "eventId": "evt-000001",
+                    "runId": "run-001",
                     "sequence": 1,
                     "occurredAt": "2026-06-23T00:00:01Z",
                     "cursor": "evt-000001",
@@ -5947,6 +5976,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",
+        "background_run_event_missing_run_id_rejected",
+        "background_run_event_run_id_mismatch_rejected",
         "background_run_event_missing_event_id_rejected",
         "background_run_duplicate_event_id_rejected",
         "background_run_event_missing_cursor_rejected",

@@ -470,6 +470,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("retention")
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_retention);
+            let expected_event_run_id = case
+                .get("initialResponse")
+                .or_else(|| case.get("initial_response"))
+                .and_then(Value::as_object)
+                .and_then(|response| response.get("runId").or_else(|| response.get("run_id")))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|run_id| !run_id.is_empty());
             let initial_cursor_for_events = case
                 .get("initialResponse")
                 .or_else(|| case.get("initial_response"))
@@ -528,6 +536,39 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": format!("$.events[{index}].{event_id_path}"),
                         }));
                     }
+                }
+                let event_run_id_path =
+                    if event.contains_key("runId") || !event.contains_key("run_id") {
+                        "runId"
+                    } else {
+                        "run_id"
+                    };
+                let event_run_id = event
+                    .get("runId")
+                    .or_else(|| event.get("run_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|run_id| !run_id.is_empty());
+                match event_run_id {
+                    None => {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run event requires runId",
+                            "path": format!("$.events[{index}].{event_run_id_path}"),
+                        }));
+                    }
+                    Some(run_id)
+                        if expected_event_run_id.is_some_and(|expected| expected != run_id) =>
+                    {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run event runId must match initial response runId",
+                            "path": format!("$.events[{index}].{event_run_id_path}"),
+                        }));
+                    }
+                    Some(_) => {}
                 }
                 if event
                     .get("cursor")
