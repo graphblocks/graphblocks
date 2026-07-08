@@ -8445,6 +8445,23 @@ class TckRunner:
                             "path": "$.lateCallback.status",
                         }
                     )
+                verified_by_path = (
+                    "verifiedBy"
+                    if "verifiedBy" in raw_late_callback
+                    or "verified_by" not in raw_late_callback
+                    else "verified_by"
+                )
+                verified_by = raw_late_callback.get(
+                    "verifiedBy", raw_late_callback.get("verified_by")
+                )
+                if not isinstance(verified_by, str) or not verified_by.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank verifiedBy",
+                            "path": f"$.lateCallback.{verified_by_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

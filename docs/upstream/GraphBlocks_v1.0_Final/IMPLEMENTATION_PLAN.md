@@ -1908,6 +1908,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require `lateCallback.status` to be
   one of the terminal async-operation result statuses in both Rust and Python runners before late
   callback evidence can prove reconciliation behavior.
+- Durable external-operation reconciliation shared TCK cases now require nonblank
+  `lateCallback.verifiedBy` evidence in both Rust and Python runners before an external callback
+  can prove authenticated late-result reconciliation.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

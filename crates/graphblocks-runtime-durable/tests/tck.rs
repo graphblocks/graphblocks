@@ -2288,6 +2288,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": "$.lateCallback.status",
                 }));
             }
+            let verified_by_path = if raw_late_callback.contains_key("verifiedBy")
+                || !raw_late_callback.contains_key("verified_by")
+            {
+                "verifiedBy"
+            } else {
+                "verified_by"
+            };
+            if raw_late_callback
+                .get("verifiedBy")
+                .or_else(|| raw_late_callback.get("verified_by"))
+                .and_then(Value::as_str)
+                .map_or(true, |verified_by| verified_by.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank verifiedBy",
+                    "path": format!("$.lateCallback.{verified_by_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
