@@ -1677,3 +1677,28 @@ license = "Apache-2.0"
     assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
         ("PackageBlockedDependency", "$.pyproject.toml.build-system.requires[0]"),
     ]
+
+
+def test_package_manifest_audit_reports_blocked_dependency_groups(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "unsafe-python"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[dependency-groups]
+dev = ["vulnerable-tool[runner] (>=1.0)"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-tool",)),
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("PackageBlockedDependency", "$.pyproject.toml.dependency-groups.dev[0]"),
+    ]
