@@ -7198,6 +7198,18 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].cursor",
                             }
                         )
+                    elif (
+                        initial_cursor is not None
+                        and cursor.strip() == initial_cursor.strip()
+                    ):
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event cursor must not equal initialCursor",
+                                "path": f"$.events[{event_index}].cursor",
+                            }
+                        )
                     elif cursor.strip() in event_cursors:
                         event_valid = False
                         diagnostics.append(

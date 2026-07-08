@@ -1910,10 +1910,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and Python runners instead of silently dropping them before replay/cursor assertions.
 - Durable background-run shared TCK cases now require nonblank event `eventId`/`event_id`,
   nonblank `cursor`, nonblank `type`, ISO-valid `occurredAt`/`occurred_at`, and strictly
-  increasing positive integer `sequence` fields in both Rust and Python runners, and reject
-  duplicate event ids or replay cursors before proving cursor replay, preventing anonymous,
-  duplicate, untyped, cursorless, untimestamped, or unordered events from satisfying replay
-  assertions.
+  increasing positive integer `sequence` fields in both Rust and Python runners, reject
+  duplicate event ids or replay cursors, and forbid event cursors from reusing the initial run
+  cursor before proving cursor replay, preventing anonymous, duplicate, ambiguous, untyped,
+  cursorless, untimestamped, or unordered events from satisfying replay assertions.
 - Durable background-run shared TCK cases now prove attach replay from the initial run-handle
   cursor or the matched event cursor position, and cursor expiry from the retained-boundary
   cursor's position, in the authoritative event stream rather than from lexicographic cursor

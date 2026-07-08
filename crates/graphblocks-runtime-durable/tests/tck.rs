@@ -470,6 +470,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("retention")
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_retention);
+            let initial_cursor_for_events = case
+                .get("initialResponse")
+                .or_else(|| case.get("initial_response"))
+                .and_then(Value::as_object)
+                .and_then(|response| {
+                    response
+                        .get("initialCursor")
+                        .or_else(|| response.get("initial_cursor"))
+                })
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|cursor| !cursor.is_empty());
             let mut event_records = Vec::new();
             let mut previous_event_sequence = None;
             let mut event_ids = BTreeSet::new();
@@ -531,7 +543,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                 } else if let Some(cursor) =
                     event.get("cursor").and_then(Value::as_str).map(str::trim)
                 {
-                    if !event_cursors.insert(cursor.to_owned()) {
+                    if initial_cursor_for_events == Some(cursor) {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run event cursor must not equal initialCursor",
+                            "path": format!("$.events[{index}].cursor"),
+                        }));
+                    } else if !event_cursors.insert(cursor.to_owned()) {
                         event_valid = false;
                         diagnostics.push(json!({
                             "code": "DurableBackgroundRunInvalid",
