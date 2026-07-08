@@ -1327,6 +1327,30 @@ def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypat
     )
 
 
+def test_testing_package_rejects_empty_callback_delivery_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/empty-callback-deliveries",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "callback delivery requires at least one delivery",
+            "path": "$.deliveries",
+        },
+    )
+
+
 def test_testing_package_rejects_non_object_callback_redrive_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
