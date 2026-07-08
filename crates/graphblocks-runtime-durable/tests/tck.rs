@@ -999,6 +999,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .get("lastError")
                         .or_else(|| delivery.get("last_error"))
                         .and_then(Value::as_str)
+                        .is_some_and(|last_error| {
+                            !last_error.trim().is_empty() && last_error != "subscription_gone"
+                        })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "410 callback delivery requires subscription_gone error",
+                        "path": format!("$.deliveries[{index}].lastError"),
+                    }));
+                }
+                if receiver_status == 410
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "cancelled")
+                    && delivery
+                        .get("lastError")
+                        .or_else(|| delivery.get("last_error"))
+                        .and_then(Value::as_str)
                         .is_some_and(|last_error| last_error == "subscription_gone")
                 {
                     subscription_gone_after_410 = true;

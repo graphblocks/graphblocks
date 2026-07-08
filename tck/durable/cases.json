@@ -1015,6 +1015,36 @@
     }
   },
   {
+    "name": "webhook_delivery_410_wrong_last_error_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-gone-error-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0252",
+        "runId": "run-coding-001",
+        "sequence": 252,
+        "cursor": "evt-0252",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0252",
+        "receiverStatus": 410,
+        "status": "cancelled",
+        "deliveredAt": "2026-07-02T00:01:31Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "410 callback delivery requires subscription_gone error",
+        "path": "$.deliveries[0].lastError"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_non_retryable_4xx_terminal",
     "kind": "callback_delivery_projection",
     "deliveries": [

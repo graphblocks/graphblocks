@@ -1781,6 +1781,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   or receiver-error labels from proving terminal 4xx handling.
 - Durable callback projection terminal failure evidence now has shared expected-diagnostic coverage
   requiring `lastError` on `failed`, `dead_lettered`, `cancelled`, and `expired` delivery rows.
+- Durable callback projection subscription-gone evidence now has shared expected-diagnostic
+  coverage requiring cancelled 410 delivery rows to record `lastError: subscription_gone`.
 - Durable callback projection retry evidence now has shared expected-diagnostic coverage requiring
   `retry_then_dead_letter` subscriptions to include `nextRetryAt` on failed 429/5xx deliveries,
   ensuring retry scheduling is proven from the subscription's failure policy rather than inferred
