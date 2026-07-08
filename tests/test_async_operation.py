@@ -1512,6 +1512,7 @@ def run_direct() -> None:
         test_async_operation_rejects_ambiguous_callback_and_polling_refs,
         test_async_operation_rejects_unbounded_callback_and_polling_waits,
         test_async_operation_accepts_explicit_infinite_wait_policy,
+        test_async_operation_rejects_ambiguous_deadline_and_infinite_wait_policy,
         test_async_operation_wait_boundary_deterministic_fuzz,
         test_async_operation_rejects_invalid_timestamp_format_and_ordering,
         test_async_operation_rejects_callback_receipt_after_expiry,
