@@ -953,6 +953,97 @@ fn application_event_stream_state_rejects_invalid_output_cutoff_payload() {
 }
 
 #[test]
+fn application_event_stream_state_enforces_unique_ids_and_monotonic_run_sequence() {
+    let mut state = ApplicationEventStreamState::default();
+    let first = ApplicationEvent::new(
+        ApplicationEventKind::RunStarted,
+        ApplicationEventMetadata {
+            event_id: "event-1".to_owned(),
+            sequence: 1,
+            cursor: Some("run-1:1".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("first event is valid");
+    let duplicate_id = ApplicationEvent::new(
+        ApplicationEventKind::RunCompleted,
+        ApplicationEventMetadata {
+            event_id: "event-1".to_owned(),
+            sequence: 2,
+            cursor: Some("run-1:2".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("duplicate id event is valid");
+    let duplicate_sequence = ApplicationEvent::new(
+        ApplicationEventKind::RunCompleted,
+        ApplicationEventMetadata {
+            event_id: "event-2".to_owned(),
+            sequence: 1,
+            cursor: Some("run-1:1-duplicate".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("duplicate sequence event is valid");
+    let backwards = ApplicationEvent::new(
+        ApplicationEventKind::RunCompleted,
+        ApplicationEventMetadata {
+            event_id: "event-3".to_owned(),
+            sequence: 0,
+            cursor: Some("run-1:0".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("backwards event is valid");
+    let other_run_same_sequence = ApplicationEvent::new(
+        ApplicationEventKind::RunStarted,
+        ApplicationEventMetadata {
+            event_id: "event-other-run".to_owned(),
+            run_id: "run-2".to_owned(),
+            sequence: 1,
+            cursor: Some("run-2:1".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("other run event is valid");
+    let next_event = ApplicationEvent::new(
+        ApplicationEventKind::RunCompleted,
+        ApplicationEventMetadata {
+            event_id: "event-4".to_owned(),
+            sequence: 2,
+            cursor: Some("run-1:2".to_owned()),
+            ..metadata()
+        },
+        json!({}),
+    )
+    .expect("next event is valid");
+
+    assert_eq!(state.accept(first.clone()), Some(first.clone()));
+    assert_eq!(state.accept(first.clone()), Some(first));
+    assert_eq!(state.accept(duplicate_id), None);
+    assert_eq!(state.accept(duplicate_sequence), None);
+    assert_eq!(state.accept(backwards), None);
+    assert_eq!(
+        state.accept(other_run_same_sequence.clone()),
+        Some(other_run_same_sequence)
+    );
+    assert_eq!(state.accept(next_event.clone()), Some(next_event));
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-1", "event-other-run", "event-4"]
+    );
+}
+
+#[test]
 fn application_event_stream_state_discards_late_output_after_cutoff() {
     let mut state = ApplicationEventStreamState::default();
     let cutoff = OutputCutoff {
@@ -980,7 +1071,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         ApplicationEventMetadata {
             event_id: "event-replacement-response".to_owned(),
             response_id: "response-2".to_owned(),
-            sequence: 8,
+            sequence: 9,
             ..metadata()
         },
         &GenerationChunk::text("stream-1", "response-2", 1, "replacement"),
@@ -1044,7 +1135,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         ApplicationEventMetadata {
             event_id: "event-replacement-tool".to_owned(),
             response_id: "response-2".to_owned(),
-            sequence: 8,
+            sequence: 10,
             ..metadata()
         },
         &ToolCallDraft::proposed("response-2", "call-replacement", "knowledge.search"),
@@ -1052,56 +1143,88 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
     .expect("replacement tool draft event is valid");
     let denied_tool = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallDenied,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-tool-denied".to_owned(),
+            sequence: 11,
+            ..metadata()
+        },
         "call-1",
         json!({"status": "denied"}),
     )
     .expect("tool event is valid");
     let cancelled_tool = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallCancelled,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-tool-cancelled".to_owned(),
+            sequence: 12,
+            ..metadata()
+        },
         "call-2",
         json!({"status": "cancelled"}),
     )
     .expect("tool event is valid");
     let policy_stopped_tool = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallPolicyStopped,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-tool-policy-stopped".to_owned(),
+            sequence: 13,
+            ..metadata()
+        },
         "call-3",
         json!({"status": "policy_stopped"}),
     )
     .expect("tool event is valid");
     let incomplete_tool = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallIncomplete,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-tool-incomplete".to_owned(),
+            sequence: 14,
+            ..metadata()
+        },
         "call-4",
         json!({"status": "incomplete"}),
     )
     .expect("tool event is valid");
     let denied_result = ApplicationEvent::tool(
         ApplicationEventKind::ToolResultDenied,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-result-denied".to_owned(),
+            sequence: 15,
+            ..metadata()
+        },
         "call-result-1",
         json!({"status": "denied"}),
     )
     .expect("tool result event is valid");
     let cancelled_result = ApplicationEvent::tool(
         ApplicationEventKind::ToolResultCancelled,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-result-cancelled".to_owned(),
+            sequence: 16,
+            ..metadata()
+        },
         "call-result-2",
         json!({"status": "cancelled"}),
     )
     .expect("tool result event is valid");
     let policy_stopped_result = ApplicationEvent::tool(
         ApplicationEventKind::ToolResultPolicyStopped,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-result-policy-stopped".to_owned(),
+            sequence: 17,
+            ..metadata()
+        },
         "call-result-3",
         json!({"status": "policy_stopped"}),
     )
     .expect("tool result event is valid");
     let incomplete_result = ApplicationEvent::tool(
         ApplicationEventKind::ToolResultIncomplete,
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-result-incomplete".to_owned(),
+            sequence: 18,
+            ..metadata()
+        },
         "call-result-4",
         json!({"status": "incomplete"}),
     )

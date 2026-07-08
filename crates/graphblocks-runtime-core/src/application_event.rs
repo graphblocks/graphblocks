@@ -837,10 +837,23 @@ impl ApplicationEvent {
 pub struct ApplicationEventStreamState {
     cutoffs: BTreeMap<String, OutputCutoff>,
     accepted_events: Vec<ApplicationEvent>,
+    accepted_events_by_id: BTreeMap<String, ApplicationEvent>,
+    last_sequence_by_run_id: BTreeMap<String, u64>,
 }
 
 impl ApplicationEventStreamState {
     pub fn accept(&mut self, event: ApplicationEvent) -> Option<ApplicationEvent> {
+        if let Some(existing_event) = self.accepted_events_by_id.get(&event.metadata.event_id) {
+            if existing_event == &event {
+                return Some(existing_event.clone());
+            }
+            return None;
+        }
+        if let Some(last_sequence) = self.last_sequence_by_run_id.get(&event.metadata.run_id)
+            && event.metadata.sequence <= *last_sequence
+        {
+            return None;
+        }
         if event.kind == ApplicationEventKind::OutputCutoff {
             let cutoff = {
                 let payload = &event.payload;
@@ -900,7 +913,7 @@ impl ApplicationEventStreamState {
                 cutoff
             };
             self.cutoffs.insert(cutoff.response_id.clone(), cutoff);
-            self.accepted_events.push(event.clone());
+            self.record(event.clone());
             return Some(event);
         }
 
@@ -919,7 +932,7 @@ impl ApplicationEventStreamState {
                 if !draft_terminal_event_matches_cutoff(&event, cutoff) {
                     return None;
                 }
-                self.accepted_events.push(event.clone());
+                self.record(event.clone());
                 return Some(event);
             }
             if event
@@ -957,8 +970,16 @@ impl ApplicationEventStreamState {
             }
         }
 
-        self.accepted_events.push(event.clone());
+        self.record(event.clone());
         Some(event)
+    }
+
+    fn record(&mut self, event: ApplicationEvent) {
+        self.accepted_events_by_id
+            .insert(event.metadata.event_id.clone(), event.clone());
+        self.last_sequence_by_run_id
+            .insert(event.metadata.run_id.clone(), event.metadata.sequence);
+        self.accepted_events.push(event);
     }
 
     pub fn accepted_events(&self) -> &[ApplicationEvent] {
