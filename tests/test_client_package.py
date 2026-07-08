@@ -2501,6 +2501,73 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
     ("method_name", "args", "kwargs", "message"),
     (
         (
+            "subscribe_events",
+            ("run-1",),
+            {
+                "event_filter": {1: ["RunSucceeded"]},
+                "delivery": {"kind": "local_callback", "callback_name": "ide"},
+            },
+            "GraphBlocks HTTP event_filter object keys must be non-empty strings",
+        ),
+        (
+            "subscribe_events",
+            ("run-1",),
+            {
+                "event_filter": {"types": ["RunSucceeded"]},
+                "delivery": {"kind": "webhook", "url": "https://relay.example/events", "headers": {"": "x"}},
+            },
+            "GraphBlocks HTTP delivery object keys must be non-empty strings",
+        ),
+        (
+            "register_callback",
+            (),
+            {
+                "scope": "run",
+                "scope_id": "run-1",
+                "event_filter": {"types": ["RunSucceeded"], "limits": {"max": math.nan}},
+                "delivery": {"kind": "local_callback", "callback_name": "ide"},
+            },
+            "GraphBlocks HTTP event_filter must contain canonical JSON values",
+        ),
+        (
+            "register_callback",
+            (),
+            {
+                "scope": "run",
+                "scope_id": "run-1",
+                "event_filter": {"types": ["RunSucceeded"]},
+                "delivery": {"kind": "webhook", "url": "https://relay.example/events", "headers": {1: "x"}},
+            },
+            "GraphBlocks HTTP delivery object keys must be non-empty strings",
+        ),
+    ),
+)
+def test_client_package_rejects_malformed_callback_subscription_config(
+    monkeypatch,
+    method_name: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise AssertionError("transport should not be called for malformed callback subscription config")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        getattr(client, method_name)(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "args", "kwargs", "message"),
+    (
+        (
             "redrive_callback_delivery",
             (" ",),
             {"operator": "operator-1", "reason": "receiver recovered"},

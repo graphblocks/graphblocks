@@ -1503,6 +1503,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `submit_async_callback` now validates callback payloads with the canonical JSON encoder before
   transport and rejects non-string or blank object keys, so `NaN`, non-serializable values, or
   key-coercing payload objects cannot be sent as callback content.
+  `subscribe_events` and `register_callback` apply the same canonical JSON and object-key checks to
+  `event_filter` and `delivery` payloads before constructing HTTP requests.
 - `LocalGraphBlocksClient` now emits deterministic `run_id:sequence` cursors on its local
   application events, matching the replay contract used by server attach/event-stream routes.
 - `graphblocks-testing` now preserves and reports authoritative event metadata when running

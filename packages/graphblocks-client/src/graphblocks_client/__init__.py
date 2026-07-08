@@ -900,25 +900,10 @@ class HttpGraphBlocksClient:
         operation_id = _http_non_empty_string("operation_id", operation_id)
         callback_id = _http_non_empty_string("callback_id", callback_id)
         idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
-        if not isinstance(payload, Mapping):
-            raise ValueError("GraphBlocks HTTP callback payload must be a JSON object")
-        try:
-            canonical_dumps(dict(payload))
-        except (TypeError, ValueError):
-            raise ValueError("GraphBlocks HTTP callback payload must contain canonical JSON values") from None
-        pending_payload_values: list[object] = [payload]
-        while pending_payload_values:
-            current_value = pending_payload_values.pop()
-            if isinstance(current_value, Mapping):
-                for key, value in current_value.items():
-                    if not isinstance(key, str) or not key.strip():
-                        raise ValueError("GraphBlocks HTTP callback payload object keys must be non-empty strings")
-                    pending_payload_values.append(value)
-            elif isinstance(current_value, list | tuple):
-                pending_payload_values.extend(current_value)
+        payload = _http_canonical_json_mapping("callback payload", payload)
         body: dict[str, object] = {
             "callbackId": callback_id,
-            "payload": deepcopy(dict(payload)),
+            "payload": payload,
         }
         if run_id is not None:
             body["runId"] = _http_non_empty_string("run_id", run_id)
@@ -1075,13 +1060,9 @@ class HttpGraphBlocksClient:
         run_id = _http_run_id(run_id)
         if event_filter is None:
             event_filter = {}
-        if not isinstance(event_filter, Mapping):
-            raise ValueError("GraphBlocks HTTP event_filter must be a JSON object")
-        if not isinstance(delivery, Mapping):
-            raise ValueError("GraphBlocks HTTP delivery must be a JSON object")
         body: dict[str, object] = {
-            "eventFilter": deepcopy(dict(event_filter)),
-            "delivery": deepcopy(dict(delivery)),
+            "eventFilter": _http_canonical_json_mapping("event_filter", event_filter),
+            "delivery": _http_canonical_json_mapping("delivery", delivery),
             "failurePolicy": _http_non_empty_string("failure_policy", failure_policy),
         }
         if subscription_id is not None:
@@ -1173,15 +1154,11 @@ class HttpGraphBlocksClient:
     ) -> RunStreamSnapshot:
         if event_filter is None:
             event_filter = {}
-        if not isinstance(event_filter, Mapping):
-            raise ValueError("GraphBlocks HTTP event_filter must be a JSON object")
-        if not isinstance(delivery, Mapping):
-            raise ValueError("GraphBlocks HTTP delivery must be a JSON object")
         body: dict[str, object] = {
             "scope": _http_non_empty_string("scope", scope),
             "scopeId": _http_non_empty_string("scope_id", scope_id),
-            "eventFilter": deepcopy(dict(event_filter)),
-            "delivery": deepcopy(dict(delivery)),
+            "eventFilter": _http_canonical_json_mapping("event_filter", event_filter),
+            "delivery": _http_canonical_json_mapping("delivery", delivery),
             "failurePolicy": _http_non_empty_string("failure_policy", failure_policy),
         }
         if subscription_id is not None:
@@ -1339,6 +1316,26 @@ def _http_non_empty_string(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"GraphBlocks HTTP {field_name} must be a non-empty string")
     return value
+
+
+def _http_canonical_json_mapping(field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"GraphBlocks HTTP {field_name} must be a JSON object")
+    try:
+        canonical_dumps(dict(value))
+    except (TypeError, ValueError):
+        raise ValueError(f"GraphBlocks HTTP {field_name} must contain canonical JSON values") from None
+    pending_values: list[object] = [value]
+    while pending_values:
+        current_value = pending_values.pop()
+        if isinstance(current_value, Mapping):
+            for key, child_value in current_value.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"GraphBlocks HTTP {field_name} object keys must be non-empty strings")
+                pending_values.append(child_value)
+        elif isinstance(current_value, list | tuple):
+            pending_values.extend(current_value)
+    return deepcopy(dict(value))
 
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:
