@@ -3112,6 +3112,45 @@
     }
   },
   {
+    "name": "webhook_delivery_missing_redrive_application_event_flag_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-application-event-missing-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0312",
+        "runId": "run-coding-001",
+        "sequence": 312,
+        "cursor": "evt-0312",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0312",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:12Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-application-event-missing-001",
+      "eventId": "evt-0312",
+      "originalEventId": "evt-0312",
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive"
+    },
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires boolean createsApplicationEvent",
+        "path": "$.redrive.createsApplicationEvent"
+      }
+    ],
+    "expected": {
+      "redriveCreatesApplicationEvent": false,
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_non_boolean_outage_flag_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

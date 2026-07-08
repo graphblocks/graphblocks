@@ -1826,9 +1826,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now reject mismatched redrive `eventId` and
   `originalEventId` values in both Rust and Python runners, making event identity preservation a
   mandatory redrive invariant instead of an optional observed flag.
-- Durable callback projection shared TCK cases now require `createsApplicationEvent` to be a real
-  boolean when present in both Rust and Python runners, preventing truthy string values from
-  satisfying the no-duplicate-event redrive invariant.
+- Durable callback projection shared TCK cases now require redrive `createsApplicationEvent`
+  evidence to be present and a real boolean in both Rust and Python runners, preventing absent
+  evidence or truthy string values from satisfying the no-duplicate-event redrive invariant.
 - Durable callback projection shared TCK cases now require fixture-level outage evidence
   `nonMandatoryOutageBlocksRun` to be present and a real boolean in both Rust and Python runners,
   preventing absent evidence or string coercion from satisfying non-mandatory webhook outage

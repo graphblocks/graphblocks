@@ -978,7 +978,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                             false
                         }
                     },
-                    None => true,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackRedriveInvalid",
+                            "message": "callback redrive requires boolean createsApplicationEvent",
+                            "path": "$.redrive.createsApplicationEvent",
+                        }));
+                        false
+                    }
                 }
             } else {
                 false

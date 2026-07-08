@@ -7559,7 +7559,14 @@ class TckRunner:
                         "createsApplicationEvent", raw_redrive.get("creates_application_event")
                     )
                     if raw_creates_application_event is None:
-                        redrive_creates_application_event = True
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive requires boolean createsApplicationEvent",
+                                "path": "$.redrive.createsApplicationEvent",
+                            }
+                        )
+                        redrive_creates_application_event = False
                     elif isinstance(raw_creates_application_event, bool):
                         redrive_creates_application_event = raw_creates_application_event
                     else:
