@@ -2152,6 +2152,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_object)
                 .ok_or_else(|| format!("{name} requires late callback"))?;
             let raw_usage = required_object(case, "usage", name)?;
+            let operation_id_path = if raw_operation.contains_key("operationId")
+                || !raw_operation.contains_key("operation_id")
+            {
+                "operationId"
+            } else {
+                "operation_id"
+            };
+            if raw_operation
+                .get("operationId")
+                .or_else(|| raw_operation.get("operation_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |operation_id| operation_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank operationId",
+                    "path": format!("$.operation.{operation_id_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {

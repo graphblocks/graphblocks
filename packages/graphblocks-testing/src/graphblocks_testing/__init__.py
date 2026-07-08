@@ -8333,6 +8333,20 @@ class TckRunner:
                 raw_usage = fixture.get("usage", {})
                 if not isinstance(raw_operation, Mapping) or not isinstance(raw_late_callback, Mapping) or not isinstance(raw_usage, Mapping):
                     raise ValueError("durable external_operation_reconciliation case requires operation, lateCallback, and usage")
+                operation_id_path = (
+                    "operationId"
+                    if "operationId" in raw_operation or "operation_id" not in raw_operation
+                    else "operation_id"
+                )
+                operation_id = raw_operation.get("operationId", raw_operation.get("operation_id"))
+                if not isinstance(operation_id, str) or not operation_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank operationId",
+                            "path": f"$.operation.{operation_id_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation
