@@ -8228,6 +8228,14 @@ class TckRunner:
                                             "path": f"$.usage.providerUsageRecords[{usage_index}].amount",
                                         }
                                     )
+                                elif not isinstance(amount, int):
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record requires integer amount",
+                                            "path": f"$.usage.providerUsageRecords[{usage_index}].amount",
+                                        }
+                                    )
                                 elif amount < 0:
                                     diagnostics.append(
                                         {

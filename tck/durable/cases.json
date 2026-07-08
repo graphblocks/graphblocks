@@ -3252,6 +3252,37 @@
     }
   },
   {
+    "name": "external_operation_usage_record_fractional_amount_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1.5
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation usage record requires integer amount",
+        "path": "$.usage.providerUsageRecords[0].amount"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_usage_record_negative_amount_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {

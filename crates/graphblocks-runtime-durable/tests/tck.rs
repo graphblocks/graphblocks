@@ -2063,15 +2063,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                                         "path": format!("$.usage.providerUsageRecords[{index}].metric"),
                                     }));
                                 }
-                                match record.get("amount").and_then(Value::as_f64) {
-                                    Some(amount) if amount >= 0.0 => {}
-                                    Some(_) => {
+                                match record.get("amount") {
+                                    Some(value) if value.as_f64().is_none() => {
                                         diagnostics.push(json!({
                                             "code": "DurableExternalOperationInvalid",
-                                            "message": "external operation reconciliation usage record amount must be non-negative",
+                                            "message": "external operation reconciliation usage record requires numeric amount",
                                             "path": format!("$.usage.providerUsageRecords[{index}].amount"),
                                         }));
                                     }
+                                    Some(value) => match value.as_i64() {
+                                        Some(amount) if amount >= 0 => {}
+                                        Some(_) => {
+                                            diagnostics.push(json!({
+                                                "code": "DurableExternalOperationInvalid",
+                                                "message": "external operation reconciliation usage record amount must be non-negative",
+                                                "path": format!("$.usage.providerUsageRecords[{index}].amount"),
+                                            }));
+                                        }
+                                        None => {
+                                            diagnostics.push(json!({
+                                                "code": "DurableExternalOperationInvalid",
+                                                "message": "external operation reconciliation usage record requires integer amount",
+                                                "path": format!("$.usage.providerUsageRecords[{index}].amount"),
+                                            }));
+                                        }
+                                    },
                                     None => {
                                         diagnostics.push(json!({
                                             "code": "DurableExternalOperationInvalid",
