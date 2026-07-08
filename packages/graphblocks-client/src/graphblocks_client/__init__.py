@@ -64,6 +64,7 @@ class RunGraphCommand:
     turn_id: str | None = None
     release_id: str = "local"
     policy_snapshot_id: str = "local"
+    response_mode: str = "sync"
     occurred_at: str = field(default_factory=_utc_now_iso)
 
     def __post_init__(self) -> None:
@@ -74,9 +75,12 @@ class RunGraphCommand:
             ("response_id", self.response_id),
             ("release_id", self.release_id),
             ("policy_snapshot_id", self.policy_snapshot_id),
+            ("response_mode", self.response_mode),
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"run graph command {field_name} must be a non-empty string")
+        if self.response_mode not in {"sync", "accepted", "background"}:
+            raise ValueError("run graph command response_mode must be one of sync, accepted, or background")
         if self.turn_id is not None and (not isinstance(self.turn_id, str) or not self.turn_id.strip()):
             raise ValueError("run graph command turn_id must be a non-empty string")
         if not isinstance(self.occurred_at, str):
@@ -1285,6 +1289,7 @@ class HttpGraphBlocksClient:
                 "turnId": command.turn_id,
                 "releaseId": command.release_id,
                 "policySnapshotId": command.policy_snapshot_id,
+                "responseMode": command.response_mode,
                 "occurredAt": command.occurred_at,
             },
             separators=(",", ":"),

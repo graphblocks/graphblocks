@@ -781,6 +781,7 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
         ({"run_id": True}, "run graph command run_id must be a non-empty string"),
         ({"response_id": " "}, "run graph command response_id must be a non-empty string"),
         ({"turn_id": ""}, "run graph command turn_id must be a non-empty string"),
+        ({"response_mode": "deferred"}, "run graph command response_mode must be one of sync, accepted, or background"),
         ({"occurred_at": None}, "run graph command occurred_at must be a string"),
         ({"occurred_at": " "}, "run graph command occurred_at must be a non-empty string"),
     ),
@@ -889,6 +890,52 @@ def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     assert response.events[0].kind == "RunStarted"
     assert response.event_stream.accept(response.events[0]) == response.events[0]
     assert "HttpGraphBlocksClient" in graphblocks_client.__all__
+
+
+def test_client_package_posts_accepted_run_graph_command_over_http(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    requests: list[object] = []
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "run-http-accepted-1",
+                    "status": "accepted",
+                    "eventStream": "/runs/run-http-accepted-1/events",
+                    "websocket": "/runs/run-http-accepted-1/ws",
+                    "cancel": "/runs/run-http-accepted-1/cancel",
+                    "initialCursor": "run-http-accepted-1:0",
+                }
+            ).encode("utf-8")
+
+    def transport(request: object, *, timeout: float) -> FakeResponse:
+        requests.append(request)
+        return FakeResponse()
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    response = client.run_graph(
+        graphblocks_client.RunGraphCommand(
+            graph={"kind": "Graph", "metadata": {"name": "remote-accepted-run"}},
+            inputs={"message": {"text": "hello"}},
+            run_id="run-http-accepted-1",
+            response_id="response-http-accepted-1",
+            response_mode="accepted",
+        )
+    )
+
+    body = json.loads(requests[0].data.decode("utf-8"))
+    assert body["responseMode"] == "accepted"
+    assert response.run_id == "run-http-accepted-1"
+    assert response.status == "accepted"
+    assert response.outputs == {}
+    assert response.events == ()
 
 
 def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
