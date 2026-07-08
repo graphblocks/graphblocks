@@ -548,11 +548,37 @@
     "nonMandatoryOutageBlocksRun": false,
     "expected": {
       "retryScheduledAfter5xx": true,
+      "retryScheduledAfterRetryableStatus": true,
       "duplicate409Acknowledged": true,
       "idempotencyKeysUniquePerSubscriptionEvent": true,
       "deadLetterPreservesEventId": true,
       "redriveCreatesApplicationEvent": false,
       "nonMandatoryOutageBlocksRun": false
+    }
+  },
+  {
+    "name": "webhook_delivery_rate_limit_schedules_retry",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-rate-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0200",
+        "runId": "run-coding-001",
+        "sequence": 200,
+        "cursor": "evt-0200",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0200",
+        "receiverStatus": 429,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:01:00Z",
+        "lastError": "rate_limited"
+      }
+    ],
+    "expected": {
+      "retryScheduledAfter5xx": false,
+      "retryScheduledAfterRetryableStatus": true,
+      "idempotencyKeysUniquePerSubscriptionEvent": true
     }
   },
   {

@@ -532,6 +532,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut idempotency_keys = BTreeSet::new();
             let mut idempotency_key_count = 0usize;
             let mut retry_scheduled_after_5xx = false;
+            let mut retry_scheduled_after_retryable_status = false;
             let mut duplicate_409_acknowledged = false;
             for delivery in deliveries.iter().filter_map(Value::as_object) {
                 let receiver_status = delivery
@@ -546,6 +547,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .is_some()
                 {
                     retry_scheduled_after_5xx = true;
+                }
+                if (receiver_status == 429 || receiver_status >= 500)
+                    && delivery
+                        .get("nextRetryAt")
+                        .or_else(|| delivery.get("next_retry_at"))
+                        .is_some()
+                {
+                    retry_scheduled_after_retryable_status = true;
                 }
                 if receiver_status == 409
                     && delivery
@@ -566,6 +575,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             }
             json!({
                 "retryScheduledAfter5xx": retry_scheduled_after_5xx,
+                "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
                 "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
                 "deadLetterPreservesEventId": raw_redrive
