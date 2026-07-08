@@ -7124,6 +7124,14 @@ class TckRunner:
                             )
                         else:
                             accepted_response_has_run_id = True
+                initial_cursor = None
+                if isinstance(raw_initial_response, Mapping):
+                    raw_initial_cursor = raw_initial_response.get(
+                        "initialCursor",
+                        raw_initial_response.get("initial_cursor"),
+                    )
+                    if isinstance(raw_initial_cursor, str) and raw_initial_cursor.strip():
+                        initial_cursor = raw_initial_cursor
                 event_records = []
                 for event_index, raw_event in enumerate(raw_events):
                     if not isinstance(raw_event, Mapping):
@@ -7185,6 +7193,8 @@ class TckRunner:
                     last_cursor = raw_last_cursor
                 if last_cursor is None:
                     last_cursor_index = None
+                elif initial_cursor == last_cursor:
+                    last_cursor_index = -1
                 else:
                     last_cursor_index = next(
                         (

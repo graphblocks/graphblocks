@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 94
+    assert [case.kind for case in cases] == ["durable"] * 95
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1215,6 +1215,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
         "background_run_detach_replay_and_cursor_expiry",
         "background_run_replay_uses_cursor_position_not_lexicographic_order",
+        "background_run_replay_from_initial_cursor_returns_retained_events",
         "background_run_non_boolean_detach_cancel_rejected",
         "background_run_non_boolean_summary_flag_rejected",
         "background_run_non_string_lifetime_rejected",
@@ -1305,6 +1306,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.case_id == "background_run_replay_uses_cursor_position_not_lexicographic_order"
         and result.observed.get("replayEventIds") == ["evt-10"]
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_replay_from_initial_cursor_returns_retained_events"
+        and result.observed.get("replayEventIds") == ["evt-initial-1", "evt-initial-2"]
         for result in report.results
     )
     assert any(
@@ -4842,6 +4848,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
         "background_run_detach_replay_and_cursor_expiry",
         "background_run_replay_uses_cursor_position_not_lexicographic_order",
+        "background_run_replay_from_initial_cursor_returns_retained_events",
         "background_run_non_boolean_detach_cancel_rejected",
         "background_run_non_boolean_summary_flag_rejected",
         "background_run_non_string_lifetime_rejected",

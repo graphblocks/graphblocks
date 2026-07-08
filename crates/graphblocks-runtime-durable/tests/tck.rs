@@ -540,20 +540,39 @@ fn run_case(case: &Value) -> Result<(), String> {
                 },
                 None => None,
             };
-            let last_cursor_index = last_cursor.and_then(|cursor| {
-                event_records.iter().position(|event| {
-                    event
-                        .get("cursor")
-                        .and_then(Value::as_str)
-                        .is_some_and(|event_cursor| event_cursor == cursor)
+            let initial_cursor = case
+                .get("initialResponse")
+                .or_else(|| case.get("initial_response"))
+                .and_then(Value::as_object)
+                .and_then(|response| {
+                    response
+                        .get("initialCursor")
+                        .or_else(|| response.get("initial_cursor"))
                 })
+                .and_then(Value::as_str)
+                .filter(|cursor| !cursor.trim().is_empty());
+            let last_cursor_index = last_cursor.and_then(|cursor| {
+                if initial_cursor.is_some_and(|initial| initial == cursor) {
+                    Some(-1)
+                } else {
+                    event_records
+                        .iter()
+                        .position(|event| {
+                            event
+                                .get("cursor")
+                                .and_then(Value::as_str)
+                                .is_some_and(|event_cursor| event_cursor == cursor)
+                        })
+                        .map(|index| index as isize)
+                }
             });
             let replay_event_ids = event_records
                 .iter()
                 .enumerate()
                 .filter(|(index, _event)| match last_cursor {
                     None => true,
-                    Some(_) => last_cursor_index.is_some_and(|cursor_index| *index > cursor_index),
+                    Some(_) => last_cursor_index
+                        .is_some_and(|cursor_index| (*index as isize) > cursor_index),
                 })
                 .map(|(_index, event)| event)
                 .filter_map(|event| {

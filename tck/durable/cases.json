@@ -547,6 +547,49 @@
     }
   },
   {
+    "name": "background_run_replay_from_initial_cursor_returns_retained_events",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "background",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-initial-cursor",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-initial-cursor/events",
+      "initialCursor": "evt_initial"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-initial-1",
+        "cursor": "evt_1",
+        "type": "RunStarted"
+      },
+      {
+        "eventId": "evt-initial-2",
+        "cursor": "evt_2",
+        "type": "JobProgress"
+      }
+    ],
+    "attach": {
+      "lastCursor": "evt_initial"
+    },
+    "expected": {
+      "runContinuesAfterDetach": true,
+      "acceptedResponseReturnsRunId": true,
+      "replayEventIds": [
+        "evt-initial-1",
+        "evt-initial-2"
+      ],
+      "cursorExpired": false,
+      "summaryIncluded": false,
+      "authoritativeStream": true
+    }
+  },
+  {
     "name": "background_run_non_boolean_detach_cancel_rejected",
     "kind": "background_run_event_stream",
     "lifetime": "background",
