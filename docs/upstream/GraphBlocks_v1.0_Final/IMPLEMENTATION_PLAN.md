@@ -1055,7 +1055,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscription projection.
 - Python and Rust callback event filters now expose an authorization projection that intersects
   requested visibility with the subscriber's allowed visibility, so a callback subscription filter
-  cannot widen access to operator/internal/audit-only events. Rust protocol-event filtering treats
+  cannot widen access to operator/internal/audit-only events. Protocol-event filtering treats
   absent visibility as default client visibility after that projection, while malformed visibility
   values remain non-matching.
 - Server callback registration and run event subscription paths now apply that visibility projection
@@ -1519,9 +1519,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   application-event payload snapshots are now deep-frozen after construction, including nested
   object and array values, so authoritative replay records cannot be mutated by retained caller
   references.
-- Python callback `EventFilter` now matches typed `ApplicationEvent` records by event type,
-  visibility, node id, operation id, severity floor, and terminal-event inclusion, aligning the
-  core schema facade with server-side callback subscription filtering.
+- Python callback `EventFilter` now matches typed `ApplicationEvent` records and protocol events by
+  event type, visibility, node id, operation id, severity floor, and terminal-event inclusion,
+  treating absent protocol visibility as default client visibility while keeping malformed
+  visibility hidden. This aligns the core schema facade with server-side callback subscription
+  filtering.
 - Rust `graphblocks-runtime-core::callback_delivery::EventFilter` now matches native
   `ApplicationEvent` records by canonical metadata visibility, node id, and operation id before
   falling back to legacy payload routing fields, so runtime callback routing can run before

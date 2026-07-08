@@ -206,7 +206,10 @@ class EventFilter:
         else:
             payload_visibility = event.payload.get("visibility")
             payload_node_id = event.payload.get("node_id", event.payload.get("nodeId"))
-            visibility = payload_visibility if isinstance(payload_visibility, str) else None
+            if "visibility" not in event.payload:
+                visibility = "client"
+            else:
+                visibility = payload_visibility if isinstance(payload_visibility, str) else None
             node_id = payload_node_id if isinstance(payload_node_id, str) else None
             operation_id = event.metadata.operation_id
             if operation_id is None:

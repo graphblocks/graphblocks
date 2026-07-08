@@ -158,6 +158,39 @@ def test_event_filter_matches_application_protocol_operation_metadata() -> None:
     assert not graphblocks.EventFilter(operation_ids=["operation-ci"]).matches(wrong_operation)
 
 
+def test_event_filter_defaults_missing_protocol_visibility_to_client() -> None:
+    default_client_event = graphblocks.ApplicationProtocolEvent.new(
+        "RunStarted",
+        graphblocks.ApplicationProtocolEventMetadata(
+            event_id="evt-default-client",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=11,
+            occurred_at_unix_ms=1_765_843_202_000,
+            cursor="run-1:11",
+        ),
+        payload={},
+    )
+    malformed_visibility_event = graphblocks.ApplicationProtocolEvent.new(
+        "RunStarted",
+        graphblocks.ApplicationProtocolEventMetadata(
+            event_id="evt-malformed-visibility",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=12,
+            occurred_at_unix_ms=1_765_843_202_100,
+            cursor="run-1:12",
+        ),
+        payload={"visibility": True},
+    )
+    filter_ = graphblocks.EventFilter(types=["RunStarted"], visibility=["client"]).authorized_for_visibility(
+        ["client"]
+    )
+
+    assert filter_.matches(default_client_event)
+    assert not filter_.matches(malformed_visibility_event)
+
+
 def test_event_filter_visibility_is_constrained_by_subscriber_authorization() -> None:
     requested = graphblocks.EventFilter(
         types=["RunStarted"],
