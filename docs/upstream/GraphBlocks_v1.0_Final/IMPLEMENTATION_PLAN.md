@@ -1868,9 +1868,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The shared durable TCK now includes a 410 subscription-gone callback delivery case. Python and
   Rust durable runners both report `subscriptionGoneAfter410` only when the receiver status is
   `410`, the delivery is `cancelled`, and the durable error is `subscription_gone`.
-- Durable callback projection validation now rejects malformed 410 receiver rows that are not
-  recorded as cancelled `subscription_gone` deliveries, preventing subscription-gone evidence from
-  being represented as a generic failed delivery.
+- Durable callback projection validation now has shared expected-diagnostic coverage for malformed
+  410 receiver rows that are not recorded as cancelled `subscription_gone` deliveries, preventing
+  subscription-gone evidence from being represented as a generic failed delivery.
 - The shared durable TCK now includes a successful 2xx callback delivery case. Python and Rust
   durable runners both report `deliveredAfter2xx` only when the receiver status is 2xx and the
   durable delivery row is recorded as `delivered`.

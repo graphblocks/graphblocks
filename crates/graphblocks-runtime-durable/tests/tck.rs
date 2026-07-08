@@ -622,6 +622,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                     && delivery
                         .get("status")
                         .and_then(Value::as_str)
+                        .is_some_and(|status| status != "cancelled")
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "410 callback delivery requires cancelled status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
+                }
+                if receiver_status == 410
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
                         .is_some_and(|status| status == "cancelled")
                     && delivery
                         .get("lastError")
