@@ -7056,6 +7056,29 @@ class TckRunner:
                     raw_redrive = {}
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
                 for index, delivery in enumerate(deliveries):
+                    for key, alias in (
+                        ("deliveryId", "delivery_id"),
+                        ("eventId", "event_id"),
+                        ("runId", "run_id"),
+                    ):
+                        value = delivery.get(key, delivery.get(alias))
+                        if not isinstance(value, str) or not value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": f"callback delivery requires {key}",
+                                    "path": f"$.deliveries[{index}].{key}",
+                                }
+                            )
+                    sequence = delivery.get("sequence")
+                    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery requires integer sequence",
+                                "path": f"$.deliveries[{index}].sequence",
+                            }
+                        )
                     idempotency_key = delivery.get("idempotencyKey", delivery.get("idempotency_key"))
                     if not isinstance(idempotency_key, str) or not idempotency_key.strip():
                         diagnostics.append(

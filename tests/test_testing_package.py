@@ -1297,6 +1297,54 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("deliveryId", " ", "callback delivery requires deliveryId"),
+        ("eventId", "", "callback delivery requires eventId"),
+        ("runId", None, "callback delivery requires runId"),
+        ("sequence", "100", "callback delivery requires integer sequence"),
+    ],
+)
+def test_testing_package_rejects_callback_delivery_without_identity_evidence(
+    monkeypatch, field: str, value: object, message: str
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    delivery = {
+        "deliveryId": "del-001",
+        "eventId": "evt-0100",
+        "runId": "run-coding-001",
+        "sequence": 100,
+        "idempotencyKey": "sub-ide-001:evt-0100",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:10Z",
+        "lastError": "receiver_error",
+    }
+    delivery[field] = value
+    case = graphblocks_testing.TckCase.durable(
+        case_id=f"durable/missing-callback-delivery-{field}",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [delivery],
+            "expected": {"retryScheduledAfter5xx": True},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": message,
+            "path": f"$.deliveries[0].{field}",
+        },
+    )
+
+
 def test_testing_package_loads_shared_orchestration_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
