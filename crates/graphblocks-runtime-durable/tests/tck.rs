@@ -2347,6 +2347,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{policy_snapshot_path}"),
                 }));
             }
+            let received_at_path = if raw_late_callback.contains_key("receivedAt")
+                || !raw_late_callback.contains_key("received_at")
+            {
+                "receivedAt"
+            } else {
+                "received_at"
+            };
+            let received_at_is_iso = raw_late_callback
+                .get("receivedAt")
+                .or_else(|| raw_late_callback.get("received_at"))
+                .and_then(Value::as_str)
+                .is_some_and(|received_at| {
+                    let received_at = received_at.trim();
+                    let bytes = received_at.as_bytes();
+                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                    bytes.len() >= 20
+                        && digit_positions
+                            .into_iter()
+                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                        && bytes.get(4) == Some(&b'-')
+                        && bytes.get(7) == Some(&b'-')
+                        && bytes.get(10) == Some(&b'T')
+                        && bytes.get(13) == Some(&b':')
+                        && bytes.get(16) == Some(&b':')
+                        && (received_at.ends_with('Z')
+                            || received_at
+                                .get(19..)
+                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
+                });
+            if !received_at_is_iso {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires ISO receivedAt",
+                    "path": format!("$.lateCallback.{received_at_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {

@@ -8496,6 +8496,38 @@ class TckRunner:
                             "path": f"$.lateCallback.{policy_snapshot_path}",
                         }
                     )
+                received_at_path = (
+                    "receivedAt"
+                    if "receivedAt" in raw_late_callback
+                    or "received_at" not in raw_late_callback
+                    else "received_at"
+                )
+                received_at = raw_late_callback.get(
+                    "receivedAt", raw_late_callback.get("received_at")
+                )
+                if not isinstance(received_at, str) or not received_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires ISO receivedAt",
+                            "path": f"$.lateCallback.{received_at_path}",
+                        }
+                    )
+                else:
+                    try:
+                        datetime.fromisoformat(
+                            received_at.replace("Z", "+00:00")
+                            if received_at.endswith("Z")
+                            else received_at
+                        )
+                    except ValueError:
+                        diagnostics.append(
+                            {
+                                "code": "DurableExternalOperationInvalid",
+                                "message": "external operation reconciliation requires ISO receivedAt",
+                                "path": f"$.lateCallback.{received_at_path}",
+                            }
+                        )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation
