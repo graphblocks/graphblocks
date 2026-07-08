@@ -7185,6 +7185,40 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].cursor",
                             }
                         )
+                    occurred_at_path = (
+                        "occurredAt"
+                        if "occurredAt" in raw_event or "occurred_at" not in raw_event
+                        else "occurred_at"
+                    )
+                    occurred_at = raw_event.get(
+                        "occurredAt",
+                        raw_event.get("occurred_at"),
+                    )
+                    if not isinstance(occurred_at, str) or not occurred_at.strip():
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires ISO occurredAt",
+                                "path": f"$.events[{event_index}].{occurred_at_path}",
+                            }
+                        )
+                    else:
+                        try:
+                            datetime.fromisoformat(
+                                occurred_at.replace("Z", "+00:00")
+                                if occurred_at.endswith("Z")
+                                else occurred_at
+                            )
+                        except ValueError:
+                            event_valid = False
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run event requires ISO occurredAt",
+                                    "path": f"$.events[{event_index}].{occurred_at_path}",
+                                }
+                            )
                     sequence = raw_event.get("sequence")
                     event_sequence = None
                     if (

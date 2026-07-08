@@ -466,18 +466,21 @@
       {
         "eventId": "evt-000001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-000002",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
         "type": "JobProgress"
       },
       {
         "eventId": "evt-000003",
         "sequence": 3,
+        "occurredAt": "2026-06-23T00:00:03Z",
         "cursor": "evt_000003",
         "type": "ReviewRequested"
       }
@@ -522,18 +525,21 @@
       {
         "eventId": "evt-1",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-2",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
         "type": "JobProgress"
       },
       {
         "eventId": "evt-10",
         "sequence": 10,
+        "occurredAt": "2026-06-23T00:00:10Z",
         "cursor": "evt_10",
         "type": "ReviewRequested"
       }
@@ -572,12 +578,14 @@
       {
         "eventId": "evt-initial-1",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-initial-2",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
         "type": "JobProgress"
       }
@@ -617,18 +625,21 @@
       {
         "eventId": "evt-retention-1",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-retention-2",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
         "type": "JobProgress"
       },
       {
         "eventId": "evt-retention-10",
         "sequence": 10,
+        "occurredAt": "2026-06-23T00:00:10Z",
         "cursor": "evt_10",
         "type": "ReviewRequested"
       }
@@ -669,12 +680,14 @@
       {
         "eventId": "evt-bg-invalid-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-bg-invalid-002",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
         "type": "RunProgress"
       }
@@ -718,12 +731,14 @@
       {
         "eventId": "evt-bg-invalid-summary-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       },
       {
         "eventId": "evt-bg-invalid-summary-002",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
         "type": "RunProgress"
       }
@@ -767,6 +782,7 @@
       {
         "eventId": "evt-bg-invalid-lifetime-type-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -805,6 +821,7 @@
       {
         "eventId": "evt-bg-client-bound-lifetime-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -843,6 +860,7 @@
       {
         "eventId": "evt-bg-invalid-response-mode-type-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -881,6 +899,7 @@
       {
         "eventId": "evt-bg-sync-response-mode-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -914,6 +933,7 @@
       {
         "eventId": "evt-bg-non-object-response-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -950,6 +970,7 @@
       {
         "eventId": "evt-bg-accepted-response-missing-run-id-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -987,6 +1008,7 @@
       {
         "eventId": "evt-bg-missing-initial-cursor-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1023,6 +1045,7 @@
       {
         "eventId": "evt-bg-background-response-missing-run-id-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1093,6 +1116,7 @@
     "events": [
       {
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1131,6 +1155,7 @@
       {
         "eventId": "evt-bg-missing-cursor-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": " ",
         "type": "RunStarted"
       }
@@ -1168,6 +1193,7 @@
     "events": [
       {
         "eventId": "evt-bg-missing-sequence-001",
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1206,12 +1232,14 @@
       {
         "eventId": "evt-bg-sequence-regression-002",
         "sequence": 2,
+        "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
         "type": "JobProgress"
       },
       {
         "eventId": "evt-bg-sequence-regression-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1235,6 +1263,44 @@
     }
   },
   {
+    "name": "background_run_event_missing_occurred_at_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-event-missing-occurred-at",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-event-missing-occurred-at/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-missing-occurred-at-001",
+        "sequence": 1,
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": "evt_000000"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run event requires ISO occurredAt",
+        "path": "$.events[0].occurredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "background_run_non_string_last_cursor_rejected",
     "kind": "background_run_event_stream",
     "lifetime": "background",
@@ -1250,6 +1316,7 @@
       {
         "eventId": "evt-bg-invalid-last-cursor-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1288,6 +1355,7 @@
       {
         "eventId": "evt-bg-invalid-expired-cursor-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000002",
         "type": "RunProgress"
       }
@@ -1330,6 +1398,7 @@
       {
         "eventId": "evt-bg-invalid-retained-cursor-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000002",
         "type": "RunProgress"
       }
@@ -1371,6 +1440,7 @@
       {
         "eventId": "evt-bg-missing-source-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1409,6 +1479,7 @@
       {
         "eventId": "evt-bg-invalid-source-type-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
@@ -1447,6 +1518,7 @@
       {
         "eventId": "evt-bg-callback-source-001",
         "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted"
       }
