@@ -2097,6 +2097,15 @@ class GraphBlocksServerApp:
                     route.operation,
                     payload,
                     request.requested_at or _utc_now_iso(),
+                    auth_decision.principal,
+                )
+            except PermissionError as error:
+                return ServerResponse.json(
+                    403,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
@@ -3043,14 +3052,21 @@ class GraphBlocksServerApp:
         operation: str,
         payload: Mapping[str, object],
         requested_at: str,
+        principal: PrincipalRef | None,
     ) -> ServerResponse:
         requested_at = _validate_iso_datetime("callback delivery control request", "requested_at", requested_at)
         delivery_id = _validate_non_empty_string("callback delivery control request", "delivery_id", delivery_id)
-        operator = _validate_non_empty_string(
-            "callback delivery control request",
-            "operator",
-            payload.get("operator", payload.get("operatorPrincipal", "")),
-        )
+        operator_value = payload.get("operator", payload.get("operatorPrincipal"))
+        if operator_value is None and principal is not None:
+            operator = principal.principal_id
+        else:
+            operator = _validate_non_empty_string(
+                "callback delivery control request",
+                "operator",
+                operator_value if operator_value is not None else "",
+            )
+        if principal is not None and operator != principal.principal_id:
+            raise PermissionError("callback delivery control request operator must match authenticated principal")
         reason = _validate_non_empty_string(
             "callback delivery control request",
             "reason",

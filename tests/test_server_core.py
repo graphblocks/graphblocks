@@ -7384,6 +7384,63 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
         app.callback_delivery_dead_letter_moves("del-1")[0]["reason"] = "changed"
 
 
+def test_server_app_uses_authenticated_principal_for_callback_delivery_control_operator() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-authenticated/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "receiver recovered"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "deliveryId": "del-authenticated",
+        "operator": "operator-1",
+        "reason": "receiver recovered",
+        "status": "redrive_requested",
+    }
+    assert app.callback_delivery_redrives("del-authenticated") == (
+        {
+            "deliveryId": "del-authenticated",
+            "operator": "operator-1",
+            "reason": "receiver recovered",
+            "requestedAt": "2026-07-03T00:00:00Z",
+            "status": "redrive_requested",
+        },
+    )
+
+
+def test_server_app_rejects_callback_delivery_control_operator_mismatch() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-forged/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-2", "reason": "receiver recovered"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:30Z",
+        )
+    )
+
+    assert response.status_code == 403
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery control request operator must match authenticated principal",
+    }
+    assert app.callback_delivery_redrives("del-forged") == ()
+
+
 def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
 
@@ -7405,7 +7462,7 @@ def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() ->
             headers={"Authorization": "Bearer token-1"},
             query={},
             cookies={},
-            body=json.dumps({"operator": "operator-2", "reason": "already moved"}).encode("utf-8"),
+            body=json.dumps({"reason": "already moved"}).encode("utf-8"),
             requested_at="2026-07-03T00:02:00Z",
         )
     )

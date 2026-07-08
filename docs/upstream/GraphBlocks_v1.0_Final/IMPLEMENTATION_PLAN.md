@@ -1408,7 +1408,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Stored control projections are immutable snapshots with ISO-validated request timestamps, so
   inspection callers cannot mutate redrive or dead-letter history after recording. Repeated
   dead-letter moves for the same delivery are idempotent and return the first terminal move;
-  redrive requests remain repeatable operator actions.
+  redrive requests remain repeatable operator actions. Authenticated control requests derive the
+  audit operator from the authorized principal when the body omits it and reject body-supplied
+  operators that do not match the authenticated principal.
 - `graphblocks-client` now exposes HTTP helpers for callback delivery redrive and dead-letter
   moves. The helpers validate delivery id, operator, and reason locally, POST the same JSON
   command contract as the server routes, preserve bearer authentication, and surface the
