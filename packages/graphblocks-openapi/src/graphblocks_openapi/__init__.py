@@ -593,8 +593,8 @@ def _stream_content_parts(
     for raw_part in raw_parts:
         if isinstance(raw_part, ContentPart):
             metadata = dict(raw_part.metadata)
-            metadata.setdefault("adapter", "openapi")
-            metadata.setdefault("trust_designation", "untrusted_external")
+            metadata["adapter"] = "openapi"
+            metadata["trust_designation"] = "untrusted_external"
             parts.append(replace(raw_part, metadata=metadata))
         elif isinstance(raw_part, str):
             parts.append(
@@ -617,8 +617,8 @@ def _content_part(raw_part: Mapping[str, object], *, owner: str) -> ContentPart:
     if not isinstance(metadata, Mapping):
         raise OpenApiToolAdapterError(f"{owner} tool result delta metadata must be an object")
     metadata = dict(metadata)
-    metadata.setdefault("adapter", owner.lower())
-    metadata.setdefault("trust_designation", "untrusted_external")
+    metadata["adapter"] = owner.lower()
+    metadata["trust_designation"] = "untrusted_external"
     if kind is None:
         kind = "text" if "text" in raw_part else "json" if "data" in raw_part else None
     if kind == "text":

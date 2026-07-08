@@ -637,6 +637,40 @@ def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
     assert "mcp_tool_result_delta" in graphblocks_mcp.__all__
 
 
+def test_mcp_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+
+    delta = graphblocks_mcp.mcp_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=(
+            ContentPart(
+                kind="text",
+                text="partial",
+                metadata={"adapter": "client", "trust_designation": "trusted"},
+            ),
+            {
+                "kind": "json",
+                "data": {"count": 1},
+                "metadata": {"adapter": "client", "trust_designation": "trusted"},
+            },
+        ),
+    )
+
+    assert [part.metadata for part in delta.output] == [
+        {"adapter": "mcp", "trust_designation": "untrusted_external"},
+        {"adapter": "mcp", "trust_designation": "untrusted_external"},
+    ]
+
+
 def test_mcp_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -1300,6 +1334,40 @@ def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> Non
     assert artifact.kind == "artifact_ready"
     assert artifact.artifact == ArtifactRef("artifact-2", "blob://tool-results/2", checksum="sha256:artifact")
     assert "openapi_tool_result_artifact_ready" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    delta = graphblocks_openapi.openapi_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=(
+            ContentPart(
+                kind="text",
+                text="draft",
+                metadata={"adapter": "client", "trust_designation": "trusted"},
+            ),
+            {
+                "kind": "json",
+                "data": {"ticket_id": "ticket-1"},
+                "metadata": {"adapter": "client", "trust_designation": "trusted"},
+            },
+        ),
+    )
+
+    assert [part.metadata for part in delta.output] == [
+        {"adapter": "openapi", "trust_designation": "untrusted_external"},
+        {"adapter": "openapi", "trust_designation": "untrusted_external"},
+    ]
 
 
 def test_openapi_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
