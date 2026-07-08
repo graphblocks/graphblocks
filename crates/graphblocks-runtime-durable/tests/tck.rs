@@ -9,7 +9,7 @@ use graphblocks_runtime_durable::{
     SinkCommitError, SinkCommitRequest, SourceCursor, SourceEvent, ToolTerminalStoreError,
     Watermark, WindowAccumulator, WindowPolicy,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
@@ -617,9 +617,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }
                         let offset_start =
                             time_with_offset.find(|character| character == '+' || character == '-');
-                        let time = offset_start.map_or(time_with_offset, |index| {
-                            &time_with_offset[..index]
-                        });
+                        let time = offset_start
+                            .map_or(time_with_offset, |index| &time_with_offset[..index]);
                         let mut time_parts = time.split(':');
                         let hour = time_parts.next();
                         let minute = time_parts.next();
@@ -637,8 +636,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                             return false;
                         };
                         let second_integer = second_text.split('.').next();
-                        let Some(second) =
-                            second_integer.and_then(|part| part.parse::<u8>().ok())
+                        let Some(second) = second_integer.and_then(|part| part.parse::<u8>().ok())
                         else {
                             return false;
                         };
@@ -734,6 +732,86 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     delivered_after_2xx = true;
                 }
+                if let Some(status) = delivery.get("status").and_then(Value::as_str) {
+                    if matches!(status, "delivered" | "acknowledged") {
+                        if let Some(delivered_at) = delivery
+                            .get("deliveredAt")
+                            .or_else(|| delivery.get("delivered_at"))
+                        {
+                            let delivered_at_valid = delivered_at.as_str().is_some_and(|value| {
+                                let trimmed = value.trim();
+                                if trimmed.is_empty() {
+                                    return false;
+                                }
+                                let without_z = trimmed.strip_suffix('Z').unwrap_or(trimmed);
+                                let Some((date, time_with_offset)) = without_z.split_once('T')
+                                else {
+                                    return false;
+                                };
+                                let mut date_parts = date.split('-');
+                                let year = date_parts.next();
+                                let month = date_parts.next();
+                                let day = date_parts.next();
+                                if date_parts.next().is_some() {
+                                    return false;
+                                }
+                                let Some(year) = year.and_then(|part| part.parse::<u16>().ok())
+                                else {
+                                    return false;
+                                };
+                                let Some(month) = month.and_then(|part| part.parse::<u8>().ok())
+                                else {
+                                    return false;
+                                };
+                                let Some(day) = day.and_then(|part| part.parse::<u8>().ok()) else {
+                                    return false;
+                                };
+                                if year == 0
+                                    || !(1..=12).contains(&month)
+                                    || !(1..=31).contains(&day)
+                                {
+                                    return false;
+                                }
+                                let offset_start = time_with_offset
+                                    .find(|character| character == '+' || character == '-');
+                                let time = offset_start
+                                    .map_or(time_with_offset, |index| &time_with_offset[..index]);
+                                let mut time_parts = time.split(':');
+                                let hour = time_parts.next();
+                                let minute = time_parts.next();
+                                let second = time_parts.next();
+                                if time_parts.next().is_some() {
+                                    return false;
+                                }
+                                let Some(hour) = hour.and_then(|part| part.parse::<u8>().ok())
+                                else {
+                                    return false;
+                                };
+                                let Some(minute) = minute.and_then(|part| part.parse::<u8>().ok())
+                                else {
+                                    return false;
+                                };
+                                let Some(second_text) = second else {
+                                    return false;
+                                };
+                                let second_integer = second_text.split('.').next();
+                                let Some(second) =
+                                    second_integer.and_then(|part| part.parse::<u8>().ok())
+                                else {
+                                    return false;
+                                };
+                                hour <= 23 && minute <= 59 && second <= 59
+                            });
+                            if !delivered_at_valid {
+                                diagnostics.push(json!({
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": format!("{status} callback delivery requires deliveredAt"),
+                                    "path": format!("$.deliveries[{index}].deliveredAt"),
+                                }));
+                            }
+                        }
+                    }
+                }
                 if delivery
                     .get("status")
                     .and_then(Value::as_str)
@@ -778,9 +856,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .get("acknowledgedAt")
                         .or_else(|| delivery.get("acknowledged_at"))
                         .and_then(Value::as_str)
-                        .map_or(true, |acknowledged_at| {
-                            acknowledged_at.trim().is_empty()
-                        })
+                        .map_or(true, |acknowledged_at| acknowledged_at.trim().is_empty())
                 {
                     diagnostics.push(json!({
                         "code": "DurableCallbackDeliveryInvalid",

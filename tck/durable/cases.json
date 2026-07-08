@@ -726,6 +726,35 @@
     }
   },
   {
+    "name": "webhook_delivery_invalid_delivered_at_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-success-format-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0154",
+        "runId": "run-coding-001",
+        "sequence": 154,
+        "cursor": "evt-0154",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0154",
+        "receiverStatus": 204,
+        "status": "delivered",
+        "deliveredAt": "eventually"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "delivered callback delivery requires deliveredAt",
+        "path": "$.deliveries[0].deliveredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_2xx_failed_status_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
