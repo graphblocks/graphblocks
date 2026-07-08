@@ -1421,9 +1421,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   audit operator from the authorized principal when the body omits it and reject body-supplied
   operators that do not match the authenticated principal.
 - `graphblocks-client` now exposes HTTP helpers for callback delivery redrive and dead-letter
-  moves. The helpers validate delivery id, operator, and reason locally, POST the same JSON
-  command contract as the server routes, preserve bearer authentication, and surface the
-  idempotent duplicate dead-letter response unchanged.
+  moves. The helpers validate delivery id and reason locally, optionally accept an explicit
+  operator, omit it when bearer authentication should let the server derive the operator, preserve
+  bearer authentication, and surface the idempotent duplicate dead-letter response unchanged.
 - `graphblocks-callbacks` now treats non-retryable `failed` callback deliveries as terminal
   delivery projections, preventing late webhook responses from mutating a delivery after the
   runtime has already produced the mandatory pause/fail/no-op failure action.

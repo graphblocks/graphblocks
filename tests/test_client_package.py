@@ -2505,6 +2505,64 @@ def test_client_package_redrives_callback_delivery_over_http_transport(monkeypat
     )
 
 
+def test_client_package_redrives_callback_delivery_with_auth_derived_operator(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/callbacks/deliveries/del-client-derived/redrive"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["content-type"] == "application/json"
+        assert json.loads(request.data.decode("utf-8")) == {"reason": "receiver recovered"}
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+                requested_at="2026-07-03T00:00:00Z",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.redrive_callback_delivery(
+        "del-client-derived",
+        reason="receiver recovered",
+    )
+
+    assert response == {
+        "ok": True,
+        "deliveryId": "del-client-derived",
+        "operator": "operator-1",
+        "reason": "receiver recovered",
+        "status": "redrive_requested",
+    }
+    assert app.callback_delivery_redrives("del-client-derived") == (
+        {
+            "deliveryId": "del-client-derived",
+            "operator": "operator-1",
+            "reason": "receiver recovered",
+            "requestedAt": "2026-07-03T00:00:00Z",
+            "status": "redrive_requested",
+        },
+    )
+
+
 def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

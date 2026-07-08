@@ -1215,8 +1215,8 @@ class HttpGraphBlocksClient:
         self,
         delivery_id: object,
         *,
-        operator: object,
         reason: object,
+        operator: object | None = None,
     ) -> dict[str, object]:
         return self._callback_delivery_control(
             delivery_id,
@@ -1230,8 +1230,8 @@ class HttpGraphBlocksClient:
         self,
         delivery_id: object,
         *,
-        operator: object,
         reason: object,
+        operator: object | None = None,
     ) -> dict[str, object]:
         return self._callback_delivery_control(
             delivery_id,
@@ -1245,16 +1245,17 @@ class HttpGraphBlocksClient:
         self,
         delivery_id: object,
         *,
-        operator: object,
         reason: object,
+        operator: object | None,
         action: str,
         label: str,
     ) -> dict[str, object]:
         delivery_id = _http_non_empty_string("delivery_id", delivery_id)
         body = {
-            "operator": _http_non_empty_string("operator", operator),
             "reason": _http_non_empty_string("reason", reason),
         }
+        if operator is not None:
+            body["operator"] = _http_non_empty_string("operator", operator)
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
