@@ -839,14 +839,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "message": format!("background run {mode} response requires eventStream"),
                             "path": format!("$.initialResponse.{event_stream_path}"),
                         }));
-                    } else if let (Some(run_id), Some(event_stream)) =
-                        (response_run_id, response_event_stream)
-                    {
-                        let run_id_path_segment = format!("/runs/{run_id}/");
-                        if !event_stream.contains(&run_id_path_segment) {
+                    } else if let Some(event_stream) = response_event_stream {
+                        if let Some(run_id) = response_run_id {
+                            let run_id_path_segment = format!("/runs/{run_id}/");
+                            if !event_stream.contains(&run_id_path_segment) {
+                                diagnostics.push(json!({
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run eventStream must include runId",
+                                    "path": format!("$.initialResponse.{event_stream_path}"),
+                                }));
+                            }
+                        }
+                        if !event_stream.ends_with("/events") {
                             diagnostics.push(json!({
                                 "code": "DurableBackgroundRunInvalid",
-                                "message": "background run eventStream must include runId",
+                                "message": "background run eventStream must end with /events",
                                 "path": format!("$.initialResponse.{event_stream_path}"),
                             }));
                         }
@@ -870,14 +877,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "message": format!("background run {mode} response requires websocket"),
                             "path": format!("$.initialResponse.{websocket_path}"),
                         }));
-                    } else if let (Some(run_id), Some(websocket)) =
-                        (response_run_id, response_websocket)
-                    {
-                        let run_id_path_segment = format!("/runs/{run_id}/");
-                        if !websocket.contains(&run_id_path_segment) {
+                    } else if let Some(websocket) = response_websocket {
+                        if let Some(run_id) = response_run_id {
+                            let run_id_path_segment = format!("/runs/{run_id}/");
+                            if !websocket.contains(&run_id_path_segment) {
+                                diagnostics.push(json!({
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run websocket must include runId",
+                                    "path": format!("$.initialResponse.{websocket_path}"),
+                                }));
+                            }
+                        }
+                        if !websocket.ends_with("/ws") {
                             diagnostics.push(json!({
                                 "code": "DurableBackgroundRunInvalid",
-                                "message": "background run websocket must include runId",
+                                "message": "background run websocket must end with /ws",
                                 "path": format!("$.initialResponse.{websocket_path}"),
                             }));
                         }
@@ -901,13 +915,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "message": format!("background run {mode} response requires cancel"),
                             "path": format!("$.initialResponse.{cancel_path}"),
                         }));
-                    } else if let (Some(run_id), Some(cancel)) = (response_run_id, response_cancel)
-                    {
-                        let run_id_path_segment = format!("/runs/{run_id}/");
-                        if !cancel.contains(&run_id_path_segment) {
+                    } else if let Some(cancel) = response_cancel {
+                        if let Some(run_id) = response_run_id {
+                            let run_id_path_segment = format!("/runs/{run_id}/");
+                            if !cancel.contains(&run_id_path_segment) {
+                                diagnostics.push(json!({
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run cancel must include runId",
+                                    "path": format!("$.initialResponse.{cancel_path}"),
+                                }));
+                            }
+                        }
+                        if !cancel.ends_with("/cancel") {
                             diagnostics.push(json!({
                                 "code": "DurableBackgroundRunInvalid",
-                                "message": "background run cancel must include runId",
+                                "message": "background run cancel must end with /cancel",
                                 "path": format!("$.initialResponse.{cancel_path}"),
                             }));
                         }

@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 234
+    assert [case.kind for case in cases] == ["durable"] * 237
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1233,10 +1233,13 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_accepted_response_missing_run_id_rejected",
         "background_run_accepted_response_missing_event_stream_rejected",
         "background_run_event_stream_run_id_mismatch_rejected",
+        "background_run_event_stream_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_websocket_rejected",
         "background_run_websocket_run_id_mismatch_rejected",
+        "background_run_websocket_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_cancel_rejected",
         "background_run_cancel_run_id_mismatch_rejected",
+        "background_run_cancel_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",
@@ -1523,6 +1526,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         for result in report.results
     )
     assert any(
+        result.case_id == "background_run_event_stream_endpoint_mismatch_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
         result.case_id == "background_run_accepted_response_missing_websocket_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
@@ -1533,12 +1541,22 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         for result in report.results
     )
     assert any(
+        result.case_id == "background_run_websocket_endpoint_mismatch_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
         result.case_id == "background_run_accepted_response_missing_cancel_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
     assert any(
         result.case_id == "background_run_cancel_run_id_mismatch_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "background_run_cancel_endpoint_mismatch_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -5919,10 +5937,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_accepted_response_missing_run_id_rejected",
         "background_run_accepted_response_missing_event_stream_rejected",
         "background_run_event_stream_run_id_mismatch_rejected",
+        "background_run_event_stream_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_websocket_rejected",
         "background_run_websocket_run_id_mismatch_rejected",
+        "background_run_websocket_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_cancel_rejected",
         "background_run_cancel_run_id_mismatch_rejected",
+        "background_run_cancel_endpoint_mismatch_rejected",
         "background_run_accepted_response_missing_initial_cursor_rejected",
         "background_run_background_response_missing_run_id_rejected",
         "background_run_non_object_event_rejected",

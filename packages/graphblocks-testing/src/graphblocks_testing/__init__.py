@@ -7167,18 +7167,27 @@ class TckRunner:
                                     "path": f"$.initialResponse.{event_stream_path}",
                                 }
                             )
-                        elif (
-                            valid_initial_run_id is not None
-                            and f"/runs/{valid_initial_run_id}/"
-                            not in valid_initial_event_stream
-                        ):
-                            diagnostics.append(
-                                {
-                                    "code": "DurableBackgroundRunInvalid",
-                                    "message": "background run eventStream must include runId",
-                                    "path": f"$.initialResponse.{event_stream_path}",
-                                }
-                            )
+                        else:
+                            if (
+                                valid_initial_run_id is not None
+                                and f"/runs/{valid_initial_run_id}/"
+                                not in valid_initial_event_stream
+                            ):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run eventStream must include runId",
+                                        "path": f"$.initialResponse.{event_stream_path}",
+                                    }
+                                )
+                            if not valid_initial_event_stream.endswith("/events"):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run eventStream must end with /events",
+                                        "path": f"$.initialResponse.{event_stream_path}",
+                                    }
+                                )
                         initial_websocket = raw_initial_response.get(
                             "websocket",
                             raw_initial_response.get("web_socket"),
@@ -7203,18 +7212,27 @@ class TckRunner:
                                     "path": f"$.initialResponse.{websocket_path}",
                                 }
                             )
-                        elif (
-                            valid_initial_run_id is not None
-                            and f"/runs/{valid_initial_run_id}/"
-                            not in valid_initial_websocket
-                        ):
-                            diagnostics.append(
-                                {
-                                    "code": "DurableBackgroundRunInvalid",
-                                    "message": "background run websocket must include runId",
-                                    "path": f"$.initialResponse.{websocket_path}",
-                                }
-                            )
+                        else:
+                            if (
+                                valid_initial_run_id is not None
+                                and f"/runs/{valid_initial_run_id}/"
+                                not in valid_initial_websocket
+                            ):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run websocket must include runId",
+                                        "path": f"$.initialResponse.{websocket_path}",
+                                    }
+                                )
+                            if not valid_initial_websocket.endswith("/ws"):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run websocket must end with /ws",
+                                        "path": f"$.initialResponse.{websocket_path}",
+                                    }
+                                )
                         initial_cancel = raw_initial_response.get(
                             "cancel",
                             raw_initial_response.get("cancel_route"),
@@ -7238,18 +7256,27 @@ class TckRunner:
                                     "path": f"$.initialResponse.{cancel_path}",
                                 }
                             )
-                        elif (
-                            valid_initial_run_id is not None
-                            and f"/runs/{valid_initial_run_id}/"
-                            not in valid_initial_cancel
-                        ):
-                            diagnostics.append(
-                                {
-                                    "code": "DurableBackgroundRunInvalid",
-                                    "message": "background run cancel must include runId",
-                                    "path": f"$.initialResponse.{cancel_path}",
-                                }
-                            )
+                        else:
+                            if (
+                                valid_initial_run_id is not None
+                                and f"/runs/{valid_initial_run_id}/"
+                                not in valid_initial_cancel
+                            ):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run cancel must include runId",
+                                        "path": f"$.initialResponse.{cancel_path}",
+                                    }
+                                )
+                            if not valid_initial_cancel.endswith("/cancel"):
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run cancel must end with /cancel",
+                                        "path": f"$.initialResponse.{cancel_path}",
+                                    }
+                                )
                         initial_cursor_value = raw_initial_response.get(
                             "initialCursor",
                             raw_initial_response.get("initial_cursor"),
