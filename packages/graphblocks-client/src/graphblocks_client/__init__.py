@@ -740,6 +740,8 @@ class LocalGraphBlocksClient:
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
 
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
+        if command.response_mode != "sync":
+            raise ValueError("LocalGraphBlocksClient supports only sync response_mode")
         result = InProcessRuntime(self.registry).run(command.graph, command.inputs, run_id=command.run_id)
         start_payload = result.journal.records[0].payload if result.journal.records else {}
         start_event = ApplicationEvent.new(

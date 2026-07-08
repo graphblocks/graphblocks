@@ -749,6 +749,25 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     assert "LocalGraphBlocksClient" in graphblocks_client.__all__
 
 
+def test_client_package_local_client_rejects_background_response_modes(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    client = graphblocks_client.LocalGraphBlocksClient()
+
+    with pytest.raises(ValueError, match="LocalGraphBlocksClient supports only sync response_mode"):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={
+                    "apiVersion": "graphblocks.ai/v1alpha3",
+                    "kind": "Graph",
+                    "metadata": {"name": "local-accepted-unsupported"},
+                    "spec": {"nodes": {}},
+                },
+                response_mode="accepted",
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("command_kwargs", "message"),
     (
