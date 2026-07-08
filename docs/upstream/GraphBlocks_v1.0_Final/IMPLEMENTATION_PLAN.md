@@ -755,9 +755,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   labels.
 - Shared durable async callback resume TCK fixtures now validate supplied operation envelopes,
   requiring nonblank `operationId`, `runId`, `nodeId`, `attemptId`, `releaseId`,
-  `policySnapshotId`, canonical `resumeTokenHash`, and nonblank `expectedSchema` evidence, so
-  journal-before-resume conformance cannot be proven from an anonymous, unpinned, or unfenced
-  `AsyncOperation` reference.
+  `policySnapshotId`, canonical `resumeTokenHash`, nonblank `expectedSchema`, ISO `deadline`,
+  and nonblank `budgetState` evidence, so journal-before-resume conformance cannot be proven from
+  an anonymous, unpinned, unfenced, or unbounded `AsyncOperation` reference.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
   through `waiting_callback` before `callback_received`, polling must be explicit before terminal
   poll results, terminal operations cannot transition again, and direct construction rejects

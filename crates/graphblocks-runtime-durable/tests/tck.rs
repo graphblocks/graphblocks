@@ -1987,6 +1987,53 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.operation.{expected_schema_path}"),
                     }));
                 }
+                let deadline_is_iso = operation
+                    .get("deadline")
+                    .and_then(Value::as_str)
+                    .is_some_and(|deadline| {
+                        let deadline = deadline.trim();
+                        let bytes = deadline.as_bytes();
+                        let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                        bytes.len() >= 20
+                            && digit_positions
+                                .into_iter()
+                                .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                            && bytes.get(4) == Some(&b'-')
+                            && bytes.get(7) == Some(&b'-')
+                            && bytes.get(10) == Some(&b'T')
+                            && bytes.get(13) == Some(&b':')
+                            && bytes.get(16) == Some(&b':')
+                            && (deadline.ends_with('Z')
+                                || deadline.get(19..).is_some_and(|suffix| {
+                                    suffix.contains('+') || suffix.contains('-')
+                                }))
+                    });
+                if !deadline_is_iso {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires ISO deadline",
+                        "path": "$.operation.deadline",
+                    }));
+                }
+                let budget_state_path = if operation.contains_key("budgetState")
+                    || !operation.contains_key("budget_state")
+                {
+                    "budgetState"
+                } else {
+                    "budget_state"
+                };
+                if operation
+                    .get("budgetState")
+                    .or_else(|| operation.get("budget_state"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |budget_state| budget_state.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires nonblank budgetState",
+                        "path": format!("$.operation.{budget_state_path}"),
+                    }));
+                }
             }
             let mut guard_values = BTreeMap::new();
             for (key, alias) in [

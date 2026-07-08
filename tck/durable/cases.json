@@ -3652,6 +3652,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3708,6 +3710,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3755,6 +3759,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3802,6 +3808,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3849,6 +3857,8 @@
       "attemptId": " ",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3896,6 +3906,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "resume-token-placeholder",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -3943,6 +3955,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": " "
     },
@@ -3990,6 +4004,8 @@
       "attemptId": "attempt-1",
       "releaseId": " ",
       "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -4037,6 +4053,8 @@
       "attemptId": "attempt-1",
       "releaseId": "rel-coding-001",
       "policySnapshotId": " ",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
       "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "expectedSchema": "schemas/CICallback@1"
     },
@@ -4068,6 +4086,104 @@
         "code": "DurableAsyncCallbackResumeInvalid",
         "message": "async callback resume operation requires nonblank policySnapshotId",
         "path": "$.operation.policySnapshotId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_invalid_deadline_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "releaseId": "rel-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "soon",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume operation requires ISO deadline",
+        "path": "$.operation.deadline"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_blank_budget_state_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "releaseId": "rel-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": " ",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume operation requires nonblank budgetState",
+        "path": "$.operation.budgetState"
       }
     ],
     "expected": {

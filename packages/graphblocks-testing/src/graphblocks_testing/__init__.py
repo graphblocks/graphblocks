@@ -8180,6 +8180,45 @@ class TckRunner:
                                 "path": f"$.operation.{expected_schema_path}",
                             }
                         )
+                    deadline = raw_operation.get("deadline")
+                    if not isinstance(deadline, str) or not deadline.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires ISO deadline",
+                                "path": "$.operation.deadline",
+                            }
+                        )
+                    else:
+                        deadline_text = deadline.strip()
+                        if deadline_text.endswith("Z"):
+                            deadline_text = f"{deadline_text[:-1]}+00:00"
+                        try:
+                            datetime.fromisoformat(deadline_text)
+                        except ValueError:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume operation requires ISO deadline",
+                                    "path": "$.operation.deadline",
+                                }
+                            )
+                    budget_state_path = (
+                        "budgetState"
+                        if "budgetState" in raw_operation or "budget_state" not in raw_operation
+                        else "budget_state"
+                    )
+                    budget_state = raw_operation.get(
+                        "budgetState", raw_operation.get("budget_state")
+                    )
+                    if not isinstance(budget_state, str) or not budget_state.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires nonblank budgetState",
+                                "path": f"$.operation.{budget_state_path}",
+                            }
+                        )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),
