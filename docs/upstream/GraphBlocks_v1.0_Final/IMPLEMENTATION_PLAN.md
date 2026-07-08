@@ -1761,6 +1761,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now reject malformed `redriveAssertions` values
   when present in both Rust and Python runners, so assertion evidence cannot be silently discarded
   by treating non-object data as an empty assertion block.
+- Durable callback projection shared TCK cases now require `redriveAssertions` fields to be real
+  booleans in both Rust and Python runners, so string assertion values cannot silently disable
+  required redrive evidence checks.
 - Durable callback projection redrive evidence now also requires an explicit `redrive` object
   before asserting `redriveCreatesApplicationEvent`, so redrive application-event behavior cannot
   be proven from the projection default.

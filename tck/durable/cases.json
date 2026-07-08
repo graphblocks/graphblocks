@@ -2837,6 +2837,40 @@
     }
   },
   {
+    "name": "webhook_delivery_non_boolean_redrive_assertion_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-assertion-bool-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0313",
+        "runId": "run-coding-001",
+        "sequence": 313,
+        "cursor": "evt-0313",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0313",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:13Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "redriveAssertions": {
+      "deadLetterPreservesEventId": "true"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive assertion requires boolean deadLetterPreservesEventId",
+        "path": "$.redriveAssertions.deadLetterPreservesEventId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_redrive_operator_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

@@ -7502,6 +7502,26 @@ class TckRunner:
                             }
                         )
                     raw_redrive_assertions = {}
+                for key, alias in (
+                    ("deadLetterPreservesEventId", "dead_letter_preserves_event_id"),
+                    ("redriveCreatesApplicationEvent", "redrive_creates_application_event"),
+                ):
+                    if key in raw_redrive_assertions or alias in raw_redrive_assertions:
+                        value = raw_redrive_assertions.get(key, raw_redrive_assertions.get(alias))
+                        path = (
+                            key
+                            if key in raw_redrive_assertions
+                            or alias not in raw_redrive_assertions
+                            else alias
+                        )
+                        if not isinstance(value, bool):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackRedriveInvalid",
+                                    "message": f"callback redrive assertion requires boolean {key}",
+                                    "path": f"$.redriveAssertions.{path}",
+                                }
+                            )
                 redrive_creates_application_event = False
                 redrive_event_id_preserved = False
                 raw_non_mandatory_outage_blocks_run = fixture.get(

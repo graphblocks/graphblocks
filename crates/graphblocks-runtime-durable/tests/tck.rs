@@ -938,6 +938,35 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_redrive_assertions = raw_redrive_assertions_value
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_redrive_assertions);
+            for (key, alias) in [
+                (
+                    "deadLetterPreservesEventId",
+                    "dead_letter_preserves_event_id",
+                ),
+                (
+                    "redriveCreatesApplicationEvent",
+                    "redrive_creates_application_event",
+                ),
+            ] {
+                let path = if raw_redrive_assertions.contains_key(key)
+                    || !raw_redrive_assertions.contains_key(alias)
+                {
+                    key
+                } else {
+                    alias
+                };
+                if raw_redrive_assertions
+                    .get(key)
+                    .or_else(|| raw_redrive_assertions.get(alias))
+                    .is_some_and(|assertion| !assertion.is_boolean())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackRedriveInvalid",
+                        "message": format!("callback redrive assertion requires boolean {key}"),
+                        "path": format!("$.redriveAssertions.{path}"),
+                    }));
+                }
+            }
             let redrive_event_id = raw_redrive
                 .get("eventId")
                 .or_else(|| raw_redrive.get("event_id"))

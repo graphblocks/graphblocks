@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 169
+    assert [case.kind for case in cases] == ["durable"] * 170
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1281,6 +1281,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "webhook_delivery_missing_redrive_preservation_evidence_rejected",
         "webhook_delivery_non_object_redrive_assertions_rejected",
+        "webhook_delivery_non_boolean_redrive_assertion_rejected",
         "webhook_delivery_missing_redrive_operator_rejected",
         "webhook_delivery_missing_redrive_reason_rejected",
         "webhook_delivery_missing_redrive_delivery_id_rejected",
@@ -1759,6 +1760,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "webhook_delivery_non_object_redrive_assertions_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_non_boolean_redrive_assertion_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -5493,6 +5499,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "webhook_delivery_missing_redrive_preservation_evidence_rejected",
         "webhook_delivery_non_object_redrive_assertions_rejected",
+        "webhook_delivery_non_boolean_redrive_assertion_rejected",
         "webhook_delivery_missing_redrive_operator_rejected",
         "webhook_delivery_missing_redrive_reason_rejected",
         "webhook_delivery_missing_redrive_delivery_id_rejected",
