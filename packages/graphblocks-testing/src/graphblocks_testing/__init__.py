@@ -7039,8 +7039,25 @@ class TckRunner:
                 ]
                 expired_cursor = str(raw_attach.get("expiredCursor", raw_attach.get("expired_cursor", "")))
                 retained_from = str(raw_retention.get("retainedFromCursor", raw_retention.get("retained_from_cursor", "")))
+                raw_cancel_run = raw_detach.get("cancelRun", raw_detach.get("cancel_run", False))
+                if isinstance(raw_cancel_run, bool):
+                    cancel_run = raw_cancel_run
+                else:
+                    cancel_run = False
+                    cancel_run_path = (
+                        "cancelRun"
+                        if "cancelRun" in raw_detach or "cancel_run" not in raw_detach
+                        else "cancel_run"
+                    )
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run detach requires boolean cancelRun",
+                            "path": f"$.detach.{cancel_run_path}",
+                        }
+                    )
                 observed = {
-                    "runContinuesAfterDetach": lifetime in {"background", "job"} and not bool(raw_detach.get("cancelRun", raw_detach.get("cancel_run", False))),
+                    "runContinuesAfterDetach": lifetime in {"background", "job"} and not cancel_run,
                     "acceptedResponseReturnsRunId": response_mode == "accepted" and bool(fixture.get("initialResponse", fixture.get("initial_response", {}))),
                     "replayEventIds": replay_after_cursor,
                     "cursorExpired": bool(expired_cursor and retained_from and expired_cursor < retained_from),

@@ -1225,6 +1225,45 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert "load_durable_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-background-run-detach",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "run_id": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000001",
+                    "cursor": "evt-000001",
+                }
+            ],
+            "attach": {},
+            "detach": {
+                "cancelRun": "false",
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run detach requires boolean cancelRun",
+            "path": "$.detach.cancelRun",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

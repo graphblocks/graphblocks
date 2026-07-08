@@ -1767,6 +1767,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection fixture-level outage evidence now requires a real boolean
   `nonMandatoryOutageBlocksRun`, preventing string coercion from satisfying non-mandatory webhook
   outage behavior.
+- Durable background-run event-stream evidence now requires a real boolean `detach.cancelRun`
+  value before proving that background/job lifetimes outlive client detach, preventing truthy
+  strings from satisfying run-lifetime behavior.
 - Durable async callback resume-guard evidence now requires real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks, preventing truthy strings from satisfying callback resume conformance.
