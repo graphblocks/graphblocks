@@ -7149,6 +7149,7 @@ class TckRunner:
                         initial_cursor = raw_initial_cursor
                 event_records = []
                 previous_event_sequence = None
+                event_ids = set()
                 for event_index, raw_event in enumerate(raw_events):
                     if not isinstance(raw_event, Mapping):
                         diagnostics.append(
@@ -7175,6 +7176,17 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].{event_id_path}",
                             }
                         )
+                    elif event_id.strip() in event_ids:
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run eventId must be unique",
+                                "path": f"$.events[{event_index}].{event_id_path}",
+                            }
+                        )
+                    else:
+                        event_ids.add(event_id.strip())
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False
