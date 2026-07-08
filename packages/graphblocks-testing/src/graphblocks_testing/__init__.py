@@ -7395,6 +7395,15 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].{event_release_id_path}",
                             }
                         )
+                    if "payload" not in raw_event:
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires payload",
+                                "path": f"$.events[{event_index}].payload",
+                            }
+                        )
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False

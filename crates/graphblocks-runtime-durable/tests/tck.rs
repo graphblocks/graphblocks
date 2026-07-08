@@ -589,6 +589,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.events[{index}].{event_release_id_path}"),
                     }));
                 }
+                if !event.contains_key("payload") {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires payload",
+                        "path": format!("$.events[{index}].payload"),
+                    }));
+                }
                 if event
                     .get("cursor")
                     .and_then(Value::as_str)

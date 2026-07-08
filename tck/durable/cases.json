@@ -470,7 +470,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-000002",
@@ -479,7 +480,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
-        "type": "JobProgress"
+        "type": "JobProgress",
+        "payload": {}
       },
       {
         "eventId": "evt-000003",
@@ -488,7 +490,8 @@
         "sequence": 3,
         "occurredAt": "2026-06-23T00:00:03Z",
         "cursor": "evt_000003",
-        "type": "ReviewRequested"
+        "type": "ReviewRequested",
+        "payload": {}
       }
     ],
     "attach": {
@@ -537,7 +540,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-2",
@@ -546,7 +550,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
-        "type": "JobProgress"
+        "type": "JobProgress",
+        "payload": {}
       },
       {
         "eventId": "evt-10",
@@ -555,7 +560,8 @@
         "sequence": 10,
         "occurredAt": "2026-06-23T00:00:10Z",
         "cursor": "evt_10",
-        "type": "ReviewRequested"
+        "type": "ReviewRequested",
+        "payload": {}
       }
     ],
     "attach": {
@@ -598,7 +604,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-initial-2",
@@ -607,7 +614,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
-        "type": "JobProgress"
+        "type": "JobProgress",
+        "payload": {}
       }
     ],
     "attach": {
@@ -651,7 +659,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_1",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-retention-2",
@@ -660,7 +669,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_2",
-        "type": "JobProgress"
+        "type": "JobProgress",
+        "payload": {}
       },
       {
         "eventId": "evt-retention-10",
@@ -669,7 +679,8 @@
         "sequence": 10,
         "occurredAt": "2026-06-23T00:00:10Z",
         "cursor": "evt_10",
-        "type": "ReviewRequested"
+        "type": "ReviewRequested",
+        "payload": {}
       }
     ],
     "attach": {
@@ -714,7 +725,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-bg-invalid-002",
@@ -723,7 +735,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
-        "type": "RunProgress"
+        "type": "RunProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -771,7 +784,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-bg-invalid-summary-002",
@@ -780,7 +794,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
-        "type": "RunProgress"
+        "type": "RunProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -828,7 +843,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -871,7 +887,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -914,7 +931,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -957,7 +975,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -993,7 +1012,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1036,7 +1056,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1078,7 +1099,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1120,7 +1142,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1163,7 +1186,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1206,7 +1230,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1248,7 +1273,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1291,7 +1317,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1334,7 +1361,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1376,7 +1404,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1419,7 +1448,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1462,7 +1492,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1504,7 +1535,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1546,7 +1578,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1623,6 +1656,7 @@
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted",
+        "payload": {},
         "releaseId": "release-background-001"
       }
     ],
@@ -1666,7 +1700,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1708,7 +1743,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1723,6 +1759,49 @@
         "code": "DurableBackgroundRunInvalid",
         "message": "background run event requires releaseId",
         "path": "$.events[0].releaseId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "background_run_event_missing_payload_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-event-missing-payload",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-event-missing-payload/events",
+      "websocket": "/v1/runs/run-background-event-missing-payload/ws",
+      "cancel": "/v1/runs/run-background-event-missing-payload/cancel",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-missing-payload-001",
+        "runId": "run-background-event-missing-payload",
+        "releaseId": "release-background-001",
+        "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01Z",
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": "evt_000000"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run event requires payload",
+        "path": "$.events[0].payload"
       }
     ],
     "expected": {
@@ -1749,6 +1828,7 @@
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
         "type": "RunStarted",
+        "payload": {},
         "runId": "run-background-event-missing-event-id",
         "releaseId": "release-background-001"
       }
@@ -1793,7 +1873,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-bg-duplicate-event-id-001",
@@ -1802,7 +1883,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
-        "type": "AgentProgress"
+        "type": "AgentProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1845,7 +1927,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": " ",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1888,7 +1971,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       },
       {
         "eventId": "evt-bg-duplicate-cursor-002",
@@ -1897,7 +1981,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000001",
-        "type": "AgentProgress"
+        "type": "AgentProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1940,7 +2025,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -1982,7 +2068,8 @@
         "releaseId": "release-background-001",
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2025,7 +2112,8 @@
         "sequence": 0,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2068,7 +2156,8 @@
         "sequence": 2,
         "occurredAt": "2026-06-23T00:00:02Z",
         "cursor": "evt_000002",
-        "type": "JobProgress"
+        "type": "JobProgress",
+        "payload": {}
       },
       {
         "eventId": "evt-bg-sequence-regression-001",
@@ -2077,7 +2166,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2119,7 +2209,8 @@
         "releaseId": "release-background-001",
         "sequence": 1,
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2162,7 +2253,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": " "
+        "type": " ",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2205,7 +2297,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2248,7 +2341,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000002",
-        "type": "RunProgress"
+        "type": "RunProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2295,7 +2389,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000002",
-        "type": "RunProgress"
+        "type": "RunProgress",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2341,7 +2436,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2384,7 +2480,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
@@ -2427,7 +2524,8 @@
         "sequence": 1,
         "occurredAt": "2026-06-23T00:00:01Z",
         "cursor": "evt_000001",
-        "type": "RunStarted"
+        "type": "RunStarted",
+        "payload": {}
       }
     ],
     "detach": {
