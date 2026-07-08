@@ -7419,6 +7419,33 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].visibility",
                             }
                         )
+                    for metadata_field, metadata_snake_field, metadata_label in (
+                        ("graphId", "graph_id", "graphId"),
+                        ("nodeId", "node_id", "nodeId"),
+                        ("turnId", "turn_id", "turnId"),
+                        ("operationId", "operation_id", "operationId"),
+                    ):
+                        metadata_path = (
+                            metadata_field
+                            if metadata_field in raw_event
+                            or metadata_snake_field not in raw_event
+                            else metadata_snake_field
+                        )
+                        metadata_value = raw_event.get(
+                            metadata_field, raw_event.get(metadata_snake_field)
+                        )
+                        if metadata_value is not None and (
+                            not isinstance(metadata_value, str)
+                            or not metadata_value.strip()
+                        ):
+                            event_valid = False
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": f"background run event {metadata_label} must be nonblank string",
+                                    "path": f"$.events[{event_index}].{metadata_path}",
+                                }
+                            )
                     cursor = raw_event.get("cursor")
                     if not isinstance(cursor, str) or not cursor.strip():
                         event_valid = False

@@ -612,6 +612,36 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                for (field, snake_field, label) in [
+                    ("graphId", "graph_id", "graphId"),
+                    ("nodeId", "node_id", "nodeId"),
+                    ("turnId", "turn_id", "turnId"),
+                    ("operationId", "operation_id", "operationId"),
+                ] {
+                    let path_field =
+                        if event.contains_key(field) || !event.contains_key(snake_field) {
+                            field
+                        } else {
+                            snake_field
+                        };
+                    if event
+                        .get(field)
+                        .or_else(|| event.get(snake_field))
+                        .is_some_and(|value| {
+                            !value.is_null()
+                                && value
+                                    .as_str()
+                                    .is_none_or(|identifier| identifier.trim().is_empty())
+                        })
+                    {
+                        event_valid = false;
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run event {label} must be nonblank string"),
+                            "path": format!("$.events[{index}].{path_field}"),
+                        }));
+                    }
+                }
                 if event
                     .get("cursor")
                     .and_then(Value::as_str)
