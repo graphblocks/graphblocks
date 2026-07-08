@@ -499,6 +499,10 @@ class CallbackDeliveryProjection:
         acknowledged_at = parsed_timestamps.get("acknowledged_at")
         if delivered_at is not None and acknowledged_at is not None and acknowledged_at < delivered_at:
             raise ValueError("acknowledged_at must not be before delivered_at")
+        if self.status != "acknowledged" and acknowledged_at is not None:
+            raise ValueError("acknowledged_at requires acknowledged status")
+        if self.status in {"failed", "dead_lettered", "cancelled", "expired"} and self.last_error is None:
+            raise ValueError("terminal failure callback delivery requires last_error")
         if self.status == "pending" and delivered_at is not None:
             raise ValueError("pending callback delivery must not already have delivered_at")
         if self.status == "delivered" and delivered_at is None:

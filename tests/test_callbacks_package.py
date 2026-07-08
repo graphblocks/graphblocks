@@ -627,6 +627,7 @@ def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None
         attempt=1,
         idempotency_key="sub_001:evt_1042",
         status="failed",
+        last_error="receiver 503",
     )
 
     first_retry = delivery.schedule_retry(
@@ -673,6 +674,7 @@ def test_callback_delivery_schedule_retry_validates_policy_type() -> None:
         attempt=1,
         idempotency_key="sub_001:evt_1042",
         status="failed",
+        last_error="receiver 503",
     )
 
     _assert_raises_value_error(
@@ -990,6 +992,37 @@ def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> No
             last_error="receiver_error",
         ),
     )
+    _assert_raises_value_error(
+        "acknowledged_at requires acknowledged status",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_delivered_ack_time",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042:delivered-ack",
+            status="delivered",
+            delivered_at="2026-07-02T00:00:00Z",
+            acknowledged_at="2026-07-02T00:00:01Z",
+        ),
+    )
+    for status in ("failed", "dead_lettered", "cancelled", "expired"):
+        _assert_raises_value_error(
+            "terminal failure callback delivery requires last_error",
+            lambda status=status: CallbackDeliveryProjection(
+                delivery_id=f"del_{status}_missing_error",
+                subscription_id="sub_001",
+                event_id="evt_1042",
+                run_id="run_coding_001",
+                sequence=1042,
+                cursor="evt_1042",
+                attempt=1,
+                idempotency_key=f"sub_001:evt_1042:{status}-missing-error",
+                status=status,
+            ),
+        )
 
 
 def test_callback_delivery_projection_requires_success_timestamps() -> None:
@@ -1555,6 +1588,8 @@ def test_callback_delivery_projection_rejects_webhook_response_after_terminal_st
             timestamps["delivered_at"] = "2026-07-02T00:00:00Z"
         if status == "acknowledged":
             timestamps["acknowledged_at"] = "2026-07-02T00:00:00Z"
+        if status in {"failed", "dead_lettered", "cancelled", "expired"}:
+            timestamps["last_error"] = f"{status}_terminal"
         delivery = CallbackDeliveryProjection(
             delivery_id=f"del_{status}",
             subscription_id="sub_001",

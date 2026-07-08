@@ -1026,6 +1026,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery projections now validate retry, delivery, and acknowledgement timestamps as
   ISO-8601 datetimes, reject acknowledgement timestamps that precede delivery timestamps, and
   reject `acknowledged_at` on any delivery whose status is not `acknowledged`.
+  The optional `graphblocks-callbacks` projection mirrors the core facade by also requiring
+  nonblank `last_error` values on failed, dead-lettered, cancelled, or expired deliveries.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection. Replay scheduling now resolves the requested cursor against retained run events and
