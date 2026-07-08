@@ -4,11 +4,12 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::application_event::{
-    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
+    ApplicationEvent, ApplicationEventKind, ApplicationProtocolEvent, ApplicationProtocolEventKind,
+    ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
-use rusqlite::{params, Connection};
-use serde_json::{json, Value};
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -159,16 +160,97 @@ impl EventFilter {
             .is_none_or(|types| types.contains(&event.kind))
     }
 
+    pub fn matches_application_event(&self, event: &ApplicationEvent) -> bool {
+        if self
+            .visibility
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(event.metadata.visibility.as_str()))
+        {
+            return false;
+        }
+
+        if let Some(allowed) = &self.node_ids {
+            let metadata_matches = event
+                .metadata
+                .node_id
+                .as_deref()
+                .is_some_and(|node_id| allowed.contains(node_id));
+            if !metadata_matches
+                && !Self::json_field_matches(&event.payload, &["node_id", "nodeId"], Some(allowed))
+            {
+                return false;
+            }
+        }
+
+        if let Some(allowed) = &self.operation_ids {
+            let metadata_matches = event
+                .metadata
+                .operation_id
+                .as_deref()
+                .is_some_and(|operation_id| allowed.contains(operation_id));
+            if !metadata_matches
+                && !Self::json_field_matches(
+                    &event.payload,
+                    &["operation_id", "operationId"],
+                    Some(allowed),
+                )
+            {
+                return false;
+            }
+        }
+
+        if let Some(severity_min) = &self.severity_min {
+            let Some(event_severity) = event.payload.get("severity").and_then(Value::as_str) else {
+                return false;
+            };
+            let Some(event_rank) = severity_rank(event_severity) else {
+                return false;
+            };
+            let Some(min_rank) = severity_rank(severity_min) else {
+                return false;
+            };
+            if event_rank < min_rank {
+                return false;
+            }
+        }
+
+        let is_terminal_event = matches!(
+            event.kind,
+            ApplicationEventKind::RunSucceeded
+                | ApplicationEventKind::RunCompleted
+                | ApplicationEventKind::RunFailed
+                | ApplicationEventKind::RunCancelled
+                | ApplicationEventKind::RunPolicyStopped
+                | ApplicationEventKind::RunExpired
+        );
+        if is_terminal_event {
+            return self.include_terminal_events;
+        }
+
+        self.types.as_ref().is_none_or(|types| {
+            types
+                .iter()
+                .any(|event_kind| event_kind.as_str() == event.kind.as_str())
+        })
+    }
+
     fn payload_field_matches(
         &self,
         event: &ApplicationProtocolEvent,
         fields: &[&str],
         allowed: &Option<BTreeSet<String>>,
     ) -> bool {
-        allowed.as_ref().is_none_or(|allowed| {
+        Self::json_field_matches(&event.payload, fields, allowed.as_ref())
+    }
+
+    fn json_field_matches(
+        payload: &Value,
+        fields: &[&str],
+        allowed: Option<&BTreeSet<String>>,
+    ) -> bool {
+        allowed.is_none_or(|allowed| {
             fields.iter().any(|field| {
-                event
-                    .payload
+                payload
                     .get(*field)
                     .and_then(Value::as_str)
                     .is_some_and(|value| allowed.contains(value))

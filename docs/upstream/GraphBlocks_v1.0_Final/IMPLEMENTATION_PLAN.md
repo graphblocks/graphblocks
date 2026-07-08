@@ -1509,6 +1509,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records by event type,
   visibility, node id, operation id, severity floor, and terminal-event inclusion, aligning the
   core schema facade with server-side callback subscription filtering.
+- Rust `graphblocks-runtime-core::callback_delivery::EventFilter` now matches native
+  `ApplicationEvent` records by canonical metadata visibility, node id, and operation id before
+  falling back to legacy payload routing fields, so runtime callback routing can run before
+  protocol projection without duplicating routing identity in payloads.
 - `graphblocks-server` invocation-created run events now persist the same authoritative metadata
   envelope, including replay cursor and visibility, so accepted/background run attach and callback
   replay surfaces do not require metadata to be duplicated in payloads.

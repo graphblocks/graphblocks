@@ -1,4 +1,5 @@
 use graphblocks_runtime_core::application_event::{
+    ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventVisibility,
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
     ApplicationProtocolLog,
 };
@@ -296,6 +297,58 @@ fn subscription_filter_matches_operation_metadata_without_payload_duplication() 
 
     assert_eq!(delivery.event_id, "event-callback-1");
     assert!(scheduler.schedule_event(&subscription, &wrong_operation).is_none());
+}
+
+#[test]
+fn subscription_filter_matches_native_application_event_metadata_without_payload_duplication() {
+    let matching = ApplicationEvent::new(
+        ApplicationEventKind::ExternalCallbackReceived,
+        ApplicationEventMetadata {
+            event_id: "event-native-callback-1".to_owned(),
+            run_id: "run-1".to_owned(),
+            response_id: "response-1".to_owned(),
+            turn_id: None,
+            cursor: Some("cursor-1".to_owned()),
+            graph_id: None,
+            node_id: Some("waitCI".to_owned()),
+            operation_id: Some("op-ci-1".to_owned()),
+            sequence: 1,
+            release_id: "release-1".to_owned(),
+            policy_snapshot_id: "policy-1".to_owned(),
+            occurred_at_unix_ms: 1_001,
+            visibility: ApplicationEventVisibility::Operator,
+        },
+        json!({"callback_id": "callback-1"}),
+    )
+    .expect("native callback event is valid");
+    let wrong_node = ApplicationEvent::new(
+        ApplicationEventKind::ExternalCallbackReceived,
+        ApplicationEventMetadata {
+            event_id: "event-native-callback-2".to_owned(),
+            run_id: "run-1".to_owned(),
+            response_id: "response-1".to_owned(),
+            turn_id: None,
+            cursor: Some("cursor-2".to_owned()),
+            graph_id: None,
+            node_id: Some("review".to_owned()),
+            operation_id: Some("op-ci-1".to_owned()),
+            sequence: 2,
+            release_id: "release-1".to_owned(),
+            policy_snapshot_id: "policy-1".to_owned(),
+            occurred_at_unix_ms: 1_002,
+            visibility: ApplicationEventVisibility::Operator,
+        },
+        json!({"callback_id": "callback-2"}),
+    )
+    .expect("native callback event is valid");
+    let filter = EventFilter::new()
+        .with_types([ApplicationProtocolEventKind::ExternalCallbackReceived])
+        .with_visibility(["operator"])
+        .with_node_ids(["waitCI"])
+        .with_operation_ids(["op-ci-1"]);
+
+    assert!(filter.matches_application_event(&matching));
+    assert!(!filter.matches_application_event(&wrong_node));
 }
 
 #[test]
