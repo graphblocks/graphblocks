@@ -299,6 +299,20 @@ impl AsyncOperation {
                 reason: "created_at must be positive".to_owned(),
             });
         }
+        let resume_digest = self.resume_token_hash.strip_prefix("sha256:");
+        if !matches!(
+            resume_digest,
+            Some(digest)
+                if digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        ) {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "resume_token_hash must be a canonical sha256 digest".to_owned(),
+            });
+        }
         if self
             .provider_operation_id
             .as_ref()

@@ -16,6 +16,11 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+const VALID_RESUME_TOKEN_HASH: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const VALID_RESUME_TOKEN_HASH_2: &str =
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 fn sqlite_async_operation_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -43,7 +48,7 @@ fn waiting_operation() -> AsyncOperation {
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         "idem-op-1",
         "schemas/CICallback@1",
         1_000,
@@ -59,7 +64,7 @@ fn late_committed_waiting_operation() -> AsyncOperation {
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         "idem-op-1",
         "schemas/CICallback@1",
         1_300,
@@ -644,7 +649,7 @@ fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         " ",
         " ",
         1_000,
@@ -772,7 +777,7 @@ fn async_operation_validate_rejects_inconsistent_state_timestamps_and_provider_i
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         "idem-op-created",
         "schemas/CICallback@1",
         1_000,
@@ -866,7 +871,7 @@ fn async_operation_validate_rejects_zero_creation_timestamp() {
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         "idem-op-zero-created",
         "schemas/CICallback@1",
         0,
@@ -882,6 +887,31 @@ fn async_operation_validate_rejects_zero_creation_timestamp() {
 }
 
 #[test]
+fn async_operation_validate_rejects_noncanonical_resume_token_hash() {
+    for resume_token_hash in ["sha256:resume-token".to_owned(), "a".repeat(64)] {
+        let operation = AsyncOperation::new(
+            "op-bad-resume-token",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            AsyncOperationKind::CiJob,
+            resume_token_hash,
+            "idem-op-bad-resume-token",
+            "schemas/CICallback@1",
+            1_000,
+        );
+
+        assert_eq!(
+            operation.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-bad-resume-token".to_owned(),
+                reason: "resume_token_hash must be a canonical sha256 digest".to_owned(),
+            })
+        );
+    }
+}
+
+#[test]
 fn async_operation_validate_rejects_out_of_order_state_timestamps() {
     let submitted_before_created = AsyncOperation::new(
         "op-submitted",
@@ -889,7 +919,7 @@ fn async_operation_validate_rejects_out_of_order_state_timestamps() {
         "node-ci",
         "attempt-1",
         AsyncOperationKind::CiJob,
-        "sha256:resume-token",
+        VALID_RESUME_TOKEN_HASH,
         "idem-op-submitted",
         "schemas/CICallback@1",
         1_000,
@@ -1263,7 +1293,7 @@ fn callback_for_non_waiting_operation_is_rejected_with_audit_event() {
                 "node-ci",
                 "attempt-1",
                 AsyncOperationKind::CiJob,
-                "sha256:resume-token",
+                VALID_RESUME_TOKEN_HASH,
                 "idem-op-1",
                 "schemas/CICallback@1",
                 1_000,
@@ -1853,7 +1883,7 @@ fn callback_idempotency_key_is_scoped_to_operation() {
                 "node-ci",
                 "attempt-1",
                 AsyncOperationKind::CiJob,
-                "sha256:resume-token-2",
+                VALID_RESUME_TOKEN_HASH_2,
                 "idem-op-2",
                 "schemas/CICallback@1",
                 1_000,
@@ -4039,7 +4069,7 @@ fn sqlite_async_operation_store_scopes_callback_idempotency_to_operation_after_r
                 "node-ci",
                 "attempt-1",
                 AsyncOperationKind::CiJob,
-                "sha256:resume-token-2",
+                VALID_RESUME_TOKEN_HASH_2,
                 "idem-op-2",
                 "schemas/CICallback@1",
                 1_000,

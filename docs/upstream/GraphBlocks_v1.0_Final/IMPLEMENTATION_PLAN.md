@@ -736,6 +736,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   as immutable JSON snapshots and thawed into fresh plain JSON values for `to_json()` callers.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
+- Rust `AsyncOperation` validation now applies the same canonical `sha256:<64 lowercase hex>`
+  requirement to `resume_token_hash`, keeping durable callback fencing tokens aligned across the
+  Python schema facade and Rust runtime backend.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
   through `waiting_callback` before `callback_received`, polling must be explicit before terminal
   poll results, terminal operations cannot transition again, and direct construction rejects
