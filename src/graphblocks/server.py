@@ -2281,6 +2281,11 @@ class GraphBlocksServerApp:
                         *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                         rejection,
                     )
+                    self._append_async_callback_diagnostic_event(
+                        "ExternalCallbackRejected",
+                        submission,
+                        "missing_attempt_fence",
+                    )
                     return ServerResponse.json(
                         400,
                         {
@@ -2295,6 +2300,11 @@ class GraphBlocksServerApp:
                     self._async_callback_rejections_by_operation_id[submission.operation_id] = (
                         *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                         rejection,
+                    )
+                    self._append_async_callback_diagnostic_event(
+                        "ExternalCallbackRejected",
+                        submission,
+                        "missing_node_fence",
                     )
                     return ServerResponse.json(
                         400,
@@ -2318,60 +2328,11 @@ class GraphBlocksServerApp:
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
                         )
-                        events = self._events_by_run_id[submission.run_id]
-                        sequence = self._last_event_sequence(events, owner="late async callback event") + 1
-                        release_id = run_status.get("releaseId")
-                        if not isinstance(release_id, str) or not release_id:
-                            release_id = "local"
-                        late_event = ApplicationEvent.new(
+                        self._append_async_callback_diagnostic_event(
                             "LateExternalCallbackReceived",
-                            ApplicationEventMetadata(
-                                event_id=f"{submission.run_id}:late-callback:{sequence}",
-                                run_id=submission.run_id,
-                                response_id=f"callback:{submission.callback_id}",
-                                sequence=sequence,
-                                release_id=release_id,
-                                policy_snapshot_id=submission.policy_snapshot_id,
-                                occurred_at=submission.received_at,
-                                cursor=f"{submission.run_id}:{sequence}",
-                                node_id=submission.node_id,
-                                operation_id=submission.operation_id,
-                                visibility="operator",
-                            ),
-                            payload={
-                                "callbackId": submission.callback_id,
-                                "idempotencyKey": submission.idempotency_key,
-                                "payloadDigest": submission.payload_digest,
-                                "verifiedBy": submission.verified_by,
-                                "policySnapshotId": submission.policy_snapshot_id,
-                                "attemptId": submission.attempt_id,
-                                "status": state,
-                                "reason": "terminal_run",
-                                "receivedAt": submission.received_at,
-                            },
-                        )
-                        late_event_payload = {
-                            "kind": late_event.kind,
-                            "metadata": {
-                                "eventId": late_event.metadata.event_id,
-                                "runId": late_event.metadata.run_id,
-                                "responseId": late_event.metadata.response_id,
-                                "turnId": late_event.metadata.turn_id,
-                                "sequence": late_event.metadata.sequence,
-                                "cursor": late_event.metadata.cursor,
-                                "releaseId": late_event.metadata.release_id,
-                                "policySnapshotId": late_event.metadata.policy_snapshot_id,
-                                "occurredAt": late_event.metadata.occurred_at,
-                                "graphId": late_event.metadata.graph_id,
-                                "nodeId": late_event.metadata.node_id,
-                                "operationId": late_event.metadata.operation_id,
-                                "visibility": late_event.metadata.visibility,
-                            },
-                            "payload": dict(late_event.payload),
-                        }
-                        self._events_by_run_id[submission.run_id] = (
-                            *events,
-                            _freeze_json_value("application event stream", "event", late_event_payload),
+                            submission,
+                            "terminal_run",
+                            status=state if isinstance(state, str) else None,
                         )
                         return ServerResponse.json(
                             409,
@@ -2400,6 +2361,11 @@ class GraphBlocksServerApp:
                                 *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                                 rejection,
                             )
+                            self._append_async_callback_diagnostic_event(
+                                "ExternalCallbackRejected",
+                                submission,
+                                "idempotency_conflict",
+                            )
                             return ServerResponse.json(
                                 409,
                                 {
@@ -2425,12 +2391,22 @@ class GraphBlocksServerApp:
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
                         )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "scope_mismatch",
+                        )
                         return ServerResponse.json(409, payload)
                     if previous.attempt_id != submission.attempt_id:
                         rejection = ServerAsyncCallbackRejection.stale_attempt(submission)
                         self._async_callback_rejections_by_operation_id[submission.operation_id] = (
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
+                        )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "stale_attempt",
                         )
                         payload = {
                             "ok": False,
@@ -2452,6 +2428,11 @@ class GraphBlocksServerApp:
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
                         )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "stale_attempt",
+                        )
                         return ServerResponse.json(
                             409,
                             {
@@ -2472,6 +2453,11 @@ class GraphBlocksServerApp:
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
                         )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "node_mismatch",
+                        )
                         return ServerResponse.json(
                             409,
                             {
@@ -2488,6 +2474,11 @@ class GraphBlocksServerApp:
                         self._async_callback_rejections_by_operation_id[submission.operation_id] = (
                             *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                             rejection,
+                        )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "provider_operation_mismatch",
                         )
                         payload = {
                             "ok": False,
@@ -2507,6 +2498,11 @@ class GraphBlocksServerApp:
                     self._async_callback_rejections_by_operation_id[submission.operation_id] = (
                         *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
                         rejection,
+                    )
+                    self._append_async_callback_diagnostic_event(
+                        "ExternalCallbackRejected",
+                        submission,
+                        "duplicate_operation_receipt",
                     )
                     payload = {
                         "ok": False,
@@ -3430,6 +3426,80 @@ class GraphBlocksServerApp:
                 if sequence > last_sequence:
                     last_sequence = sequence
         return last_sequence
+
+    def _append_async_callback_diagnostic_event(
+        self,
+        kind: str,
+        submission: ServerAsyncCallbackSubmission,
+        reason: str,
+        *,
+        status: str | None = None,
+    ) -> None:
+        if submission.run_id is None:
+            return
+        events = self._events_by_run_id.get(submission.run_id)
+        if events is None:
+            return
+        sequence = self._last_event_sequence(events, owner="async callback diagnostic event") + 1
+        run_status = self._run_status_payload(submission.run_id, events, include_ok=False)
+        release_id = run_status.get("releaseId")
+        if not isinstance(release_id, str) or not release_id:
+            release_id = "local"
+        payload: dict[str, object] = {
+            "callbackId": submission.callback_id,
+            "idempotencyKey": submission.idempotency_key,
+            "payloadDigest": submission.payload_digest,
+            "verifiedBy": submission.verified_by,
+            "policySnapshotId": submission.policy_snapshot_id,
+            "reason": reason,
+            "receivedAt": submission.received_at,
+        }
+        if submission.attempt_id is not None:
+            payload["attemptId"] = submission.attempt_id
+        if submission.provider_operation_id is not None:
+            payload["providerOperationId"] = submission.provider_operation_id
+        if status is not None:
+            payload["status"] = status
+        event = ApplicationEvent.new(
+            kind,
+            ApplicationEventMetadata(
+                event_id=f"{submission.run_id}:callback-diagnostic:{sequence}",
+                run_id=submission.run_id,
+                response_id=f"callback:{submission.callback_id}",
+                sequence=sequence,
+                release_id=release_id,
+                policy_snapshot_id=submission.policy_snapshot_id,
+                occurred_at=submission.received_at,
+                cursor=f"{submission.run_id}:{sequence}",
+                node_id=submission.node_id,
+                operation_id=submission.operation_id,
+                visibility="operator",
+            ),
+            payload=payload,
+        )
+        event_payload = {
+            "kind": event.kind,
+            "metadata": {
+                "eventId": event.metadata.event_id,
+                "runId": event.metadata.run_id,
+                "responseId": event.metadata.response_id,
+                "turnId": event.metadata.turn_id,
+                "sequence": event.metadata.sequence,
+                "cursor": event.metadata.cursor,
+                "releaseId": event.metadata.release_id,
+                "policySnapshotId": event.metadata.policy_snapshot_id,
+                "occurredAt": event.metadata.occurred_at,
+                "graphId": event.metadata.graph_id,
+                "nodeId": event.metadata.node_id,
+                "operationId": event.metadata.operation_id,
+                "visibility": event.metadata.visibility,
+            },
+            "payload": dict(event.payload),
+        }
+        self._events_by_run_id[submission.run_id] = (
+            *events,
+            _freeze_json_value("application event stream", "event", event_payload),
+        )
 
     def _subscription_replay(
         self,

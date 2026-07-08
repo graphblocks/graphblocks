@@ -666,7 +666,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `duplicate_operation_receipt` and are not appended as accepted submissions. Conflicting scoped
   callbacks for a different run, attempt, or node now also append `ServerAsyncCallbackRejection`
   metadata before returning `409`, preserving audit evidence for stale or misrouted callback
-  attempts.
+  attempts. Run-scoped callback rejections with known run identity are also appended to the
+  authoritative `ApplicationEventStream` as `ExternalCallbackRejected` metadata-only diagnostics.
 - Server callback ingress now also projects terminal-run callback rejections as
   `LateExternalCallbackReceived` diagnostics, so late arrivals after cancellation, expiry, failure,
   or policy stop remain inspectable without creating an accepted callback receipt or resume signal.

@@ -2307,6 +2307,35 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
             "receivedAt": "2026-07-03T00:00:02Z",
         },
     )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": "run-1:1"},
+            cookies={},
+        )
+    )
+    event_payload = json.loads(events.body.decode("utf-8"))
+    assert events.status_code == 200
+    assert event_payload["lastCursor"] == "run-1:2"
+    assert [event["kind"] for event in event_payload["events"]] == ["ExternalCallbackRejected"]
+    rejection_event = event_payload["events"][0]
+    assert rejection_event["metadata"]["sequence"] == 2
+    assert rejection_event["metadata"]["cursor"] == "run-1:2"
+    assert rejection_event["metadata"]["operationId"] == "op-ci-1"
+    assert rejection_event["metadata"]["nodeId"] == "waitCI"
+    assert rejection_event["metadata"]["visibility"] == "operator"
+    assert rejection_event["payload"] == {
+        "callbackId": "cb-stale",
+        "idempotencyKey": "idem-callback-stale",
+        "payloadDigest": graphblocks.canonical_hash({"status": "completed"}),
+        "verifiedBy": "callback-relay",
+        "policySnapshotId": "local",
+        "attemptId": "attempt-1",
+        "reason": "stale_attempt",
+        "receivedAt": "2026-07-03T00:00:02Z",
+    }
 
 
 def test_server_app_rejects_async_callback_for_different_node_on_existing_run_attempt() -> None:
