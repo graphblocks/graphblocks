@@ -567,6 +567,37 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 false
             };
+            let raw_subscription = case
+                .get("subscription")
+                .or_else(|| case.get("callback_subscription"));
+            if raw_subscription.is_some_and(|subscription| !subscription.is_object()) {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackProjectionInvalid",
+                    "message": "callback projection subscription must be object",
+                    "path": "$.subscription",
+                }));
+            }
+            if let Some(subscription) = raw_subscription.and_then(Value::as_object) {
+                if let Some(failure_policy) = subscription
+                    .get("failurePolicy")
+                    .or_else(|| subscription.get("failure_policy"))
+                    .and_then(Value::as_str)
+                {
+                    if !matches!(
+                        failure_policy,
+                        "best_effort"
+                            | "retry_then_dead_letter"
+                            | "pause_run_on_failure"
+                            | "fail_run_on_failure"
+                    ) {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackProjectionInvalid",
+                            "message": "callback subscription has invalid failurePolicy",
+                            "path": "$.subscription.failurePolicy",
+                        }));
+                    }
+                }
+            }
             let subscription_failure_policy = case
                 .get("subscription")
                 .and_then(Value::as_object)
