@@ -8333,6 +8333,22 @@ class TckRunner:
                 raw_usage = fixture.get("usage", {})
                 if not isinstance(raw_operation, Mapping) or not isinstance(raw_late_callback, Mapping) or not isinstance(raw_usage, Mapping):
                     raise ValueError("durable external_operation_reconciliation case requires operation, lateCallback, and usage")
+                effect_state_path = (
+                    "effectState"
+                    if "effectState" in raw_operation or "effect_state" not in raw_operation
+                    else "effect_state"
+                )
+                if (
+                    raw_operation.get("effectState", raw_operation.get("effect_state"))
+                    != "committed"
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires committed effectState",
+                            "path": f"$.operation.{effect_state_path}",
+                        }
+                    )
                 external_reconciliation_values = {}
                 for source_name, source, key, alias, default in (
                     ("lateCallback", raw_late_callback, "commitsResult", "commits_result", True),

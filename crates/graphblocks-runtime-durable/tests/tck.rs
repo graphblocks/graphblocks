@@ -2152,6 +2152,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_object)
                 .ok_or_else(|| format!("{name} requires late callback"))?;
             let raw_usage = required_object(case, "usage", name)?;
+            let effect_state_path = if raw_operation.contains_key("effectState")
+                || !raw_operation.contains_key("effect_state")
+            {
+                "effectState"
+            } else {
+                "effect_state"
+            };
+            if !raw_operation
+                .get("effectState")
+                .or_else(|| raw_operation.get("effect_state"))
+                .and_then(Value::as_str)
+                .is_some_and(|state| state == "committed")
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires committed effectState",
+                    "path": format!("$.operation.{effect_state_path}"),
+                }));
+            }
             let mut reconciliation_values = BTreeMap::new();
             for (source_name, source, key, alias, default) in [
                 (
