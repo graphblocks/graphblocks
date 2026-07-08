@@ -3859,6 +3859,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -3899,6 +3900,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -3941,6 +3943,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -3984,6 +3987,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4026,6 +4030,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4069,6 +4074,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4112,6 +4118,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4154,6 +4161,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4197,6 +4205,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4239,6 +4248,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4282,6 +4292,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4324,6 +4335,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4367,6 +4379,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4409,6 +4422,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4452,6 +4466,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4494,6 +4509,7 @@
       "effectJournaled": true
     },
     "lateCallback": {
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4537,6 +4553,7 @@
     },
     "lateCallback": {
       "callbackId": "   ",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4568,6 +4585,93 @@
     }
   },
   {
+    "name": "external_operation_missing_callback_operation_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires callback operationId",
+        "path": "$.lateCallback.operationId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_mismatched_callback_operation_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-other",
+      "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1",
+      "idempotencyKey": "idem-ci-callback-001",
+      "policySnapshotId": "pol-callback-001",
+      "receivedAt": "2026-06-23T00:00:30Z",
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation callback operationId must match operation",
+        "path": "$.lateCallback.operationId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_callback_payload_digest_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
@@ -4580,6 +4684,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
@@ -4622,6 +4727,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:not-a-digest",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4665,6 +4771,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
@@ -4707,6 +4814,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "running",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4750,6 +4858,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "idempotencyKey": "idem-ci-callback-001",
@@ -4792,6 +4901,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "   ",
@@ -4835,6 +4945,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4877,6 +4988,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4920,6 +5032,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -4962,6 +5075,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5005,6 +5119,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5047,6 +5162,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5090,6 +5206,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5132,6 +5249,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5174,6 +5292,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5216,6 +5335,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5258,6 +5378,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5295,6 +5416,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5337,6 +5459,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5380,6 +5503,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
@@ -5423,6 +5547,7 @@
     },
     "lateCallback": {
       "callbackId": "cb-ci-late-001",
+      "operationId": "op-ci-002",
       "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "status": "completed",
       "verifiedBy": "hmac-sha256:callback-endpoint-1",

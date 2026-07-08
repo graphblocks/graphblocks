@@ -2245,6 +2245,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{callback_id_path}"),
                 }));
             }
+            let callback_operation_id_path = if raw_late_callback.contains_key("operationId")
+                || !raw_late_callback.contains_key("operation_id")
+            {
+                "operationId"
+            } else {
+                "operation_id"
+            };
+            match raw_late_callback
+                .get("operationId")
+                .or_else(|| raw_late_callback.get("operation_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_operation_id) if !callback_operation_id.is_empty() => {
+                    let operation_id = raw_operation
+                        .get("operationId")
+                        .or_else(|| raw_operation.get("operation_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !operation_id.is_empty() && callback_operation_id != operation_id {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback operationId must match operation",
+                            "path": format!("$.lateCallback.{callback_operation_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback operationId",
+                        "path": format!("$.lateCallback.{callback_operation_id_path}"),
+                    }));
+                }
+            }
             let payload_digest_path = if raw_late_callback.contains_key("payloadDigest")
                 || !raw_late_callback.contains_key("payload_digest")
             {
