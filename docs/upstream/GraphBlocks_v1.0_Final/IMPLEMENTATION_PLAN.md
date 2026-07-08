@@ -1902,6 +1902,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `lateCallback.callbackId` evidence in both Rust and Python runners so late provider callbacks
   remain tied to an auditable callback receipt.
+- Durable external-operation reconciliation shared TCK cases now require
+  `lateCallback.payloadDigest` to be a canonical `sha256:` digest in both Rust and Python runners
+  before late callback content can prove reconciliation behavior.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

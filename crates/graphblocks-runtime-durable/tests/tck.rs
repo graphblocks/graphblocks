@@ -2245,6 +2245,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{callback_id_path}"),
                 }));
             }
+            let payload_digest_path = if raw_late_callback.contains_key("payloadDigest")
+                || !raw_late_callback.contains_key("payload_digest")
+            {
+                "payloadDigest"
+            } else {
+                "payload_digest"
+            };
+            if !raw_late_callback
+                .get("payloadDigest")
+                .or_else(|| raw_late_callback.get("payload_digest"))
+                .and_then(Value::as_str)
+                .is_some_and(|payload_digest| {
+                    let Some(hex) = payload_digest.strip_prefix("sha256:") else {
+                        return false;
+                    };
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires payloadDigest sha256 digest",
+                    "path": format!("$.lateCallback.{payload_digest_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {

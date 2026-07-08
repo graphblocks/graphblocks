@@ -8406,6 +8406,31 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_id_path}",
                         }
                     )
+                payload_digest_path = (
+                    "payloadDigest"
+                    if "payloadDigest" in raw_late_callback
+                    or "payload_digest" not in raw_late_callback
+                    else "payload_digest"
+                )
+                payload_digest = raw_late_callback.get(
+                    "payloadDigest", raw_late_callback.get("payload_digest")
+                )
+                if (
+                    not isinstance(payload_digest, str)
+                    or not payload_digest.startswith("sha256:")
+                    or len(payload_digest.removeprefix("sha256:")) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in payload_digest.removeprefix("sha256:")
+                    )
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires payloadDigest sha256 digest",
+                            "path": f"$.lateCallback.{payload_digest_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation
