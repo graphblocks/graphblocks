@@ -1774,6 +1774,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `resumeSequence`, and `successfulResumeCount` values before proving journal-before-resume and
   coordinator failover invariants, preventing string coercion from satisfying durable ordering
   evidence.
+- Durable async callback resume-guard evidence now requires `reevaluates` to be a sequence of
+  nonblank strings before proving policy, budget, and release compatibility re-evaluation, so
+  object keys or malformed entries cannot satisfy resume-admission conformance.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

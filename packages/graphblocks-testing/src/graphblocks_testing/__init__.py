@@ -7492,6 +7492,34 @@ class TckRunner:
                     successful_resume_count = 0
                 else:
                     successful_resume_count = raw_successful_resume_count
+                raw_resume_reevaluates = raw_resume.get("reevaluates", ())
+                resume_reevaluates = ()
+                if (
+                    isinstance(raw_resume_reevaluates, (str, bytes))
+                    or isinstance(raw_resume_reevaluates, Mapping)
+                    or not isinstance(raw_resume_reevaluates, Sequence)
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires reevaluates sequence",
+                            "path": "$.resume.reevaluates",
+                        }
+                    )
+                else:
+                    resume_reevaluates_values = []
+                    for reevaluate_index, reevaluate in enumerate(raw_resume_reevaluates):
+                        if not isinstance(reevaluate, str) or not reevaluate.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume requires string reevaluates entry",
+                                    "path": f"$.resume.reevaluates[{reevaluate_index}]",
+                                }
+                            )
+                        else:
+                            resume_reevaluates_values.append(reevaluate.strip())
+                    resume_reevaluates = tuple(resume_reevaluates_values)
                 observed = {
                     "signatureFailureRevealsOperation": async_resume_guard_values["signatureFailureRevealsOperation"],
                     "schemaFailureResumesRun": async_resume_guard_values["schemaFailureResumesRun"],
@@ -7502,7 +7530,7 @@ class TckRunner:
                     "nonExternalCallbackEventCanBecomeReceipt": async_resume_guard_values["nonExternalCallbackEventCanBecomeReceipt"],
                     "providerOperationMismatchCanResume": async_resume_guard_values["providerOperationMismatchCanResume"],
                     "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
-                    "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
+                    "resumeReevaluatesPolicyBudgetRelease": set(resume_reevaluates) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
                     "coordinatorFailoverResumesOnce": successful_resume_count == 1,
                 }
