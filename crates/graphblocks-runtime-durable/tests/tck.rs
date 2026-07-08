@@ -597,6 +597,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                if subscription
+                    .get("mandatory")
+                    .is_some_and(|mandatory| mandatory.as_bool().is_none())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackProjectionInvalid",
+                        "message": "callback subscription requires boolean mandatory",
+                        "path": "$.subscription.mandatory",
+                    }));
+                }
             }
             let subscription_failure_policy = case
                 .get("subscription")

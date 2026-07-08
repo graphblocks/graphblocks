@@ -592,6 +592,41 @@
     }
   },
   {
+    "name": "webhook_delivery_non_boolean_subscription_mandatory_rejected",
+    "kind": "callback_delivery_projection",
+    "subscription": {
+      "subscriptionId": "sub-ide-001",
+      "failurePolicy": "retry_then_dead_letter",
+      "mandatory": "false"
+    },
+    "deliveries": [
+      {
+        "deliveryId": "del-sub-mandatory-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0098",
+        "runId": "run-coding-001",
+        "sequence": 98,
+        "cursor": "evt-0098",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0098",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:04Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackProjectionInvalid",
+        "message": "callback subscription requires boolean mandatory",
+        "path": "$.subscription.mandatory"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_duplicate_idempotency_key_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
