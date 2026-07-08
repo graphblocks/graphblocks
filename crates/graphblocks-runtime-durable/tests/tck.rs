@@ -1258,6 +1258,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "callback delivery requires integer attempt",
                         "path": format!("$.deliveries[{index}].attempt"),
                     }));
+                } else if delivery
+                    .get("attempt")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|attempt| attempt == 0)
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires positive integer attempt",
+                        "path": format!("$.deliveries[{index}].attempt"),
+                    }));
                 }
                 if let Some(subscription_id) = subscription_id {
                     if delivery

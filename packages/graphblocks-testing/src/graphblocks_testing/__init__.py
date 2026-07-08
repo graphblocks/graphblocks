@@ -7728,6 +7728,14 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].attempt",
                             }
                         )
+                    elif attempt == 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery requires positive integer attempt",
+                                "path": f"$.deliveries[{index}].attempt",
+                            }
+                        )
                     idempotency_key = delivery.get("idempotencyKey", delivery.get("idempotency_key"))
                     if not isinstance(idempotency_key, str) or not idempotency_key.strip():
                         diagnostics.append(
