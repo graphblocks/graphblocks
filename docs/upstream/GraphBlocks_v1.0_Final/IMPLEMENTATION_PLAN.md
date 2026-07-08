@@ -1867,12 +1867,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   of nonblank strings in both Rust and Python runners before proving policy, budget, and release
   compatibility re-evaluation, so object keys or malformed entries cannot satisfy
   resume-admission conformance.
-- Durable async cancel-race evidence now requires real boolean values for callback receipt,
-  resume-attempt, result-commit, and usage-reconciliation flags, preventing truthy strings from
-  proving cancellation/resume race behavior.
-- Durable async cancel-race evidence now requires integer journal entry `sequence` values before
-  proving cancel-before-callback ordering, preventing string coercion from satisfying race
-  ordering conformance.
+- Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
+  resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
+  preventing truthy strings from proving cancellation/resume race behavior.
+- Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
+  both Rust and Python runners before proving cancel-before-callback ordering, preventing string
+  coercion from satisfying race ordering conformance.
 - Durable external-operation reconciliation evidence now requires real boolean values for late
   callback commit/diagnostic/artifact-reference flags and late usage reconciliation, preventing
   truthy strings from proving cancellation, payload extraction, or billing reconciliation behavior.

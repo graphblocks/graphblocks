@@ -1888,7 +1888,8 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut cancel_sequence = None;
             let mut callback_sequence = None;
             let mut fences = BTreeSet::new();
-            for entry in raw_journal.iter().filter_map(Value::as_object) {
+            for (entry_index, entry) in raw_journal.iter().filter_map(Value::as_object).enumerate()
+            {
                 if let Some(fence) = entry
                     .get("ownershipFence")
                     .or_else(|| entry.get("ownership_fence"))
@@ -1896,7 +1897,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     fences.insert(fence.to_owned());
                 }
-                let sequence = entry.get("sequence").and_then(Value::as_u64).unwrap_or(0);
+                let sequence = match entry.get("sequence").and_then(Value::as_u64) {
+                    Some(sequence) => sequence,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race journal entry requires integer sequence",
+                            "path": format!("$.journal[{entry_index}].sequence"),
+                        }));
+                        0
+                    }
+                };
                 match entry
                     .get("kind")
                     .and_then(Value::as_str)
@@ -1919,6 +1930,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                     _ => {}
                 }
             }
+            let mut race_boolean_values = BTreeMap::new();
+            for (key, alias, default) in [
+                (
+                    "callbackReceiptRecorded",
+                    "callback_receipt_recorded",
+                    false,
+                ),
+                ("resumeAttempted", "resume_attempted", true),
+                ("resultCommitted", "result_committed", true),
+                ("usageReconciled", "usage_reconciled", false),
+            ] {
+                let raw_value = raw_race.get(key).or_else(|| raw_race.get(alias));
+                race_boolean_values
+                    .insert(key, raw_value.and_then(Value::as_bool).unwrap_or(default));
+                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                    let path_key = if raw_race.contains_key(key) || !raw_race.contains_key(alias) {
+                        key
+                    } else {
+                        alias
+                    };
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCancelRaceInvalid",
+                        "message": format!("async cancel race requires boolean {key}"),
+                        "path": format!("$.race.{path_key}"),
+                    }));
+                }
+            }
             json!({
                 "journalOrderingDecidesRace": raw_race
                     .get("winner")
@@ -1927,30 +1965,26 @@ fn run_case(case: &Value) -> Result<(), String> {
                     && cancel_sequence.is_some_and(|cancel| {
                         callback_sequence.is_some_and(|callback| callback > cancel)
                     }),
-                "callbackReceiptRecorded": raw_race
+                "callbackReceiptRecorded": race_boolean_values
                     .get("callbackReceiptRecorded")
-                    .or_else(|| raw_race.get("callback_receipt_recorded"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(false)
                     && callback_sequence.is_some(),
                 "cancelWinsBlocksResume": raw_race
                     .get("winner")
                     .and_then(Value::as_str)
                     .is_some_and(|winner| winner == "cancel")
-                    && !raw_race
+                    && !race_boolean_values
                         .get("resumeAttempted")
-                        .or_else(|| raw_race.get("resume_attempted"))
-                        .and_then(Value::as_bool)
+                        .copied()
                         .unwrap_or(true),
-                "lateCallbackCommitsResult": raw_race
+                "lateCallbackCommitsResult": race_boolean_values
                     .get("resultCommitted")
-                    .or_else(|| raw_race.get("result_committed"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(true),
-                "lateUsageReconciled": raw_race
+                "lateUsageReconciled": race_boolean_values
                     .get("usageReconciled")
-                    .or_else(|| raw_race.get("usage_reconciled"))
-                    .and_then(Value::as_bool)
+                    .copied()
                     .unwrap_or(false),
                 "ownershipFenceStable": fences.len() == 1 && !fences.contains(""),
             })
