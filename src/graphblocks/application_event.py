@@ -356,6 +356,67 @@ class ApplicationProtocolError(RuntimeError):
     pass
 
 
+class _FrozenPayloadMapping(dict[str, object]):
+    def __setitem__(self, key: str, value: object) -> None:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def pop(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def popitem(self) -> tuple[str, object]:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def setdefault(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+    def update(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
+
+class _FrozenPayloadList(list[object]):
+    def __setitem__(self, index: object, value: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def __delitem__(self, index: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def append(self, item: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def extend(self, items: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def insert(self, index: int, item: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def pop(self, index: int = -1) -> object:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def remove(self, item: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def reverse(self) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def sort(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def __iadd__(self, items: object) -> _FrozenPayloadList:
+        raise TypeError("frozen payload list cannot be mutated")
+
+    def __imul__(self, multiplier: int) -> _FrozenPayloadList:
+        raise TypeError("frozen payload list cannot be mutated")
+
+
 def _validate_non_empty_string(error_type: type[RuntimeError], label: str, value: object) -> None:
     if not isinstance(value, str):
         raise error_type(f"{label} must be a string")
@@ -384,9 +445,11 @@ def _copy_payload_value(error_type: type[RuntimeError], label: str, value: objec
         copied = dict(value)
         if any(not isinstance(key, str) or not key.strip() for key in copied):
             raise error_type(f"{label} keys must be non-empty strings")
-        return {key: _copy_payload_value(error_type, f"{label}.{key}", item) for key, item in copied.items()}
+        return _FrozenPayloadMapping(
+            {key: _copy_payload_value(error_type, f"{label}.{key}", item) for key, item in copied.items()}
+        )
     if isinstance(value, list):
-        return [_copy_payload_value(error_type, label, item) for item in value]
+        return _FrozenPayloadList(_copy_payload_value(error_type, label, item) for item in value)
     if isinstance(value, tuple):
         return tuple(_copy_payload_value(error_type, label, item) for item in value)
     return value

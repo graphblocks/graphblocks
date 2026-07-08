@@ -492,6 +492,14 @@ def test_application_protocol_payloads_deep_copy_nested_values() -> None:
             "tags": ["preview"],
         }
     }
+    with pytest.raises(TypeError):
+        command.payload["approval"]["tool_call_id"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        command.payload["approval"]["reason_codes"].append("mutated")  # type: ignore[index, union-attr]
+    with pytest.raises(TypeError):
+        event.payload["artifact"]["artifact_id"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        event.payload["artifact"]["tags"].append("mutated")  # type: ignore[index, union-attr]
     with pytest.raises(
         ApplicationProtocolError,
         match="application command payload.invalid keys must be non-empty strings",
@@ -1110,13 +1118,18 @@ def test_tool_events_carry_tool_call_id_and_required_envelope_fields() -> None:
 
 
 def test_application_event_payloads_are_copied_and_read_only() -> None:
-    payload = {"status": "running"}
+    payload = {"status": {"phase": "running", "labels": ["background"]}}
     event = ApplicationEvent.new("RunStarted", _metadata(), payload=payload)
-    payload["status"] = "mutated"
+    payload["status"]["phase"] = "mutated"  # type: ignore[index]
+    payload["status"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
-    assert event.payload == {"status": "running"}
+    assert event.payload == {"status": {"phase": "running", "labels": ["background"]}}
     with pytest.raises(TypeError):
         event.payload["status"] = "mutated"
+    with pytest.raises(TypeError):
+        event.payload["status"]["phase"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        event.payload["status"]["labels"].append("mutated")  # type: ignore[index, union-attr]
     with pytest.raises(ApplicationEventError, match="application event metadata must be"):
         ApplicationEvent.new("RunStarted", object(), payload={})  # type: ignore[arg-type]
     with pytest.raises(ApplicationEventError, match="application event payload must be a mapping"):

@@ -1460,7 +1460,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscription semantics.
 - The Python `ApplicationEvent` facade now carries the authoritative event-stream metadata needed
   by callback projections and cursor replay: stable cursor, graph/node/operation ids, and typed
-  client/operator/internal/audit-only visibility.
+  client/operator/internal/audit-only visibility. Application command, protocol event, and
+  application-event payload snapshots are now deep-frozen after construction, including nested
+  object and array values, so authoritative replay records cannot be mutated by retained caller
+  references.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records by event type,
   visibility, node id, operation id, severity floor, and terminal-event inclusion, aligning the
   core schema facade with server-side callback subscription filtering.
