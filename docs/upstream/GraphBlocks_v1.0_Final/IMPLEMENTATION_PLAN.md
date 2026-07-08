@@ -1043,6 +1043,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `failed` deliveries to carry `next_retry_at` with a nonblank `last_error`, while delivered,
   acknowledged, dead-lettered, cancelled, and expired records remain non-retryable terminal
   projections.
+- The optional `graphblocks-callbacks` projection now applies the same distinction: retry-scheduled
+  failed deliveries are ignored by mandatory failure actions until retry exhaustion, but they still
+  cannot consume late webhook responses because only `delivering` records may apply transport
+  outcomes.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection. Replay scheduling now resolves the requested cursor against retained run events and
@@ -1536,8 +1540,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   bearer authentication, require response `deliveryId` to echo the requested delivery, and surface
   the idempotent duplicate dead-letter response unchanged.
 - `graphblocks-callbacks` now treats non-retryable `failed` callback deliveries as terminal
-  delivery projections, preventing late webhook responses from mutating a delivery after the
-  runtime has already produced the mandatory pause/fail/no-op failure action.
+  delivery projections, while retry-scheduled failed deliveries remain non-terminal retry records.
+  Late webhook responses cannot mutate either case because response transitions require an
+  in-flight `delivering` record.
 - `graphblocks-callbacks` callback delivery projections now reject status/timestamp conflicts
   such as pending deliveries that already have a delivered timestamp or non-retryable terminal
   deliveries that still carry a future retry timestamp, keeping retry metadata scoped to live retry

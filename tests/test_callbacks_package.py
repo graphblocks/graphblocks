@@ -959,6 +959,21 @@ def test_callback_delivery_projection_validates_timestamp_fields() -> None:
 
 
 def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> None:
+    retry_scheduled = CallbackDeliveryProjection(
+        delivery_id="del_failed_retry",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042:failed-retry",
+        status="failed",
+        next_retry_at="2026-07-02T00:00:10Z",
+        last_error="receiver_error",
+    )
+    assert retry_scheduled.next_retry_at == "2026-07-02T00:00:10Z"
+
     _assert_raises_value_error(
         "pending callback delivery must not already have delivered_at",
         lambda: CallbackDeliveryProjection(
@@ -978,18 +993,17 @@ def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> No
     _assert_raises_value_error(
         "terminal callback delivery must not have next_retry_at",
         lambda: CallbackDeliveryProjection(
-            delivery_id="del_failed_retry",
+            delivery_id="del_delivered_retry",
             subscription_id="sub_001",
             event_id="evt_1042",
             run_id="run_coding_001",
             sequence=1042,
             cursor="evt_1042",
             attempt=2,
-            idempotency_key="sub_001:evt_1042:failed-retry",
-            status="failed",
+            idempotency_key="sub_001:evt_1042:delivered-retry",
+            status="delivered",
             next_retry_at="2026-07-02T00:00:10Z",
             delivered_at="2026-07-02T00:00:00Z",
-            last_error="receiver_error",
         ),
     )
     _assert_raises_value_error(
@@ -1543,11 +1557,34 @@ def test_callback_delivery_failure_action_ignores_non_terminal_delivery() -> Non
         status="pending",
         last_error="receiver_error",
     )
+    retry_scheduled_failure = CallbackDeliveryProjection(
+        delivery_id="del_002",
+        subscription_id="sub_001",
+        event_id="evt_1043",
+        run_id="run_coding_001",
+        sequence=1043,
+        cursor="evt_1043",
+        attempt=3,
+        idempotency_key="sub_001:evt_1043",
+        status="failed",
+        next_retry_at="2026-07-02T00:00:10Z",
+        last_error="receiver_error",
+    )
 
     assert evaluate_callback_delivery_failure_action(pending, "fail_run_on_failure") == CallbackDeliveryFailureAction(
         action="none",
         run_id="run_coding_001",
         delivery_id="del_001",
+        reason="delivery_not_terminal",
+        terminal_delivery=False,
+    )
+    assert evaluate_callback_delivery_failure_action(
+        retry_scheduled_failure,
+        "pause_run_on_failure",
+    ) == CallbackDeliveryFailureAction(
+        action="none",
+        run_id="run_coding_001",
+        delivery_id="del_002",
         reason="delivery_not_terminal",
         terminal_delivery=False,
     )
@@ -1611,6 +1648,31 @@ def test_callback_delivery_projection_rejects_webhook_response_after_terminal_st
                 policy=CallbackRetryPolicy(max_attempts=4),
             ),
         )
+
+
+def test_callback_delivery_projection_rejects_webhook_response_after_retry_scheduled_failure() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_failed_retry",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042:failed-retry",
+        status="failed",
+        next_retry_at="2026-07-02T00:00:10Z",
+        last_error="receiver_error",
+    )
+
+    _assert_raises_value_error(
+        "webhook response requires delivering callback delivery",
+        lambda: delivery.apply_webhook_response(
+            classify_webhook_response(204),
+            received_at="2026-07-02T00:00:00Z",
+            policy=CallbackRetryPolicy(max_attempts=4),
+        ),
+    )
 
 
 def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_duplicate() -> None:

@@ -204,6 +204,10 @@ def _json_payload(value: Mapping[str, object]) -> _FrozenJsonObject:
     return frozen
 
 
+def _is_terminal_delivery(status: str, next_retry_at: str | None) -> bool:
+    return status in TERMINAL_DELIVERY_STATUSES and not (status == "failed" and next_retry_at is not None)
+
+
 def _callback_resume_binding_key(
     *,
     tenant_id: str | None,
@@ -511,7 +515,7 @@ class CallbackDeliveryProjection:
             raise ValueError("acknowledged callback delivery requires delivered_at")
         if self.status == "acknowledged" and acknowledged_at is None:
             raise ValueError("acknowledged callback delivery requires acknowledged_at")
-        if self.status in TERMINAL_DELIVERY_STATUSES and self.next_retry_at is not None:
+        if _is_terminal_delivery(self.status, self.next_retry_at) and self.next_retry_at is not None:
             raise ValueError("terminal callback delivery must not have next_retry_at")
 
     def mark_failed(self, error: str) -> CallbackDeliveryProjection:
@@ -578,8 +582,10 @@ class CallbackDeliveryProjection:
         if not isinstance(policy, CallbackRetryPolicy):
             raise ValueError("policy must be a CallbackRetryPolicy")
         _require_non_empty_string("received_at", received_at)
-        if self.status in TERMINAL_DELIVERY_STATUSES:
+        if _is_terminal_delivery(self.status, self.next_retry_at):
             raise ValueError("terminal callback delivery cannot apply webhook response")
+        if self.status != "delivering":
+            raise ValueError("webhook response requires delivering callback delivery")
 
         if decision.status == "delivered":
             return CallbackDeliveryProjection(
@@ -746,7 +752,10 @@ def evaluate_callback_delivery_failure_action(
             "failure_policy must be best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
         )
     reason = delivery.last_error or delivery.status
-    if delivery.status not in TERMINAL_FAILURE_DELIVERY_STATUSES:
+    if delivery.status not in TERMINAL_FAILURE_DELIVERY_STATUSES or not _is_terminal_delivery(
+        delivery.status,
+        delivery.next_retry_at,
+    ):
         return CallbackDeliveryFailureAction(
             action="none",
             run_id=delivery.run_id,
