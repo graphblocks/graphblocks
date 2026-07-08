@@ -624,15 +624,38 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_redrive.get("original_event_id"))
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty());
+            if let Some((event_id, original_event_id)) =
+                redrive_event_id.zip(original_redrive_event_id)
+            {
+                if event_id != original_event_id {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackRedriveInvalid",
+                        "message": "callback redrive must preserve originalEventId",
+                        "path": "$.redrive.eventId",
+                    }));
+                }
+            }
             let dead_letter_preserves_event_id = redrive_event_id
                 .zip(original_redrive_event_id)
                 .is_some_and(|(event_id, original_event_id)| event_id == original_event_id);
+            let raw_redrive_creates_application_event = raw_redrive
+                .get("createsApplicationEvent")
+                .or_else(|| raw_redrive.get("creates_application_event"));
             let redrive_creates_application_event = if has_redrive {
-                raw_redrive
-                    .get("createsApplicationEvent")
-                    .or_else(|| raw_redrive.get("creates_application_event"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true)
+                match raw_redrive_creates_application_event {
+                    Some(value) => match value.as_bool() {
+                        Some(flag) => flag,
+                        None => {
+                            diagnostics.push(json!({
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive requires boolean createsApplicationEvent",
+                                "path": "$.redrive.createsApplicationEvent",
+                            }));
+                            false
+                        }
+                    },
+                    None => true,
+                }
             } else {
                 false
             };

@@ -1913,6 +1913,84 @@
     }
   },
   {
+    "name": "webhook_delivery_redrive_event_identity_mismatch_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-event-mismatch-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0307",
+        "runId": "run-coding-001",
+        "sequence": 307,
+        "cursor": "evt-0307",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0307",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:07Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-event-mismatch-001",
+      "eventId": "evt-0307",
+      "originalEventId": "evt-original-0307",
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive must preserve originalEventId",
+        "path": "$.redrive.eventId"
+      }
+    ],
+    "expected": {
+      "deadLetterPreservesEventId": false,
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_redrive_application_event_flag_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-application-event-flag-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0308",
+        "runId": "run-coding-001",
+        "sequence": 308,
+        "cursor": "evt-0308",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0308",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:08Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-application-event-flag-001",
+      "eventId": "evt-0308",
+      "originalEventId": "evt-0308",
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
+      "createsApplicationEvent": "false"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires boolean createsApplicationEvent",
+        "path": "$.redrive.createsApplicationEvent"
+      }
+    ],
+    "expected": {
+      "redriveCreatesApplicationEvent": false,
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
     "kind": "async_callback_resume_guards",
     "operation": {
