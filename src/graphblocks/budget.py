@@ -10,6 +10,7 @@ import sqlite3
 from types import MappingProxyType
 from typing import Literal, TypeVar, cast, get_args
 
+from .canonical import canonical_dumps
 from .policy import ResourceRef
 
 
@@ -140,6 +141,23 @@ def _validate_usage_amounts(owner: str, field_name: str, values: object) -> list
     if any(not isinstance(amount, UsageAmount) for amount in amounts):
         raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
     return list(amounts)
+
+
+def _loads_strict_json(field_name: str, value: str) -> object:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"budget ledger {field_name} must be valid strict JSON") from error
+
+
+def _dumps_strict_json(field_name: str, value: object) -> str:
+    try:
+        return canonical_dumps(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"budget ledger {field_name} must be valid strict JSON") from error
 
 
 def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple[str, ...]:
@@ -1508,7 +1526,10 @@ class SQLiteBudgetLedger:
         ).fetchone()
         if row is None:
             return InMemoryBudgetLedger()
-        return _budget_ledger_from_snapshot(json.loads(row["state_json"]))
+        snapshot = _loads_strict_json("state_json", row["state_json"])
+        if not isinstance(snapshot, dict):
+            raise ValueError("budget ledger state_json must decode to an object")
+        return _budget_ledger_from_snapshot(snapshot)
 
     def _save_snapshot(self, ledger: InMemoryBudgetLedger) -> None:
         self._connection.execute(
@@ -1519,10 +1540,9 @@ class SQLiteBudgetLedger:
             """,
             (
                 "default",
-                json.dumps(
+                _dumps_strict_json(
+                    "state_json",
                     _budget_ledger_to_snapshot(ledger),
-                    sort_keys=True,
-                    separators=(",", ":"),
                 ),
             ),
         )

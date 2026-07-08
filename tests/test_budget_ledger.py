@@ -486,6 +486,21 @@ def test_sqlite_budget_ledger_persists_reserved_balance_and_permit_spend(tmp_pat
     reopened.close()
 
 
+def test_sqlite_budget_ledger_rejects_non_standard_snapshot_json_on_replay(tmp_path) -> None:
+    path = tmp_path / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    ledger._connection.execute(
+        "UPDATE budget_ledger_snapshots SET state_json = ? WHERE snapshot_id = ?",
+        ('{"version": NaN}', "default"),
+    )
+    ledger._connection.commit()
+    ledger.close()
+
+    with pytest.raises(ValueError, match="budget ledger state_json must be valid strict JSON"):
+        SQLiteBudgetLedger(path)
+
+
 def test_sqlite_budget_ledger_persists_completion_reserve_lifecycle(tmp_path) -> None:
     path = tmp_path / "budget.sqlite3"
     ledger = SQLiteBudgetLedger(path)
