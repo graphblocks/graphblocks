@@ -196,15 +196,7 @@ class RemoteToolInvocation:
             object.__setattr__(self, "idempotency_key", self.idempotency_key.strip())
         if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
             raise RemoteToolAdapterError("remote invocation arguments_json must not be empty")
-        try:
-            arguments = json.loads(
-                self.arguments_json,
-                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            )
-        except (ValueError, json.JSONDecodeError) as error:
-            raise RemoteToolAdapterError("remote invocation arguments_json must be valid JSON") from error
-        if not isinstance(arguments, Mapping):
-            raise RemoteToolAdapterError("remote invocation arguments_json must decode to an object")
+        arguments = _remote_invocation_arguments(self.arguments_json)
         try:
             actual_digest = canonical_hash(arguments)
             canonical_arguments = canonical_dumps(arguments)
@@ -223,13 +215,26 @@ class RemoteToolInvocation:
             "tool_call_id": self.tool_call_id,
             "connection": self.connection,
             "operation": self.operation,
-            "arguments": json.loads(self.arguments_json),
+            "arguments": _remote_invocation_arguments(self.arguments_json),
             "arguments_digest": self.arguments_digest,
             "definition_digest": self.definition_digest,
             "binding_digest": self.binding_digest,
             "effective_policy_snapshot_id": self.effective_policy_snapshot_id,
             "idempotency_key": self.idempotency_key,
         }
+
+
+def _remote_invocation_arguments(arguments_json: str) -> dict[str, object]:
+    try:
+        arguments = json.loads(
+            arguments_json,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except (ValueError, json.JSONDecodeError) as error:
+        raise RemoteToolAdapterError("remote invocation arguments_json must be valid JSON") from error
+    if not isinstance(arguments, Mapping):
+        raise RemoteToolAdapterError("remote invocation arguments_json must decode to an object")
+    return dict(arguments)
 
 
 def define_remote_tool(

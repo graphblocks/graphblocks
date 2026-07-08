@@ -1521,10 +1521,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and input objects before local or HTTP execution, so malformed run invocations fail at the client
   boundary rather than being coerced by a downstream serializer.
   `RemoteToolInvocation` now parses caller-supplied `arguments_json` with strict JSON semantics,
-  rejecting non-standard constants such as `NaN` before argument digest verification.
+  rejecting non-standard constants such as `NaN` before argument digest verification and again when
+  request-contract projections replay stored invocation arguments.
   MCP and OpenAPI adapter invocations now apply the same strict parsing to caller-supplied
   `arguments_json`, so non-standard constants are rejected before the executable request contract is
-  canonicalized or digest-checked.
+  canonicalized, digest-checked, or replayed through request-contract projections.
   `graphblocks-policy-opa` and `graphblocks-policy-cedar` now parse stored PDP request contracts
   with strict JSON semantics, rejecting non-standard constants such as `NaN` before OPA input or
   Cedar authorization payloads are exposed to external policy engines.

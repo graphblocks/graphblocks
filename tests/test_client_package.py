@@ -430,6 +430,9 @@ def test_client_package_builds_remote_tool_definition_binding_and_invocation(mon
     direct = graphblocks_client.RemoteToolInvocation(**direct_kwargs)
 
     assert direct.arguments_json == '{"limit":5,"query":"billing"}'
+    object.__setattr__(direct, "arguments_json", '{"score": NaN}')
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments_json must be valid JSON"):
+        direct.request_contract()
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="connection must not be empty"):
         graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "connection": " "})
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="must decode to an object"):

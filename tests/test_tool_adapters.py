@@ -286,6 +286,9 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     direct = graphblocks_mcp.McpToolInvocation(**direct_kwargs)
 
     assert direct.arguments_json == '{"limit":5,"query":"billing"}'
+    object.__setattr__(direct, "arguments_json", '{"score": NaN}')
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments_json must be valid JSON"):
+        direct.request_contract()
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="server must not be empty"):
         graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "server": " "})
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="must decode to an object"):
@@ -958,6 +961,9 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
     direct = graphblocks_openapi.OpenApiOperationInvocation(**direct_kwargs)
 
     assert direct.arguments_json == '{"priority":"normal","title":"Need help"}'
+    object.__setattr__(direct, "arguments_json", '{"score": NaN}')
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments_json must be valid JSON"):
+        direct.request_contract()
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="connection must not be empty"):
         graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "connection": " "})
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="must decode to an object"):
