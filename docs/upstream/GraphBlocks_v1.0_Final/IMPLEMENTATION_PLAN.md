@@ -1865,6 +1865,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The shared durable TCK now includes a 429 callback-delivery retry case and the Rust durable TCK
   runner reports `retryScheduledAfterRetryableStatus`, keeping Rust/Python conformance aligned for
   retryable webhook receiver responses beyond 5xx.
+- Durable callback projection validation now has shared expected-diagnostic coverage for malformed
+  duplicate 409 receiver rows that are not recorded as `acknowledged`, keeping duplicate delivery
+  evidence distinct from failed or retryable deliveries.
 - The shared durable TCK now includes a 410 subscription-gone callback delivery case. Python and
   Rust durable runners both report `subscriptionGoneAfter410` only when the receiver status is
   `410`, the delivery is `cancelled`, and the durable error is `subscription_gone`.

@@ -618,6 +618,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     duplicate_409_acknowledged = true;
                 }
+                if receiver_status == 409
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status != "acknowledged")
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery duplicate 409 requires acknowledged status",
+                        "path": format!("$.deliveries[{index}].status"),
+                    }));
+                }
                 if receiver_status == 410
                     && delivery
                         .get("status")

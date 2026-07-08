@@ -557,6 +557,35 @@
     }
   },
   {
+    "name": "webhook_delivery_409_failed_status_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-duplicate-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0102",
+        "runId": "run-coding-001",
+        "sequence": 102,
+        "cursor": "evt-0102",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0102",
+        "receiverStatus": 409,
+        "status": "failed",
+        "lastError": "duplicate"
+      }
+    ],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery duplicate 409 requires acknowledged status",
+        "path": "$.deliveries[0].status"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_success_2xx_delivered",
     "kind": "callback_delivery_projection",
     "deliveries": [
