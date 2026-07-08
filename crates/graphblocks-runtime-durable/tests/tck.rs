@@ -516,10 +516,30 @@ fn run_case(case: &Value) -> Result<(), String> {
                     event_records.push(event);
                 }
             }
-            let last_cursor = raw_attach
+            let raw_last_cursor = raw_attach
                 .get("lastCursor")
-                .or_else(|| raw_attach.get("last_cursor"))
-                .and_then(Value::as_str);
+                .or_else(|| raw_attach.get("last_cursor"));
+            let last_cursor_path = if raw_attach.contains_key("lastCursor")
+                || !raw_attach.contains_key("last_cursor")
+            {
+                "lastCursor"
+            } else {
+                "last_cursor"
+            };
+            let last_cursor = match raw_last_cursor {
+                Some(value) => match value.as_str().filter(|cursor| !cursor.trim().is_empty()) {
+                    Some(cursor) => Some(cursor),
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires string lastCursor",
+                            "path": format!("$.attach.{last_cursor_path}"),
+                        }));
+                        None
+                    }
+                },
+                None => None,
+            };
             let replay_event_ids = event_records
                 .iter()
                 .filter(|event| {
@@ -537,16 +557,54 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .and_then(Value::as_str)
                 })
                 .collect::<Vec<_>>();
-            let expired_cursor = raw_attach
+            let raw_expired_cursor = raw_attach
                 .get("expiredCursor")
-                .or_else(|| raw_attach.get("expired_cursor"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let retained_from = raw_retention
+                .or_else(|| raw_attach.get("expired_cursor"));
+            let expired_cursor_path = if raw_attach.contains_key("expiredCursor")
+                || !raw_attach.contains_key("expired_cursor")
+            {
+                "expiredCursor"
+            } else {
+                "expired_cursor"
+            };
+            let expired_cursor = match raw_expired_cursor {
+                Some(value) => match value.as_str().filter(|cursor| !cursor.trim().is_empty()) {
+                    Some(cursor) => cursor,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires string expiredCursor",
+                            "path": format!("$.attach.{expired_cursor_path}"),
+                        }));
+                        ""
+                    }
+                },
+                None => "",
+            };
+            let raw_retained_from = raw_retention
                 .get("retainedFromCursor")
-                .or_else(|| raw_retention.get("retained_from_cursor"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+                .or_else(|| raw_retention.get("retained_from_cursor"));
+            let retained_from_path = if raw_retention.contains_key("retainedFromCursor")
+                || !raw_retention.contains_key("retained_from_cursor")
+            {
+                "retainedFromCursor"
+            } else {
+                "retained_from_cursor"
+            };
+            let retained_from = match raw_retained_from {
+                Some(value) => match value.as_str().filter(|cursor| !cursor.trim().is_empty()) {
+                    Some(cursor) => cursor,
+                    None => {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run retention requires string retainedFromCursor",
+                            "path": format!("$.retention.{retained_from_path}"),
+                        }));
+                        ""
+                    }
+                },
+                None => "",
+            };
             let lifetime = case.get("lifetime").and_then(Value::as_str);
             let lifetime_allows_detach = match lifetime {
                 Some("background" | "job") => true,

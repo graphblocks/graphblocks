@@ -961,6 +961,128 @@
     }
   },
   {
+    "name": "background_run_non_string_last_cursor_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-invalid-last-cursor",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-invalid-last-cursor/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-invalid-last-cursor-001",
+        "sequence": 1,
+        "cursor": "evt_000001",
+        "type": "RunStarted"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "lastCursor": 0
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run attach requires string lastCursor",
+        "path": "$.attach.lastCursor"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "background_run_non_string_expired_cursor_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-invalid-expired-cursor",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-invalid-expired-cursor/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-invalid-expired-cursor-001",
+        "sequence": 1,
+        "cursor": "evt_000002",
+        "type": "RunProgress"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "expiredCursor": 0,
+      "summaryOnExpiredCursor": true
+    },
+    "retention": {
+      "retainedFromCursor": "evt_000002"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run attach requires string expiredCursor",
+        "path": "$.attach.expiredCursor"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "background_run_non_string_retained_cursor_rejected",
+    "kind": "background_run_event_stream",
+    "lifetime": "background",
+    "responseMode": "accepted",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-background-invalid-retained-cursor",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-background-invalid-retained-cursor/events",
+      "initialCursor": "evt_000000"
+    },
+    "events": [
+      {
+        "eventId": "evt-bg-invalid-retained-cursor-001",
+        "sequence": 1,
+        "cursor": "evt_000002",
+        "type": "RunProgress"
+      }
+    ],
+    "detach": {
+      "clientId": "client-1",
+      "cancelRun": false
+    },
+    "attach": {
+      "expiredCursor": "evt_000001",
+      "summaryOnExpiredCursor": true
+    },
+    "retention": {
+      "retainedFromCursor": 2
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run retention requires string retainedFromCursor",
+        "path": "$.retention.retainedFromCursor"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
     "kind": "callback_delivery_projection",
     "subscription": {
