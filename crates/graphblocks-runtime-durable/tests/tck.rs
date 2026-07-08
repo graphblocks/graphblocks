@@ -682,6 +682,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].runId"),
                     }));
                 }
+                if delivery
+                    .get("sequence")
+                    .is_some_and(|sequence| sequence.as_bool().is_some() || !sequence.is_u64())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires integer sequence",
+                        "path": format!("$.deliveries[{index}].sequence"),
+                    }));
+                }
                 if let Some(subscription_id) = subscription_id {
                     if delivery
                         .get("subscriptionId")
