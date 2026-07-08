@@ -8219,6 +8219,74 @@ class TckRunner:
                                 "path": f"$.operation.{budget_state_path}",
                             }
                         )
+                callback_receipt_supplied = any(
+                    key in raw_callback
+                    for key in (
+                        "callbackId",
+                        "callback_id",
+                        "payloadDigest",
+                        "payload_digest",
+                        "verifiedBy",
+                        "verified_by",
+                    )
+                )
+                if callback_receipt_supplied:
+                    callback_id_path = (
+                        "callbackId"
+                        if "callbackId" in raw_callback or "callback_id" not in raw_callback
+                        else "callback_id"
+                    )
+                    callback_id = raw_callback.get(
+                        "callbackId", raw_callback.get("callback_id")
+                    )
+                    if not isinstance(callback_id, str) or not callback_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires nonblank callbackId",
+                                "path": f"$.callback.{callback_id_path}",
+                            }
+                        )
+                    payload_digest_path = (
+                        "payloadDigest"
+                        if "payloadDigest" in raw_callback or "payload_digest" not in raw_callback
+                        else "payload_digest"
+                    )
+                    payload_digest = raw_callback.get(
+                        "payloadDigest", raw_callback.get("payload_digest")
+                    )
+                    if (
+                        not isinstance(payload_digest, str)
+                        or not payload_digest.startswith("sha256:")
+                        or len(payload_digest.removeprefix("sha256:")) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in payload_digest.removeprefix("sha256:")
+                        )
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires payloadDigest sha256 digest",
+                                "path": f"$.callback.{payload_digest_path}",
+                            }
+                        )
+                    verified_by_path = (
+                        "verifiedBy"
+                        if "verifiedBy" in raw_callback or "verified_by" not in raw_callback
+                        else "verified_by"
+                    )
+                    verified_by = raw_callback.get(
+                        "verifiedBy", raw_callback.get("verified_by")
+                    )
+                    if not isinstance(verified_by, str) or not verified_by.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires nonblank verifiedBy",
+                                "path": f"$.callback.{verified_by_path}",
+                            }
+                        )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),

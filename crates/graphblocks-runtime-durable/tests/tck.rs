@@ -2035,6 +2035,83 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let callback_receipt_supplied = [
+                "callbackId",
+                "callback_id",
+                "payloadDigest",
+                "payload_digest",
+                "verifiedBy",
+                "verified_by",
+            ]
+            .into_iter()
+            .any(|key| raw_callback.contains_key(key));
+            if callback_receipt_supplied {
+                let callback_id_path = if raw_callback.contains_key("callbackId")
+                    || !raw_callback.contains_key("callback_id")
+                {
+                    "callbackId"
+                } else {
+                    "callback_id"
+                };
+                if raw_callback
+                    .get("callbackId")
+                    .or_else(|| raw_callback.get("callback_id"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |callback_id| callback_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires nonblank callbackId",
+                        "path": format!("$.callback.{callback_id_path}"),
+                    }));
+                }
+                let payload_digest_path = if raw_callback.contains_key("payloadDigest")
+                    || !raw_callback.contains_key("payload_digest")
+                {
+                    "payloadDigest"
+                } else {
+                    "payload_digest"
+                };
+                if !raw_callback
+                    .get("payloadDigest")
+                    .or_else(|| raw_callback.get("payload_digest"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|payload_digest| {
+                        let Some(hex) = payload_digest.strip_prefix("sha256:") else {
+                            return false;
+                        };
+                        hex.len() == 64
+                            && hex
+                                .bytes()
+                                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                    })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires payloadDigest sha256 digest",
+                        "path": format!("$.callback.{payload_digest_path}"),
+                    }));
+                }
+                let verified_by_path = if raw_callback.contains_key("verifiedBy")
+                    || !raw_callback.contains_key("verified_by")
+                {
+                    "verifiedBy"
+                } else {
+                    "verified_by"
+                };
+                if raw_callback
+                    .get("verifiedBy")
+                    .or_else(|| raw_callback.get("verified_by"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |verified_by| verified_by.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume callback requires nonblank verifiedBy",
+                        "path": format!("$.callback.{verified_by_path}"),
+                    }));
+                }
+            }
             let mut guard_values = BTreeMap::new();
             for (key, alias) in [
                 (
