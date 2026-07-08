@@ -7184,6 +7184,20 @@ class TckRunner:
                                 "path": f"$.events[{event_index}].cursor",
                             }
                         )
+                    sequence = raw_event.get("sequence")
+                    if (
+                        isinstance(sequence, bool)
+                        or not isinstance(sequence, int)
+                        or sequence < 0
+                    ):
+                        event_valid = False
+                        diagnostics.append(
+                            {
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run event requires integer sequence",
+                                "path": f"$.events[{event_index}].sequence",
+                            }
+                        )
                     if event_valid:
                         event_records.append(raw_event)
                 cursor_positions = {}

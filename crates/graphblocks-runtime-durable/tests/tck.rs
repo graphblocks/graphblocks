@@ -512,6 +512,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.events[{index}].cursor"),
                     }));
                 }
+                if event.get("sequence").and_then(Value::as_u64).is_none() {
+                    event_valid = false;
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": "background run event requires integer sequence",
+                        "path": format!("$.events[{index}].sequence"),
+                    }));
+                }
                 if event_valid {
                     event_records.push(event);
                 }
