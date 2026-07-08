@@ -1729,6 +1729,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection TCK cases now reject non-object delivery entries before evaluating
   retry, duplicate, idempotency, or redrive evidence, preserving the `CallbackDelivery` envelope
   shape across the shared Rust and Python conformance harnesses.
+- Durable callback projection TCK diagnostics now preserve original delivery-array indexes after
+  non-object entries, so malformed rows still point to stable repair paths in replay fixtures.
 - Durable callback projection TCK cases now have shared expected-diagnostic coverage rejecting
   delivery rows without nonblank `idempotencyKey` evidence, preserving the callback protocol's
   at-least-once deduplication contract in shared MVP fixtures.

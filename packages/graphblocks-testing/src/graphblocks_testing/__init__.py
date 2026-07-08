@@ -7660,7 +7660,11 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}]",
                             }
                         )
-                deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
+                deliveries = [
+                    (index, delivery)
+                    for index, delivery in enumerate(raw_deliveries)
+                    if isinstance(delivery, Mapping)
+                ]
                 valid_delivery_statuses = {
                     "pending",
                     "delivering",
@@ -7674,7 +7678,7 @@ class TckRunner:
                 receiver_statuses = []
                 next_retry_at_values = []
                 seen_idempotency_keys: dict[str, tuple[str, str]] = {}
-                for index, delivery in enumerate(deliveries):
+                for index, delivery in deliveries:
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
                         ("subscriptionId", "subscription_id"),
@@ -8035,9 +8039,9 @@ class TckRunner:
                 acknowledged_duplicates = []
                 subscription_gone_ids = []
                 non_retryable_4xx_ids = []
-                for index, delivery in enumerate(deliveries):
-                    receiver_status = receiver_statuses[index]
-                    next_retry_at = next_retry_at_values[index]
+                for position, (_index, delivery) in enumerate(deliveries):
+                    receiver_status = receiver_statuses[position]
+                    next_retry_at = next_retry_at_values[position]
                     delivery_id = str(delivery.get("deliveryId", delivery.get("delivery_id", "")))
                     if (
                         receiver_status is not None
@@ -8080,7 +8084,7 @@ class TckRunner:
                         non_retryable_4xx_ids.append(delivery_id)
                 idempotency_keys = [
                     str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
-                    for delivery in deliveries
+                    for _index, delivery in deliveries
                 ]
                 observed = {
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),

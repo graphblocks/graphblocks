@@ -1159,7 +1159,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
-            for (index, delivery) in deliveries.iter().filter_map(Value::as_object).enumerate() {
+            for (index, raw_delivery) in deliveries.iter().enumerate() {
+                let Some(delivery) = raw_delivery.as_object() else {
+                    continue;
+                };
                 if delivery
                     .get("deliveryId")
                     .or_else(|| delivery.get("delivery_id"))

@@ -2320,6 +2320,43 @@
     }
   },
   {
+    "name": "webhook_delivery_non_object_preserves_later_indices_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      "del-object-invalid-002",
+      {
+        "deliveryId": " ",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0088",
+        "runId": "run-coding-001",
+        "sequence": 88,
+        "cursor": "evt-0088",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0088",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:01Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery must be object",
+        "path": "$.deliveries[0]"
+      },
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery requires deliveryId",
+        "path": "$.deliveries[1].deliveryId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_empty_deliveries_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [],
