@@ -7420,7 +7420,7 @@ class TckRunner:
                             }
                         )
                 else:
-                    if "deadLetterPreservesEventId" in expected:
+                    if expected.get("deadLetterPreservesEventId") is True:
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackRedriveInvalid",
@@ -7431,7 +7431,7 @@ class TckRunner:
                         expected_keys_with_structural_diagnostics.add(
                             "deadLetterPreservesEventId"
                         )
-                    if "redriveCreatesApplicationEvent" in expected:
+                    if expected.get("redriveCreatesApplicationEvent") is True:
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackRedriveInvalid",

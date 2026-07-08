@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 14
+    assert [case.kind for case in cases] == ["durable"] * 15
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1216,6 +1216,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_detach_replay_and_cursor_expiry",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_rate_limit_schedules_retry",
+        "webhook_delivery_without_redrive_does_not_prove_redrive",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",
@@ -1225,6 +1226,12 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.observed.get("retryScheduledAfterRetryableStatus") is True
         and result.observed.get("retryScheduledAfter5xx") is False
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_without_redrive_does_not_prove_redrive"
+        and result.observed.get("deadLetterPreservesEventId") is False
+        and result.observed.get("redriveCreatesApplicationEvent") is False
         for result in report.results
     )
     assert any(result.observed.get("cancelWinsBlocksResume") is True for result in report.results)
@@ -4156,6 +4163,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_detach_replay_and_cursor_expiry",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_rate_limit_schedules_retry",
+        "webhook_delivery_without_redrive_does_not_prove_redrive",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "external_operation_late_side_effect_usage_reconciliation",

@@ -1865,6 +1865,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The shared durable TCK now includes a 429 callback-delivery retry case and the Rust durable TCK
   runner reports `retryScheduledAfterRetryableStatus`, keeping Rust/Python conformance aligned for
   retryable webhook receiver responses beyond 5xx.
+- The shared durable TCK now also includes a missing-redrive callback projection case. Python and
+  Rust runners both observe `deadLetterPreservesEventId` and `redriveCreatesApplicationEvent` as
+  false when no explicit `redrive` envelope is present, while Python still rejects attempts to
+  prove true redrive behavior without that evidence.
 - Production conformance evidence now treats durable async/background execution as part of the MVP
   acceptance boundary: `GB-C4-PRODUCTION` requires durable TCK coverage and the
   `coding-agent-background-callbacks` acceptance application, so accepted invocation, cursor replay,

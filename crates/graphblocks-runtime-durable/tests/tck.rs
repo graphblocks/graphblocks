@@ -529,6 +529,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .get("redrive")
                 .and_then(Value::as_object)
                 .unwrap_or(&empty_redrive);
+            let has_redrive = case
+                .get("redrive")
+                .and_then(Value::as_object)
+                .is_some_and(|redrive| !redrive.is_empty());
+            let redrive_event_id = raw_redrive
+                .get("eventId")
+                .or_else(|| raw_redrive.get("event_id"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let original_redrive_event_id = raw_redrive
+                .get("originalEventId")
+                .or_else(|| raw_redrive.get("original_event_id"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let dead_letter_preserves_event_id = redrive_event_id
+                .zip(original_redrive_event_id)
+                .is_some_and(|(event_id, original_event_id)| event_id == original_event_id);
+            let redrive_creates_application_event = if has_redrive {
+                raw_redrive
+                    .get("createsApplicationEvent")
+                    .or_else(|| raw_redrive.get("creates_application_event"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+            } else {
+                false
+            };
             let mut idempotency_keys = BTreeSet::new();
             let mut idempotency_key_count = 0usize;
             let mut retry_scheduled_after_5xx = false;
@@ -578,17 +604,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
                 "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
-                "deadLetterPreservesEventId": raw_redrive
-                    .get("eventId")
-                    .or_else(|| raw_redrive.get("event_id"))
-                    == raw_redrive
-                        .get("originalEventId")
-                        .or_else(|| raw_redrive.get("original_event_id")),
-                "redriveCreatesApplicationEvent": raw_redrive
-                    .get("createsApplicationEvent")
-                    .or_else(|| raw_redrive.get("creates_application_event"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
+                "deadLetterPreservesEventId": dead_letter_preserves_event_id,
+                "redriveCreatesApplicationEvent": redrive_creates_application_event,
                 "nonMandatoryOutageBlocksRun": case
                     .get("nonMandatoryOutageBlocksRun")
                     .or_else(|| case.get("non_mandatory_outage_blocks_run"))
