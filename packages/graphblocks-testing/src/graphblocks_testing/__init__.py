@@ -8209,6 +8209,25 @@ class TckRunner:
                                         "path": f"$.usage.providerUsageRecords[{usage_index}]",
                                     }
                                 )
+                            else:
+                                metric = usage_record.get("metric")
+                                if not isinstance(metric, str) or not metric.strip():
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record requires string metric",
+                                            "path": f"$.usage.providerUsageRecords[{usage_index}].metric",
+                                        }
+                                    )
+                                amount = usage_record.get("amount")
+                                if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableExternalOperationInvalid",
+                                            "message": "external operation reconciliation usage record requires numeric amount",
+                                            "path": f"$.usage.providerUsageRecords[{usage_index}].amount",
+                                        }
+                                    )
                 observed = {
                     "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
                     "lateCallbackCommitsResult": external_reconciliation_values[("lateCallback", "commitsResult")],

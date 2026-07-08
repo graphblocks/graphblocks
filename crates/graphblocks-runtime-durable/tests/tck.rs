@@ -2051,7 +2051,26 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     Some(Value::Array(records)) if !records.is_empty() => {
                         for (index, record) in records.iter().enumerate() {
-                            if !record.is_object() {
+                            if let Some(record) = record.as_object() {
+                                if record
+                                    .get("metric")
+                                    .and_then(Value::as_str)
+                                    .map_or(true, |metric| metric.trim().is_empty())
+                                {
+                                    diagnostics.push(json!({
+                                        "code": "DurableExternalOperationInvalid",
+                                        "message": "external operation reconciliation usage record requires string metric",
+                                        "path": format!("$.usage.providerUsageRecords[{index}].metric"),
+                                    }));
+                                }
+                                if record.get("amount").and_then(Value::as_f64).is_none() {
+                                    diagnostics.push(json!({
+                                        "code": "DurableExternalOperationInvalid",
+                                        "message": "external operation reconciliation usage record requires numeric amount",
+                                        "path": format!("$.usage.providerUsageRecords[{index}].amount"),
+                                    }));
+                                }
+                            } else {
                                 diagnostics.push(json!({
                                     "code": "DurableExternalOperationInvalid",
                                     "message": "external operation reconciliation usage record must be object",

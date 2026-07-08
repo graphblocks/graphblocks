@@ -3189,5 +3189,66 @@
     "expected": {
       "expectedDiagnosticsMatched": true
     }
+  },
+  {
+    "name": "external_operation_usage_record_missing_metric_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation usage record requires string metric",
+        "path": "$.usage.providerUsageRecords[0].metric"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_usage_record_non_numeric_amount_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "effectState": "committed"
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": "1"
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation usage record requires numeric amount",
+        "path": "$.usage.providerUsageRecords[0].amount"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
   }
 ]
