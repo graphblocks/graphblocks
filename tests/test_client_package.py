@@ -1233,6 +1233,102 @@ def test_client_package_rejects_mismatched_run_snapshot_response_id(
 
 
 @pytest.mark.parametrize(
+    ("method_name", "payload", "message"),
+    (
+        (
+            "run_graph",
+            {
+                "runId": "run-requested-1",
+                "status": "succeeded",
+                "outputs": {},
+            },
+            "GraphBlocks HTTP response event run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "run_events",
+            {},
+            "GraphBlocks run events response event run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "run_stream",
+            {"runId": "run-requested-1", "stream": {"status": "accepted"}},
+            "GraphBlocks run stream response event run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "attach_to_run",
+            {"runId": "run-requested-1", "lastCursor": "run-requested-1:1"},
+            "GraphBlocks attach response event run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "subscribe_events",
+            {"runId": "run-requested-1", "lastCursor": "run-requested-1:1"},
+            "GraphBlocks subscribe response event run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "register_callback",
+            {"scope": "run", "scopeId": "run-requested-1"},
+            "GraphBlocks callback registration response event run_id must match requested run 'run-requested-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_replayed_events_for_wrong_run(
+    monkeypatch,
+    method_name: str,
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    wrong_run_event = {
+        "kind": "RunStarted",
+        "metadata": {
+            "eventId": "event-wrong-run-1",
+            "runId": "other-run",
+            "responseId": "response-wrong-run-1",
+            "turnId": None,
+            "sequence": 1,
+            "cursor": "other-run:1",
+            "releaseId": "release-1",
+            "policySnapshotId": "policy-1",
+            "occurredAt": "2026-06-24T00:00:00Z",
+        },
+        "payload": {"status": "running"},
+    }
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps({**payload, "events": [wrong_run_event]}).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        if method_name == "run_graph":
+            client.run_graph(
+                graphblocks_client.RunGraphCommand(
+                    graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+                    run_id="run-requested-1",
+                )
+            )
+        elif method_name == "subscribe_events":
+            client.subscribe_events(
+                "run-requested-1",
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+            )
+        elif method_name == "register_callback":
+            client.register_callback(
+                scope="run",
+                scope_id="run-requested-1",
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+            )
+        else:
+            getattr(client, method_name)("run-requested-1")
+
+
+@pytest.mark.parametrize(
     ("metadata_override", "message"),
     (
         ({"sequence": True}, "GraphBlocks HTTP event metadata sequence must be an integer"),

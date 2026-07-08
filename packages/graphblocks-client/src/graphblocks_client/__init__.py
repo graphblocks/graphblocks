@@ -966,7 +966,8 @@ class HttpGraphBlocksClient:
         return _read_json_response(response, "GraphBlocks async callback response")
 
     def run_events(self, run_id: str, *, cursor: object | None = None) -> tuple[ApplicationEvent, ...]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         url = f"{self.base_url.rstrip('/')}/runs/{run_id}/events"
         if cursor is not None:
             url = f"{url}?{urlencode({'cursor': _http_non_empty_string('cursor', cursor)})}"
@@ -980,7 +981,11 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks run events response")
-        return _events_from_payload(payload, "GraphBlocks run events response")
+        return _events_from_payload(
+            payload,
+            "GraphBlocks run events response",
+            expected_run_id=requested_run_id,
+        )
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
         requested_run_id = _http_non_empty_string("run_id", run_id)
@@ -1000,7 +1005,11 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks run stream response")
         stream_payload = _payload_object(payload, "GraphBlocks run stream response", "stream", "stream")
-        events = _events_from_payload(payload, "GraphBlocks run stream response")
+        events = _events_from_payload(
+            payload,
+            "GraphBlocks run stream response",
+            expected_run_id=requested_run_id,
+        )
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
@@ -1052,7 +1061,11 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks attach response")
-        events = _events_from_payload(payload, "GraphBlocks attach response")
+        events = _events_from_payload(
+            payload,
+            "GraphBlocks attach response",
+            expected_run_id=requested_run_id,
+        )
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
@@ -1130,7 +1143,11 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks subscribe response")
-        events = _events_from_payload(payload, "GraphBlocks subscribe response")
+        events = _events_from_payload(
+            payload,
+            "GraphBlocks subscribe response",
+            expected_run_id=requested_run_id,
+        )
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
@@ -1234,7 +1251,11 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks callback registration response")
-        events = _events_from_payload(payload, "GraphBlocks callback registration response")
+        events = _events_from_payload(
+            payload,
+            "GraphBlocks callback registration response",
+            expected_run_id=scope_id_value if scope_value == "run" else None,
+        )
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
@@ -1366,7 +1387,11 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks HTTP response")
 
-        events = _events_from_payload(payload, "GraphBlocks HTTP response")
+        events = _events_from_payload(
+            payload,
+            "GraphBlocks HTTP response",
+            expected_run_id=command.run_id,
+        )
 
         stream_state = ApplicationEventStreamState()
         for event in events:
@@ -1502,13 +1527,23 @@ def _payload_object(payload: Mapping[str, object], label: str, field_name: str, 
     return dict(value)
 
 
-def _events_from_payload(payload: Mapping[str, object], label: str) -> tuple[ApplicationEvent, ...]:
+def _events_from_payload(
+    payload: Mapping[str, object],
+    label: str,
+    *,
+    expected_run_id: str | None = None,
+) -> tuple[ApplicationEvent, ...]:
     if "events" not in payload:
         return ()
     event_payloads = payload["events"]
     if not isinstance(event_payloads, list):
         raise ValueError(f"{label} events must be a JSON array")
-    return _application_events_from_payloads(event_payloads)
+    events = _application_events_from_payloads(event_payloads)
+    if expected_run_id is not None:
+        for event in events:
+            if event.metadata.run_id != expected_run_id:
+                raise ValueError(f"{label} event run_id must match requested run {expected_run_id!r}")
+    return events
 
 
 def _validate_resolved_tool_capability(
