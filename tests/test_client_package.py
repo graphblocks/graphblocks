@@ -1194,6 +1194,7 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
                     "operationId": "id/with?query#fragment",
                     "callbackId": "callback-1",
                     "idempotencyKey": "idem-1",
+                    "payloadDigest": canonical_hash({"status": "completed"}),
                     "runId": "id/with?query#fragment",
                     "subscriptionId": "id/with?query#fragment",
                     "deliveryId": "id/with?query#fragment",
@@ -2333,6 +2334,45 @@ def test_client_package_rejects_mismatched_async_callback_response_identity(
             node_id="waitCI",
             attempt_id="attempt-1",
             provider_operation_id="provider-ci-1",
+        )
+
+
+def test_client_package_rejects_mismatched_async_callback_response_payload_digest(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "operationId": "op-ci-client-1",
+                    "callbackId": "cb-client-1",
+                    "idempotencyKey": "idem-client-callback-1",
+                    "payloadDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "verifiedBy": "callback-relay",
+                    "policySnapshotId": "local",
+                    "status": "accepted",
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "GraphBlocks async callback response payload_digest must match submitted payload "
+            "'sha256:4b7f8e395f509529dbf2eba914e46745cbe72791078d1b9c198d01daab24c9ae'"
+        ),
+    ):
+        client.submit_async_callback(
+            operation_id="op-ci-client-1",
+            callback_id="cb-client-1",
+            idempotency_key="idem-client-callback-1",
+            payload={"status": "completed", "checks": [{"name": "unit", "passed": True}]},
         )
 
 

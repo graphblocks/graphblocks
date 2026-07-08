@@ -1204,8 +1204,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback receipts to `/callbacks/{operation_id}` with the required idempotency header and typed
   run/node/attempt/provider fences, so clients do not need to hand-assemble callback ingress
   requests. Accepted callback responses must echo the requested operation, callback id,
-  idempotency key, and any requested run/node/attempt/provider fences before the client treats the
-  callback receipt as durable.
+  idempotency key, canonical payload digest, and any requested run/node/attempt/provider fences
+  before the client treats the callback receipt as durable.
 - `graphblocks-client` also exposes a `GetRunStatus` HTTP helper for `/runs/{run_id}`, sharing the
   same run-id validation, authentication header handling, and JSON error mapping as attach/replay
   helpers.

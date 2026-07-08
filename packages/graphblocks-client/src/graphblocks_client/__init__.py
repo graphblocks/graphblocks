@@ -938,6 +938,7 @@ class HttpGraphBlocksClient:
         callback_id = _http_non_empty_string("callback_id", callback_id)
         idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
         payload = _http_canonical_json_mapping("callback payload", payload)
+        expected_payload_digest = canonical_hash(payload)
         body: dict[str, object] = {
             "callbackId": callback_id,
             "payload": payload,
@@ -1011,6 +1012,18 @@ class HttpGraphBlocksClient:
             raise ValueError(
                 "GraphBlocks async callback response idempotency_key "
                 f"must match requested idempotency key {idempotency_key!r}"
+            )
+        response_payload_digest = _payload_string(
+            response_payload,
+            "GraphBlocks async callback response",
+            "payload_digest",
+            "payloadDigest",
+            "payload_digest",
+        )
+        if response_payload_digest != expected_payload_digest:
+            raise ValueError(
+                "GraphBlocks async callback response payload_digest "
+                f"must match submitted payload {expected_payload_digest!r}"
             )
         if requested_run_id is not None:
             _validate_response_run_id(
