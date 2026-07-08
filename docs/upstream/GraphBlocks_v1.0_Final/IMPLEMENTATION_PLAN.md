@@ -1813,8 +1813,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection redrive evidence now requires nonblank operator and reason audit
   metadata, so dead-letter redrive conformance preserves the operator action context required for
   durable audit and redrive review.
-- Durable callback projection TCK cases now reject non-object redrive entries when present, so
-  malformed dead-letter redrive projections cannot be silently treated as absent optional data.
+- Durable callback projection shared TCK cases now reject non-object redrive entries when present,
+  so malformed dead-letter redrive projections cannot be silently treated as absent optional data
+  by either Rust or Python.
 - Durable callback projection redrive evidence also requires nonblank `deliveryId`, `eventId`, and
   `originalEventId` fields, preventing missing identity values from satisfying dead-letter
   preservation checks by comparing absent data.

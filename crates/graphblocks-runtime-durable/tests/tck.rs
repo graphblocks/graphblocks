@@ -536,6 +536,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": "$.deliveries",
                 }));
             }
+            if case
+                .get("redrive")
+                .is_some_and(|redrive| !redrive.is_object())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackRedriveInvalid",
+                    "message": "callback redrive must be object",
+                    "path": "$.redrive",
+                }));
+            }
             let empty_redrive = Map::new();
             let raw_redrive = case
                 .get("redrive")

@@ -557,6 +557,37 @@
     }
   },
   {
+    "name": "webhook_delivery_non_object_redrive_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-shape-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0089",
+        "runId": "run-coding-001",
+        "sequence": 89,
+        "cursor": "evt-0089",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0089",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:01Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": "del-dead-001",
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive must be object",
+        "path": "$.redrive"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_invalid_subscription_failure_policy_rejected",
     "kind": "callback_delivery_projection",
     "subscription": {
