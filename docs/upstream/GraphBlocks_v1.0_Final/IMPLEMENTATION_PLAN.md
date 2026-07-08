@@ -667,6 +667,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callbacks for a different run, attempt, or node now also append `ServerAsyncCallbackRejection`
   metadata before returning `409`, preserving audit evidence for stale or misrouted callback
   attempts.
+- Server callback ingress now also projects terminal-run callback rejections as
+  `LateExternalCallbackReceived` diagnostics, so late arrivals after cancellation, expiry, failure,
+  or policy stop remain inspectable without creating an accepted callback receipt or resume signal.
 - Async callback ingestion now supports durable pre-operation quarantine for the race where an
   external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate

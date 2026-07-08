@@ -2847,6 +2847,14 @@ class GraphBlocksServerApp:
             for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
         )
 
+    def late_async_callbacks(self, operation_id: str) -> tuple[dict[str, object], ...]:
+        operation_id = _validate_non_empty_string("server late async callback", "operation_id", operation_id)
+        return tuple(
+            {"kind": "LateExternalCallbackReceived", **rejection.protocol_value()}
+            for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
+            if rejection.reason == "terminal_run"
+        )
+
     def detachments(self, run_id: str) -> tuple[dict[str, object], ...]:
         run_id = _validate_non_empty_string("server detach", "run_id", run_id)
         return self._detachments_by_run_id.get(run_id, ())
