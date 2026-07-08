@@ -7114,7 +7114,12 @@ class TckRunner:
                         initial_run_id = raw_initial_response.get(
                             "runId", raw_initial_response.get("run_id")
                         )
-                        if not isinstance(initial_run_id, str) or not initial_run_id.strip():
+                        valid_initial_run_id = (
+                            initial_run_id.strip()
+                            if isinstance(initial_run_id, str) and initial_run_id.strip()
+                            else None
+                        )
+                        if valid_initial_run_id is None:
                             diagnostics.append(
                                 {
                                     "code": "DurableBackgroundRunInvalid",
@@ -7128,20 +7133,35 @@ class TckRunner:
                             "eventStream",
                             raw_initial_response.get("event_stream"),
                         )
-                        if (
-                            not isinstance(initial_event_stream, str)
-                            or not initial_event_stream.strip()
-                        ):
-                            event_stream_path = (
-                                "eventStream"
-                                if "eventStream" in raw_initial_response
-                                or "event_stream" not in raw_initial_response
-                                else "event_stream"
-                            )
+                        valid_initial_event_stream = (
+                            initial_event_stream.strip()
+                            if isinstance(initial_event_stream, str)
+                            and initial_event_stream.strip()
+                            else None
+                        )
+                        event_stream_path = (
+                            "eventStream"
+                            if "eventStream" in raw_initial_response
+                            or "event_stream" not in raw_initial_response
+                            else "event_stream"
+                        )
+                        if valid_initial_event_stream is None:
                             diagnostics.append(
                                 {
                                     "code": "DurableBackgroundRunInvalid",
                                     "message": f"background run {response_mode} response requires eventStream",
+                                    "path": f"$.initialResponse.{event_stream_path}",
+                                }
+                            )
+                        elif (
+                            valid_initial_run_id is not None
+                            and f"/runs/{valid_initial_run_id}/"
+                            not in valid_initial_event_stream
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableBackgroundRunInvalid",
+                                    "message": "background run eventStream must include runId",
                                     "path": f"$.initialResponse.{event_stream_path}",
                                 }
                             )

@@ -795,12 +795,13 @@ fn run_case(case: &Value) -> Result<(), String> {
             let initial_response = raw_initial_response.and_then(Value::as_object);
             if let Some(mode) = valid_response_mode {
                 if let Some(response) = initial_response {
-                    if response
+                    let response_run_id = response
                         .get("runId")
                         .or_else(|| response.get("run_id"))
                         .and_then(Value::as_str)
-                        .is_none_or(|run_id| run_id.trim().is_empty())
-                    {
+                        .map(str::trim)
+                        .filter(|run_id| !run_id.is_empty());
+                    if response_run_id.is_none() {
                         diagnostics.push(json!({
                             "code": "DurableBackgroundRunInvalid",
                             "message": format!("background run {mode} response requires runId"),
@@ -814,17 +815,29 @@ fn run_case(case: &Value) -> Result<(), String> {
                     } else {
                         "event_stream"
                     };
-                    if response
+                    let response_event_stream = response
                         .get("eventStream")
                         .or_else(|| response.get("event_stream"))
                         .and_then(Value::as_str)
-                        .is_none_or(|event_stream| event_stream.trim().is_empty())
-                    {
+                        .map(str::trim)
+                        .filter(|event_stream| !event_stream.is_empty());
+                    if response_event_stream.is_none() {
                         diagnostics.push(json!({
                             "code": "DurableBackgroundRunInvalid",
                             "message": format!("background run {mode} response requires eventStream"),
                             "path": format!("$.initialResponse.{event_stream_path}"),
                         }));
+                    } else if let (Some(run_id), Some(event_stream)) =
+                        (response_run_id, response_event_stream)
+                    {
+                        let run_id_path_segment = format!("/runs/{run_id}/");
+                        if !event_stream.contains(&run_id_path_segment) {
+                            diagnostics.push(json!({
+                                "code": "DurableBackgroundRunInvalid",
+                                "message": "background run eventStream must include runId",
+                                "path": format!("$.initialResponse.{event_stream_path}"),
+                            }));
+                        }
                     }
                     if response
                         .get("initialCursor")
