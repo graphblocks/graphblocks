@@ -7029,17 +7029,38 @@ class TckRunner:
                 if not isinstance(raw_retention, Mapping):
                     raw_retention = {}
                 lifetime = str(fixture.get("lifetime", ""))
-                response_mode = str(fixture.get("responseMode", fixture.get("response_mode", "")))
+                response_mode_path = (
+                    "responseMode"
+                    if "responseMode" in fixture or "response_mode" not in fixture
+                    else "response_mode"
+                )
+                raw_response_mode = fixture.get(
+                    "responseMode", fixture.get("response_mode")
+                )
+                if not isinstance(raw_response_mode, str) or raw_response_mode not in {
+                    "accepted",
+                    "background",
+                }:
+                    response_mode = ""
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run responseMode must be accepted or background",
+                            "path": f"$.{response_mode_path}",
+                        }
+                    )
+                else:
+                    response_mode = raw_response_mode
                 raw_initial_response = fixture.get(
                     "initialResponse", fixture.get("initial_response", {})
                 )
                 accepted_response_has_run_id = False
-                if response_mode == "accepted":
+                if response_mode in {"accepted", "background"}:
                     if not isinstance(raw_initial_response, Mapping):
                         diagnostics.append(
                             {
                                 "code": "DurableBackgroundRunInvalid",
-                                "message": "background run accepted response requires object initialResponse",
+                                "message": f"background run {response_mode} response requires object initialResponse",
                                 "path": "$.initialResponse",
                             }
                         )
@@ -7051,7 +7072,7 @@ class TckRunner:
                             diagnostics.append(
                                 {
                                     "code": "DurableBackgroundRunInvalid",
-                                    "message": "background run accepted response requires runId",
+                                    "message": f"background run {response_mode} response requires runId",
                                     "path": "$.initialResponse.runId",
                                 }
                             )

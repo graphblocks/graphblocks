@@ -1779,6 +1779,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run accepted-invocation evidence now requires an object `initialResponse`
   carrying a nonblank `runId`/`run_id`, preventing truthy placeholder values from satisfying
   accepted response semantics.
+- Durable background-run invocation evidence now requires `responseMode`/`response_mode` to be
+  exactly `accepted` or `background`, and applies the durable run-id handle requirement to
+  background responses as well as accepted responses.
 - Durable background-run replay evidence now rejects non-object event-stream entries instead of
   silently dropping them before replay/cursor assertions.
 - Durable background-run replay evidence now requires nonblank event `eventId`/`event_id` and
