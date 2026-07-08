@@ -855,6 +855,38 @@ def test_client_package_durable_response_requires_handle_fields(monkeypatch, sta
 
 
 @pytest.mark.parametrize(
+    ("initial_cursor", "message"),
+    (
+        ("other-run:0", "run graph response initial_cursor must belong to run 'run-1'"),
+        (
+            "run-1:not-a-sequence",
+            "run graph response initial_cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
+        ),
+    ),
+)
+def test_client_package_durable_response_validates_initial_cursor(
+    monkeypatch,
+    initial_cursor: str,
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        graphblocks_client.RunGraphResponse(
+            run_id="run-1",
+            status="accepted",
+            outputs={},
+            events=(),
+            event_stream=graphblocks_client.ApplicationEventStreamState(),
+            event_stream_url="/runs/run-1/events",
+            websocket_url="/runs/run-1/ws",
+            cancel_url="/runs/run-1/cancel",
+            initial_cursor=initial_cursor,
+        )
+
+
+@pytest.mark.parametrize(
     ("response_kwargs", "message"),
     (
         ({"run_id": ""}, "run graph response run_id must be a non-empty string"),

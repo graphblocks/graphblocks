@@ -108,8 +108,6 @@ class RunGraphResponse:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"run graph response {field_name} must be a non-empty string")
-            if field_name == "initial_cursor":
-                _validate_run_cursor("run graph response", field_name, self.run_id, value)
         if not isinstance(self.outputs, Mapping):
             raise ValueError("run graph response outputs must be a JSON object")
         object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
@@ -122,6 +120,8 @@ class RunGraphResponse:
                 continue
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"run graph response {field_name} must be a non-empty string")
+            if field_name == "initial_cursor":
+                _validate_run_cursor("run graph response", field_name, self.run_id, value)
 
 
 @dataclass(frozen=True, slots=True)

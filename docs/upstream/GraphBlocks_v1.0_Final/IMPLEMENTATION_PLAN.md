@@ -1221,13 +1221,14 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   of being limited to the default synchronous path. `RunGraphResponse` validates non-empty run
   identity and status plus JSON-object outputs, and preserves accepted/background run-handle links
   (`eventStream`, `websocket`, `cancel`) and `initialCursor`; accepted and background response
-  objects must carry every handle field. The HTTP client rejects missing or blank durable handle
-  fields and validates that `initialCursor` belongs to the returned run id with a non-negative
-  sequence before callers persist or replay from it. Run graph responses, stream snapshots,
-  attach snapshots, and subscription snapshots must echo the requested `runId` before the client
-  will attribute replay metadata to that run, and replayed events in run-scoped responses must
-  carry matching event metadata `runId` values. Outgoing run replay and acknowledgement cursor
-  arguments are also validated as `<run_id>:<sequence>` before the HTTP request is sent.
+  objects must carry every handle field. The public response facade and HTTP client reject missing
+  or blank durable handle fields and validate that `initialCursor` belongs to the returned run id
+  with a non-negative sequence before callers persist or replay from it. Run graph responses,
+  stream snapshots, attach snapshots, and subscription snapshots must echo the requested `runId`
+  before the client will attribute replay metadata to that run, and replayed events in run-scoped
+  responses must carry matching event metadata `runId` values. Outgoing run replay and
+  acknowledgement cursor arguments are also validated as `<run_id>:<sequence>` before the HTTP
+  request is sent.
   Run status, run control, and detach responses must echo the requested `runId` before the client
   exposes their payloads.
   `LocalGraphBlocksClient` rejects non-`sync`
