@@ -98,6 +98,8 @@ graphblocks-cli
   non-JSON, Python-only JSON-like shapes, and non-canonical numeric values before they can enter
   schema envelopes, and stores a canonical JSON copy so caller-owned mutable payloads cannot change
   the envelope after creation.
+- Python canonical JSON serialization now rejects mappings with non-string object keys before
+  hashing or schema-envelope storage, preventing Python's JSON encoder from silently coercing keys.
 - `graphblocks-testing` can load and run the typed-value schema fixture through the shared schema
   TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
   relying on package-local tests only. TCK suite manifests now surface auxiliary suite fixtures such

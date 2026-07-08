@@ -4,7 +4,8 @@ import sys
 from types import SimpleNamespace
 
 import graphblocks
-from graphblocks import canonical_hash, compile_graph, compile_graph_native, normalize_graph
+import pytest
+from graphblocks import canonical_dumps, canonical_hash, compile_graph, compile_graph_native, normalize_graph
 from graphblocks import compiler as compiler_module
 from graphblocks.output_policy import (
     VALID_DELIVERY_MODES,
@@ -76,6 +77,15 @@ def test_normalized_hash_is_stable_for_mapping_order() -> None:
     }
 
     assert canonical_hash(normalize_graph(left)) == canonical_hash(normalize_graph(right))
+
+
+def test_canonical_json_rejects_non_string_object_keys() -> None:
+    with pytest.raises(TypeError, match="canonical JSON object keys must be strings"):
+        canonical_dumps({1: "coerced"})
+    with pytest.raises(TypeError, match="canonical JSON object keys must be strings"):
+        canonical_dumps({"nested": {2: "coerced"}})
+    with pytest.raises(TypeError, match="canonical JSON object keys must be strings"):
+        canonical_hash({"nested": {3: "coerced"}})
 
 
 def test_node_inputs_are_normalized_to_edges() -> None:

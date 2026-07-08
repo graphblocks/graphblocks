@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import json
 from copy import deepcopy
@@ -11,6 +12,16 @@ PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 
 
 def canonical_dumps(value: Any) -> str:
+    pending_values: list[Any] = [value]
+    while pending_values:
+        current_value = pending_values.pop()
+        if isinstance(current_value, Mapping):
+            for key, child_value in current_value.items():
+                if not isinstance(key, str):
+                    raise TypeError("canonical JSON object keys must be strings")
+                pending_values.append(child_value)
+        elif isinstance(current_value, list | tuple):
+            pending_values.extend(current_value)
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
@@ -78,4 +89,3 @@ def normalize_graph(document: dict[str, Any]) -> dict[str, Any]:
     spec["nodes"] = {name: nodes[name] for name in sorted(nodes)}
     spec["edges"] = sorted(edges, key=lambda item: (item["from"], item["to"]))
     return normalized
-
