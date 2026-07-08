@@ -7471,7 +7471,7 @@ class TckRunner:
                         "fail_run_on_failure",
                     }:
                         subscription_failure_policy = failure_policy
-                    else:
+                    elif failure_policy is not None:
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackProjectionInvalid",
@@ -7480,7 +7480,9 @@ class TckRunner:
                             }
                         )
                     mandatory = raw_subscription.get("mandatory")
-                    if failure_policy == "best_effort" and mandatory is True:
+                    if mandatory is True and (
+                        failure_policy is None or failure_policy == "best_effort"
+                    ):
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackProjectionInvalid",

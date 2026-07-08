@@ -1068,11 +1068,15 @@ fn run_case(case: &Value) -> Result<(), String> {
                 }));
             }
             if let Some(subscription) = raw_subscription.and_then(Value::as_object) {
-                if let Some(failure_policy) = subscription
+                let mandatory = subscription
+                    .get("mandatory")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let failure_policy = subscription
                     .get("failurePolicy")
                     .or_else(|| subscription.get("failure_policy"))
-                    .and_then(Value::as_str)
-                {
+                    .and_then(Value::as_str);
+                if let Some(failure_policy) = failure_policy {
                     if !matches!(
                         failure_policy,
                         "best_effort"
@@ -1086,18 +1090,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "path": "$.subscription.failurePolicy",
                         }));
                     }
-                    if failure_policy == "best_effort"
-                        && subscription
-                            .get("mandatory")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                    {
+                    if failure_policy == "best_effort" && mandatory {
                         diagnostics.push(json!({
                             "code": "DurableCallbackProjectionInvalid",
                             "message": "mandatory callback subscription requires retry, dead-letter, or fallback failurePolicy",
                             "path": "$.subscription.failurePolicy",
                         }));
                     }
+                } else if mandatory {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackProjectionInvalid",
+                        "message": "mandatory callback subscription requires retry, dead-letter, or fallback failurePolicy",
+                        "path": "$.subscription.failurePolicy",
+                    }));
                 }
                 if subscription
                     .get("mandatory")
