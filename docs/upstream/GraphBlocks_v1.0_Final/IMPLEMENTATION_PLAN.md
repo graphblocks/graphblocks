@@ -1022,7 +1022,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   settings to a positive delay floor, and scheduler retries use deterministic bounded jitter unless
   a receiver-provided `Retry-After` delay is present.
 - Callback delivery projections now validate retry, delivery, and acknowledgement timestamps as
-  ISO-8601 datetimes and reject acknowledgement timestamps that precede delivery timestamps.
+  ISO-8601 datetimes, reject acknowledgement timestamps that precede delivery timestamps, and
+  reject `acknowledged_at` on any delivery whose status is not `acknowledged`.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection. Replay scheduling now resolves the requested cursor against retained run events and

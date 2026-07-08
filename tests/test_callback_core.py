@@ -316,6 +316,21 @@ def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
             delivered_at="2026-07-02T00:00:01Z",
         )
 
+    with raises_value_error("callback delivery acknowledged_at requires acknowledged status"):
+        graphblocks.CallbackDelivery(
+            delivery_id="del-5",
+            subscription_id="sub-1",
+            event_id="evt-5",
+            run_id="run-1",
+            sequence=11,
+            cursor="run-1:11",
+            attempt=1,
+            idempotency_key="sub-1:evt-5",
+            status="delivered",
+            delivered_at="2026-07-02T00:00:01Z",
+            acknowledged_at="2026-07-02T00:00:02Z",
+        )
+
 
 def test_callback_schema_exports_are_available() -> None:
     assert "EventFilter" in graphblocks.__all__

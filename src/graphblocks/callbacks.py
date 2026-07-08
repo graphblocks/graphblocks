@@ -335,6 +335,8 @@ class CallbackDelivery:
             _optional_iso_datetime("callback delivery", "acknowledged_at", self.acknowledged_at),
         )
         object.__setattr__(self, "last_error", _optional_non_empty_string("callback delivery", "last_error", self.last_error))
+        if self.status != "acknowledged" and self.acknowledged_at is not None:
+            raise ValueError("callback delivery acknowledged_at requires acknowledged status")
         if self.status in TERMINAL_CALLBACK_DELIVERY_STATUSES and self.next_retry_at is not None:
             raise ValueError("terminal callback delivery must not have next_retry_at")
         if self.status == "delivered" and self.delivered_at is None:
