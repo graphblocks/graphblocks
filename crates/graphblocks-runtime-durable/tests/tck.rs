@@ -560,6 +560,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut retry_scheduled_after_5xx = false;
             let mut retry_scheduled_after_retryable_status = false;
             let mut duplicate_409_acknowledged = false;
+            let mut subscription_gone_after_410 = false;
             for delivery in deliveries.iter().filter_map(Value::as_object) {
                 let receiver_status = delivery
                     .get("receiverStatus")
@@ -590,6 +591,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     duplicate_409_acknowledged = true;
                 }
+                if receiver_status == 410
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "cancelled")
+                    && delivery
+                        .get("lastError")
+                        .or_else(|| delivery.get("last_error"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|last_error| last_error == "subscription_gone")
+                {
+                    subscription_gone_after_410 = true;
+                }
                 if let Some(key) = delivery
                     .get("idempotencyKey")
                     .or_else(|| delivery.get("idempotency_key"))
@@ -603,6 +617,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "retryScheduledAfter5xx": retry_scheduled_after_5xx,
                 "retryScheduledAfterRetryableStatus": retry_scheduled_after_retryable_status,
                 "duplicate409Acknowledged": duplicate_409_acknowledged,
+                "subscriptionGoneAfter410": subscription_gone_after_410,
                 "idempotencyKeysUniquePerSubscriptionEvent": idempotency_keys.len() == idempotency_key_count,
                 "deadLetterPreservesEventId": dead_letter_preserves_event_id,
                 "redriveCreatesApplicationEvent": redrive_creates_application_event,

@@ -1194,7 +1194,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 15
+    assert [case.kind for case in cases] == ["durable"] * 16
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1216,6 +1216,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "background_run_detach_replay_and_cursor_expiry",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_rate_limit_schedules_retry",
+        "webhook_delivery_subscription_gone_410",
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
@@ -1226,6 +1227,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.observed.get("retryScheduledAfterRetryableStatus") is True
         and result.observed.get("retryScheduledAfter5xx") is False
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "webhook_delivery_subscription_gone_410"
+        and result.observed.get("subscriptionGoneAfter410") is True
         for result in report.results
     )
     assert any(
@@ -3146,6 +3152,42 @@ def test_testing_package_rejects_callback_duplicate_409_without_acknowledged_sta
     )
 
 
+def test_testing_package_observes_subscription_gone_after_410_delivery(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/callback-410-subscription-gone",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 410,
+                    "status": "cancelled",
+                    "deliveredAt": "2026-07-02T00:00:01Z",
+                    "lastError": "subscription_gone",
+                }
+            ],
+            "expected": {"subscriptionGoneAfter410": True},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].observed["subscriptionGoneAfter410"] is True
+
+
 def test_testing_package_rejects_callback_delivery_with_non_integer_receiver_status(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
@@ -4163,6 +4205,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "background_run_detach_replay_and_cursor_expiry",
         "webhook_delivery_retry_duplicate_and_dead_letter_redrive",
         "webhook_delivery_rate_limit_schedules_retry",
+        "webhook_delivery_subscription_gone_410",
         "webhook_delivery_without_redrive_does_not_prove_redrive",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
         "callback_cancel_race_cancel_wins_and_blocks_resume",

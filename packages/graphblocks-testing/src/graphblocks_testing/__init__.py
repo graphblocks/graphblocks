@@ -7764,6 +7764,7 @@ class TckRunner:
                 scheduled_retry_ids = []
                 scheduled_retryable_status_ids = []
                 acknowledged_duplicates = []
+                subscription_gone_ids = []
                 for index, delivery in enumerate(deliveries):
                     receiver_status = receiver_statuses[index]
                     next_retry_at = next_retry_at_values[index]
@@ -7785,6 +7786,13 @@ class TckRunner:
                         and str(delivery.get("status", "")) == "acknowledged"
                     ):
                         acknowledged_duplicates.append(delivery_id)
+                    if (
+                        receiver_status == 410
+                        and str(delivery.get("status", "")) == "cancelled"
+                        and str(delivery.get("lastError", delivery.get("last_error", "")))
+                        == "subscription_gone"
+                    ):
+                        subscription_gone_ids.append(delivery_id)
                 idempotency_keys = [
                     str(delivery.get("idempotencyKey", delivery.get("idempotency_key", "")))
                     for delivery in deliveries
@@ -7793,6 +7801,7 @@ class TckRunner:
                     "retryScheduledAfter5xx": bool(scheduled_retry_ids),
                     "retryScheduledAfterRetryableStatus": bool(scheduled_retryable_status_ids),
                     "duplicate409Acknowledged": bool(acknowledged_duplicates),
+                    "subscriptionGoneAfter410": bool(subscription_gone_ids),
                     "idempotencyKeysUniquePerSubscriptionEvent": len(idempotency_keys) == len(set(idempotency_keys)),
                     "deadLetterPreservesEventId": redrive_event_id_preserved,
                     "redriveCreatesApplicationEvent": redrive_creates_application_event,

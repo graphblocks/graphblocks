@@ -582,6 +582,30 @@
     }
   },
   {
+    "name": "webhook_delivery_subscription_gone_410",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-gone-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0250",
+        "runId": "run-coding-001",
+        "sequence": 250,
+        "cursor": "evt-0250",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0250",
+        "receiverStatus": 410,
+        "status": "cancelled",
+        "deliveredAt": "2026-07-02T00:01:30Z",
+        "lastError": "subscription_gone"
+      }
+    ],
+    "expected": {
+      "subscriptionGoneAfter410": true,
+      "idempotencyKeysUniquePerSubscriptionEvent": true
+    }
+  },
+  {
     "name": "webhook_delivery_without_redrive_does_not_prove_redrive",
     "kind": "callback_delivery_projection",
     "deliveries": [
