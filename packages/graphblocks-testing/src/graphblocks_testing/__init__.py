@@ -8347,6 +8347,26 @@ class TckRunner:
                             "path": f"$.operation.{operation_id_path}",
                         }
                     )
+                provider_operation_id_path = (
+                    "providerOperationId"
+                    if "providerOperationId" in raw_operation
+                    or "provider_operation_id" not in raw_operation
+                    else "provider_operation_id"
+                )
+                provider_operation_id = raw_operation.get(
+                    "providerOperationId", raw_operation.get("provider_operation_id")
+                )
+                if (
+                    not isinstance(provider_operation_id, str)
+                    or not provider_operation_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank providerOperationId",
+                            "path": f"$.operation.{provider_operation_id_path}",
+                        }
+                    )
                 run_id_path = (
                     "runId"
                     if "runId" in raw_operation or "run_id" not in raw_operation
@@ -8481,6 +8501,40 @@ class TckRunner:
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation callback operationId must match operation",
                             "path": f"$.lateCallback.{callback_operation_id_path}",
+                        }
+                    )
+                callback_provider_operation_id_path = (
+                    "providerOperationId"
+                    if "providerOperationId" in raw_late_callback
+                    or "provider_operation_id" not in raw_late_callback
+                    else "provider_operation_id"
+                )
+                callback_provider_operation_id = raw_late_callback.get(
+                    "providerOperationId",
+                    raw_late_callback.get("provider_operation_id"),
+                )
+                if (
+                    not isinstance(callback_provider_operation_id, str)
+                    or not callback_provider_operation_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires callback providerOperationId",
+                            "path": f"$.lateCallback.{callback_provider_operation_id_path}",
+                        }
+                    )
+                elif (
+                    isinstance(provider_operation_id, str)
+                    and provider_operation_id.strip()
+                    and callback_provider_operation_id.strip()
+                    != provider_operation_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback providerOperationId must match operation",
+                            "path": f"$.lateCallback.{callback_provider_operation_id_path}",
                         }
                     )
                 callback_run_id_path = (

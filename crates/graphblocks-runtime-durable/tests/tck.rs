@@ -2171,6 +2171,27 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{operation_id_path}"),
                 }));
             }
+            let provider_operation_id_path = if raw_operation.contains_key("providerOperationId")
+                || !raw_operation.contains_key("provider_operation_id")
+            {
+                "providerOperationId"
+            } else {
+                "provider_operation_id"
+            };
+            if raw_operation
+                .get("providerOperationId")
+                .or_else(|| raw_operation.get("provider_operation_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |provider_operation_id| {
+                    provider_operation_id.trim().is_empty()
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank providerOperationId",
+                    "path": format!("$.operation.{provider_operation_id_path}"),
+                }));
+            }
             let run_id_path =
                 if raw_operation.contains_key("runId") || !raw_operation.contains_key("run_id") {
                     "runId"
@@ -2337,6 +2358,47 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "code": "DurableExternalOperationInvalid",
                         "message": "external operation reconciliation requires callback operationId",
                         "path": format!("$.lateCallback.{callback_operation_id_path}"),
+                    }));
+                }
+            }
+            let callback_provider_operation_id_path = if raw_late_callback
+                .contains_key("providerOperationId")
+                || !raw_late_callback.contains_key("provider_operation_id")
+            {
+                "providerOperationId"
+            } else {
+                "provider_operation_id"
+            };
+            match raw_late_callback
+                .get("providerOperationId")
+                .or_else(|| raw_late_callback.get("provider_operation_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_provider_operation_id)
+                    if !callback_provider_operation_id.is_empty() =>
+                {
+                    let provider_operation_id = raw_operation
+                        .get("providerOperationId")
+                        .or_else(|| raw_operation.get("provider_operation_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !provider_operation_id.is_empty()
+                        && callback_provider_operation_id != provider_operation_id
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback providerOperationId must match operation",
+                            "path": format!("$.lateCallback.{callback_provider_operation_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback providerOperationId",
+                        "path": format!("$.lateCallback.{callback_provider_operation_id_path}"),
                     }));
                 }
             }
