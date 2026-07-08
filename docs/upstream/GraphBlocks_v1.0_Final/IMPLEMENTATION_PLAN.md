@@ -1297,6 +1297,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   projection. The receipt factory can also bind the envelope to the runtime's expected run,
   release, and tenant identity and rejects mismatches before a durable receipt projection is
   produced.
+- External callback receipt projection now also rejects operation id drift when the callback
+  envelope carries `operation_id`, so authenticated callback envelopes cannot be re-bound to a
+  different async operation during journal-before-resume projection.
 - `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
   HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
   attempt, release, tenant, and optional provider-operation identity into stable resume fences so

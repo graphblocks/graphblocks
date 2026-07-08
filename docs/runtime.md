@@ -62,6 +62,9 @@ run, node, attempt, and operation ids still match.
 The Rust runtime rejects direct async callback submissions whose verifier is
 explicitly `unauthenticated` before normal receipt, artifact compaction, or
 pre-operation quarantine can create resumable state.
+Callback receipt projection also rejects operation identity drift when a
+callback envelope includes `operation_id`; the durable receipt must name the
+same operation as the authenticated envelope.
 Persisted run provenance is also replay-validated without type coercion so
 corrupted release or physical-plan identity cannot become authoritative state.
 

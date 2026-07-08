@@ -1219,6 +1219,9 @@ def record_external_callback_receipt(
         envelope.delivered_at,
     ):
         raise ValueError("received_at must not be before envelope delivered_at")
+    _require_non_empty_string("operation_id", operation_id)
+    if envelope.operation_id is not None and operation_id != envelope.operation_id:
+        raise ValueError("operation_id must match the envelope")
     if run_id is not None:
         _require_non_empty_string("run_id", run_id)
         if run_id != envelope.run_id:
