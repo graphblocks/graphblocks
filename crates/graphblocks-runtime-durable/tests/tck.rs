@@ -1026,6 +1026,26 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .get("lastError")
                         .or_else(|| delivery.get("last_error"))
                         .and_then(Value::as_str)
+                        .is_some_and(|last_error| {
+                            !last_error.trim().is_empty() && last_error != "non_retryable"
+                        })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "non-retryable 4xx callback delivery requires non_retryable error",
+                        "path": format!("$.deliveries[{index}].lastError"),
+                    }));
+                }
+                if (400..=499).contains(&receiver_status)
+                    && !matches!(receiver_status, 409 | 410 | 429)
+                    && delivery
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "failed")
+                    && delivery
+                        .get("lastError")
+                        .or_else(|| delivery.get("last_error"))
+                        .and_then(Value::as_str)
                         .is_some_and(|last_error| last_error == "non_retryable")
                 {
                     non_retryable_4xx_terminal = true;
