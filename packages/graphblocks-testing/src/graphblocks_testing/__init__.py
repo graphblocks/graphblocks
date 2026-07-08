@@ -7052,7 +7052,16 @@ class TckRunner:
                 raw_redrive = fixture.get("redrive", {})
                 if not isinstance(raw_deliveries, list):
                     raise ValueError("durable callback_delivery_projection case requires deliveries")
-                if not isinstance(raw_redrive, Mapping):
+                if "redrive" in fixture and not isinstance(raw_redrive, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "DurableCallbackRedriveInvalid",
+                            "message": "callback redrive must be object",
+                            "path": "$.redrive",
+                        }
+                    )
+                    raw_redrive = {}
+                elif not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
                 redrive_creates_application_event = True
                 if raw_redrive:
