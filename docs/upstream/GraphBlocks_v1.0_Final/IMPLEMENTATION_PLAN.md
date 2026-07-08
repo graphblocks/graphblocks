@@ -1752,6 +1752,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection retry and duplicate evidence now uses only typed integer
   `receiverStatus` values in the HTTP status-code range, preventing string coercion from proving
   webhook retry or duplicate-acknowledgement behavior.
+- Durable callback projection receiver evidence now requires 2xx webhook responses to be recorded
+  as `delivered` or `acknowledged`, preventing successful receiver acknowledgements from being
+  represented as failed delivery rows.
 - Durable callback projection retry evidence now rejects blank, non-string, or unparsable
   `nextRetryAt` timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook
   retry evidence tied to durable retry metadata.

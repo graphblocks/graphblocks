@@ -7523,7 +7523,11 @@ class TckRunner:
                             }
                         )
                     raw_status = delivery.get("status")
-                    if not isinstance(raw_status, str) or raw_status not in valid_delivery_statuses:
+                    status_is_valid = (
+                        isinstance(raw_status, str)
+                        and raw_status in valid_delivery_statuses
+                    )
+                    if not status_is_valid:
                         diagnostics.append(
                             {
                                 "code": "DurableCallbackDeliveryInvalid",
@@ -7598,6 +7602,19 @@ class TckRunner:
                             {
                                 "code": "DurableCallbackDeliveryInvalid",
                                 "message": "callback delivery retry requires failed status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
+                    if (
+                        receiver_status is not None
+                        and 200 <= receiver_status <= 299
+                        and status_is_valid
+                        and status not in {"delivered", "acknowledged"}
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "2xx callback delivery requires delivered or acknowledged status",
                                 "path": f"$.deliveries[{index}].status",
                             }
                         )
