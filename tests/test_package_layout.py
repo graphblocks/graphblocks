@@ -125,6 +125,38 @@ def test_upstream_package_catalog_matches_shipped_catalog() -> None:
     assert upstream == shipped
 
 
+def test_load_package_catalog_rejects_invalid_catalog_shape(tmp_path) -> None:
+    cases = (
+        ("[]\n", "package catalog must be a mapping"),
+        (
+            "catalogVersion: true\nspecVersion: graphblocks.package-catalog.v1\npackages: []\n",
+            "package catalog catalogVersion must be a positive integer",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: ' '\npackages: []\n",
+            "package catalog specVersion must be a non-empty string",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages: {}\n",
+            "package catalog packages must be a list",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages:\n  - graphblocks-core\n",
+            "package catalog packages entries must be mappings",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages:\n  - import: graphblocks\n",
+            "package catalog package distribution must be a non-empty string",
+        ),
+    )
+
+    for index, (document, message) in enumerate(cases):
+        catalog_path = tmp_path / f"package-catalog-{index}.yaml"
+        catalog_path.write_text(document, encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            load_package_catalog(catalog_path)
+
+
 def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
 

@@ -251,9 +251,28 @@ class PackageManifestAuditPolicy:
 def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
         with resources.files("graphblocks").joinpath("data/package-catalog.yaml").open("r", encoding="utf-8") as stream:
-            return yaml.safe_load(stream)
-    with Path(path).open("r", encoding="utf-8") as stream:
-        return yaml.safe_load(stream)
+            catalog = yaml.safe_load(stream)
+    else:
+        with Path(path).open("r", encoding="utf-8") as stream:
+            catalog = yaml.safe_load(stream)
+    if not isinstance(catalog, dict):
+        raise ValueError("package catalog must be a mapping")
+    catalog_version = catalog.get("catalogVersion")
+    if isinstance(catalog_version, bool) or not isinstance(catalog_version, int) or catalog_version <= 0:
+        raise ValueError("package catalog catalogVersion must be a positive integer")
+    spec_version = catalog.get("specVersion")
+    if not isinstance(spec_version, str) or not spec_version.strip():
+        raise ValueError("package catalog specVersion must be a non-empty string")
+    packages = catalog.get("packages")
+    if not isinstance(packages, list):
+        raise ValueError("package catalog packages must be a list")
+    for package in packages:
+        if not isinstance(package, dict):
+            raise ValueError("package catalog packages entries must be mappings")
+        distribution = package.get("distribution")
+        if not isinstance(distribution, str) or not distribution.strip():
+            raise ValueError("package catalog package distribution must be a non-empty string")
+    return catalog
 
 
 def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:

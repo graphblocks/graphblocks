@@ -117,6 +117,10 @@ graphblocks-cli
 - Package manifest audit now normalizes PEP 508 direct-reference dependencies before applying
   blocked dependency policy, so `name @ URL` and optional extra direct references cannot bypass the
   license/vulnerability gate.
+- Package catalog loading now validates catalog shape at the file boundary, rejecting non-mapping
+  documents, invalid catalog versions, blank spec versions, non-list package collections, malformed
+  entries, and missing distribution names before CLI package inspection or lock generation can
+  consume partial catalog state.
 - The `graphblocks` Python metapackage manifest now carries the default foundation dependency
   closure (`graphblocks-core`, runtime, stdlib, documents, RAG, conversation, policy, budget,
   usage, and CLI) instead of remaining an empty placeholder, so package doctor checks can verify
