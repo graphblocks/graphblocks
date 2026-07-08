@@ -176,23 +176,25 @@ class RunDeploymentProvenance:
         if not isinstance(value, dict):
             raise ValueError("run deployment provenance mapping must be an object")
         return cls(
-            release_digest=(
-                str(value["release_digest"]) if value.get("release_digest") is not None else None
+            release_digest=_validate_optional_non_empty_string(
+                "run deployment provenance",
+                "release_digest",
+                value.get("release_digest"),
             ),
-            deployment_revision_id=(
-                str(value["deployment_revision_id"])
-                if value.get("deployment_revision_id") is not None
-                else None
+            deployment_revision_id=_validate_optional_non_empty_string(
+                "run deployment provenance",
+                "deployment_revision_id",
+                value.get("deployment_revision_id"),
             ),
-            physical_plan_hash=(
-                str(value["physical_plan_hash"])
-                if value.get("physical_plan_hash") is not None
-                else None
+            physical_plan_hash=_validate_optional_non_empty_string(
+                "run deployment provenance",
+                "physical_plan_hash",
+                value.get("physical_plan_hash"),
             ),
-            release_signature_digest=(
-                str(value["release_signature_digest"])
-                if value.get("release_signature_digest") is not None
-                else None
+            release_signature_digest=_validate_optional_non_empty_string(
+                "run deployment provenance",
+                "release_signature_digest",
+                value.get("release_signature_digest"),
             ),
         )
 

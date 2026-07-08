@@ -357,6 +357,25 @@ def test_sqlite_run_store_rejects_malformed_deployment_provenance_on_replay(tmp_
         store.get_run(record.run_id)
 
 
+def test_sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(database)
+    record = store.create_run("sha256:test", {})
+    store.connection.execute(
+        "UPDATE runs SET deployment_provenance_json = ? WHERE run_id = ?",
+        (
+            '{"release_digest":17,"deployment_revision_id":"rev-1",'
+            '"physical_plan_hash":"sha256:physical",'
+            '"release_signature_digest":"sha256:signature"}',
+            record.run_id,
+        ),
+    )
+    store.connection.commit()
+
+    with pytest.raises(ValueError, match="run deployment provenance release_digest must be a string"):
+        store.get_run(record.run_id)
+
+
 def test_sqlite_run_store_rejects_malformed_model_visible_tools_on_replay(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
     store = SQLiteRunStore(database)

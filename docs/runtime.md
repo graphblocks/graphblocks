@@ -53,6 +53,8 @@ operation states such as `completed`, `failed`, `cancelled`, or `expired`.
 Durable callback receipt replay must verify the stored run, node, attempt, and
 provider-operation identity against the operation record before admitting any
 duplicate callback or resume decision.
+Persisted run provenance is also replay-validated without type coercion so
+corrupted release or physical-plan identity cannot become authoritative state.
 
 Callback dead-letter records preserve original delivery identity and a
 consecutive attempt history starting at attempt `1`. Redrive uses that history
