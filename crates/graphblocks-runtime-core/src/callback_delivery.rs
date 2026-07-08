@@ -121,7 +121,7 @@ impl EventFilter {
     }
 
     pub fn matches(&self, event: &ApplicationProtocolEvent) -> bool {
-        if !self.payload_field_matches(event, &["visibility"], &self.visibility)
+        if !Self::protocol_visibility_matches(&event.payload, self.visibility.as_ref())
             || !self.payload_field_matches(event, &["node_id", "nodeId"], &self.node_ids)
             || !self.operation_id_matches(event)
         {
@@ -256,6 +256,18 @@ impl EventFilter {
                     .is_some_and(|value| allowed.contains(value))
             })
         })
+    }
+
+    fn protocol_visibility_matches(payload: &Value, allowed: Option<&BTreeSet<String>>) -> bool {
+        let Some(allowed) = allowed else {
+            return true;
+        };
+        let Some(visibility) = payload.get("visibility") else {
+            return allowed.contains("client");
+        };
+        visibility
+            .as_str()
+            .is_some_and(|value| allowed.contains(value))
     }
 
     fn operation_id_matches(&self, event: &ApplicationProtocolEvent) -> bool {

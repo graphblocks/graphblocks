@@ -228,6 +228,25 @@ fn event_filter_visibility_is_constrained_by_subscriber_authorization() {
 }
 
 #[test]
+fn authorized_visibility_treats_missing_protocol_event_visibility_as_client() {
+    let default_client_event = protocol_event(
+        "event-default-client",
+        ApplicationProtocolEventKind::RunStarted,
+        15,
+    );
+    let mut malformed_visibility_event = default_client_event.clone();
+    malformed_visibility_event.metadata.event_id = "event-malformed-visibility".to_owned();
+    malformed_visibility_event.payload["visibility"] = json!(true);
+    let filter = EventFilter::new()
+        .with_types([ApplicationProtocolEventKind::RunStarted])
+        .authorized_for_visibility(["client"])
+        .expect("authorized visibility projection is valid");
+
+    assert!(filter.matches(&default_client_event));
+    assert!(!filter.matches(&malformed_visibility_event));
+}
+
+#[test]
 fn subscription_filter_matches_camel_case_node_and_operation_payload_fields() {
     let mut matching = protocol_event(
         "event-ci-camel-case",

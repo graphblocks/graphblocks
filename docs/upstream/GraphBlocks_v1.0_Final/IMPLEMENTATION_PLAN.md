@@ -1055,7 +1055,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscription projection.
 - Python and Rust callback event filters now expose an authorization projection that intersects
   requested visibility with the subscriber's allowed visibility, so a callback subscription filter
-  cannot widen access to operator/internal/audit-only events.
+  cannot widen access to operator/internal/audit-only events. Rust protocol-event filtering treats
+  absent visibility as default client visibility after that projection, while malformed visibility
+  values remain non-matching.
 - Server callback registration and run event subscription paths now apply that visibility projection
   before replay or storage, so unauthorized event visibility cannot be obtained by requesting a
   broader callback filter.
