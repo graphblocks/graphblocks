@@ -1496,6 +1496,137 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
     )
 
 
+def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-string-background-run-last-cursor",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000001",
+                    "cursor": "evt-000001",
+                }
+            ],
+            "attach": {
+                "lastCursor": 0,
+            },
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run attach requires string lastCursor",
+            "path": "$.attach.lastCursor",
+        },
+    )
+
+
+def test_testing_package_rejects_non_string_background_run_expired_cursor(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-string-background-run-expired-cursor",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000002",
+                    "cursor": "evt-000002",
+                }
+            ],
+            "attach": {
+                "expiredCursor": 0,
+                "summaryOnExpiredCursor": True,
+            },
+            "retention": {
+                "retainedFromCursor": "evt-000002",
+            },
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run attach requires string expiredCursor",
+            "path": "$.attach.expiredCursor",
+        },
+    )
+
+
+def test_testing_package_rejects_non_string_background_run_retained_cursor(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-string-background-run-retained-cursor",
+        fixture={
+            "kind": "background_run_event_stream",
+            "lifetime": "background",
+            "responseMode": "accepted",
+            "sourceOfTruth": "ApplicationEventStream",
+            "initialResponse": {
+                "runId": "run-001",
+            },
+            "events": [
+                {
+                    "eventId": "evt-000002",
+                    "cursor": "evt-000002",
+                }
+            ],
+            "attach": {
+                "expiredCursor": "evt-000001",
+                "summaryOnExpiredCursor": True,
+            },
+            "retention": {
+                "retainedFromCursor": 2,
+            },
+            "detach": {
+                "cancelRun": False,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableBackgroundRunInvalid",
+            "message": "background run retention requires string retainedFromCursor",
+            "path": "$.retention.retainedFromCursor",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

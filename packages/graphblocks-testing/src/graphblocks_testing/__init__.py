@@ -7096,14 +7096,80 @@ class TckRunner:
                         )
                     if event_valid:
                         event_records.append(raw_event)
-                last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
+                has_last_cursor = "lastCursor" in raw_attach or "last_cursor" in raw_attach
+                raw_last_cursor = raw_attach.get("lastCursor", raw_attach.get("last_cursor"))
+                if has_last_cursor and (
+                    not isinstance(raw_last_cursor, str) or not raw_last_cursor.strip()
+                ):
+                    last_cursor_path = (
+                        "lastCursor"
+                        if "lastCursor" in raw_attach or "last_cursor" not in raw_attach
+                        else "last_cursor"
+                    )
+                    last_cursor = None
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires string lastCursor",
+                            "path": f"$.attach.{last_cursor_path}",
+                        }
+                    )
+                else:
+                    last_cursor = raw_last_cursor
                 replay_after_cursor = [
                     str(event.get("eventId", event.get("event_id", "")))
                     for event in event_records
                     if last_cursor is None or str(event.get("cursor", "")) > str(last_cursor)
                 ]
-                expired_cursor = str(raw_attach.get("expiredCursor", raw_attach.get("expired_cursor", "")))
-                retained_from = str(raw_retention.get("retainedFromCursor", raw_retention.get("retained_from_cursor", "")))
+                has_expired_cursor = "expiredCursor" in raw_attach or "expired_cursor" in raw_attach
+                raw_expired_cursor = raw_attach.get(
+                    "expiredCursor", raw_attach.get("expired_cursor", "")
+                )
+                if has_expired_cursor and (
+                    not isinstance(raw_expired_cursor, str) or not raw_expired_cursor.strip()
+                ):
+                    expired_cursor_path = (
+                        "expiredCursor"
+                        if "expiredCursor" in raw_attach or "expired_cursor" not in raw_attach
+                        else "expired_cursor"
+                    )
+                    expired_cursor = ""
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run attach requires string expiredCursor",
+                            "path": f"$.attach.{expired_cursor_path}",
+                        }
+                    )
+                else:
+                    expired_cursor = raw_expired_cursor
+                has_retained_from = (
+                    "retainedFromCursor" in raw_retention
+                    or "retained_from_cursor" in raw_retention
+                )
+                raw_retained_from = raw_retention.get(
+                    "retainedFromCursor",
+                    raw_retention.get("retained_from_cursor", ""),
+                )
+                if has_retained_from and (
+                    not isinstance(raw_retained_from, str) or not raw_retained_from.strip()
+                ):
+                    retained_from_path = (
+                        "retainedFromCursor"
+                        if "retainedFromCursor" in raw_retention
+                        or "retained_from_cursor" not in raw_retention
+                        else "retained_from_cursor"
+                    )
+                    retained_from = ""
+                    diagnostics.append(
+                        {
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": "background run retention requires string retainedFromCursor",
+                            "path": f"$.retention.{retained_from_path}",
+                        }
+                    )
+                else:
+                    retained_from = raw_retained_from
                 raw_cancel_run = raw_detach.get("cancelRun", raw_detach.get("cancel_run", False))
                 if isinstance(raw_cancel_run, bool):
                     cancel_run = raw_cancel_run
