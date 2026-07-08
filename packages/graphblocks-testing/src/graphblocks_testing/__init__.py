@@ -7105,6 +7105,15 @@ class TckRunner:
                                 "path": "$.redrive.createsApplicationEvent",
                             }
                         )
+                for index, raw_delivery in enumerate(raw_deliveries):
+                    if not isinstance(raw_delivery, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery must be object",
+                                "path": f"$.deliveries[{index}]",
+                            }
+                        )
                 deliveries = [delivery for delivery in raw_deliveries if isinstance(delivery, Mapping)]
                 valid_delivery_statuses = {
                     "pending",

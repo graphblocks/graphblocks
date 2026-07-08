@@ -1303,6 +1303,30 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
     )
 
 
+def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-object-callback-delivery",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": ["del-001"],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "callback delivery must be object",
+            "path": "$.deliveries[0]",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
