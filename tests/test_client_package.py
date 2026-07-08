@@ -838,6 +838,21 @@ def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> No
     assert response.outputs == {"answer": {"text": "ok"}}
 
 
+@pytest.mark.parametrize("status", ("accepted", "background"))
+def test_client_package_durable_response_requires_handle_fields(monkeypatch, status: str) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    with pytest.raises(ValueError, match=f"run graph response {status} requires event_stream_url"):
+        graphblocks_client.RunGraphResponse(
+            run_id="run-1",
+            status=status,
+            outputs={},
+            events=(),
+            event_stream=graphblocks_client.ApplicationEventStreamState(),
+        )
+
+
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

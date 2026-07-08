@@ -1194,8 +1194,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   allowing callers to request `sync`, `accepted`, or `background` `InvokeGraph` responses instead
   of being limited to the default synchronous path. `RunGraphResponse` preserves accepted/background
   run-handle links (`eventStream`, `websocket`, `cancel`) and `initialCursor`; accepted and
-  background HTTP responses must provide every handle field, and the client rejects missing or
-  blank handle fields rather than dropping durable attach metadata. `LocalGraphBlocksClient`
+  background response objects must carry every handle field. The HTTP client rejects missing or
+  blank durable handle fields rather than dropping durable attach metadata. `LocalGraphBlocksClient`
   rejects non-`sync` response modes instead of pretending in-process execution has durable
   background-run lifetime.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event

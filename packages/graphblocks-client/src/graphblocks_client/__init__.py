@@ -108,7 +108,11 @@ class RunGraphResponse:
         object.__setattr__(self, "events", tuple(self.events))
         for field_name in ("event_stream_url", "websocket_url", "cancel_url", "initial_cursor"):
             value = getattr(self, field_name)
-            if value is not None and (not isinstance(value, str) or not value.strip()):
+            if value is None:
+                if self.status in {"accepted", "background"}:
+                    raise ValueError(f"run graph response {self.status} requires {field_name}")
+                continue
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"run graph response {field_name} must be a non-empty string")
 
 
