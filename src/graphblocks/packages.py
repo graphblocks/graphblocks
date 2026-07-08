@@ -44,7 +44,7 @@ def _python_dependency_name(dependency: str) -> str:
     dependency_name = dependency.strip().split(";", 1)[0].strip()
     if "@" in dependency_name:
         dependency_name = dependency_name.split("@", 1)[0].strip()
-    for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
+    for marker in ("[", "(", "~=", "==", ">=", "<=", "!=", ">", "<"):
         marker_index = dependency_name.find(marker)
         if marker_index > 0:
             dependency_name = dependency_name[:marker_index]

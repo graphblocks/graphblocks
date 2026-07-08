@@ -1601,3 +1601,30 @@ pdf = ["Vulnerable_SDK[parser] @ file:///tmp/vulnerable-sdk.whl ; python_version
         ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]"),
         ("PackageBlockedDependency", "$.pyproject.toml.project.optional-dependencies.pdf[0]"),
     ]
+
+
+def test_package_manifest_audit_reports_pep508_parenthesized_blocked_dependencies(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "unsafe-python"
+version = "0.1.0"
+license = "Apache-2.0"
+dependencies = ["vulnerable-sdk (>=1.0)"]
+
+[project.optional-dependencies]
+model = ["Vulnerable_SDK[client] (==2.0)"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-sdk",)),
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]"),
+        ("PackageBlockedDependency", "$.pyproject.toml.project.optional-dependencies.model[0]"),
+    ]
