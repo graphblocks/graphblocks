@@ -3650,6 +3650,7 @@
       "runId": "run-coding-001",
       "nodeId": "waitCI",
       "attemptId": "attempt-1",
+      "providerOperationId": "gh-run-async-001",
       "releaseId": "rel-coding-001",
       "tenantId": "tenant-coding-001",
       "policySnapshotId": "policy-snap-callback-001",
@@ -3674,6 +3675,7 @@
       "receivedAt": "2026-07-02T00:00:41Z",
       "releaseId": "rel-coding-001",
       "tenantId": "tenant-coding-001",
+      "providerOperationId": "gh-run-async-001",
       "operationId": "op-ci-001",
       "runId": "run-coding-001",
       "nodeId": "waitCI",
@@ -3954,6 +3956,57 @@
         "code": "DurableAsyncCallbackResumeInvalid",
         "message": "async callback resume operation requires resumeTokenHash sha256 digest",
         "path": "$.operation.resumeTokenHash"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_blank_provider_operation_id_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "providerOperationId": " ",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume operation requires nonblank providerOperationId",
+        "path": "$.operation.providerOperationId"
       }
     ],
     "expected": {
@@ -5152,6 +5205,133 @@
         "code": "DurableAsyncCallbackResumeInvalid",
         "message": "async callback resume callback tenantId must match operation tenantId",
         "path": "$.callback.tenantId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_missing_callback_provider_operation_id_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "providerOperationId": "gh-run-async-001",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "callbackId": "cb-ci-missing-provider-operation",
+      "idempotencyKey": "idem-ci-callback-missing-provider-operation",
+      "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "policySnapshotId": "policy-snap-callback-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume callback requires providerOperationId",
+        "path": "$.callback.providerOperationId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "async_callback_resume_callback_provider_operation_mismatch_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "providerOperationId": "gh-run-async-001",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "callbackId": "cb-ci-wrong-provider-operation",
+      "idempotencyKey": "idem-ci-callback-wrong-provider-operation",
+      "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "providerOperationId": "gh-run-other",
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "policySnapshotId": "policy-snap-callback-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume callback providerOperationId must match operation providerOperationId",
+        "path": "$.callback.providerOperationId"
       }
     ],
     "expected": {

@@ -1942,6 +1942,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                if operation.contains_key("providerOperationId")
+                    || operation.contains_key("provider_operation_id")
+                {
+                    let provider_operation_id_path = if operation
+                        .contains_key("providerOperationId")
+                        || !operation.contains_key("provider_operation_id")
+                    {
+                        "providerOperationId"
+                    } else {
+                        "provider_operation_id"
+                    };
+                    if operation
+                        .get("providerOperationId")
+                        .or_else(|| operation.get("provider_operation_id"))
+                        .and_then(Value::as_str)
+                        .map_or(true, |provider_operation_id| {
+                            provider_operation_id.trim().is_empty()
+                        })
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume operation requires nonblank providerOperationId",
+                            "path": format!("$.operation.{provider_operation_id_path}"),
+                        }));
+                    }
+                }
                 let resume_token_hash_path = if operation.contains_key("resumeTokenHash")
                     || !operation.contains_key("resume_token_hash")
                 {
@@ -2036,6 +2062,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let operation_provider_operation_id = case
+                .get("operation")
+                .and_then(Value::as_object)
+                .and_then(|operation| {
+                    operation
+                        .get("providerOperationId")
+                        .or_else(|| operation.get("provider_operation_id"))
+                })
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|provider_operation_id| !provider_operation_id.is_empty());
             let callback_receipt_supplied = [
                 "callbackId",
                 "callback_id",
@@ -2051,6 +2088,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "release_id",
                 "tenantId",
                 "tenant_id",
+                "providerOperationId",
+                "provider_operation_id",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2212,6 +2251,41 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "message": "async callback resume callback requires nonblank tenantId",
                         "path": format!("$.callback.{tenant_id_path}"),
                     }));
+                }
+                if let Some(operation_provider_operation_id) = operation_provider_operation_id {
+                    let provider_operation_id_path = if raw_callback
+                        .contains_key("providerOperationId")
+                        || !raw_callback.contains_key("provider_operation_id")
+                    {
+                        "providerOperationId"
+                    } else {
+                        "provider_operation_id"
+                    };
+                    match raw_callback
+                        .get("providerOperationId")
+                        .or_else(|| raw_callback.get("provider_operation_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                    {
+                        Some(callback_provider_operation_id)
+                            if !callback_provider_operation_id.is_empty() =>
+                        {
+                            if callback_provider_operation_id != operation_provider_operation_id {
+                                diagnostics.push(json!({
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback providerOperationId must match operation providerOperationId",
+                                    "path": format!("$.callback.{provider_operation_id_path}"),
+                                }));
+                            }
+                        }
+                        _ => {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires providerOperationId",
+                                "path": format!("$.callback.{provider_operation_id_path}"),
+                            }));
+                        }
+                    }
                 }
                 if let Some(operation) = case.get("operation").and_then(Value::as_object) {
                     for (key, alias) in [

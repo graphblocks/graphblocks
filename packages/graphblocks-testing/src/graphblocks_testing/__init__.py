@@ -8141,6 +8141,23 @@ class TckRunner:
                                     "path": f"$.operation.{path_key}",
                                 }
                             )
+                    if "providerOperationId" in raw_operation or "provider_operation_id" in raw_operation:
+                        provider_operation_id_path = (
+                            "providerOperationId"
+                            if "providerOperationId" in raw_operation or "provider_operation_id" not in raw_operation
+                            else "provider_operation_id"
+                        )
+                        provider_operation_id = raw_operation.get(
+                            "providerOperationId", raw_operation.get("provider_operation_id")
+                        )
+                        if not isinstance(provider_operation_id, str) or not provider_operation_id.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume operation requires nonblank providerOperationId",
+                                    "path": f"$.operation.{provider_operation_id_path}",
+                                }
+                            )
                     resume_token_hash_path = (
                         "resumeTokenHash"
                         if "resumeTokenHash" in raw_operation or "resume_token_hash" not in raw_operation
@@ -8220,6 +8237,13 @@ class TckRunner:
                                 "path": f"$.operation.{budget_state_path}",
                             }
                         )
+                operation_provider_operation_id = None
+                if isinstance(raw_operation, Mapping):
+                    raw_operation_provider_operation_id = raw_operation.get(
+                        "providerOperationId", raw_operation.get("provider_operation_id")
+                    )
+                    if isinstance(raw_operation_provider_operation_id, str) and raw_operation_provider_operation_id.strip():
+                        operation_provider_operation_id = raw_operation_provider_operation_id.strip()
                 callback_receipt_supplied = any(
                     key in raw_callback
                     for key in (
@@ -8237,6 +8261,8 @@ class TckRunner:
                         "release_id",
                         "tenantId",
                         "tenant_id",
+                        "providerOperationId",
+                        "provider_operation_id",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8374,6 +8400,31 @@ class TckRunner:
                                 "path": f"$.callback.{tenant_id_path}",
                             }
                         )
+                    if operation_provider_operation_id is not None:
+                        provider_operation_id_path = (
+                            "providerOperationId"
+                            if "providerOperationId" in raw_callback or "provider_operation_id" not in raw_callback
+                            else "provider_operation_id"
+                        )
+                        callback_provider_operation_id = raw_callback.get(
+                            "providerOperationId", raw_callback.get("provider_operation_id")
+                        )
+                        if not isinstance(callback_provider_operation_id, str) or not callback_provider_operation_id.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback requires providerOperationId",
+                                    "path": f"$.callback.{provider_operation_id_path}",
+                                }
+                            )
+                        elif callback_provider_operation_id.strip() != operation_provider_operation_id:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback providerOperationId must match operation providerOperationId",
+                                    "path": f"$.callback.{provider_operation_id_path}",
+                                }
+                            )
                     if isinstance(raw_operation, Mapping):
                         for key, alias in (
                             ("operationId", "operation_id"),
