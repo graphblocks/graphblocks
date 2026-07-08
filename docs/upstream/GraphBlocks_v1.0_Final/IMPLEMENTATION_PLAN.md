@@ -1817,9 +1817,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now reject non-object redrive entries when present,
   so malformed dead-letter redrive projections cannot be silently treated as absent optional data
   by either Rust or Python.
-- Durable callback projection redrive evidence also requires nonblank `deliveryId`, `eventId`, and
-  `originalEventId` fields, preventing missing identity values from satisfying dead-letter
-  preservation checks by comparing absent data.
+- Durable callback projection shared TCK cases now require nonblank redrive `deliveryId`, `eventId`,
+  and `originalEventId` fields in both Rust and Python runners, preventing missing identity values
+  from satisfying dead-letter preservation checks by comparing absent data.
 - Durable callback projection redrive evidence now rejects mismatched `eventId` and
   `originalEventId`, making event identity preservation a mandatory redrive invariant instead of an
   optional observed flag.

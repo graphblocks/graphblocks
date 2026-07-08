@@ -581,6 +581,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                for (key, alias, message) in [
+                    (
+                        "deliveryId",
+                        "delivery_id",
+                        "callback redrive requires deliveryId",
+                    ),
+                    ("eventId", "event_id", "callback redrive requires eventId"),
+                    (
+                        "originalEventId",
+                        "original_event_id",
+                        "callback redrive requires originalEventId",
+                    ),
+                ] {
+                    if raw_redrive
+                        .get(key)
+                        .or_else(|| raw_redrive.get(alias))
+                        .and_then(Value::as_str)
+                        .map_or(true, |value| value.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackRedriveInvalid",
+                            "message": message,
+                            "path": format!("$.redrive.{key}"),
+                        }));
+                    }
+                }
             }
             let empty_redrive_assertions = Map::new();
             let raw_redrive_assertions = case

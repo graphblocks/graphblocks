@@ -1799,6 +1799,120 @@
     }
   },
   {
+    "name": "webhook_delivery_missing_redrive_delivery_id_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-delivery-id-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0304",
+        "runId": "run-coding-001",
+        "sequence": 304,
+        "cursor": "evt-0304",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0304",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:04Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "",
+      "eventId": "evt-0304",
+      "originalEventId": "evt-0304",
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires deliveryId",
+        "path": "$.redrive.deliveryId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_missing_redrive_event_id_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-event-id-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0305",
+        "runId": "run-coding-001",
+        "sequence": 305,
+        "cursor": "evt-0305",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0305",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:05Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-event-id-invalid-001",
+      "eventId": " ",
+      "originalEventId": "evt-0305",
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires eventId",
+        "path": "$.redrive.eventId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_missing_redrive_original_event_id_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-redrive-original-event-id-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0306",
+        "runId": "run-coding-001",
+        "sequence": 306,
+        "cursor": "evt-0306",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0306",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:02:06Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "redrive": {
+      "deliveryId": "del-redrive-original-event-id-invalid-001",
+      "eventId": "evt-0306",
+      "originalEventId": null,
+      "operatorPrincipal": "operator-1",
+      "reason": "operator redrive",
+      "createsApplicationEvent": false
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackRedriveInvalid",
+        "message": "callback redrive requires originalEventId",
+        "path": "$.redrive.originalEventId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_auth_schema_stale_and_budget_guards",
     "kind": "async_callback_resume_guards",
     "operation": {
