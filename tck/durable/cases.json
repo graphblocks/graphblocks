@@ -562,6 +562,7 @@
       "timeoutCallbackResumesExpiredOperation": false,
       "cancelledCallbackCommitsResult": false,
       "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
       "providerOperationMismatchCanResume": false
     },
     "callback": {
@@ -588,6 +589,7 @@
       "timeoutCallbackResumesExpiredOperation": false,
       "cancelledCallbackCommitsResult": false,
       "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
       "providerOperationMismatchCanResume": false,
       "receiptJournaledBeforeResume": true,
       "resumeReevaluatesPolicyBudgetRelease": true,

@@ -623,6 +623,11 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .or_else(|| raw_checks.get("stale_attempt_can_resume"))
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
+                "unauthenticatedCallbackCanResume": raw_checks
+                    .get("unauthenticatedCallbackCanResume")
+                    .or_else(|| raw_checks.get("unauthenticated_callback_can_resume"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
                 "providerOperationMismatchCanResume": raw_checks
                     .get("providerOperationMismatchCanResume")
                     .or_else(|| raw_checks.get("provider_operation_mismatch_can_resume"))

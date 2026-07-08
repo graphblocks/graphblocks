@@ -1580,7 +1580,8 @@ resume, and resume without ownership fencing.
 
 Implementation note: the durable shared TCK now includes async callback contract fixtures for
 background detach/cursor replay, webhook retry/duplicate/dead-letter projection, callback
-auth/schema/stale-attempt/budget resume guards, and late external-operation reconciliation. These
+auth/schema/stale-attempt/budget resume guards, unauthenticated callback rejection, and late
+external-operation reconciliation. These
 fixtures keep the central rule executable: runs outlive clients, the event stream and journals are
 authoritative, and callbacks are projections or authenticated resume signals rather than sources of
 truth.

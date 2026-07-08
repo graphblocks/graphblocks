@@ -35,9 +35,9 @@ The `application-events` suite includes authoritative stream invariants:
 idempotent exact replay, duplicate event-id conflict rejection, and monotonic
 per-run sequence enforcement.
 
-The `durable` suite includes async callback guards for auth failures, schema
-failures, stale attempts, provider-operation mismatches, timeout/cancel races,
-and budget-paused resume.
+The `durable` suite includes async callback guards for signature/auth failures,
+explicitly unauthenticated callbacks, schema failures, stale attempts,
+provider-operation mismatches, timeout/cancel races, and budget-paused resume.
 
 Common commands:
 

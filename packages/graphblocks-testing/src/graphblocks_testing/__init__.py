@@ -7065,6 +7065,7 @@ class TckRunner:
                     "timeoutCallbackResumesExpiredOperation": bool(raw_checks.get("timeoutCallbackResumesExpiredOperation", raw_checks.get("timeout_callback_resumes_expired_operation", True))),
                     "cancelledCallbackCommitsResult": bool(raw_checks.get("cancelledCallbackCommitsResult", raw_checks.get("cancelled_callback_commits_result", True))),
                     "staleAttemptCanResume": bool(raw_checks.get("staleAttemptCanResume", raw_checks.get("stale_attempt_can_resume", True))),
+                    "unauthenticatedCallbackCanResume": bool(raw_checks.get("unauthenticatedCallbackCanResume", raw_checks.get("unauthenticated_callback_can_resume", True))),
                     "providerOperationMismatchCanResume": bool(raw_checks.get("providerOperationMismatchCanResume", raw_checks.get("provider_operation_mismatch_can_resume", True))),
                     "receiptJournaledBeforeResume": int(raw_callback.get("journalSequence", raw_callback.get("journal_sequence", 0))) < int(raw_resume.get("resumeSequence", raw_resume.get("resume_sequence", 0))),
                     "resumeReevaluatesPolicyBudgetRelease": set(_string_tuple(raw_resume.get("reevaluates", ()))) >= {"policy", "budget", "release"},
