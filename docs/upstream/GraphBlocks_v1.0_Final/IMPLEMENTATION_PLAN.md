@@ -1741,6 +1741,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection redrive evidence now requires nonblank operator and reason audit
   metadata, so dead-letter redrive conformance preserves the operator action context required for
   durable audit and redrive review.
+- Durable callback projection redrive evidence also requires nonblank `deliveryId`, `eventId`, and
+  `originalEventId` fields, preventing missing identity values from satisfying dead-letter
+  preservation checks by comparing absent data.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

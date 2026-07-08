@@ -7056,6 +7056,9 @@ class TckRunner:
                     raw_redrive = {}
                 if raw_redrive:
                     for key, alias in (
+                        ("deliveryId", "delivery_id"),
+                        ("eventId", "event_id"),
+                        ("originalEventId", "original_event_id"),
                         ("operatorPrincipal", "operator_principal"),
                         ("reason", "redrive_reason"),
                     ):
