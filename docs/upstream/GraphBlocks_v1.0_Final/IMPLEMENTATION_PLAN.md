@@ -1741,6 +1741,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection fixtures now carry and validate `subscriptionId`, cursor, and
   delivery-attempt metadata, aligning shared callback conformance evidence with the protocol's
   at-least-once delivery envelope.
+- Durable callback projection shared TCK fixtures now reject delivery rows without nonblank
+  `deliveryId` evidence, so callback redrive, dead-letter, and audit assertions always have a
+  stable delivery identity in Rust and Python.
 - Durable callback projection shared TCK fixtures now validate explicit `subscription` envelopes,
   including nonblank `subscriptionId`, protocol-defined `failurePolicy`, and boolean `mandatory`,
   so subscription-level delivery policy evidence cannot be silently ignored by Rust or Python.
