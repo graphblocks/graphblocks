@@ -529,6 +529,13 @@ fn run_case(case: &Value) -> Result<(), String> {
         }
         "callback_delivery_projection" => {
             let deliveries = required_array(case, "deliveries", name)?;
+            if deliveries.is_empty() {
+                diagnostics.push(json!({
+                    "code": "DurableCallbackDeliveryInvalid",
+                    "message": "callback delivery requires at least one delivery",
+                    "path": "$.deliveries",
+                }));
+            }
             let empty_redrive = Map::new();
             let raw_redrive = case
                 .get("redrive")

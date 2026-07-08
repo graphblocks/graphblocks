@@ -646,6 +646,21 @@
     }
   },
   {
+    "name": "webhook_delivery_empty_deliveries_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [],
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery requires at least one delivery",
+        "path": "$.deliveries"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_missing_idempotency_key_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [

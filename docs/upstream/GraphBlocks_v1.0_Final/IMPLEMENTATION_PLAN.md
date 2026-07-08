@@ -1724,7 +1724,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   (`failed`, `dead_lettered`, `cancelled`, or `expired`) when `lastError` evidence is missing,
   preventing cancelled or expired rows from being misreported as failed evidence.
 - Durable callback projection TCK cases now reject empty `deliveries` arrays, so callback delivery
-  conformance cannot pass without at least one durable `CallbackDelivery` row.
+  conformance cannot pass in either Rust or Python without at least one durable
+  `CallbackDelivery` row.
 - Durable callback projection TCK cases now reject non-object delivery entries before evaluating
   retry, duplicate, idempotency, or redrive evidence, preserving the `CallbackDelivery` envelope
   shape across the shared Rust and Python conformance harnesses.
