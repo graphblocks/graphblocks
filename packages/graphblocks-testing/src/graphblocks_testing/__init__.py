@@ -8110,6 +8110,16 @@ class TckRunner:
                             }
                         )
                     status = raw_status if isinstance(raw_status, str) else ""
+                    if status in {"pending", "delivering"} and (
+                        "deliveredAt" in delivery or "delivered_at" in delivery
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": f"{status} callback delivery must not have deliveredAt",
+                                "path": f"$.deliveries[{index}].deliveredAt",
+                            }
+                        )
                     raw_receiver_status = delivery.get(
                         "receiverStatus", delivery.get("receiver_status")
                     )

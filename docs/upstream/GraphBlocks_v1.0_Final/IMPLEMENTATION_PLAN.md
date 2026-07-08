@@ -1840,6 +1840,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection success evidence now has shared expected-diagnostic coverage rejecting
   blank, non-string, or unparsable `deliveredAt` timestamps before accepting delivered or
   acknowledged callback delivery rows.
+- Durable callback projection status/timestamp evidence now has shared expected-diagnostic coverage
+  rejecting pending or delivering callback delivery rows that already expose `deliveredAt`, keeping
+  in-flight delivery records distinct from accepted webhook delivery outcomes.
 - Durable callback projection duplicate-acknowledgement evidence now has shared
   expected-diagnostic coverage rejecting blank, non-string, or unparsable `acknowledgedAt`
   timestamps before accepting duplicate webhook acknowledgement rows.

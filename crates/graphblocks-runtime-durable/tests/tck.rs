@@ -1637,6 +1637,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].status"),
                     }));
                 }
+                if let Some(status @ ("pending" | "delivering")) =
+                    delivery.get("status").and_then(Value::as_str)
+                {
+                    if delivery
+                        .get("deliveredAt")
+                        .or_else(|| delivery.get("delivered_at"))
+                        .is_some()
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackDeliveryInvalid",
+                            "message": format!("{status} callback delivery must not have deliveredAt"),
+                            "path": format!("$.deliveries[{index}].deliveredAt"),
+                        }));
+                    }
+                }
                 if let Some(next_retry_at) = delivery
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))

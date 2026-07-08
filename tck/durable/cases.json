@@ -3600,6 +3600,35 @@
     }
   },
   {
+    "name": "webhook_delivery_pending_delivered_at_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-pending-delivered-at-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0119",
+        "runId": "run-coding-001",
+        "sequence": 119,
+        "cursor": "evt-0119",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0119",
+        "status": "pending",
+        "deliveredAt": "2026-07-02T00:00:39Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "pending callback delivery must not have deliveredAt",
+        "path": "$.deliveries[0].deliveredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_duplicate_attempt_idempotency_key_allowed",
     "kind": "callback_delivery_projection",
     "deliveries": [
