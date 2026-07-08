@@ -1773,6 +1773,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection success evidence now has shared expected-diagnostic coverage rejecting
   blank, non-string, or unparsable `deliveredAt` timestamps before accepting delivered or
   acknowledged callback delivery rows.
+- Durable callback projection duplicate-acknowledgement evidence now has shared
+  expected-diagnostic coverage rejecting blank, non-string, or unparsable `acknowledgedAt`
+  timestamps before accepting duplicate webhook acknowledgement rows.
 - Durable callback projection retry evidence now has shared expected-diagnostic coverage requiring
   `retry_then_dead_letter` subscriptions to include `nextRetryAt` on failed 429/5xx deliveries,
   ensuring retry scheduling is proven from the subscription's failure policy rather than inferred

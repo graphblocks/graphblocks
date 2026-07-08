@@ -869,6 +869,81 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .and_then(Value::as_str)
                     .is_some_and(|status| status == "acknowledged")
                 {
+                    if let Some(acknowledged_at) = delivery
+                        .get("acknowledgedAt")
+                        .or_else(|| delivery.get("acknowledged_at"))
+                    {
+                        let acknowledged_at_valid = acknowledged_at.as_str().is_some_and(|value| {
+                            let trimmed = value.trim();
+                            if trimmed.is_empty() {
+                                return false;
+                            }
+                            let without_z = trimmed.strip_suffix('Z').unwrap_or(trimmed);
+                            let Some((date, time_with_offset)) = without_z.split_once('T') else {
+                                return false;
+                            };
+                            let mut date_parts = date.split('-');
+                            let year = date_parts.next();
+                            let month = date_parts.next();
+                            let day = date_parts.next();
+                            if date_parts.next().is_some() {
+                                return false;
+                            }
+                            let Some(year) = year.and_then(|part| part.parse::<u16>().ok()) else {
+                                return false;
+                            };
+                            let Some(month) = month.and_then(|part| part.parse::<u8>().ok()) else {
+                                return false;
+                            };
+                            let Some(day) = day.and_then(|part| part.parse::<u8>().ok()) else {
+                                return false;
+                            };
+                            if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+                                return false;
+                            }
+                            let offset_start = time_with_offset
+                                .find(|character| character == '+' || character == '-');
+                            let time = offset_start
+                                .map_or(time_with_offset, |index| &time_with_offset[..index]);
+                            let mut time_parts = time.split(':');
+                            let hour = time_parts.next();
+                            let minute = time_parts.next();
+                            let second = time_parts.next();
+                            if time_parts.next().is_some() {
+                                return false;
+                            }
+                            let Some(hour) = hour.and_then(|part| part.parse::<u8>().ok()) else {
+                                return false;
+                            };
+                            let Some(minute) = minute.and_then(|part| part.parse::<u8>().ok())
+                            else {
+                                return false;
+                            };
+                            let Some(second_text) = second else {
+                                return false;
+                            };
+                            let second_integer = second_text.split('.').next();
+                            let Some(second) =
+                                second_integer.and_then(|part| part.parse::<u8>().ok())
+                            else {
+                                return false;
+                            };
+                            hour <= 23 && minute <= 59 && second <= 59
+                        });
+                        if !acknowledged_at_valid {
+                            diagnostics.push(json!({
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "acknowledged callback delivery requires acknowledgedAt",
+                                "path": format!("$.deliveries[{index}].acknowledgedAt"),
+                            }));
+                        }
+                    }
+                }
+                if delivery
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "acknowledged")
+                {
                     let delivered_at = delivery
                         .get("deliveredAt")
                         .or_else(|| delivery.get("delivered_at"))
