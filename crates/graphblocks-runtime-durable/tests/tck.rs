@@ -658,6 +658,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.deliveries[{index}].deliveryId"),
                     }));
                 }
+                if delivery
+                    .get("eventId")
+                    .or_else(|| delivery.get("event_id"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |event_id| event_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableCallbackDeliveryInvalid",
+                        "message": "callback delivery requires eventId",
+                        "path": format!("$.deliveries[{index}].eventId"),
+                    }));
+                }
                 if let Some(subscription_id) = subscription_id {
                     if delivery
                         .get("subscriptionId")
