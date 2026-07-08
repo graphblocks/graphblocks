@@ -1251,7 +1251,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   requested `scope` and `scopeId` before the client treats replayed events as a projection for that
   subscription, and run-scoped callback registration replays reject events from any other run. A
   run-scoped callback registration `replayFromCursor` is validated against the requested run scope
-  before dispatch.
+  before dispatch. Callback revoke responses must echo the requested `subscriptionId` before the
+  client treats the registration as revoked.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async
@@ -1525,7 +1526,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` now exposes HTTP helpers for callback delivery redrive and dead-letter
   moves. The helpers validate delivery id and reason locally, optionally accept an explicit
   operator, omit it when bearer authentication should let the server derive the operator, preserve
-  bearer authentication, and surface the idempotent duplicate dead-letter response unchanged.
+  bearer authentication, require response `deliveryId` to echo the requested delivery, and surface
+  the idempotent duplicate dead-letter response unchanged.
 - `graphblocks-callbacks` now treats non-retryable `failed` callback deliveries as terminal
   delivery projections, preventing late webhook responses from mutating a delivery after the
   runtime has already produced the mandatory pause/fail/no-op failure action.

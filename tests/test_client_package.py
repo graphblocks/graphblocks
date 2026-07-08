@@ -1193,6 +1193,7 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
                     "ok": True,
                     "runId": "id/with?query#fragment",
                     "subscriptionId": "id/with?query#fragment",
+                    "deliveryId": "id/with?query#fragment",
                 }
             ).encode("utf-8")
 
@@ -3161,6 +3162,35 @@ def test_client_package_revokes_callback_over_http_transport(monkeypatch) -> Non
     assert app.callback_registrations()[0].status == "revoked"
 
 
+def test_client_package_rejects_mismatched_callback_revoke_response_subscription_id(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "subscriptionId": "other-sub",
+                    "status": "revoked",
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "GraphBlocks callback revoke response subscription_id "
+            "must match requested subscription 'callback-sub-requested'"
+        ),
+    ):
+        client.revoke_callback("callback-sub-requested")
+
+
 def test_client_package_redrives_callback_delivery_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
@@ -3355,6 +3385,45 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
             "status": "dead_letter_requested",
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "response_label"),
+    (
+        ("redrive_callback_delivery", "GraphBlocks callback delivery redrive response"),
+        ("move_callback_to_dead_letter", "GraphBlocks callback delivery dead-letter response"),
+    ),
+)
+def test_client_package_rejects_mismatched_callback_delivery_control_response_id(
+    monkeypatch,
+    method_name: str,
+    response_label: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "deliveryId": "other-delivery",
+                    "operator": "operator-1",
+                    "reason": "retry",
+                    "status": "redrive_requested",
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(f"{response_label} delivery_id must match requested delivery 'del-requested'"),
+    ):
+        getattr(client, method_name)("del-requested", reason="retry")
 
 
 @pytest.mark.parametrize(

@@ -1345,7 +1345,8 @@ class HttpGraphBlocksClient:
         )
 
     def revoke_callback(self, subscription_id: object) -> dict[str, object]:
-        subscription_id = _http_path_segment("subscription_id", subscription_id)
+        requested_subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = quote(requested_subscription_id, safe="")
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1355,7 +1356,19 @@ class HttpGraphBlocksClient:
             method="DELETE",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks callback revoke response")
+        payload = _read_json_response(response, "GraphBlocks callback revoke response")
+        _validate_response_subscription_id(
+            "GraphBlocks callback revoke response",
+            requested_subscription_id,
+            _payload_string(
+                payload,
+                "GraphBlocks callback revoke response",
+                "subscription_id",
+                "subscriptionId",
+                "subscription_id",
+            ),
+        )
+        return payload
 
     def redrive_callback_delivery(
         self,
@@ -1396,7 +1409,8 @@ class HttpGraphBlocksClient:
         action: str,
         label: str,
     ) -> dict[str, object]:
-        delivery_id = _http_path_segment("delivery_id", delivery_id)
+        requested_delivery_id = _http_non_empty_string("delivery_id", delivery_id)
+        delivery_id = quote(requested_delivery_id, safe="")
         body = {
             "reason": _http_non_empty_string("reason", reason),
         }
@@ -1415,7 +1429,13 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, label)
+        payload = _read_json_response(response, label)
+        _validate_response_delivery_id(
+            label,
+            requested_delivery_id,
+            _payload_string(payload, label, "delivery_id", "deliveryId", "delivery_id"),
+        )
+        return payload
 
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
@@ -1522,6 +1542,12 @@ def _validate_response_run_id(label: str, expected_run_id: str, value: str) -> s
 def _validate_response_subscription_id(label: str, expected_subscription_id: str, value: str) -> str:
     if value != expected_subscription_id:
         raise ValueError(f"{label} subscription_id must match requested subscription {expected_subscription_id!r}")
+    return value
+
+
+def _validate_response_delivery_id(label: str, expected_delivery_id: str, value: str) -> str:
+    if value != expected_delivery_id:
+        raise ValueError(f"{label} delivery_id must match requested delivery {expected_delivery_id!r}")
     return value
 
 
