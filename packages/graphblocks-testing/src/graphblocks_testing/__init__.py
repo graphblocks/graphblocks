@@ -8568,6 +8568,15 @@ class TckRunner:
                         }
                     )
                     callback_journal_sequence = 0
+                elif raw_callback_journal_sequence == 0:
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires positive integer callback journalSequence",
+                            "path": "$.callback.journalSequence",
+                        }
+                    )
+                    callback_journal_sequence = raw_callback_journal_sequence
                 else:
                     callback_journal_sequence = raw_callback_journal_sequence
                 resume_sequence_missing = False
@@ -8593,6 +8602,15 @@ class TckRunner:
                         }
                     )
                     resume_sequence = 0
+                elif raw_resume_sequence == 0:
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires positive integer resumeSequence",
+                            "path": "$.resume.resumeSequence",
+                        }
+                    )
+                    resume_sequence = raw_resume_sequence
                 else:
                     resume_sequence = raw_resume_sequence
                 successful_resume_count_missing = False

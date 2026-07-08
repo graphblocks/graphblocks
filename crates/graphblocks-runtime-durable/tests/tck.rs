@@ -2474,7 +2474,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_callback.get("journal_sequence"));
             let callback_journal_sequence = match raw_callback_journal_sequence {
                 Some(value) => match value.as_u64() {
-                    Some(sequence) => sequence,
+                    Some(sequence) => {
+                        if sequence == 0 {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires positive integer callback journalSequence",
+                                "path": "$.callback.journalSequence",
+                            }));
+                        }
+                        sequence
+                    }
                     None => {
                         diagnostics.push(json!({
                             "code": "DurableAsyncCallbackResumeInvalid",
@@ -2498,7 +2507,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_resume.get("resume_sequence"));
             let resume_sequence = match raw_resume_sequence {
                 Some(value) => match value.as_u64() {
-                    Some(sequence) => sequence,
+                    Some(sequence) => {
+                        if sequence == 0 {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires positive integer resumeSequence",
+                                "path": "$.resume.resumeSequence",
+                            }));
+                        }
+                        sequence
+                    }
                     None => {
                         diagnostics.push(json!({
                             "code": "DurableAsyncCallbackResumeInvalid",
