@@ -2226,6 +2226,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{attempt_id_path}"),
                 }));
             }
+            let release_id_path = if raw_operation.contains_key("releaseId")
+                || !raw_operation.contains_key("release_id")
+            {
+                "releaseId"
+            } else {
+                "release_id"
+            };
+            if raw_operation
+                .get("releaseId")
+                .or_else(|| raw_operation.get("release_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |release_id| release_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank releaseId",
+                    "path": format!("$.operation.{release_id_path}"),
+                }));
+            }
             let operation_policy_snapshot_path = if raw_operation.contains_key("policySnapshotId")
                 || !raw_operation.contains_key("policy_snapshot_id")
             {
@@ -2407,6 +2426,42 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "code": "DurableExternalOperationInvalid",
                         "message": "external operation reconciliation requires callback attemptId",
                         "path": format!("$.lateCallback.{callback_attempt_id_path}"),
+                    }));
+                }
+            }
+            let callback_release_id_path = if raw_late_callback.contains_key("releaseId")
+                || !raw_late_callback.contains_key("release_id")
+            {
+                "releaseId"
+            } else {
+                "release_id"
+            };
+            match raw_late_callback
+                .get("releaseId")
+                .or_else(|| raw_late_callback.get("release_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(callback_release_id) if !callback_release_id.is_empty() => {
+                    let release_id = raw_operation
+                        .get("releaseId")
+                        .or_else(|| raw_operation.get("release_id"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if !release_id.is_empty() && callback_release_id != release_id {
+                        diagnostics.push(json!({
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback releaseId must match operation",
+                            "path": format!("$.lateCallback.{callback_release_id_path}"),
+                        }));
+                    }
+                }
+                _ => {
+                    diagnostics.push(json!({
+                        "code": "DurableExternalOperationInvalid",
+                        "message": "external operation reconciliation requires callback releaseId",
+                        "path": format!("$.lateCallback.{callback_release_id_path}"),
                     }));
                 }
             }

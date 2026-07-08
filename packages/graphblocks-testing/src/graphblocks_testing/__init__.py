@@ -8389,6 +8389,20 @@ class TckRunner:
                             "path": f"$.operation.{attempt_id_path}",
                         }
                     )
+                release_id_path = (
+                    "releaseId"
+                    if "releaseId" in raw_operation or "release_id" not in raw_operation
+                    else "release_id"
+                )
+                release_id = raw_operation.get("releaseId", raw_operation.get("release_id"))
+                if not isinstance(release_id, str) or not release_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank releaseId",
+                            "path": f"$.operation.{release_id_path}",
+                        }
+                    )
                 operation_policy_snapshot_path = (
                     "policySnapshotId"
                     if "policySnapshotId" in raw_operation
@@ -8540,6 +8554,35 @@ class TckRunner:
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation callback attemptId must match operation",
                             "path": f"$.lateCallback.{callback_attempt_id_path}",
+                        }
+                    )
+                callback_release_id_path = (
+                    "releaseId"
+                    if "releaseId" in raw_late_callback
+                    or "release_id" not in raw_late_callback
+                    else "release_id"
+                )
+                callback_release_id = raw_late_callback.get(
+                    "releaseId", raw_late_callback.get("release_id")
+                )
+                if not isinstance(callback_release_id, str) or not callback_release_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires callback releaseId",
+                            "path": f"$.lateCallback.{callback_release_id_path}",
+                        }
+                    )
+                elif (
+                    isinstance(release_id, str)
+                    and release_id.strip()
+                    and callback_release_id.strip() != release_id.strip()
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback releaseId must match operation",
+                            "path": f"$.lateCallback.{callback_release_id_path}",
                         }
                     )
                 payload_digest_path = (

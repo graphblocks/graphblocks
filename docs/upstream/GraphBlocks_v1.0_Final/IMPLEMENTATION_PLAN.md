@@ -1900,6 +1900,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   in both Rust and Python runners before accepting late side-effect, callback, or usage
   reconciliation evidence.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
+  `operation.releaseId` evidence in both Rust and Python runners before accepting
+  release-compatible late callback reconciliation.
+- Durable external-operation reconciliation shared TCK cases now require nonblank
   `operation.policySnapshotId` evidence in both Rust and Python runners before accepting
   policy-governed late callback reconciliation.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
@@ -1917,6 +1920,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require
   `lateCallback.attemptId` to be present and match `operation.attemptId` in both Rust and Python runners
   before a late callback can prove it belongs to the reconciled run attempt.
+- Durable external-operation reconciliation shared TCK cases now require
+  `lateCallback.releaseId` to be present and match `operation.releaseId` in both Rust and Python
+  runners before a late callback can prove it belongs to the compatible release.
 - Durable external-operation reconciliation shared TCK cases now require
   `lateCallback.payloadDigest` to be a canonical `sha256:` digest in both Rust and Python runners
   before late callback content can prove reconciliation behavior.
