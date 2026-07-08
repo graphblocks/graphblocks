@@ -1235,9 +1235,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription replay cursors must belong to the subscribed run before retention
   lookup and must use a non-negative integer sequence. Retained event `sequence` metadata must also
-  be a non-boolean non-negative integer before subscription replay projection. Subscription and
-  callback registration projections validate the spec failure policy literals before storage, and
-  ordered delivery requests are rejected unless the target kind can preserve run ordering. Mandatory delivery
+  be a non-boolean non-negative integer before subscription replay projection. Expired subscription
+  replay cursors return the same current `runStatus` recovery metadata as raw event replay and
+  attach. Subscription and callback registration projections validate the spec failure policy
+  literals before storage, and ordered delivery requests are rejected unless the target kind can
+  preserve run ordering. Mandatory delivery
   projections cannot use best-effort failure handling unless an explicit dead-letter configuration
   is supplied, and projections that explicitly select `retry_then_dead_letter` must declare a
   dead-letter or fallback behavior before storage. Route validation rejects callback delivery

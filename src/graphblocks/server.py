@@ -3577,6 +3577,7 @@ class GraphBlocksServerApp:
                         "nearestAvailableCursor": nearest_cursor,
                         "lastCursor": f"{subscription.run_id}:{last_sequence}",
                         "lastSequence": last_sequence,
+                        "runStatus": self._run_status_payload(subscription.run_id, events, include_ok=False),
                     },
                 )
             else:

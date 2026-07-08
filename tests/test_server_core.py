@@ -5467,6 +5467,7 @@ def test_server_app_subscribe_events_reports_cursor_expired() -> None:
                     "inputs": {"message": {"text": "ok"}},
                     "runId": "run-subscribe-expired-1",
                     "responseId": "response-subscribe-expired-1",
+                    "occurredAt": "2026-07-02T00:00:00Z",
                 }
             ).encode("utf-8"),
         )
@@ -5499,6 +5500,17 @@ def test_server_app_subscribe_events_reports_cursor_expired() -> None:
         "nearestAvailableCursor": "run-subscribe-expired-1:1",
         "lastCursor": "run-subscribe-expired-1:2",
         "lastSequence": 2,
+        "runStatus": {
+            "runId": "run-subscribe-expired-1",
+            "state": "succeeded",
+            "releaseId": "local",
+            "lastCursor": "run-subscribe-expired-1:2",
+            "startedAt": "2026-07-02T00:00:00Z",
+            "updatedAt": "2026-07-02T00:00:00Z",
+            "completedAt": "2026-07-02T00:00:00Z",
+            "waitingOn": [],
+            "activeOperations": [],
+        },
     }
     assert app.subscriptions("run-subscribe-expired-1") == ()
 
