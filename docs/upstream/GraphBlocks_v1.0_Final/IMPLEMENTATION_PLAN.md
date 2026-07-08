@@ -122,6 +122,9 @@ graphblocks-cli
   documents, invalid catalog versions, blank spec versions, non-list package collections, malformed
   entries, and missing distribution names before CLI package inspection or lock generation can
   consume partial catalog state.
+- Default metapackage dependency parsing now uses the same normalized distribution-name handling
+  for parenthesized PEP 508 constraints, so `graphblocks-core (>=1.0)` records a clean
+  `>=1.0` lock constraint instead of producing a bogus missing dependency.
 - The `graphblocks` Python metapackage manifest now carries the default foundation dependency
   closure (`graphblocks-core`, runtime, stdlib, documents, RAG, conversation, policy, budget,
   usage, and CLI) instead of remaining an empty placeholder, so package doctor checks can verify

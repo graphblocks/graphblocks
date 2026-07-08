@@ -1447,6 +1447,29 @@ def test_package_catalog_doctor_reports_unknown_dependency_and_default_constrain
     ]
 
 
+def test_package_catalog_normalizes_parenthesized_default_constraints() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultMetaPackage": {
+            "distribution": "graphblocks",
+            "dependencies": ["graphblocks-core (>=1.0)"],
+            "excludedCategories": [],
+        },
+        "packages": [
+            {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-core"]},
+            {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
+        ],
+    }
+
+    diagnostics = doctor_package_catalog(catalog)
+    lock = build_package_lock(catalog)
+    core_entry = next(entry for entry in lock.entries if entry.distribution == "graphblocks-core")
+
+    assert diagnostics.diagnostics == ()
+    assert core_entry.version_constraint == ">=1.0"
+
+
 def test_package_catalog_doctor_reports_forbidden_dependency_conflicts() -> None:
     diagnostics = doctor_package_catalog(
         {

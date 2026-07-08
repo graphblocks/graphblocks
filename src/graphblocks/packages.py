@@ -354,14 +354,22 @@ def build_package_lock(
     for dependency in default_metapackage.get("dependencies", []):
         if not isinstance(dependency, str) or not dependency.strip():
             continue
-        distribution = dependency
+        distribution = _python_dependency_name(dependency)
         constraint = None
-        for marker in ("~=", "==", ">=", "<=", "!=", ">", "<"):
-            marker_index = dependency.find(marker)
-            if marker_index > 0:
-                distribution = dependency[:marker_index]
-                constraint = dependency[marker_index:]
-                break
+        dependency_text = dependency.strip().split(";", 1)[0].strip()
+        if "@" not in dependency_text:
+            paren_index = dependency_text.find("(")
+            if paren_index > 0:
+                close_index = dependency_text.rfind(")")
+                constraint = dependency_text[
+                    paren_index + 1 : close_index if close_index > paren_index else None
+                ].strip()
+            else:
+                for marker in ("~=", "==", ">=", "<=", "!=", ">", "<"):
+                    marker_index = dependency_text.find(marker)
+                    if marker_index > 0:
+                        constraint = dependency_text[marker_index:].strip()
+                        break
         if constraint is not None:
             default_constraints[distribution] = constraint
 
@@ -929,12 +937,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 )
             )
             continue
-        distribution = dependency
-        for marker in ("~=", "==", ">=", "<=", "!=", ">", "<"):
-            marker_index = dependency.find(marker)
-            if marker_index > 0:
-                distribution = dependency[:marker_index]
-                break
+        distribution = _python_dependency_name(dependency)
         if distribution not in packages_by_distribution:
             diagnostics.append(
                 Diagnostic(
