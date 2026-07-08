@@ -2517,6 +2517,11 @@ class GraphBlocksServerApp:
                         payload["nodeId"] = submission.node_id
                     return ServerResponse.json(409, payload)
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
+                self._append_async_callback_diagnostic_event(
+                    "ExternalCallbackReceived",
+                    submission,
+                    None,
+                )
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if str(error) == "server async callback operation_id must match callback endpoint operation_id":
@@ -3431,7 +3436,7 @@ class GraphBlocksServerApp:
         self,
         kind: str,
         submission: ServerAsyncCallbackSubmission,
-        reason: str,
+        reason: str | None,
         *,
         status: str | None = None,
     ) -> None:
@@ -3451,9 +3456,10 @@ class GraphBlocksServerApp:
             "payloadDigest": submission.payload_digest,
             "verifiedBy": submission.verified_by,
             "policySnapshotId": submission.policy_snapshot_id,
-            "reason": reason,
             "receivedAt": submission.received_at,
         }
+        if reason is not None:
+            payload["reason"] = reason
         if submission.attempt_id is not None:
             payload["attemptId"] = submission.attempt_id
         if submission.provider_operation_id is not None:

@@ -661,13 +661,15 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback identity or payload digest; in-memory, SQLite-reopen, and deterministic fuzz tests verify
   that the original receipt remains authoritative and no second resume is produced.
 - Server callback ingress now treats the first accepted receipt for an operation/run/node/attempt
-  as the authoritative resume signal. Exact idempotent replays return `duplicate`; later callbacks
-  for the same bound operation attempt but with a new idempotency key are rejected as
-  `duplicate_operation_receipt` and are not appended as accepted submissions. Conflicting scoped
-  callbacks for a different run, attempt, or node now also append `ServerAsyncCallbackRejection`
-  metadata before returning `409`, preserving audit evidence for stale or misrouted callback
-  attempts. Run-scoped callback rejections with known run identity are also appended to the
-  authoritative `ApplicationEventStream` as `ExternalCallbackRejected` metadata-only diagnostics.
+  as the authoritative resume signal and appends an `ExternalCallbackReceived` metadata-only event
+  to the run's authoritative `ApplicationEventStream`. Exact idempotent replays return
+  `duplicate`; later callbacks for the same bound operation attempt but with a new idempotency key
+  are rejected as `duplicate_operation_receipt` and are not appended as accepted submissions.
+  Conflicting scoped callbacks for a different run, attempt, or node now also append
+  `ServerAsyncCallbackRejection` metadata before returning `409`, preserving audit evidence for
+  stale or misrouted callback attempts. Run-scoped callback rejections with known run identity are
+  also appended to the authoritative `ApplicationEventStream` as `ExternalCallbackRejected`
+  metadata-only diagnostics.
 - Server callback ingress now also projects terminal-run callback rejections as
   `LateExternalCallbackReceived` diagnostics, so late arrivals after cancellation, expiry, failure,
   or policy stop remain inspectable without creating an accepted callback receipt or resume signal.
