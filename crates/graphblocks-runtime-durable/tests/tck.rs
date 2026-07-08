@@ -1840,7 +1840,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             ] {
                 let raw_value = raw_checks.get(key).or_else(|| raw_checks.get(alias));
                 guard_values.insert(key, raw_value.and_then(Value::as_bool).unwrap_or(true));
-                if raw_value.is_some_and(|value| !value.is_boolean()) {
+                if raw_value.is_none_or(|value| !value.is_boolean()) {
                     let path_key =
                         if raw_checks.contains_key(key) || !raw_checks.contains_key(alias) {
                             key

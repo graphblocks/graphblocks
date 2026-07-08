@@ -1864,8 +1864,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscriptions or truthy placeholders from satisfying the authoritative-event-stream invariant.
 - Durable async callback resume-guard shared TCK cases now require real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
-  safety checks in both Rust and Python runners, preventing truthy strings from satisfying callback
-  resume conformance.
+  safety checks in both Rust and Python runners, rejecting missing guard fields as well as truthy
+  strings before they can satisfy callback resume conformance.
 - Durable async callback resume-guard shared TCK cases now require integer callback
   `journalSequence`, `resumeSequence`, and `successfulResumeCount` values in both Rust and Python
   runners before proving journal-before-resume and coordinator failover invariants, preventing

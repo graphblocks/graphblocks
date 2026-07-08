@@ -8062,10 +8062,19 @@ class TckRunner:
                         "provider_operation_mismatch_can_resume",
                     ),
                 ):
-                    raw_value = raw_checks.get(key, raw_checks.get(alias, True))
+                    raw_value_missing = False
+                    if key in raw_checks:
+                        raw_value = raw_checks[key]
+                        path_key = key
+                    elif alias in raw_checks:
+                        raw_value = raw_checks[alias]
+                        path_key = alias
+                    else:
+                        raw_value = True
+                        path_key = key
+                        raw_value_missing = True
                     async_resume_guard_values[key] = raw_value if isinstance(raw_value, bool) else True
-                    if not isinstance(raw_value, bool):
-                        path_key = key if key in raw_checks or alias not in raw_checks else alias
+                    if raw_value_missing or not isinstance(raw_value, bool):
                         diagnostics.append(
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
