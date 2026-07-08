@@ -1868,8 +1868,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   strings before they can satisfy callback resume conformance.
 - Durable async callback resume-guard shared TCK cases now require integer callback
   `journalSequence`, `resumeSequence`, and `successfulResumeCount` values in both Rust and Python
-  runners before proving journal-before-resume and coordinator failover invariants, preventing
-  string coercion from satisfying durable ordering evidence.
+  runners before proving journal-before-resume and coordinator failover invariants, rejecting
+  missing fields as well as string coercion from satisfying durable ordering evidence.
 - Durable async callback resume-guard shared TCK cases now require `reevaluates` to be a sequence
   of nonblank strings in both Rust and Python runners before proving policy, budget, and release
   compatibility re-evaluation, so object keys or malformed entries cannot satisfy

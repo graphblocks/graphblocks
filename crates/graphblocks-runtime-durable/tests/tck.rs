@@ -1897,7 +1897,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         0
                     }
                 },
-                None => 0,
+                None => {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume requires integer callback journalSequence",
+                        "path": "$.callback.journalSequence",
+                    }));
+                    0
+                }
             };
             let raw_resume_sequence = raw_resume
                 .get("resumeSequence")
@@ -1914,7 +1921,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         0
                     }
                 },
-                None => 0,
+                None => {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume requires integer resumeSequence",
+                        "path": "$.resume.resumeSequence",
+                    }));
+                    0
+                }
             };
             let raw_successful_resume_count = raw_resume
                 .get("successfulResumeCount")
@@ -1931,7 +1945,14 @@ fn run_case(case: &Value) -> Result<(), String> {
                         0
                     }
                 },
-                None => 0,
+                None => {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume requires integer successfulResumeCount",
+                        "path": "$.resume.successfulResumeCount",
+                    }));
+                    0
+                }
             };
             json!({
                 "signatureFailureRevealsOperation": guard_values

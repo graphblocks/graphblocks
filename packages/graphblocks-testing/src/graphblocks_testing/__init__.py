@@ -8082,10 +8082,17 @@ class TckRunner:
                                 "path": f"$.checks.{path_key}",
                             }
                         )
-                raw_callback_journal_sequence = raw_callback.get(
-                    "journalSequence", raw_callback.get("journal_sequence", 0)
-                )
+                callback_journal_sequence_missing = False
+                if "journalSequence" in raw_callback:
+                    raw_callback_journal_sequence = raw_callback["journalSequence"]
+                elif "journal_sequence" in raw_callback:
+                    raw_callback_journal_sequence = raw_callback["journal_sequence"]
+                else:
+                    raw_callback_journal_sequence = 0
+                    callback_journal_sequence_missing = True
                 if (
+                    callback_journal_sequence_missing
+                    or
                     isinstance(raw_callback_journal_sequence, bool)
                     or not isinstance(raw_callback_journal_sequence, int)
                     or raw_callback_journal_sequence < 0
@@ -8100,10 +8107,17 @@ class TckRunner:
                     callback_journal_sequence = 0
                 else:
                     callback_journal_sequence = raw_callback_journal_sequence
-                raw_resume_sequence = raw_resume.get(
-                    "resumeSequence", raw_resume.get("resume_sequence", 0)
-                )
+                resume_sequence_missing = False
+                if "resumeSequence" in raw_resume:
+                    raw_resume_sequence = raw_resume["resumeSequence"]
+                elif "resume_sequence" in raw_resume:
+                    raw_resume_sequence = raw_resume["resume_sequence"]
+                else:
+                    raw_resume_sequence = 0
+                    resume_sequence_missing = True
                 if (
+                    resume_sequence_missing
+                    or
                     isinstance(raw_resume_sequence, bool)
                     or not isinstance(raw_resume_sequence, int)
                     or raw_resume_sequence < 0
@@ -8118,10 +8132,17 @@ class TckRunner:
                     resume_sequence = 0
                 else:
                     resume_sequence = raw_resume_sequence
-                raw_successful_resume_count = raw_resume.get(
-                    "successfulResumeCount", raw_resume.get("successful_resume_count", 0)
-                )
+                successful_resume_count_missing = False
+                if "successfulResumeCount" in raw_resume:
+                    raw_successful_resume_count = raw_resume["successfulResumeCount"]
+                elif "successful_resume_count" in raw_resume:
+                    raw_successful_resume_count = raw_resume["successful_resume_count"]
+                else:
+                    raw_successful_resume_count = 0
+                    successful_resume_count_missing = True
                 if (
+                    successful_resume_count_missing
+                    or
                     isinstance(raw_successful_resume_count, bool)
                     or not isinstance(raw_successful_resume_count, int)
                     or raw_successful_resume_count < 0
