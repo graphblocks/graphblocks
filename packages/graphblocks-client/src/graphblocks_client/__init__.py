@@ -845,7 +845,8 @@ class HttpGraphBlocksClient:
         return _read_json_response(response, "GraphBlocks list runs response")
 
     def cancel_run(self, run_id: str) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -856,7 +857,7 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks cancel response")
+        return _read_run_json_response(response, "GraphBlocks cancel response", requested_run_id)
 
     def pause_run(
         self,
@@ -889,7 +890,8 @@ class HttpGraphBlocksClient:
         body: Mapping[str, object],
         label: str,
     ) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -903,10 +905,11 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, label)
+        return _read_run_json_response(response, label, requested_run_id)
 
     def run_status(self, run_id: str) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -916,7 +919,7 @@ class HttpGraphBlocksClient:
             method="GET",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks run status response")
+        return _read_run_json_response(response, "GraphBlocks run status response", requested_run_id)
 
     def submit_async_callback(
         self,
@@ -1098,7 +1101,8 @@ class HttpGraphBlocksClient:
         client_id: object,
         reason: object | None = None,
     ) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
         body: dict[str, object] = {"clientId": _http_non_empty_string("client_id", client_id)}
         if reason is not None:
             body["reason"] = _http_non_empty_string("reason", reason)
@@ -1115,7 +1119,7 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks detach response")
+        return _read_run_json_response(response, "GraphBlocks detach response", requested_run_id)
 
     def subscribe_events(
         self,
@@ -1179,8 +1183,10 @@ class HttpGraphBlocksClient:
         )
 
     def unsubscribe_events(self, run_id: str, subscription_id: object) -> dict[str, object]:
-        run_id = _http_run_id(run_id)
-        subscription_id = _http_path_segment("subscription_id", subscription_id)
+        requested_run_id = _http_non_empty_string("run_id", run_id)
+        run_id = quote(requested_run_id, safe="")
+        requested_subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = quote(requested_subscription_id, safe="")
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1190,7 +1196,19 @@ class HttpGraphBlocksClient:
             method="DELETE",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks unsubscribe response")
+        payload = _read_run_json_response(response, "GraphBlocks unsubscribe response", requested_run_id)
+        _validate_response_subscription_id(
+            "GraphBlocks unsubscribe response",
+            requested_subscription_id,
+            _payload_string(
+                payload,
+                "GraphBlocks unsubscribe response",
+                "subscription_id",
+                "subscriptionId",
+                "subscription_id",
+            ),
+        )
+        return payload
 
     def ack_event(
         self,
@@ -1202,7 +1220,8 @@ class HttpGraphBlocksClient:
     ) -> dict[str, object]:
         requested_run_id = _http_non_empty_string("run_id", run_id)
         run_id = quote(requested_run_id, safe="")
-        subscription_id = _http_path_segment("subscription_id", subscription_id)
+        requested_subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = quote(requested_subscription_id, safe="")
         if event_id is None and cursor is None:
             raise ValueError("GraphBlocks HTTP ack requires event_id or cursor")
         body: dict[str, object] = {}
@@ -1228,7 +1247,19 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        return _read_json_response(response, "GraphBlocks ack response")
+        payload = _read_run_json_response(response, "GraphBlocks ack response", requested_run_id)
+        _validate_response_subscription_id(
+            "GraphBlocks ack response",
+            requested_subscription_id,
+            _payload_string(
+                payload,
+                "GraphBlocks ack response",
+                "subscription_id",
+                "subscriptionId",
+                "subscription_id",
+            ),
+        )
+        return payload
 
     def register_callback(
         self,
@@ -1488,6 +1519,12 @@ def _validate_response_run_id(label: str, expected_run_id: str, value: str) -> s
     return value
 
 
+def _validate_response_subscription_id(label: str, expected_subscription_id: str, value: str) -> str:
+    if value != expected_subscription_id:
+        raise ValueError(f"{label} subscription_id must match requested subscription {expected_subscription_id!r}")
+    return value
+
+
 def _http_canonical_json_mapping(field_name: str, value: object) -> dict[str, object]:
     return _canonical_json_mapping("GraphBlocks HTTP", field_name, value)
 
@@ -1532,6 +1569,16 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
             raise ValueError(f"{label} status code must be a valid HTTP status")
         if status_code >= 400:
             raise GraphBlocksHttpError(status_code, payload)
+    return payload
+
+
+def _read_run_json_response(response: object, label: str, expected_run_id: str) -> dict[str, object]:
+    payload = _read_json_response(response, label)
+    _validate_response_run_id(
+        label,
+        expected_run_id,
+        _payload_string(payload, label, "run_id", "runId", "run_id"),
+    )
     return payload
 
 

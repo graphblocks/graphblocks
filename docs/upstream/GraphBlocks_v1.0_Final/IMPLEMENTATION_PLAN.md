@@ -1228,6 +1228,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   will attribute replay metadata to that run, and replayed events in run-scoped responses must
   carry matching event metadata `runId` values. Outgoing run replay and acknowledgement cursor
   arguments are also validated as `<run_id>:<sequence>` before the HTTP request is sent.
+  Run status, run control, and detach responses must echo the requested `runId` before the client
+  exposes their payloads.
   `LocalGraphBlocksClient` rejects non-`sync`
   response modes instead of pretending in-process execution has durable background-run lifetime.
 - `graphblocks-client` now exposes a `SubscribeEvents` HTTP helper that stores run-scoped event
@@ -1240,7 +1242,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-client` now exposes `UnsubscribeEvents` and `AckEvent` HTTP helpers for run-scoped
   subscriptions, preserving the server's idempotent revoke and event/cursor acknowledgement
   projections. `AckEvent` rejects acknowledgements from a different authenticated principal or tenant before
-  recording delivery state for the subscription.
+  recording delivery state for the subscription. Revoke and acknowledgement responses must echo
+  both the requested `runId` and `subscriptionId` before the client accepts them.
 - `graphblocks-client` now exposes `RegisterCallback` and `RevokeCallback` HTTP helpers for
   callback delivery registrations, including replayed run-scope events, delivery target config,
   failure policy, and dead-letter policy projection. Callback registration responses must echo the

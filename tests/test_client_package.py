@@ -1156,7 +1156,13 @@ def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
 
     class FakeResponse:
         def read(self) -> bytes:
-            return b'{"ok":true}'
+            return json.dumps(
+                {
+                    "ok": True,
+                    "runId": "id/with?query#fragment",
+                    "subscriptionId": "id/with?query#fragment",
+                }
+            ).encode("utf-8")
 
     def transport(request: object, *, timeout: float) -> FakeResponse:
         requests.append(request)
@@ -1326,6 +1332,117 @@ def test_client_package_rejects_replayed_events_for_wrong_run(
             )
         else:
             getattr(client, method_name)("run-requested-1")
+
+
+@pytest.mark.parametrize(
+    ("method_name", "payload", "message"),
+    (
+        (
+            "cancel_run",
+            {"ok": True, "runId": "other-run", "status": "cancelled"},
+            "GraphBlocks cancel response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "run_status",
+            {"runId": "other-run", "state": "running"},
+            "GraphBlocks run status response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "pause_run",
+            {"ok": True, "runId": "other-run", "status": "paused"},
+            "GraphBlocks pause response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "resume_run",
+            {"ok": True, "runId": "other-run", "status": "resumed"},
+            "GraphBlocks resume response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "expire_run",
+            {"ok": True, "runId": "other-run", "status": "expired"},
+            "GraphBlocks expire response run_id must match requested run 'run-requested-1'",
+        ),
+        (
+            "detach_from_run",
+            {"ok": True, "runId": "other-run", "clientId": "client-1", "status": "detached"},
+            "GraphBlocks detach response run_id must match requested run 'run-requested-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_mismatched_control_response_run_id(
+    monkeypatch,
+    method_name: str,
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        if method_name == "detach_from_run":
+            client.detach_from_run("run-requested-1", client_id="client-1")
+        else:
+            getattr(client, method_name)("run-requested-1")
+
+
+@pytest.mark.parametrize(
+    ("method_name", "payload", "message"),
+    (
+        (
+            "unsubscribe_events",
+            {
+                "ok": True,
+                "runId": "run-requested-1",
+                "subscriptionId": "other-sub",
+                "status": "revoked",
+            },
+            "GraphBlocks unsubscribe response subscription_id must match requested subscription 'sub-requested-1'",
+        ),
+        (
+            "ack_event",
+            {
+                "ok": True,
+                "runId": "run-requested-1",
+                "subscriptionId": "other-sub",
+                "eventId": "evt-1",
+                "status": "acknowledged",
+            },
+            "GraphBlocks ack response subscription_id must match requested subscription 'sub-requested-1'",
+        ),
+    ),
+)
+def test_client_package_rejects_mismatched_subscription_response_id(
+    monkeypatch,
+    method_name: str,
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        if method_name == "unsubscribe_events":
+            client.unsubscribe_events("run-requested-1", "sub-requested-1")
+        else:
+            client.ack_event("run-requested-1", "sub-requested-1", event_id="evt-1")
 
 
 @pytest.mark.parametrize(
