@@ -1337,6 +1337,8 @@ def test_testing_package_rejects_duplicate_callback_delivery_idempotency_keys(mo
                     "idempotencyKey": "sub-ide-001:evt-0100",
                     "receiverStatus": 409,
                     "status": "acknowledged",
+                    "deliveredAt": "2026-07-02T00:00:01Z",
+                    "acknowledgedAt": "2026-07-02T00:00:02Z",
                 },
             ],
         },
@@ -1735,6 +1737,85 @@ def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(mo
             "code": "DurableCallbackDeliveryInvalid",
             "message": "callback delivery requires nextRetryAt timestamp",
             "path": "$.deliveries[0].nextRetryAt",
+        },
+    )
+
+
+def test_testing_package_rejects_delivered_callback_delivery_without_delivered_at(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/missing-callback-delivery-delivered-at",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 200,
+                    "status": "delivered",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "delivered callback delivery requires deliveredAt",
+            "path": "$.deliveries[0].deliveredAt",
+        },
+    )
+
+
+def test_testing_package_rejects_acknowledged_callback_delivery_without_acknowledged_at(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/missing-callback-delivery-acknowledged-at",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 409,
+                    "status": "acknowledged",
+                    "deliveredAt": "2026-07-02T00:00:01Z",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": "acknowledged callback delivery requires acknowledgedAt",
+            "path": "$.deliveries[0].acknowledgedAt",
         },
     )
 

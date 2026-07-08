@@ -1746,6 +1746,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection retry evidence now rejects blank, non-string, or unparsable
   `nextRetryAt` timestamps before considering a 5xx delivery as retry-scheduled, keeping webhook
   retry evidence tied to durable retry metadata.
+- Durable callback projection delivery evidence now requires parseable `deliveredAt` for
+  `delivered`/`acknowledged` rows and parseable `acknowledgedAt` for acknowledged duplicate rows,
+  aligning the shared TCK projection with durable callback terminal timestamp invariants.
 - Durable callback projection redrive evidence now requires nonblank operator and reason audit
   metadata, so dead-letter redrive conformance preserves the operator action context required for
   durable audit and redrive review.

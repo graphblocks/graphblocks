@@ -532,7 +532,9 @@
         "attempt": 1,
         "idempotencyKey": "sub-ide-001:evt-0101",
         "receiverStatus": 409,
-        "status": "acknowledged"
+        "status": "acknowledged",
+        "deliveredAt": "2026-07-02T00:00:01Z",
+        "acknowledgedAt": "2026-07-02T00:00:02Z"
       }
     ],
     "redrive": {
