@@ -759,8 +759,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback/polling wait states that omit their required callback or polling reference.
 - The Python `AsyncOperation` facade now validates state/timestamp consistency: non-created states
   require `submitted_at`, terminal states require `completed_at`, and `created` records cannot
-  already carry submitted or completed timestamps. A `created` record may carry the precomputed
-  `expires_at` deadline that `async.start_operation@1` derives before external submission.
+  already carry submitted/completed timestamps or wait boundaries. Deadline and explicit
+  infinite-wait policy fields are introduced only once an operation advances into a submitted wait
+  state.
 - The Python `AsyncOperation` facade now validates ISO datetime syntax and ordering for
   `created_at`, `submitted_at`, `completed_at`, and `expires_at`, including offset-aware comparisons
   for submitted-before-created, completed-before-submitted, non-positive expiry windows, and
@@ -774,8 +775,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Rust `AsyncOperation` validation now rejects zero `created_at_unix_ms` values so durable
   operation records cannot start from a sentinel timestamp.
 - Rust `AsyncOperation` validation now rejects `created` records that already carry submitted,
-  completed, or expiration timestamps, preserving the operation lifecycle boundary before external
-  submission or waiting.
+  completed, or expiration timestamps, and the Python facade now applies the same lifecycle
+  boundary before external submission or waiting.
 - Rust `AsyncOperation` validation now rejects whitespace-only `provider_operation_id` values before
   registration, matching callback submission identity checks and preventing unusable provider
   identities from entering the durable operation store.

@@ -288,6 +288,8 @@ class AsyncOperation:
                 )
         if self.state == "created" and (self.submitted_at is not None or self.completed_at is not None):
             raise ValueError("async operation created state must not have submitted_at or completed_at")
+        if self.state == "created" and (self.expires_at is not None or self.infinite_wait_policy is not None):
+            raise ValueError("async operation created state must not have wait boundary")
         if self.callback_ref is not None and self.polling_ref is not None:
             raise ValueError("async operation must not define both callback_ref and polling_ref")
         if self.state in {
@@ -477,10 +479,16 @@ class AsyncOperation:
         *,
         submitted_at: str,
         provider_operation_id: str | None = None,
+        expires_at: str | None = None,
+        infinite_wait_policy: str | None = None,
     ) -> AsyncOperation:
         changes: dict[str, object] = {"submitted_at": submitted_at}
         if provider_operation_id is not None:
             changes["provider_operation_id"] = provider_operation_id
+        if expires_at is not None:
+            changes["expires_at"] = expires_at
+        if infinite_wait_policy is not None:
+            changes["infinite_wait_policy"] = infinite_wait_policy
         return self._replace_state("submitted", **changes)
 
     def wait_for_callback(self) -> AsyncOperation:

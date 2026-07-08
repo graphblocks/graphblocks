@@ -278,8 +278,10 @@ def test_async_operation_result_projects_from_terminal_operation_state() -> None
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         expires_at="2026-07-02T00:30:00Z",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+    ).wait_for_callback().mark_callback_received(
         completed_at="2026-07-02T00:10:00Z"
     ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
     cancelled_operation = graphblocks.AsyncOperation.created(
@@ -319,8 +321,10 @@ def test_async_operation_result_projects_late_callback_as_incomplete_diagnostic(
         idempotency_key="idem-ci-late-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-late-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         expires_at="2026-07-02T00:30:00Z",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().cancel(
+    ).wait_for_callback().cancel(
         completed_at="2026-07-02T00:05:00Z"
     )
     committed_effect = graphblocks.ExternalEffectRecord(
@@ -668,8 +672,10 @@ def test_async_operation_result_rejects_projection_from_non_terminal_operation()
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         expires_at="2026-07-02T00:30:00Z",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+    ).wait_for_callback()
 
     with raises_value_error("async operation result requires a terminal operation"):
         graphblocks.AsyncOperationResult.from_operation(waiting)
@@ -692,7 +698,6 @@ def test_async_operation_requires_resume_token_hash_digest() -> None:
                 idempotency_key="idem-ci-1",
                 created_at="2026-07-02T00:00:00Z",
                 callback_ref="cbep-ci-1",
-                expires_at="2026-07-02T00:30:00Z",
             )
 
     assert graphblocks.AsyncOperation.created(
@@ -706,7 +711,6 @@ def test_async_operation_requires_resume_token_hash_digest() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
-        expires_at="2026-07-02T00:30:00Z",
     ).resume_token_hash == VALID_RESUME_TOKEN_HASH
 
 
@@ -722,12 +726,12 @@ def test_async_operation_records_callback_wait_metadata_and_state_transitions() 
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
-        expires_at="2026-07-02T00:30:00Z",
     )
 
     submitted = operation.mark_submitted(
         provider_operation_id="gha-run-1",
         submitted_at="2026-07-02T00:00:01Z",
+        expires_at="2026-07-02T00:30:00Z",
     )
     waiting = submitted.wait_for_callback()
     received = waiting.mark_callback_received(callback_received_at="2026-07-02T00:10:00Z")
@@ -761,8 +765,10 @@ def test_async_operation_rejects_conflicting_callback_receipt_aliases() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         expires_at="2026-07-02T00:30:00Z",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+    ).wait_for_callback()
 
     with raises_value_error("async operation callback_received_at and completed_at alias must match"):
         waiting.mark_callback_received(
@@ -802,10 +808,12 @@ def test_async_operation_records_polling_metadata_and_terminal_failure() -> None
         idempotency_key="idem-batch-1",
         created_at="2026-07-02T00:00:00Z",
         polling_ref="poll-batch-1",
-        expires_at="2026-07-02T02:00:00Z",
     )
 
-    failed = operation.mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling().fail(
+    failed = operation.mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
+        expires_at="2026-07-02T02:00:00Z",
+    ).start_polling().fail(
         completed_at="2026-07-02T00:45:00Z"
     )
 
@@ -882,8 +890,10 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         expires_at="2026-07-02T00:30:00Z",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+    ).wait_for_callback().mark_callback_received(
         completed_at="2026-07-02T00:10:00Z"
     ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
 
@@ -936,20 +946,24 @@ def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
             completed_at="2026-07-02T00:10:05Z",
         )
 
-    created_with_deadline = graphblocks.AsyncOperation(
-        operation_id="op-ci-1",
-        run_id="run-1",
-        node_id="startCI",
-        attempt_id="attempt-1",
-        kind="ci_job",
-        state="created",
-        expected_schema="schemas/CICallback@1",
-        resume_token_hash=VALID_RESUME_TOKEN_HASH,
-        idempotency_key="idem-ci-1",
-        created_at="2026-07-02T00:00:00Z",
-        expires_at="2026-07-02T00:30:00Z",
-    )
-    assert created_with_deadline.expires_at == "2026-07-02T00:30:00Z"
+    for wait_boundary in (
+        {"expires_at": "2026-07-02T00:30:00Z"},
+        {"infinite_wait_policy": "operator_review_required"},
+    ):
+        with raises_value_error("async operation created state must not have wait boundary"):
+            graphblocks.AsyncOperation(
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                kind="ci_job",
+                state="created",
+                expected_schema="schemas/CICallback@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-ci-1",
+                created_at="2026-07-02T00:00:00Z",
+                **wait_boundary,
+            )
 
 
 def test_async_operation_rejects_direct_wait_states_without_required_refs() -> None:
@@ -1067,7 +1081,6 @@ def test_async_operation_rejects_ambiguous_callback_and_polling_refs() -> None:
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ambiguous-1",
             polling_ref="poll-ambiguous-1",
-            expires_at="2026-07-02T00:30:00Z",
         )
 
 
@@ -1113,8 +1126,10 @@ def test_async_operation_accepts_explicit_infinite_wait_policy() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         infinite_wait_policy="operator_review_required",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+    ).wait_for_callback()
     polling = graphblocks.AsyncOperation.created(
         operation_id="op-batch-1",
         run_id="run-1",
@@ -1126,8 +1141,10 @@ def test_async_operation_accepts_explicit_infinite_wait_policy() -> None:
         idempotency_key="idem-batch-1",
         created_at="2026-07-02T00:00:00Z",
         polling_ref="poll-batch-1",
+    ).mark_submitted(
+        submitted_at="2026-07-02T00:00:01Z",
         infinite_wait_policy="provider_has_no_timeout",
-    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling()
+    ).start_polling()
 
     assert callback_waiting.state == graphblocks.AsyncOperationState.WAITING_CALLBACK
     assert callback_waiting.to_json()["infinite_wait_policy"] == "operator_review_required"
@@ -1145,6 +1162,8 @@ def test_async_operation_accepts_explicit_infinite_wait_policy() -> None:
             idempotency_key="idem-ci-2",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-2",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             infinite_wait_policy=" ",
         )
 
@@ -1164,9 +1183,11 @@ def test_async_operation_rejects_ambiguous_deadline_and_infinite_wait_policy() -
             idempotency_key="idem-ci-ambiguous-wait",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-ambiguous",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
             infinite_wait_policy="operator_review_required",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+        ).wait_for_callback()
 
     with raises_value_error(
         "async operation wait must not define both expires_at and infinite_wait_policy"
@@ -1182,9 +1203,11 @@ def test_async_operation_rejects_ambiguous_deadline_and_infinite_wait_policy() -
             idempotency_key="idem-batch-ambiguous-wait",
             created_at="2026-07-02T00:00:00Z",
             polling_ref="poll-batch-ambiguous",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
             infinite_wait_policy="provider_has_no_timeout",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling()
+        ).start_polling()
 
 
 def test_async_operation_wait_boundary_deterministic_fuzz() -> None:
@@ -1209,13 +1232,15 @@ def test_async_operation_wait_boundary_deterministic_fuzz() -> None:
             kwargs["callback_ref"] = f"cbep-{case:03d}"
         else:
             kwargs["polling_ref"] = f"poll-{case:03d}"
+        wait_kwargs: dict[str, object] = {}
         if use_deadline:
-            kwargs["expires_at"] = "2026-07-02T00:30:00Z"
+            wait_kwargs["expires_at"] = "2026-07-02T00:30:00Z"
         if use_infinite_policy:
-            kwargs["infinite_wait_policy"] = f"explicit-wait-{case:03d}"
+            wait_kwargs["infinite_wait_policy"] = f"explicit-wait-{case:03d}"
 
         submitted = graphblocks.AsyncOperation.created(**kwargs).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z"
+            submitted_at="2026-07-02T00:00:01Z",
+            **wait_kwargs,
         )
         if use_deadline and use_infinite_policy:
             with raises_value_error(
@@ -1273,8 +1298,10 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:00:00Z"
         )
 
@@ -1289,6 +1316,8 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             resume_token_hash=VALID_RESUME_TOKEN_HASH,
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:00:00Z",
         )
 
@@ -1304,8 +1333,10 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:03Z",
             expires_at="2026-07-02T00:00:02Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:03Z")
+        )
 
 
 def test_async_operation_rejects_callback_receipt_after_expiry() -> None:
@@ -1321,8 +1352,10 @@ def test_async_operation_rejects_callback_receipt_after_expiry() -> None:
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:30:01Z"
         )
 
@@ -1340,8 +1373,10 @@ def test_async_operation_rejects_polling_completion_after_expiry() -> None:
             idempotency_key="idem-batch-1",
             created_at="2026-07-02T00:00:00Z",
             polling_ref="poll-batch-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling().complete(
+        ).start_polling().complete(
             completed_at="2026-07-02T00:30:01Z"
         )
 
@@ -1359,8 +1394,10 @@ def test_async_operation_rejects_callback_completion_after_expiry() -> None:
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:29:59Z"
         ).mark_resuming().complete(completed_at="2026-07-02T00:30:01Z")
 
@@ -1378,8 +1415,10 @@ def test_async_operation_rejects_terminal_transition_before_callback_receipt() -
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:10:00Z"
         ).mark_resuming().complete(completed_at="2026-07-02T00:09:59Z")
 
@@ -1413,8 +1452,10 @@ def test_async_operation_callback_terminal_ordering_deterministic_fuzz() -> None
             idempotency_key=f"idem-ci-{case}",
             created_at="2026-07-02T00:00:00Z",
             callback_ref=f"cbep-ci-{case}",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at=expires_at,
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at=f"2026-07-02T00:00:{receipt_second:02d}Z"
         ).mark_resuming()
 
@@ -1440,8 +1481,10 @@ def test_async_operation_rejects_expiry_before_deadline() -> None:
             idempotency_key="idem-ci-expire-early",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-expire-early",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().expire(
+        ).wait_for_callback().expire(
             completed_at="2026-07-02T00:29:59Z"
         )
 
@@ -1457,8 +1500,10 @@ def test_async_operation_rejects_expiry_before_deadline() -> None:
             idempotency_key="idem-batch-expire-early",
             created_at="2026-07-02T00:00:00Z",
             polling_ref="poll-batch-expire-early",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling().expire(
+        ).start_polling().expire(
             completed_at="2026-07-02T00:29:59Z"
         )
 
@@ -1476,8 +1521,10 @@ def test_async_operation_rejects_terminal_failure_after_expiry() -> None:
             idempotency_key="idem-batch-1",
             created_at="2026-07-02T00:00:00Z",
             polling_ref="poll-batch-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling().fail(
+        ).start_polling().fail(
             completed_at="2026-07-02T00:30:01Z"
         )
 
@@ -1493,8 +1540,10 @@ def test_async_operation_rejects_terminal_failure_after_expiry() -> None:
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        ).wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:29:59Z"
         ).mark_resuming().fail(completed_at="2026-07-02T00:30:01Z")
 
@@ -1512,8 +1561,10 @@ def test_async_operation_requires_callback_receipt_timestamp() -> None:
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
             expires_at="2026-07-02T00:30:00Z",
-        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received()
+        ).wait_for_callback().mark_callback_received()
 
 
 def test_async_operation_result_exports_are_available() -> None:
