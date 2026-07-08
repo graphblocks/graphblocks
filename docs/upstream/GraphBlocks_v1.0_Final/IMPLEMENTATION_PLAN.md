@@ -554,6 +554,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   schema-validated `ExternalCallbackReceived` records, idempotent duplicate callback handling,
   stale-attempt rejection, terminal expiration/cancellation transitions, diagnostic late callback
   records after terminal states, and the required journal-before-resume ordering.
+- Callback receipt timestamps now reject conflicting legacy `completed_at` aliases and direct
+  `callback_received` records with terminal completion metadata, preserving a single journaled
+  receipt time before resume.
 - Focused tests include duplicate delivery, invalid callback schema, stale attempt fencing,
   callback-after-timeout/cancellation, concurrent duplicate callback racing, callback/cancel racing,
   whitespace-only operation registration and callback identity rejection at endpoint and store

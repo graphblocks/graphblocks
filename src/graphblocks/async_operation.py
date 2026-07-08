@@ -242,6 +242,12 @@ class AsyncOperation:
         if self.state == "callback_received" and self.callback_received_at is None and self.completed_at is not None:
             object.__setattr__(self, "callback_received_at", self.completed_at)
             object.__setattr__(self, "completed_at", None)
+        if (
+            self.state == "callback_received"
+            and self.callback_received_at is not None
+            and self.completed_at is not None
+        ):
+            raise ValueError("async operation callback_received state must not have completed_at")
         for field_name in (
             "operation_id",
             "run_id",
@@ -477,6 +483,11 @@ class AsyncOperation:
         callback_received_at: str | None = None,
         completed_at: str | None = None,
     ) -> AsyncOperation:
+        if callback_received_at is not None and completed_at is not None:
+            receipt_at = _parse_iso_datetime("async operation", "callback_received_at", callback_received_at)
+            alias_at = _parse_iso_datetime("async operation", "completed_at", completed_at)
+            if receipt_at != alias_at:
+                raise ValueError("async operation callback_received_at and completed_at alias must match")
         if callback_received_at is None:
             callback_received_at = completed_at
         if callback_received_at is None:

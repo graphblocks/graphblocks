@@ -749,6 +749,47 @@ def test_async_operation_records_callback_wait_metadata_and_state_transitions() 
     assert completed.to_json()["callback_ref"] == "cbep-ci-1"
 
 
+def test_async_operation_rejects_conflicting_callback_receipt_aliases() -> None:
+    waiting = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash=VALID_RESUME_TOKEN_HASH,
+        idempotency_key="idem-ci-1",
+        created_at="2026-07-02T00:00:00Z",
+        callback_ref="cbep-ci-1",
+        expires_at="2026-07-02T00:30:00Z",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+
+    with raises_value_error("async operation callback_received_at and completed_at alias must match"):
+        waiting.mark_callback_received(
+            callback_received_at="2026-07-02T00:10:00Z",
+            completed_at="2026-07-02T00:10:01Z",
+        )
+
+    with raises_value_error("async operation callback_received state must not have completed_at"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-2",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="callback_received",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-ci-2",
+            created_at="2026-07-02T00:00:00Z",
+            submitted_at="2026-07-02T00:00:01Z",
+            callback_ref="cbep-ci-2",
+            expires_at="2026-07-02T00:30:00Z",
+            callback_received_at="2026-07-02T00:10:00Z",
+            completed_at="2026-07-02T00:10:00Z",
+        )
+
+
 def test_async_operation_records_polling_metadata_and_terminal_failure() -> None:
     operation = graphblocks.AsyncOperation.created(
         operation_id="op-batch-1",
@@ -1418,6 +1459,7 @@ def run_direct() -> None:
         test_async_operation_result_rejects_projection_from_non_terminal_operation,
         test_async_operation_requires_resume_token_hash_digest,
         test_async_operation_records_callback_wait_metadata_and_state_transitions,
+        test_async_operation_rejects_conflicting_callback_receipt_aliases,
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,
         test_async_operation_rejects_state_timestamp_inconsistency,
