@@ -2749,6 +2749,48 @@ def test_testing_package_rejects_redrive_assertion_without_redrive_evidence(
     )
 
 
+def test_testing_package_rejects_redrive_event_assertion_without_redrive_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/missing-callback-redrive-event-evidence",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "receiver_error",
+                }
+            ],
+            "expected": {"redriveCreatesApplicationEvent": True},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackRedriveInvalid",
+            "message": "callback redrive evidence required for redriveCreatesApplicationEvent",
+            "path": "$.redrive",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_callback_projection_outage_flag(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

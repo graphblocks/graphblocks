@@ -7351,7 +7351,7 @@ class TckRunner:
                     raw_redrive = {}
                 elif not isinstance(raw_redrive, Mapping):
                     raw_redrive = {}
-                redrive_creates_application_event = True
+                redrive_creates_application_event = False
                 redrive_event_id_preserved = False
                 raw_non_mandatory_outage_blocks_run = fixture.get(
                     "nonMandatoryOutageBlocksRun",
@@ -7419,17 +7419,29 @@ class TckRunner:
                                 "path": "$.redrive.createsApplicationEvent",
                             }
                         )
-                elif "deadLetterPreservesEventId" in expected:
-                    diagnostics.append(
-                        {
-                            "code": "DurableCallbackRedriveInvalid",
-                            "message": "callback redrive evidence required for deadLetterPreservesEventId",
-                            "path": "$.redrive",
-                        }
-                    )
-                    expected_keys_with_structural_diagnostics.add(
-                        "deadLetterPreservesEventId"
-                    )
+                else:
+                    if "deadLetterPreservesEventId" in expected:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive evidence required for deadLetterPreservesEventId",
+                                "path": "$.redrive",
+                            }
+                        )
+                        expected_keys_with_structural_diagnostics.add(
+                            "deadLetterPreservesEventId"
+                        )
+                    if "redriveCreatesApplicationEvent" in expected:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackRedriveInvalid",
+                                "message": "callback redrive evidence required for redriveCreatesApplicationEvent",
+                                "path": "$.redrive",
+                            }
+                        )
+                        expected_keys_with_structural_diagnostics.add(
+                            "redriveCreatesApplicationEvent"
+                        )
                 for index, raw_delivery in enumerate(raw_deliveries):
                     if not isinstance(raw_delivery, Mapping):
                         diagnostics.append(
