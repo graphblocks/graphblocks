@@ -2451,6 +2451,138 @@ def test_testing_package_rejects_empty_callback_delivery_evidence(monkeypatch) -
     )
 
 
+def test_testing_package_rejects_non_object_callback_subscription_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-object-callback-subscription",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "subscription": "sub-ide-001",
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "receiver_error",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackProjectionInvalid",
+            "message": "callback projection subscription must be object",
+            "path": "$.subscription",
+        },
+    )
+
+
+def test_testing_package_rejects_invalid_callback_subscription_failure_policy(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/invalid-callback-subscription-failure-policy",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "subscription": {
+                "subscriptionId": "sub-ide-001",
+                "failurePolicy": "retry_forever",
+                "mandatory": False,
+            },
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "receiver_error",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackProjectionInvalid",
+            "message": "callback subscription has invalid failurePolicy",
+            "path": "$.subscription.failurePolicy",
+        },
+    )
+
+
+def test_testing_package_rejects_non_boolean_callback_subscription_mandatory_flag(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-callback-subscription-mandatory",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "subscription": {
+                "subscriptionId": "sub-ide-001",
+                "failurePolicy": "retry_then_dead_letter",
+                "mandatory": "false",
+            },
+            "deliveries": [
+                {
+                    "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
+                    "eventId": "evt-0100",
+                    "runId": "run-coding-001",
+                    "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
+                    "idempotencyKey": "sub-ide-001:evt-0100",
+                    "receiverStatus": 500,
+                    "status": "failed",
+                    "nextRetryAt": "2026-07-02T00:00:10Z",
+                    "lastError": "receiver_error",
+                }
+            ],
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackProjectionInvalid",
+            "message": "callback subscription requires boolean mandatory",
+            "path": "$.subscription.mandatory",
+        },
+    )
+
+
 def test_testing_package_rejects_non_object_callback_redrive_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

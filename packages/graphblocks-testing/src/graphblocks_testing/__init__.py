@@ -7274,6 +7274,7 @@ class TckRunner:
             elif kind == "callback_delivery_projection":
                 raw_deliveries = fixture.get("deliveries", [])
                 raw_redrive = fixture.get("redrive", {})
+                raw_subscription = fixture.get("subscription", {})
                 if not isinstance(raw_deliveries, list):
                     raise ValueError("durable callback_delivery_projection case requires deliveries")
                 if not raw_deliveries:
@@ -7284,6 +7285,54 @@ class TckRunner:
                             "path": "$.deliveries",
                         }
                     )
+                if "subscription" in fixture and not isinstance(raw_subscription, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "DurableCallbackProjectionInvalid",
+                            "message": "callback projection subscription must be object",
+                            "path": "$.subscription",
+                        }
+                    )
+                    raw_subscription = {}
+                elif not isinstance(raw_subscription, Mapping):
+                    raw_subscription = {}
+                if raw_subscription:
+                    subscription_id = raw_subscription.get(
+                        "subscriptionId", raw_subscription.get("subscription_id")
+                    )
+                    if not isinstance(subscription_id, str) or not subscription_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackProjectionInvalid",
+                                "message": "callback subscription requires subscriptionId",
+                                "path": "$.subscription.subscriptionId",
+                            }
+                        )
+                    failure_policy = raw_subscription.get(
+                        "failurePolicy", raw_subscription.get("failure_policy")
+                    )
+                    if failure_policy not in {
+                        "best_effort",
+                        "retry_then_dead_letter",
+                        "pause_run_on_failure",
+                        "fail_run_on_failure",
+                    }:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackProjectionInvalid",
+                                "message": "callback subscription has invalid failurePolicy",
+                                "path": "$.subscription.failurePolicy",
+                            }
+                        )
+                    mandatory = raw_subscription.get("mandatory")
+                    if not isinstance(mandatory, bool):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackProjectionInvalid",
+                                "message": "callback subscription requires boolean mandatory",
+                                "path": "$.subscription.mandatory",
+                            }
+                        )
                 if "redrive" in fixture and not isinstance(raw_redrive, Mapping):
                     diagnostics.append(
                         {
