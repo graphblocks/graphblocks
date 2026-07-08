@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from graphblocks import (
@@ -903,7 +904,7 @@ class HttpGraphBlocksClient:
         attempt_id: object | None = None,
         provider_operation_id: object | None = None,
     ) -> dict[str, object]:
-        operation_id = _http_non_empty_string("operation_id", operation_id)
+        operation_id = _http_path_segment("operation_id", operation_id)
         callback_id = _http_non_empty_string("callback_id", callback_id)
         idempotency_key = _http_non_empty_string("idempotency_key", idempotency_key)
         payload = _http_canonical_json_mapping("callback payload", payload)
@@ -1102,7 +1103,7 @@ class HttpGraphBlocksClient:
 
     def unsubscribe_events(self, run_id: str, subscription_id: object) -> dict[str, object]:
         run_id = _http_run_id(run_id)
-        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = _http_path_segment("subscription_id", subscription_id)
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1123,7 +1124,7 @@ class HttpGraphBlocksClient:
         cursor: object | None = None,
     ) -> dict[str, object]:
         run_id = _http_run_id(run_id)
-        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = _http_path_segment("subscription_id", subscription_id)
         if event_id is None and cursor is None:
             raise ValueError("GraphBlocks HTTP ack requires event_id or cursor")
         body: dict[str, object] = {}
@@ -1199,7 +1200,7 @@ class HttpGraphBlocksClient:
         )
 
     def revoke_callback(self, subscription_id: object) -> dict[str, object]:
-        subscription_id = _http_non_empty_string("subscription_id", subscription_id)
+        subscription_id = _http_path_segment("subscription_id", subscription_id)
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -1250,7 +1251,7 @@ class HttpGraphBlocksClient:
         action: str,
         label: str,
     ) -> dict[str, object]:
-        delivery_id = _http_non_empty_string("delivery_id", delivery_id)
+        delivery_id = _http_path_segment("delivery_id", delivery_id)
         body = {
             "reason": _http_non_empty_string("reason", reason),
         }
@@ -1316,7 +1317,11 @@ class HttpGraphBlocksClient:
 
 
 def _http_run_id(run_id: object) -> str:
-    return _http_non_empty_string("run_id", run_id)
+    return _http_path_segment("run_id", run_id)
+
+
+def _http_path_segment(field_name: str, value: object) -> str:
+    return quote(_http_non_empty_string(field_name, value), safe="")
 
 
 def _http_non_empty_string(field_name: str, value: object) -> str:

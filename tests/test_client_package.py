@@ -891,6 +891,43 @@ def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     assert "HttpGraphBlocksClient" in graphblocks_client.__all__
 
 
+def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    requests: list[object] = []
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return b'{"ok":true}'
+
+    def transport(request: object, *, timeout: float) -> FakeResponse:
+        requests.append(request)
+        return FakeResponse()
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+    identifier = "id/with?query#fragment"
+
+    client.cancel_run(identifier)
+    client.submit_async_callback(
+        operation_id=identifier,
+        callback_id="callback-1",
+        idempotency_key="idem-1",
+        payload={"status": "completed"},
+    )
+    client.unsubscribe_events(identifier, identifier)
+    client.redrive_callback_delivery(identifier, reason="retry")
+
+    assert [urlparse(request.full_url).path.removeprefix("/api") for request in requests] == [
+        "/runs/id%2Fwith%3Fquery%23fragment/cancel",
+        "/callbacks/id%2Fwith%3Fquery%23fragment",
+        "/runs/id%2Fwith%3Fquery%23fragment/subscriptions/id%2Fwith%3Fquery%23fragment",
+        "/callbacks/deliveries/id%2Fwith%3Fquery%23fragment/redrive",
+    ]
+
+
 @pytest.mark.parametrize(
     ("metadata_override", "message"),
     (
