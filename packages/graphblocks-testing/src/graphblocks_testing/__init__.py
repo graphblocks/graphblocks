@@ -7058,8 +7058,10 @@ class TckRunner:
                 for index, delivery in enumerate(deliveries):
                     for key, alias in (
                         ("deliveryId", "delivery_id"),
+                        ("subscriptionId", "subscription_id"),
                         ("eventId", "event_id"),
                         ("runId", "run_id"),
+                        ("cursor", "cursor"),
                     ):
                         value = delivery.get(key, delivery.get(alias))
                         if not isinstance(value, str) or not value.strip():
@@ -7077,6 +7079,15 @@ class TckRunner:
                                 "code": "DurableCallbackDeliveryInvalid",
                                 "message": "callback delivery requires integer sequence",
                                 "path": f"$.deliveries[{index}].sequence",
+                            }
+                        )
+                    attempt = delivery.get("attempt")
+                    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery requires integer attempt",
+                                "path": f"$.deliveries[{index}].attempt",
                             }
                         )
                     idempotency_key = delivery.get("idempotencyKey", delivery.get("idempotency_key"))

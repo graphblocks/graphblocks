@@ -510,9 +510,12 @@
     "deliveries": [
       {
         "deliveryId": "del-001",
+        "subscriptionId": "sub-ide-001",
         "eventId": "evt-0100",
         "runId": "run-coding-001",
         "sequence": 100,
+        "cursor": "evt-0100",
+        "attempt": 1,
         "idempotencyKey": "sub-ide-001:evt-0100",
         "receiverStatus": 500,
         "status": "failed",
@@ -521,9 +524,12 @@
       },
       {
         "deliveryId": "del-002",
+        "subscriptionId": "sub-ide-001",
         "eventId": "evt-0101",
         "runId": "run-coding-001",
         "sequence": 101,
+        "cursor": "evt-0101",
+        "attempt": 1,
         "idempotencyKey": "sub-ide-001:evt-0101",
         "receiverStatus": 409,
         "status": "acknowledged"

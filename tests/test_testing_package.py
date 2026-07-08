@@ -1236,9 +1236,12 @@ def test_testing_package_rejects_failed_callback_delivery_without_error_evidence
             "deliveries": [
                 {
                     "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
                     "eventId": "evt-0100",
                     "runId": "run-coding-001",
                     "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
                     "idempotencyKey": "sub-ide-001:evt-0100",
                     "receiverStatus": 500,
                     "status": "failed",
@@ -1272,9 +1275,12 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
             "deliveries": [
                 {
                     "deliveryId": "del-001",
+                    "subscriptionId": "sub-ide-001",
                     "eventId": "evt-0100",
                     "runId": "run-coding-001",
                     "sequence": 100,
+                    "cursor": "evt-0100",
+                    "attempt": 1,
                     "receiverStatus": 500,
                     "status": "failed",
                     "nextRetryAt": "2026-07-02T00:00:10Z",
@@ -1314,9 +1320,62 @@ def test_testing_package_rejects_callback_delivery_without_identity_evidence(
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     delivery = {
         "deliveryId": "del-001",
+        "subscriptionId": "sub-ide-001",
         "eventId": "evt-0100",
         "runId": "run-coding-001",
         "sequence": 100,
+        "cursor": "evt-0100",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0100",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "2026-07-02T00:00:10Z",
+        "lastError": "receiver_error",
+    }
+    delivery[field] = value
+    case = graphblocks_testing.TckCase.durable(
+        case_id=f"durable/missing-callback-delivery-{field}",
+        fixture={
+            "kind": "callback_delivery_projection",
+            "deliveries": [delivery],
+            "expected": {"retryScheduledAfter5xx": True},
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableCallbackDeliveryInvalid",
+            "message": message,
+            "path": f"$.deliveries[0].{field}",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("subscriptionId", " ", "callback delivery requires subscriptionId"),
+        ("cursor", "", "callback delivery requires cursor"),
+        ("attempt", "1", "callback delivery requires integer attempt"),
+    ],
+)
+def test_testing_package_rejects_callback_delivery_without_envelope_evidence(
+    monkeypatch, field: str, value: object, message: str
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    delivery = {
+        "deliveryId": "del-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0100",
+        "runId": "run-coding-001",
+        "sequence": 100,
+        "cursor": "evt-0100",
+        "attempt": 1,
         "idempotencyKey": "sub-ide-001:evt-0100",
         "receiverStatus": 500,
         "status": "failed",
