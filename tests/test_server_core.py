@@ -5887,6 +5887,69 @@ def test_server_app_rejects_unsubscribe_from_non_owner_principal() -> None:
     assert app.subscriptions("run-unsubscribe-owner-1")[0].status == "active"
 
 
+def test_server_app_rejects_unsubscribe_from_same_principal_different_tenant() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
+                "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
+            }
+        )
+    )
+    app._events_by_run_id["run-unsubscribe-tenant-owner-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-unsubscribe-tenant-owner-1"},
+            "metadata": {
+                "runId": "run-unsubscribe-tenant-owner-1",
+                "sequence": 1,
+                "cursor": "run-unsubscribe-tenant-owner-1:1",
+                "releaseId": "release-unsubscribe-tenant-owner-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+    created = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-unsubscribe-tenant-owner-1/subscriptions",
+            headers={"Authorization": "Bearer owner-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-unsubscribe-tenant-owner-1",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    denied = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-unsubscribe-tenant-owner-1/subscriptions/sub-unsubscribe-tenant-owner-1",
+            headers={"Authorization": "Bearer other-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert created.status_code == 201
+    assert denied.status_code == 403
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "subscription 'sub-unsubscribe-tenant-owner-1' for run 'run-unsubscribe-tenant-owner-1' "
+            "belongs to a different principal"
+        ),
+    }
+    assert app.subscriptions("run-unsubscribe-tenant-owner-1")[0].status == "active"
+
+
 def test_server_app_rejects_ack_after_subscription_is_revoked() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -6030,6 +6093,71 @@ def test_server_app_rejects_ack_from_non_owner_principal() -> None:
         "error": "subscription 'sub-ack-owner-1' for run 'run-ack-owner-1' belongs to a different principal",
     }
     assert app.event_acks("run-ack-owner-1", "sub-ack-owner-1") == ()
+
+
+def test_server_app_rejects_ack_from_same_principal_different_tenant() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
+                "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
+            }
+        )
+    )
+    app._events_by_run_id["run-ack-tenant-owner-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-ack-tenant-owner-1"},
+            "metadata": {
+                "runId": "run-ack-tenant-owner-1",
+                "sequence": 1,
+                "cursor": "run-ack-tenant-owner-1:1",
+                "releaseId": "release-ack-tenant-owner-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+    created = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-tenant-owner-1/subscriptions",
+            headers={"Authorization": "Bearer owner-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-tenant-owner-1",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    denied = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-tenant-owner-1/subscriptions/sub-ack-tenant-owner-1/ack",
+            headers={"Authorization": "Bearer other-token"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "run-ack-tenant-owner-1:1"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    assert created.status_code == 201
+    assert denied.status_code == 403
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "subscription 'sub-ack-tenant-owner-1' for run 'run-ack-tenant-owner-1' "
+            "belongs to a different principal"
+        ),
+    }
+    assert app.event_acks("run-ack-tenant-owner-1", "sub-ack-tenant-owner-1") == ()
 
 
 def test_server_app_reports_missing_subscription_on_unsubscribe() -> None:
@@ -6991,6 +7119,55 @@ def test_server_app_rejects_callback_revoke_from_non_owner_principal() -> None:
     assert json.loads(denied.body.decode("utf-8")) == {
         "ok": False,
         "error": "callback registration 'callback-sub-owner-1' belongs to a different principal",
+    }
+    assert app.callback_registrations()[0].status == "active"
+
+
+def test_server_app_rejects_callback_revoke_from_same_principal_different_tenant() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {
+                "owner-token": PrincipalRef("user-1", tenant_id="tenant-a"),
+                "other-token": PrincipalRef("user-1", tenant_id="tenant-b"),
+            }
+        )
+    )
+    registered = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer owner-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-tenant-owner-1",
+                    "scope": "tenant",
+                    "scopeId": "tenant-a",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    denied = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/callbacks/callback-sub-tenant-owner-1",
+            headers={"Authorization": "Bearer other-token"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert registered.status_code == 201
+    assert denied.status_code == 403
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback registration 'callback-sub-tenant-owner-1' belongs to a different principal",
     }
     assert app.callback_registrations()[0].status == "active"
 

@@ -403,6 +403,12 @@ def _principal_response_payload(owner: PrincipalRef) -> dict[str, object]:
     }
 
 
+def _principal_matches_owner(principal: PrincipalRef | None, owner: PrincipalRef) -> bool:
+    if principal is None:
+        return False
+    return principal.principal_id == owner.principal_id and principal.tenant_id == owner.tenant_id
+
+
 def _thaw_json_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _thaw_json_value(item) for key, item in value.items()}
@@ -1974,9 +1980,9 @@ class GraphBlocksServerApp:
             )
             for index, subscription in enumerate(subscriptions):
                 if subscription.subscription_id == subscription_id:
-                    if subscription.owner is not None and (
-                        auth_decision.principal is None
-                        or auth_decision.principal.principal_id != subscription.owner.principal_id
+                    if subscription.owner is not None and not _principal_matches_owner(
+                        auth_decision.principal,
+                        subscription.owner,
                     ):
                         return ServerResponse.json(
                             403,
@@ -2043,9 +2049,9 @@ class GraphBlocksServerApp:
                             "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
                         },
                     )
-                if subscription.owner is not None and (
-                    auth_decision.principal is None
-                    or auth_decision.principal.principal_id != subscription.owner.principal_id
+                if subscription.owner is not None and not _principal_matches_owner(
+                    auth_decision.principal,
+                    subscription.owner,
                 ):
                     return ServerResponse.json(
                         403,
@@ -2134,9 +2140,9 @@ class GraphBlocksServerApp:
                         "error": f"callback registration {subscription_id!r} not found",
                     },
                 )
-            if registration.owner is not None and (
-                auth_decision.principal is None
-                or auth_decision.principal.principal_id != registration.owner.principal_id
+            if registration.owner is not None and not _principal_matches_owner(
+                auth_decision.principal,
+                registration.owner,
             ):
                 return ServerResponse.json(
                     403,
