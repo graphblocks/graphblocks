@@ -1747,9 +1747,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK fixtures now have explicit expected-diagnostic coverage
   for non-boolean `mandatory` subscription flags, preserving the `CallbackSubscription` schema
   contract in the MVP callback protocol.
-- Durable callback projection fixtures now reject delivery rows whose `subscriptionId` differs
-  from the explicit subscription envelope, ensuring retry, duplicate, and redrive evidence belongs
-  to the projected subscription.
+- Durable callback projection shared TCK fixtures now reject delivery rows whose `subscriptionId`
+  differs from the explicit subscription envelope, ensuring retry, duplicate, and redrive evidence
+  belongs to the projected subscription in both Rust and Python.
 - Durable callback projection redrive evidence now requires an explicit `redrive` object before
   asserting `deadLetterPreservesEventId`, preventing absent event ids from comparing equal and
   proving redrive preservation accidentally.

@@ -608,6 +608,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let subscription_id = raw_subscription
+                .and_then(Value::as_object)
+                .and_then(|subscription| {
+                    subscription
+                        .get("subscriptionId")
+                        .or_else(|| subscription.get("subscription_id"))
+                })
+                .and_then(Value::as_str)
+                .filter(|subscription_id| !subscription_id.trim().is_empty())
+                .map(str::trim);
             let subscription_failure_policy = case
                 .get("subscription")
                 .and_then(Value::as_object)
@@ -636,6 +646,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                 }
             }
             for (index, delivery) in deliveries.iter().filter_map(Value::as_object).enumerate() {
+                if let Some(subscription_id) = subscription_id {
+                    if delivery
+                        .get("subscriptionId")
+                        .or_else(|| delivery.get("subscription_id"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|delivery_subscription_id| {
+                            delivery_subscription_id.trim() != subscription_id
+                        })
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackDeliveryInvalid",
+                            "message": "callback delivery subscriptionId must match subscription",
+                            "path": format!("$.deliveries[{index}].subscriptionId"),
+                        }));
+                    }
+                }
                 let raw_receiver_status = delivery
                     .get("receiverStatus")
                     .or_else(|| delivery.get("receiver_status"));
