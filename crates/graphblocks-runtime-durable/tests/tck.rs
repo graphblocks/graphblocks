@@ -524,18 +524,43 @@ fn run_case(case: &Value) -> Result<(), String> {
                 } else {
                     "response_mode"
                 };
-            let accepted_response_mode = match response_mode {
-                Some("accepted") => true,
-                Some("background") => false,
+            let valid_response_mode = match response_mode {
+                Some("accepted" | "background") => response_mode,
                 _ => {
                     diagnostics.push(json!({
                         "code": "DurableBackgroundRunInvalid",
                         "message": "background run responseMode must be accepted or background",
                         "path": format!("$.{response_mode_path}"),
                     }));
-                    false
+                    None
                 }
             };
+            let raw_initial_response = case
+                .get("initialResponse")
+                .or_else(|| case.get("initial_response"));
+            let initial_response = raw_initial_response.and_then(Value::as_object);
+            if let Some(mode) = valid_response_mode {
+                if let Some(response) = initial_response {
+                    if response
+                        .get("runId")
+                        .or_else(|| response.get("run_id"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|run_id| run_id.trim().is_empty())
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableBackgroundRunInvalid",
+                            "message": format!("background run {mode} response requires runId"),
+                            "path": "$.initialResponse.runId",
+                        }));
+                    }
+                } else {
+                    diagnostics.push(json!({
+                        "code": "DurableBackgroundRunInvalid",
+                        "message": format!("background run {mode} response requires object initialResponse"),
+                        "path": "$.initialResponse",
+                    }));
+                }
+            }
             let raw_cancel_run = raw_detach
                 .get("cancelRun")
                 .or_else(|| raw_detach.get("cancel_run"));
@@ -586,12 +611,13 @@ fn run_case(case: &Value) -> Result<(), String> {
             };
             json!({
                 "runContinuesAfterDetach": lifetime_allows_detach && !cancel_run,
-                "acceptedResponseReturnsRunId": accepted_response_mode
-                    && case
-                        .get("initialResponse")
-                        .or_else(|| case.get("initial_response"))
-                        .and_then(Value::as_object)
-                        .is_some(),
+                "acceptedResponseReturnsRunId": matches!(valid_response_mode, Some("accepted"))
+                    && initial_response
+                        .is_some_and(|response| response
+                            .get("runId")
+                            .or_else(|| response.get("run_id"))
+                            .and_then(Value::as_str)
+                            .is_some_and(|run_id| !run_id.trim().is_empty())),
                 "replayEventIds": replay_event_ids,
                 "cursorExpired": !expired_cursor.is_empty()
                     && !retained_from.is_empty()

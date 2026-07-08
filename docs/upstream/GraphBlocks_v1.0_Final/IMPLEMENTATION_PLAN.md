@@ -1841,9 +1841,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run replay and retention evidence now requires present cursor fields
   (`attach.lastCursor`, `attach.expiredCursor`, and `retention.retainedFromCursor`) to be nonblank
   strings before they can drive replay or cursor-expiry assertions.
-- Durable background-run accepted-invocation evidence now requires an object `initialResponse`
-  carrying a nonblank `runId`/`run_id`, preventing truthy placeholder values from satisfying
-  accepted response semantics.
+- Durable background-run shared TCK cases now require an object `initialResponse` carrying a
+  nonblank `runId`/`run_id` in both Rust and Python runners, preventing truthy placeholder values
+  from satisfying durable response semantics.
 - Durable background-run shared TCK cases now require `responseMode`/`response_mode` to be exactly
   `accepted` or `background` in both Rust and Python runners, and apply the durable run-id handle
   requirement to background responses as well as accepted responses.
