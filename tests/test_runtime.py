@@ -884,6 +884,33 @@ def test_stdlib_async_await_callback_rejects_operation_without_expected_schema()
         )
 
 
+def test_stdlib_async_await_callback_accepts_camel_case_operation_input() -> None:
+    operation = {
+        "operationId": "op-ci-1",
+        "runId": "run-coding-1",
+        "nodeId": "waitCI",
+        "attemptId": "attempt-1",
+        "kind": "ci_job",
+        "state": "waiting_callback",
+        "resumeTokenHash": "sha256:resume-token",
+        "idempotencyKey": "idem-op-ci-1",
+        "expectedSchema": "schemas/CICallback@1",
+        "submittedAtUnixMs": 1_050,
+        "expiresAtUnixMs": 1_801_000,
+    }
+
+    wait = stdlib_registry().resolve("async.await_callback@1")(
+        {"operation": operation},
+        {"checkpoint": True, "onTimeout": "fail", "timeout": "30m"},
+        {},
+    )["wait"]
+
+    assert wait["operation"]["operation_id"] == "op-ci-1"
+    assert wait["operation"]["expected_schema"] == "schemas/CICallback@1"
+    assert wait["operation"]["submitted_at_unix_ms"] == 1_050
+    assert wait["operation"]["expires_at_unix_ms"] == 1_801_000
+
+
 def test_stdlib_async_poll_operation_rejects_ambiguous_wait_bounds() -> None:
     registry = stdlib_registry()
     operation = registry.resolve("async.start_operation@1")(

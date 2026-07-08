@@ -1399,21 +1399,44 @@ def stdlib_registry() -> RuntimeRegistry:
         operation = inputs.get("operation")
         if not isinstance(operation, dict):
             raise TypeError(f"{block_label} requires operation input")
-        if not isinstance(operation.get("operation_id"), str) or not str(operation.get("operation_id")).strip():
-            raise TypeError(f"{block_label} input operation.operation_id must be a non-empty string")
-        for field_name in (
-            "run_id",
-            "node_id",
-            "attempt_id",
-            "kind",
-            "state",
-            "resume_token_hash",
-            "idempotency_key",
-            "expected_schema",
+        normalized = dict(operation)
+        for snake_key, camel_key in (
+            ("operation_id", "operationId"),
+            ("run_id", "runId"),
+            ("node_id", "nodeId"),
+            ("attempt_id", "attemptId"),
+            ("kind", "kind"),
+            ("state", "state"),
+            ("resume_token_hash", "resumeTokenHash"),
+            ("idempotency_key", "idempotencyKey"),
+            ("expected_schema", "expectedSchema"),
         ):
-            if not isinstance(operation.get(field_name), str) or not str(operation.get(field_name)).strip():
-                raise TypeError(f"{block_label} input operation.{field_name} must be a non-empty string")
-        return operation
+            value = normalized.get(snake_key, normalized.get(camel_key))
+            if not isinstance(value, str) or not value.strip():
+                raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
+            normalized[snake_key] = value
+        for snake_key, camel_key in (
+            ("provider_operation_id", "providerOperationId"),
+            ("infinite_wait_policy", "infiniteWaitPolicy"),
+        ):
+            value = normalized.get(snake_key, normalized.get(camel_key))
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                raise TypeError(f"{block_label} input operation.{snake_key} must be a non-empty string")
+            normalized[snake_key] = value
+        for snake_key, camel_key in (
+            ("submitted_at_unix_ms", "submittedAtUnixMs"),
+            ("expires_at_unix_ms", "expiresAtUnixMs"),
+            ("completed_at_unix_ms", "completedAtUnixMs"),
+        ):
+            value = normalized.get(snake_key, normalized.get(camel_key))
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > MAX_U64:
+                raise TypeError(f"{block_label} input operation.{snake_key} must be an unsigned 64-bit integer")
+            normalized[snake_key] = value
+        return normalized
 
     def _validate_async_terminal_timestamp(
         operation: Mapping[str, Any],
