@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from graphblocks.blob_store import (
@@ -7,6 +9,7 @@ from graphblocks.blob_store import (
     BlobListItem,
     BlobMetadata,
     BlobNotFoundError,
+    BlobStoreError,
     ByteRange,
     InvalidBlobKeyError,
     ListPage,
@@ -43,6 +46,36 @@ def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
     assert metadata.artifact == artifact
     assert metadata.etag == artifact.checksum
     assert store.get(BlobKey("docs/policy.txt")) == b"alpha policy"
+
+
+def test_local_blob_store_rejects_non_standard_metadata_json_constants(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    artifact = store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    metadata_path = store._metadata_path_for(key)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "artifact": {
+                    "artifact_id": artifact.artifact_id,
+                    "uri": artifact.uri,
+                    "media_type": artifact.media_type,
+                    "size_bytes": artifact.size_bytes,
+                    "checksum": artifact.checksum,
+                    "etag": artifact.etag,
+                    "version": artifact.version,
+                    "filename": artifact.filename,
+                    "metadata": dict(artifact.metadata),
+                },
+                "etag": artifact.checksum,
+                "ignored": float("nan"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BlobStoreError, match="strict JSON"):
+        store.head(key)
 
 
 def test_put_options_rejects_invalid_metadata() -> None:

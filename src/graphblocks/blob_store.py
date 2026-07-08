@@ -208,7 +208,15 @@ class LocalBlobStore:
             raise BlobNotFoundError(f"blob {key.key!r} does not exist")
         metadata_path = self._metadata_path_for(key)
         if metadata_path.exists():
-            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            try:
+                payload = json.loads(
+                    metadata_path.read_text(encoding="utf-8"),
+                    parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+                )
+            except ValueError as error:
+                raise BlobStoreError("local blob metadata must be valid strict JSON") from error
+            if not isinstance(payload, Mapping):
+                raise BlobStoreError("local blob metadata must be a JSON object")
             artifact = ArtifactRef(**payload["artifact"])
             return BlobMetadata(key=key, artifact=artifact, etag=payload.get("etag"))
         data = path.read_bytes()
