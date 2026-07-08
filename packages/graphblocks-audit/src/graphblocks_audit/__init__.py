@@ -17,7 +17,7 @@ from graphblocks.application_event import (
     ApplicationEventMetadata,
 )
 from graphblocks.approval import ApprovalRecord, ApprovalRequest, ApprovalStatus, VALID_APPROVAL_STATUSES
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.policy import PolicyDecision, PolicyEnforcementRecord, PrincipalRef, ResourceRef
 from graphblocks.tools import (
     ResolvedTool,
@@ -46,6 +46,16 @@ class AuditOutboxRecordNotFoundError(AuditOutboxError):
 
 
 AuditOutboxStatus = Literal["pending", "published", "failed"]
+
+
+def _loads_strict_json(field_name: str, value: str) -> object:
+    try:
+        return json.loads(
+            value,
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        )
+    except ValueError as error:
+        raise ValueError(f"audit outbox {field_name} must be valid strict JSON") from error
 
 
 def record_native_tool_effect_precondition(
@@ -157,8 +167,9 @@ class SQLiteAuditOutbox:
         occurred_at: str,
         record_id: str | None = None,
     ) -> AuditOutboxRecord:
-        payload_json = json.dumps(dict(payload), sort_keys=True, separators=(",", ":"))
-        payload_digest = canonical_hash(json.loads(payload_json))
+        payload_value = dict(payload)
+        payload_json = canonical_dumps(payload_value)
+        payload_digest = canonical_hash(payload_value)
         actual_record_id = record_id or f"audit:{payload_digest}"
         try:
             self._connection.execute(
@@ -245,10 +256,15 @@ class SQLiteAuditOutbox:
         return self.get(record_id)
 
     def _record_from_row(self, row: sqlite3.Row) -> AuditOutboxRecord:
+        payload = _loads_strict_json("payload_json", str(row["payload_json"]))
+        if not isinstance(payload, Mapping):
+            raise ValueError("audit outbox payload_json must decode to an object")
+        if canonical_hash(payload) != row["payload_digest"]:
+            raise ValueError("audit outbox payload_digest does not match payload_json")
         return AuditOutboxRecord(
             record_id=row["record_id"],
             record_type=row["record_type"],
-            payload=json.loads(row["payload_json"]),
+            payload=payload,
             payload_digest=row["payload_digest"],
             occurred_at=row["occurred_at"],
             status=row["status"],

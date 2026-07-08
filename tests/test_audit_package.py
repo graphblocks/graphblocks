@@ -431,6 +431,48 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
     reopened.close()
 
 
+def test_audit_outbox_rejects_non_standard_payload_json_on_replay(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
+    outbox._connection.execute(  # noqa: SLF001
+        "UPDATE audit_outbox_records SET payload_json = ? WHERE record_id = ?",
+        ('{"value": NaN}', "audit-1"),
+    )
+    outbox._connection.commit()  # noqa: SLF001
+
+    try:
+        outbox.get("audit-1")
+    except ValueError as error:
+        assert "audit outbox payload_json must be valid strict JSON" in str(error)
+    else:
+        raise AssertionError("audit outbox replay should reject non-standard JSON constants")
+    finally:
+        outbox.close()
+
+
+def test_audit_outbox_rejects_payload_digest_drift_on_replay(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
+    outbox._connection.execute(  # noqa: SLF001
+        "UPDATE audit_outbox_records SET payload_json = ? WHERE record_id = ?",
+        ('{"event_id":"event-mutated"}', "audit-1"),
+    )
+    outbox._connection.commit()  # noqa: SLF001
+
+    try:
+        outbox.get("audit-1")
+    except ValueError as error:
+        assert "audit outbox payload_digest does not match payload_json" in str(error)
+    else:
+        raise AssertionError("audit outbox replay should reject payload digest drift")
+    finally:
+        outbox.close()
+
+
 def test_audit_package_rejects_duplicate_outbox_record_ids(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     graphblocks_audit = importlib.import_module("graphblocks_audit")

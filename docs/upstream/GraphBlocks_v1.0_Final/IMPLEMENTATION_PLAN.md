@@ -559,6 +559,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   payload bodies into the audit log.
 - Audit outbox records now reject blank record ids, record types, occurrence times, and failure
   reasons before pending or failed delivery projections can enter retry/audit inspection.
+  SQLite replay now parses payloads with strict JSON semantics and rechecks the stored
+  `payload_digest`, so corrupted audit rows cannot re-enter pending delivery with non-standard
+  constants or mutated payload bodies.
 - Observability now exposes typed names for the amendment's required async operation, callback
   delivery, and run attach/detach/replay events, and `ObservabilityObservation` validates metric
   labels against the low-cardinality rule including `operation_id`, `event_id`, and `delivery_id`.
