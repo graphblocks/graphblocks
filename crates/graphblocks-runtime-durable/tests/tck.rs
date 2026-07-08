@@ -1913,6 +1913,27 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_checks = required_object(case, "checks", name)?;
             let raw_callback = required_object(case, "callback", name)?;
             let raw_resume = required_object(case, "resume", name)?;
+            if let Some(operation) = case.get("operation").and_then(Value::as_object) {
+                let operation_id_path = if operation.contains_key("operationId")
+                    || !operation.contains_key("operation_id")
+                {
+                    "operationId"
+                } else {
+                    "operation_id"
+                };
+                if operation
+                    .get("operationId")
+                    .or_else(|| operation.get("operation_id"))
+                    .and_then(Value::as_str)
+                    .map_or(true, |operation_id| operation_id.trim().is_empty())
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires nonblank operationId",
+                        "path": format!("$.operation.{operation_id_path}"),
+                    }));
+                }
+            }
             let mut guard_values = BTreeMap::new();
             for (key, alias) in [
                 (

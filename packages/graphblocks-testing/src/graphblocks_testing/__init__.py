@@ -8116,6 +8116,24 @@ class TckRunner:
                 raw_callback = fixture.get("callback", {})
                 if not isinstance(raw_checks, Mapping) or not isinstance(raw_resume, Mapping) or not isinstance(raw_callback, Mapping):
                     raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
+                raw_operation = fixture.get("operation")
+                if isinstance(raw_operation, Mapping):
+                    operation_id_path = (
+                        "operationId"
+                        if "operationId" in raw_operation or "operation_id" not in raw_operation
+                        else "operation_id"
+                    )
+                    operation_id = raw_operation.get(
+                        "operationId", raw_operation.get("operation_id")
+                    )
+                    if not isinstance(operation_id, str) or not operation_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires nonblank operationId",
+                                "path": f"$.operation.{operation_id_path}",
+                            }
+                        )
                 async_resume_guard_values = {}
                 for key, alias in (
                     ("signatureFailureRevealsOperation", "signature_failure_reveals_operation"),
