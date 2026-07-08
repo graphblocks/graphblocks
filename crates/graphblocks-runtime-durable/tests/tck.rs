@@ -540,16 +540,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                 },
                 None => None,
             };
+            let last_cursor_index = last_cursor.and_then(|cursor| {
+                event_records.iter().position(|event| {
+                    event
+                        .get("cursor")
+                        .and_then(Value::as_str)
+                        .is_some_and(|event_cursor| event_cursor == cursor)
+                })
+            });
             let replay_event_ids = event_records
                 .iter()
-                .filter(|event| {
-                    last_cursor.is_none_or(|cursor| {
-                        event
-                            .get("cursor")
-                            .and_then(Value::as_str)
-                            .is_some_and(|event_cursor| event_cursor > cursor)
-                    })
+                .enumerate()
+                .filter(|(index, _event)| match last_cursor {
+                    None => true,
+                    Some(_) => last_cursor_index.is_some_and(|cursor_index| *index > cursor_index),
                 })
+                .map(|(_index, event)| event)
                 .filter_map(|event| {
                     event
                         .get("eventId")

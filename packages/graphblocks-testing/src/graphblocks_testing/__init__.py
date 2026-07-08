@@ -7183,10 +7183,25 @@ class TckRunner:
                     )
                 else:
                     last_cursor = raw_last_cursor
+                if last_cursor is None:
+                    last_cursor_index = None
+                else:
+                    last_cursor_index = next(
+                        (
+                            event_index
+                            for event_index, event in enumerate(event_records)
+                            if event.get("cursor") == last_cursor
+                        ),
+                        None,
+                    )
                 replay_after_cursor = [
                     str(event.get("eventId", event.get("event_id", "")))
-                    for event in event_records
-                    if last_cursor is None or str(event.get("cursor", "")) > str(last_cursor)
+                    for event_index, event in enumerate(event_records)
+                    if last_cursor is None
+                    or (
+                        last_cursor_index is not None
+                        and event_index > last_cursor_index
+                    )
                 ]
                 has_expired_cursor = "expiredCursor" in raw_attach or "expired_cursor" in raw_attach
                 raw_expired_cursor = raw_attach.get(
