@@ -7708,6 +7708,39 @@ class TckRunner:
                                     "path": f"$.deliveries[{index}].lastError",
                                 }
                             )
+                    if (
+                        receiver_status is not None
+                        and 400 <= receiver_status <= 499
+                        and receiver_status not in {409, 410, 429}
+                        and status_is_valid
+                        and status != "failed"
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "non-retryable 4xx callback delivery requires failed status",
+                                "path": f"$.deliveries[{index}].status",
+                            }
+                        )
+                    if (
+                        receiver_status is not None
+                        and 400 <= receiver_status <= 499
+                        and receiver_status not in {409, 410, 429}
+                        and status == "failed"
+                    ):
+                        last_error = delivery.get("lastError", delivery.get("last_error"))
+                        if (
+                            isinstance(last_error, str)
+                            and last_error.strip()
+                            and last_error != "non_retryable"
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableCallbackDeliveryInvalid",
+                                    "message": "non-retryable 4xx callback delivery requires non_retryable error",
+                                    "path": f"$.deliveries[{index}].lastError",
+                                }
+                            )
                     delivered_at = None
                     if status in {"delivered", "acknowledged"}:
                         raw_delivered_at = delivery.get(
