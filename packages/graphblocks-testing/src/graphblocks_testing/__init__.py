@@ -7553,12 +7553,29 @@ class TckRunner:
                     if str(entry.get("kind", "")).lower()
                     in {"externalcallbackreceived", "external_callback_received"}
                 ]
+                journal_sequences = {}
+                for entry_index, entry in enumerate(journal_entries):
+                    sequence = entry.get("sequence")
+                    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCancelRaceInvalid",
+                                "message": "async cancel race journal entry requires integer sequence",
+                                "path": f"$.journal[{entry_index}].sequence",
+                            }
+                        )
+                    else:
+                        journal_sequences[id(entry)] = sequence
                 cancel_sequence = min(
-                    (int(entry.get("sequence", 0)) for entry in cancel_entries),
+                    (journal_sequences[id(entry)] for entry in cancel_entries if id(entry) in journal_sequences),
                     default=0,
                 )
                 callback_sequence = min(
-                    (int(entry.get("sequence", 0)) for entry in callback_entries),
+                    (
+                        journal_sequences[id(entry)]
+                        for entry in callback_entries
+                        if id(entry) in journal_sequences
+                    ),
                     default=0,
                 )
                 fences = {
