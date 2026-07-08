@@ -1896,8 +1896,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `operation.effectJournaled` to be a real `true` boolean before accepting side-effect preservation
   evidence, tying late cancellation reconciliation to an auditable EffectJournal record.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
-  `operation.operationId` and `operation.runId` values in both Rust and Python runners before
-  accepting late side-effect, callback, or usage reconciliation evidence.
+  `operation.operationId`, `operation.runId`, `operation.nodeId`, and `operation.attemptId` values
+  in both Rust and Python runners before accepting late side-effect, callback, or usage
+  reconciliation evidence.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

@@ -8361,6 +8361,34 @@ class TckRunner:
                             "path": f"$.operation.{run_id_path}",
                         }
                     )
+                node_id_path = (
+                    "nodeId"
+                    if "nodeId" in raw_operation or "node_id" not in raw_operation
+                    else "node_id"
+                )
+                node_id = raw_operation.get("nodeId", raw_operation.get("node_id"))
+                if not isinstance(node_id, str) or not node_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank nodeId",
+                            "path": f"$.operation.{node_id_path}",
+                        }
+                    )
+                attempt_id_path = (
+                    "attemptId"
+                    if "attemptId" in raw_operation or "attempt_id" not in raw_operation
+                    else "attempt_id"
+                )
+                attempt_id = raw_operation.get("attemptId", raw_operation.get("attempt_id"))
+                if not isinstance(attempt_id, str) or not attempt_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires nonblank attemptId",
+                            "path": f"$.operation.{attempt_id_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

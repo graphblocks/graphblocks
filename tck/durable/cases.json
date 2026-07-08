@@ -3851,6 +3851,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "state": "cancelled",
       "effectState": "committed",
       "effectJournaled": true
@@ -3885,6 +3887,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -3919,6 +3923,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectJournaled": true
     },
     "lateCallback": {
@@ -3952,6 +3958,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "pending",
       "effectJournaled": true
     },
@@ -3986,6 +3994,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed"
     },
     "lateCallback": {
@@ -4019,6 +4029,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": "true"
     },
@@ -4053,6 +4065,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": false
     },
@@ -4086,6 +4100,8 @@
     "kind": "external_operation_reconciliation",
     "operation": {
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4120,6 +4136,8 @@
     "operation": {
       "operationId": "   ",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4153,6 +4171,8 @@
     "kind": "external_operation_reconciliation",
     "operation": {
       "operationId": "op-ci-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4187,6 +4207,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "   ",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4216,11 +4238,155 @@
     }
   },
   {
+    "name": "external_operation_missing_node_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank nodeId",
+        "path": "$.operation.nodeId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_blank_node_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "   ",
+      "attemptId": "attempt-ci-001",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank nodeId",
+        "path": "$.operation.nodeId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_missing_attempt_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank attemptId",
+        "path": "$.operation.attemptId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "external_operation_blank_attempt_id_rejected",
+    "kind": "external_operation_reconciliation",
+    "operation": {
+      "operationId": "op-ci-002",
+      "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "   ",
+      "effectState": "committed",
+      "effectJournaled": true
+    },
+    "lateCallback": {
+      "commitsResult": false,
+      "diagnosticRecorded": true,
+      "payloadConvertedToArtifactRef": true
+    },
+    "usage": {
+      "providerUsageRecords": [
+        {
+          "metric": "ci.minutes",
+          "amount": 1
+        }
+      ],
+      "reconciled": true
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableExternalOperationInvalid",
+        "message": "external operation reconciliation requires nonblank attemptId",
+        "path": "$.operation.attemptId"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "external_operation_missing_commits_result_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4254,6 +4420,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4287,6 +4455,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4320,6 +4490,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4353,6 +4525,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4381,6 +4555,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4414,6 +4590,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4448,6 +4626,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },
@@ -4482,6 +4662,8 @@
     "operation": {
       "operationId": "op-ci-002",
       "runId": "run-coding-002",
+      "nodeId": "runExternalCI",
+      "attemptId": "attempt-ci-001",
       "effectState": "committed",
       "effectJournaled": true
     },

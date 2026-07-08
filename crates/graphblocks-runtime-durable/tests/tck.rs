@@ -2189,6 +2189,43 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{run_id_path}"),
                 }));
             }
+            let node_id_path =
+                if raw_operation.contains_key("nodeId") || !raw_operation.contains_key("node_id") {
+                    "nodeId"
+                } else {
+                    "node_id"
+                };
+            if raw_operation
+                .get("nodeId")
+                .or_else(|| raw_operation.get("node_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |node_id| node_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank nodeId",
+                    "path": format!("$.operation.{node_id_path}"),
+                }));
+            }
+            let attempt_id_path = if raw_operation.contains_key("attemptId")
+                || !raw_operation.contains_key("attempt_id")
+            {
+                "attemptId"
+            } else {
+                "attempt_id"
+            };
+            if raw_operation
+                .get("attemptId")
+                .or_else(|| raw_operation.get("attempt_id"))
+                .and_then(Value::as_str)
+                .map_or(true, |attempt_id| attempt_id.trim().is_empty())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires nonblank attemptId",
+                    "path": format!("$.operation.{attempt_id_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
