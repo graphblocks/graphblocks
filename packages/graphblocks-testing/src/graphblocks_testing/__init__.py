@@ -8120,6 +8120,16 @@ class TckRunner:
                                 "path": f"$.deliveries[{index}].deliveredAt",
                             }
                         )
+                    if status != "acknowledged" and (
+                        "acknowledgedAt" in delivery or "acknowledged_at" in delivery
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": f"{status} callback delivery must not have acknowledgedAt",
+                                "path": f"$.deliveries[{index}].acknowledgedAt",
+                            }
+                        )
                     raw_receiver_status = delivery.get(
                         "receiverStatus", delivery.get("receiver_status")
                     )

@@ -1652,6 +1652,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                if let Some(status) = delivery.get("status").and_then(Value::as_str) {
+                    if status != "acknowledged"
+                        && delivery
+                            .get("acknowledgedAt")
+                            .or_else(|| delivery.get("acknowledged_at"))
+                            .is_some()
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableCallbackDeliveryInvalid",
+                            "message": format!("{status} callback delivery must not have acknowledgedAt"),
+                            "path": format!("$.deliveries[{index}].acknowledgedAt"),
+                        }));
+                    }
+                }
                 if let Some(next_retry_at) = delivery
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))
