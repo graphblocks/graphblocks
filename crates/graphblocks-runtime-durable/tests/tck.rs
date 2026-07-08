@@ -570,6 +570,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                 })
                 .and_then(Value::as_str);
             let mut idempotency_keys = BTreeSet::new();
+            let mut idempotency_key_logical_deliveries = BTreeMap::new();
             let mut idempotency_key_count = 0usize;
             let mut retry_scheduled_after_5xx = false;
             let mut retry_scheduled_after_retryable_status = false;
@@ -1090,7 +1091,36 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .and_then(Value::as_str)
                 {
                     idempotency_key_count += 1;
-                    idempotency_keys.insert(key.to_owned());
+                    let normalized_key = key.trim().to_owned();
+                    idempotency_keys.insert(normalized_key.clone());
+                    let subscription_id = delivery
+                        .get("subscriptionId")
+                        .or_else(|| delivery.get("subscription_id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
+                    let event_id = delivery
+                        .get("eventId")
+                        .or_else(|| delivery.get("event_id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
+                    let logical_delivery = (subscription_id, event_id);
+                    if let Some(previous_delivery) =
+                        idempotency_key_logical_deliveries.get(&normalized_key)
+                    {
+                        if previous_delivery != &logical_delivery {
+                            diagnostics.push(json!({
+                                "code": "DurableCallbackDeliveryInvalid",
+                                "message": "callback delivery idempotencyKey must be unique",
+                                "path": format!("$.deliveries[{index}].idempotencyKey"),
+                            }));
+                        }
+                    } else {
+                        idempotency_key_logical_deliveries.insert(normalized_key, logical_delivery);
+                    }
                 }
             }
             json!({
