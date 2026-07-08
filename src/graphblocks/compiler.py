@@ -255,6 +255,8 @@ def _diagnose_async_operation_config(
     diagnostics: list[Diagnostic],
     config: dict[str, Any],
     path: str,
+    *,
+    require_callback_schema: bool = False,
 ) -> None:
     callback = config.get("callback")
     callback_config = callback if isinstance(callback, dict) else {}
@@ -323,7 +325,7 @@ def _diagnose_async_operation_config(
                     f"{path}.{field}",
                 )
             )
-    if _callback_schema_required(config) and not _has_async_callback_schema(config):
+    if (require_callback_schema or _callback_schema_required(config)) and not _has_async_callback_schema(config):
         diagnostics.append(
             Diagnostic(
                 "GB6007",
@@ -709,11 +711,8 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         block = node.get("block")
         if not isinstance(block, str) or "@" not in block or block.endswith("@"):
             diagnostics.append(Diagnostic("GB0009", "node.block must use '<type>@<major>'", f"$.spec.nodes.{node_name}.block"))
-        if isinstance(block, str) and block.split("@", 1)[0] in {
-            "async.start_operation",
-            "async.await_callback",
-            "async.poll_operation",
-        }:
+        block_type = block.split("@", 1)[0] if isinstance(block, str) and "@" in block else None
+        if block_type in {"async.start_operation", "async.await_callback", "async.poll_operation"}:
             config = node.get("config", {})
             if config is None:
                 config = {}
@@ -722,6 +721,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     diagnostics,
                     config,
                     f"$.spec.nodes.{node_name}.config",
+                    require_callback_schema=block_type == "async.await_callback",
                 )
             else:
                 diagnostics.append(

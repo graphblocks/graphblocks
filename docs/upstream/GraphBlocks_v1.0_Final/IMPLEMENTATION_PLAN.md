@@ -621,7 +621,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order for
   top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with
-  shared compiler TCK coverage.
+  shared compiler TCK coverage. `async.await_callback@1` node configs require an expected callback
+  schema even when the author omits the optional `callback` mapping, because the block is itself a
+  callback wait boundary.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
   the configured ingestion limit and report oversized inline callback payloads as `GB6010`, with
   shared compiler TCK coverage.

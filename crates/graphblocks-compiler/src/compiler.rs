@@ -504,6 +504,7 @@ fn diagnose_async_operation_config(
     diagnostics: &mut Vec<Diagnostic>,
     config: &Map<String, Value>,
     path: &str,
+    require_callback_schema: bool,
 ) {
     if has_async_callback_completion_ref(config) && has_async_polling_completion_ref(config) {
         diagnostics.push(Diagnostic::error(
@@ -580,7 +581,9 @@ fn diagnose_async_operation_config(
             path,
         ));
     }
-    if callback_schema_required(config) && !has_async_callback_schema(config) {
+    if (require_callback_schema || callback_schema_required(config))
+        && !has_async_callback_schema(config)
+    {
         diagnostics.push(Diagnostic::error(
             "GB6007",
             "async operation callbacks require an expected callback schema",
@@ -1128,13 +1131,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("$.spec.nodes.{node_name}.block"),
                 ));
             }
-            if node
+            if let Some(async_block_type) = node
                 .get("block")
                 .and_then(Value::as_str)
                 .and_then(|block| block.split_once('@').map(|(block_type, _)| block_type))
-                .is_some_and(|block_type| {
+                .filter(|block_type| {
                     matches!(
-                        block_type,
+                        *block_type,
                         "async.start_operation" | "async.await_callback" | "async.poll_operation"
                     )
                 })
@@ -1145,6 +1148,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             &mut diagnostics,
                             config,
                             &format!("$.spec.nodes.{node_name}.config"),
+                            async_block_type == "async.await_callback",
                         );
                     }
                     Some(_) => diagnostics.push(Diagnostic::error(
@@ -1158,6 +1162,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             &mut diagnostics,
                             &empty_config,
                             &format!("$.spec.nodes.{node_name}.config"),
+                            async_block_type == "async.await_callback",
                         );
                     }
                 }
@@ -1247,6 +1252,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     &mut diagnostics,
                     operation_config,
                     &operation_path,
+                    false,
                 );
             }
         }
@@ -1265,6 +1271,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     &mut diagnostics,
                     operation_config,
                     &operation_path,
+                    false,
                 );
             }
         }

@@ -1555,6 +1555,38 @@
     }
   },
   {
+    "name": "async_await_callback_missing_schema",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-await-callback-missing-schema"
+      },
+      "spec": {
+        "nodes": {
+          "waitCI": {
+            "block": "async.await_callback@1",
+            "config": {
+              "timeout": "30m",
+              "idempotencyKey": "$input.request_id",
+              "attemptFencing": true,
+              "resume": {
+                "requirePolicyReevaluation": true,
+                "requireBudgetReservation": true,
+                "requireReleaseCompatibility": true,
+                "requireOwnershipFence": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:7fb14cfcc2b402940badcb736480caf04b8b684e2c48f5161192d0b9efd7aab0",
+      "error_codes": ["GB6007"]
+    }
+  },
+  {
     "name": "callback_subscription_safety_diagnostics",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
