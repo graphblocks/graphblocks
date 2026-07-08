@@ -628,6 +628,11 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .or_else(|| raw_checks.get("unauthenticated_callback_can_resume"))
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
+                "nonExternalCallbackEventCanBecomeReceipt": raw_checks
+                    .get("nonExternalCallbackEventCanBecomeReceipt")
+                    .or_else(|| raw_checks.get("non_external_callback_event_can_become_receipt"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
                 "providerOperationMismatchCanResume": raw_checks
                     .get("providerOperationMismatchCanResume")
                     .or_else(|| raw_checks.get("provider_operation_mismatch_can_resume"))

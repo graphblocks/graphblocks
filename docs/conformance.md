@@ -37,7 +37,8 @@ per-run sequence enforcement.
 
 The `durable` suite includes async callback guards for signature/auth failures,
 explicitly unauthenticated callbacks, schema failures, stale attempts,
-provider-operation mismatches, timeout/cancel races, and budget-paused resume.
+non-`ExternalCallbackReceived` receipt promotion, provider-operation mismatches,
+timeout/cancel races, and budget-paused resume.
 
 Common commands:
 

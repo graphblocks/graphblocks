@@ -563,6 +563,7 @@
       "cancelledCallbackCommitsResult": false,
       "staleAttemptCanResume": false,
       "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
       "providerOperationMismatchCanResume": false
     },
     "callback": {
@@ -590,6 +591,7 @@
       "cancelledCallbackCommitsResult": false,
       "staleAttemptCanResume": false,
       "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
       "providerOperationMismatchCanResume": false,
       "receiptJournaledBeforeResume": true,
       "resumeReevaluatesPolicyBudgetRelease": true,
