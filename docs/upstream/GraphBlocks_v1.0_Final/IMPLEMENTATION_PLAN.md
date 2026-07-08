@@ -1783,6 +1783,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async cancel-race evidence now requires integer journal entry `sequence` values before
   proving cancel-before-callback ordering, preventing string coercion from satisfying race
   ordering conformance.
+- Durable external-operation reconciliation evidence now requires real boolean values for late
+  callback commit/diagnostic/artifact-reference flags and late usage reconciliation, preventing
+  truthy strings from proving cancellation, payload extraction, or billing reconciliation behavior.
 - The application-protocol TCK runner now applies the protocol metadata default release id when
   fixtures omit `releaseId`, so malformed sequence and replay-limit cases validate the intended
   integer contracts instead of failing earlier on unrelated release metadata.

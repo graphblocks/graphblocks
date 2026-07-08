@@ -1481,6 +1481,42 @@ def test_testing_package_rejects_non_integer_async_cancel_race_journal_sequence(
     )
 
 
+def test_testing_package_rejects_non_boolean_external_operation_reconciliation_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/non-boolean-external-operation-reconciliation",
+        fixture={
+            "kind": "external_operation_reconciliation",
+            "operation": {
+                "effectState": "committed",
+            },
+            "lateCallback": {
+                "commitsResult": False,
+                "diagnosticRecorded": "true",
+                "payloadConvertedToArtifactRef": True,
+            },
+            "usage": {
+                "reconciled": True,
+            },
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableExternalOperationInvalid",
+            "message": "external operation reconciliation requires boolean diagnosticRecorded",
+            "path": "$.lateCallback.diagnosticRecorded",
+        },
+    )
+
+
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

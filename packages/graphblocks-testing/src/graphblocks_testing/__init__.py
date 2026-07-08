@@ -7623,12 +7623,44 @@ class TckRunner:
                 raw_usage = fixture.get("usage", {})
                 if not isinstance(raw_operation, Mapping) or not isinstance(raw_late_callback, Mapping) or not isinstance(raw_usage, Mapping):
                     raise ValueError("durable external_operation_reconciliation case requires operation, lateCallback, and usage")
+                external_reconciliation_values = {}
+                for source_name, source, key, alias, default in (
+                    ("lateCallback", raw_late_callback, "commitsResult", "commits_result", True),
+                    (
+                        "lateCallback",
+                        raw_late_callback,
+                        "diagnosticRecorded",
+                        "diagnostic_recorded",
+                        False,
+                    ),
+                    (
+                        "lateCallback",
+                        raw_late_callback,
+                        "payloadConvertedToArtifactRef",
+                        "payload_converted_to_artifact_ref",
+                        False,
+                    ),
+                    ("usage", raw_usage, "reconciled", "reconciled", False),
+                ):
+                    raw_value = source.get(key, source.get(alias, default))
+                    external_reconciliation_values[(source_name, key)] = (
+                        raw_value if isinstance(raw_value, bool) else default
+                    )
+                    if not isinstance(raw_value, bool):
+                        path_key = key if key in source or alias not in source else alias
+                        diagnostics.append(
+                            {
+                                "code": "DurableExternalOperationInvalid",
+                                "message": f"external operation reconciliation requires boolean {key}",
+                                "path": f"$.{source_name}.{path_key}",
+                            }
+                        )
                 observed = {
                     "sideEffectCommitPreserved": str(raw_operation.get("effectState", raw_operation.get("effect_state", ""))) == "committed",
-                    "lateCallbackCommitsResult": bool(raw_late_callback.get("commitsResult", raw_late_callback.get("commits_result", True))),
-                    "lateCallbackRecordedDiagnostic": bool(raw_late_callback.get("diagnosticRecorded", raw_late_callback.get("diagnostic_recorded", False))),
-                    "lateUsageReconciled": bool(raw_usage.get("reconciled", False)),
-                    "largePayloadUsesArtifactRef": bool(raw_late_callback.get("payloadConvertedToArtifactRef", raw_late_callback.get("payload_converted_to_artifact_ref", False))),
+                    "lateCallbackCommitsResult": external_reconciliation_values[("lateCallback", "commitsResult")],
+                    "lateCallbackRecordedDiagnostic": external_reconciliation_values[("lateCallback", "diagnosticRecorded")],
+                    "lateUsageReconciled": external_reconciliation_values[("usage", "reconciled")],
+                    "largePayloadUsesArtifactRef": external_reconciliation_values[("lateCallback", "payloadConvertedToArtifactRef")],
                 }
             else:
                 diagnostics.append(
