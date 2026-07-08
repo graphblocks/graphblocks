@@ -1504,7 +1504,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   subscription visibility, rather than treating those server-owned fields as optional noise.
   `submit_async_callback` now validates callback payloads with the canonical JSON encoder before
   transport and rejects non-string or blank object keys, so `NaN`, non-serializable values, or
-  key-coercing payload objects cannot be sent as callback content.
+  key-coercing payload objects cannot be sent as callback content. The same client boundary rejects
+  Python tuples before they can be serialized as JSON arrays.
   `subscribe_events` and `register_callback` apply the same canonical JSON and object-key checks to
   `event_filter` and `delivery` payloads before constructing HTTP requests.
   `RunGraphCommand` now applies the same canonical JSON and object-key checks to graph documents

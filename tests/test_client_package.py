@@ -733,6 +733,10 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
             "run graph command inputs must contain canonical JSON values",
         ),
         (
+            {"inputs": {"message": ("tuple", "array")}},
+            "run graph command inputs arrays must be lists",
+        ),
+        (
             {"graph": {"kind": "Graph", "spec": {"nodes": {1: {}}}}},
             "run graph command graph object keys must be non-empty strings",
         ),
@@ -1621,6 +1625,15 @@ def test_client_package_submits_async_callback_over_http_transport(monkeypatch) 
                 "payload": {"status": object()},
             },
             "GraphBlocks HTTP callback payload must contain canonical JSON values",
+        ),
+        (
+            {
+                "operation_id": "op-1",
+                "callback_id": "cb-1",
+                "idempotency_key": "idem-1",
+                "payload": {"checks": ("unit", "lint")},
+            },
+            "GraphBlocks HTTP callback payload arrays must be lists",
         ),
         (
             {
@@ -2565,6 +2578,17 @@ def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transpo
                 "delivery": {"kind": "local_callback", "callback_name": "ide"},
             },
             "GraphBlocks HTTP event_filter must contain canonical JSON values",
+        ),
+        (
+            "register_callback",
+            (),
+            {
+                "scope": "run",
+                "scope_id": "run-1",
+                "event_filter": {"types": ("RunSucceeded",)},
+                "delivery": {"kind": "local_callback", "callback_name": "ide"},
+            },
+            "GraphBlocks HTTP event_filter arrays must be lists",
         ),
         (
             "register_callback",

@@ -1331,7 +1331,9 @@ def _canonical_json_mapping(label: str, field_name: str, value: object) -> dict[
                 if not isinstance(key, str) or not key.strip():
                     raise ValueError(f"{label} {field_name} object keys must be non-empty strings")
                 pending_values.append(child_value)
-        elif isinstance(current_value, list | tuple):
+        elif isinstance(current_value, tuple):
+            raise ValueError(f"{label} {field_name} arrays must be lists")
+        elif isinstance(current_value, list):
             pending_values.extend(current_value)
     try:
         canonical_dumps(dict(value))
