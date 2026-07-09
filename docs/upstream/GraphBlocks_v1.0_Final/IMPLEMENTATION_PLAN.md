@@ -1955,6 +1955,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now require `operation.deadline` to be a
   calendar-valid timestamp in the Rust runner, so digit-shaped but impossible deadlines cannot
   satisfy callback timeout and resume-admission evidence.
+- Durable async callback resume-guard shared TCK cases now reject malformed deadline separators and
+  impossible month/day combinations in the Rust runner, keeping callback timeout and resume
+  admission timestamp parsing aligned with the Python TCK runner.
 - Durable async callback resume-guard shared TCK cases now require integer callback
   `journalSequence`, `resumeSequence`, and `successfulResumeCount` values in both Rust and Python
   runners before proving journal-before-resume and coordinator failover invariants, rejecting

@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 286
+    assert [case.kind for case in cases] == ["durable"] * 288
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1349,6 +1349,8 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_blank_policy_snapshot_rejected",
         "async_callback_resume_invalid_deadline_rejected",
         "async_callback_resume_invalid_calendar_deadline_rejected",
+        "async_callback_resume_malformed_deadline_separator_rejected",
+        "async_callback_resume_invalid_day_deadline_rejected",
         "async_callback_resume_blank_budget_state_rejected",
         "async_callback_resume_cancelled_operation_state_rejected",
         "async_callback_resume_non_object_operation_rejected",
@@ -2142,6 +2144,16 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_invalid_calendar_deadline_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_malformed_deadline_separator_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_invalid_day_deadline_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6427,6 +6439,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_blank_policy_snapshot_rejected",
         "async_callback_resume_invalid_deadline_rejected",
         "async_callback_resume_invalid_calendar_deadline_rejected",
+        "async_callback_resume_malformed_deadline_separator_rejected",
+        "async_callback_resume_invalid_day_deadline_rejected",
         "async_callback_resume_blank_budget_state_rejected",
         "async_callback_resume_cancelled_operation_state_rejected",
         "async_callback_resume_non_object_operation_rejected",

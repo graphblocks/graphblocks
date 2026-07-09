@@ -2258,48 +2258,62 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_resume = required_object(case, "resume", name)?;
             let timestamp_seconds = |value: &str| -> Option<i64> {
                 let value = value.trim();
+                let bytes = value.as_bytes();
+                let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                if bytes.len() < 20
+                    || !digit_positions
+                        .into_iter()
+                        .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                    || bytes.get(4) != Some(&b'-')
+                    || bytes.get(7) != Some(&b'-')
+                    || bytes.get(10) != Some(&b'T')
+                    || bytes.get(13) != Some(&b':')
+                    || bytes.get(16) != Some(&b':')
+                {
+                    return None;
+                }
                 let year = value.get(0..4)?.parse::<i64>().ok()?;
                 let month = value.get(5..7)?.parse::<i64>().ok()?;
                 let day = value.get(8..10)?.parse::<i64>().ok()?;
                 let hour = value.get(11..13)?.parse::<i64>().ok()?;
                 let minute = value.get(14..16)?.parse::<i64>().ok()?;
                 let second = value.get(17..19)?.parse::<i64>().ok()?;
-                if !(1..=12).contains(&month)
-                    || !(1..=31).contains(&day)
+                let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+                let max_day = match month {
+                    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                    4 | 6 | 9 | 11 => 30,
+                    2 if leap_year => 29,
+                    2 => 28,
+                    _ => return None,
+                };
+                if day < 1
+                    || day > max_day
                     || !(0..=23).contains(&hour)
                     || !(0..=59).contains(&minute)
-                    || !(0..=60).contains(&second)
+                    || !(0..=59).contains(&second)
                 {
                     return None;
                 }
-                let mut offset_seconds = 0;
-                if !value.ends_with('Z') {
-                    let suffix = value.get(19..)?;
-                    let offset_start = suffix
-                        .rfind('+')
-                        .or_else(|| suffix.rfind('-'))
-                        .map(|position| 19 + position)?;
-                    let sign = if value.as_bytes().get(offset_start) == Some(&b'-') {
-                        -1
-                    } else {
-                        1
-                    };
-                    let offset_hour = value
-                        .get(offset_start + 1..offset_start + 3)?
-                        .parse::<i64>()
-                        .ok()?;
-                    let offset_minute = value
-                        .get(offset_start + 4..offset_start + 6)?
-                        .parse::<i64>()
-                        .ok()?;
-                    if value.as_bytes().get(offset_start + 3) != Some(&b':')
-                        || !(0..=23).contains(&offset_hour)
-                        || !(0..=59).contains(&offset_minute)
-                    {
-                        return None;
+                let offset_seconds = match value.get(19..) {
+                    Some("Z") => 0,
+                    Some(offset) if offset.len() == 6 => {
+                        let sign = match offset.as_bytes().first() {
+                            Some(b'+') => 1,
+                            Some(b'-') => -1,
+                            _ => return None,
+                        };
+                        if offset.as_bytes().get(3) != Some(&b':') {
+                            return None;
+                        }
+                        let offset_hour = offset.get(1..3)?.parse::<i64>().ok()?;
+                        let offset_minute = offset.get(4..6)?.parse::<i64>().ok()?;
+                        if !(0..=23).contains(&offset_hour) || !(0..=59).contains(&offset_minute) {
+                            return None;
+                        }
+                        sign * ((offset_hour * 60 + offset_minute) * 60)
                     }
-                    offset_seconds = sign * ((offset_hour * 60 + offset_minute) * 60);
-                }
+                    _ => return None,
+                };
                 let adjusted_year = year - i64::from(month <= 2);
                 let era = if adjusted_year >= 0 {
                     adjusted_year
