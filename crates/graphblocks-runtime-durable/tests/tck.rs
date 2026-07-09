@@ -3217,6 +3217,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_race = required_object(case, "race", name)?;
             let mut cancel_sequence = None;
             let mut callback_sequence = None;
+            let mut has_cancel_entry = false;
             let mut fences = BTreeSet::new();
             for (entry_index, raw_entry) in raw_journal.iter().enumerate() {
                 let Some(entry) = raw_entry.as_object() else {
@@ -3280,6 +3281,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .as_str()
                 {
                     "cancelrun" | "run_cancelled" | "cancelled" => {
+                        has_cancel_entry = true;
                         cancel_sequence = Some(
                             cancel_sequence
                                 .map_or(sequence, |current| std::cmp::min(current, sequence)),
@@ -3310,6 +3312,19 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "code": "DurableAsyncCancelRaceInvalid",
                     "message": "async cancel race requires cancel winner",
                     "path": "$.race.winner",
+                }));
+            }
+            if diagnostics.is_empty()
+                && raw_race
+                    .get("winner")
+                    .and_then(Value::as_str)
+                    .is_some_and(|winner| winner == "cancel")
+                && !has_cancel_entry
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race requires cancel journal entry",
+                    "path": "$.journal",
                 }));
             }
             if raw_race

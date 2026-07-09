@@ -9205,6 +9205,7 @@ class TckRunner:
                     for _, entry in journal_entries
                     if str(entry.get("kind", "")).lower() in {"cancelrun", "run_cancelled", "cancelled"}
                 ]
+                has_cancel_entry = bool(cancel_entries)
                 callback_entries = [
                     entry
                     for _, entry in journal_entries
@@ -9280,6 +9281,18 @@ class TckRunner:
                     ),
                     default=0,
                 )
+                if (
+                    not diagnostics
+                    and str(raw_race.get("winner", "")) == "cancel"
+                    and not has_cancel_entry
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race requires cancel journal entry",
+                            "path": "$.journal",
+                        }
+                    )
                 if (
                     str(raw_race.get("winner", "")) == "cancel"
                     and cancel_sequence > 0

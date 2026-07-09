@@ -1985,6 +1985,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async cancel-race shared TCK cases now require `race.winner` to identify `cancel`, so
   callback/cancellation races cannot satisfy conformance when the callback path is declared the
   winner after cancellation.
+- Durable async cancel-race shared TCK cases now require explicit cancel journal evidence for
+  cancel-winner races, so a callback-only journal cannot prove cancellation blocked resume.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.
