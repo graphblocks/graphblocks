@@ -201,6 +201,37 @@ def test_callback_envelope_validates_timestamp_fields() -> None:
         ),
     )
     _assert_raises_value_error(
+        "occurred_at must be an ISO-8601 datetime",
+        lambda: CallbackEnvelope(
+            delivery_id="del_space_time",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key="sub_001:evt_1042:space-time",
+            occurred_at="2026-07-02 00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "delivered_at must be an ISO-8601 datetime",
+        lambda: CallbackEnvelope(
+            delivery_id="del_compact_offset",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key="sub_001:evt_1042:compact-offset",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01+0000",
+        ),
+    )
+    _assert_raises_value_error(
         "delivered_at must not be before occurred_at",
         lambda: CallbackEnvelope(
             delivery_id="del_002",
@@ -236,6 +267,10 @@ def test_callback_envelope_validates_timestamp_fields() -> None:
     _assert_raises_value_error(
         "timestamp must be an ISO-8601 datetime",
         lambda: sign_webhook_hmac_sha256(envelope, b"callback-secret", timestamp="later"),
+    )
+    _assert_raises_value_error(
+        "timestamp must be an ISO-8601 datetime",
+        lambda: envelope.unsigned_headers(timestamp="2026-07-02T00:00:01+0000"),
     )
 
 

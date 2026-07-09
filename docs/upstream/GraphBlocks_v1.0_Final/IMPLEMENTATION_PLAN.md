@@ -610,6 +610,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   invalid callback endpoint deadlines are rejected before resume admission. The Python callback
   projection also denies resume when a durable callback receipt was recorded after the endpoint
   expiration, even if the projection is evaluated later with a different clock value.
+- `graphblocks-callbacks` timestamp validation now rejects space-separated datetimes and compact
+  timezone offsets such as `+0000` on webhook envelopes, signing headers, endpoint expirations,
+  retry projections, dead-letter/redrive timestamps, and external callback receipts, keeping the
+  optional callback projection package aligned with the shared RFC 3339-style durable TCK parser.
 - `CallbackEndpointRef` now rejects endpoint URLs with surrounding whitespace before scheme
   validation, preserving exact ingress route identity for signed callback submissions.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
