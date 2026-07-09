@@ -241,6 +241,9 @@ Message
 - Python tool-call drafts and final tool calls now validate response ids, tool-call ids,
   resolved-tool ids, tool names, argument digests, and dependency ids as exact lifecycle
   identities before argument assembly, admission, or dependency planning can depend on them.
+- Python `ToolCallDraft` now enforces status/fragment/sequence invariants, so proposed drafts
+  cannot carry argument fragments and streaming or complete drafts cannot carry impossible fragment
+  counts before JSON assembly creates an immutable `ToolCall`.
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
 - Python `ToolResult` artifact references now validate artifact ids, URIs, media types, checksums,

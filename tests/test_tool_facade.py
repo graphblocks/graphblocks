@@ -1331,6 +1331,49 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         ToolResultEvent.started("call-1", True, started_at="2026-06-23T00:00:00Z")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"argument_fragments": ("{",), "sequence": 1, "status": "proposed"},
+            "tool call draft proposed status must not carry argument fragments",
+        ),
+        (
+            {"sequence": 1, "status": "proposed"},
+            "tool call draft proposed status must have sequence 0",
+        ),
+        (
+            {"argument_fragments": (), "sequence": 0, "status": "arguments_streaming"},
+            "tool call draft arguments_streaming status requires argument fragments",
+        ),
+        (
+            {"argument_fragments": (), "sequence": 0, "status": "arguments_complete"},
+            "tool call draft arguments_complete status requires argument fragments",
+        ),
+        (
+            {"argument_fragments": ("{", "}"), "sequence": 1, "status": "arguments_streaming"},
+            "tool call draft sequence must match argument fragment count",
+        ),
+        (
+            {"argument_fragments": ("{",), "sequence": 2, "status": "arguments_complete"},
+            "tool call draft sequence must match argument fragment count",
+        ),
+    ),
+)
+def test_tool_call_draft_validates_status_fragment_sequence_invariants(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "response_id": "response-1",
+        "tool_call_id": "call-1",
+        "tool_name": "knowledge.search",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ToolCallDraft(**(base | overrides))  # type: ignore[arg-type]
+
+
 def test_tool_call_lifecycle_rejects_non_string_fields() -> None:
     draft_cases = (
         ({"response_id": object()}, "tool call draft response_id must be a string"),

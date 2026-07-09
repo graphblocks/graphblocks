@@ -1081,6 +1081,15 @@ class ToolCallDraft:
             raise ValueError("tool call draft argument fragments must be strings") from error
         if any(not isinstance(fragment, str) for fragment in argument_fragments):
             raise ValueError("tool call draft argument fragments must be strings")
+        if self.status == "proposed":
+            if argument_fragments:
+                raise ValueError("tool call draft proposed status must not carry argument fragments")
+            if self.sequence != 0:
+                raise ValueError("tool call draft proposed status must have sequence 0")
+        elif not argument_fragments:
+            raise ValueError(f"tool call draft {self.status} status requires argument fragments")
+        elif self.sequence != len(argument_fragments):
+            raise ValueError("tool call draft sequence must match argument fragment count")
         object.__setattr__(self, "argument_fragments", argument_fragments)
 
     @classmethod
