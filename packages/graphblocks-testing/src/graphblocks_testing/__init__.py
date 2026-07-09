@@ -9489,7 +9489,10 @@ class TckRunner:
                         else:
                             resume_reevaluates_values.append(reevaluate.strip())
                     resume_reevaluates = tuple(resume_reevaluates_values)
-                    if len(resume_reevaluates) == len(raw_resume_reevaluates) and not (
+                    reevaluates_shape_valid = (
+                        len(resume_reevaluates) == len(raw_resume_reevaluates)
+                    )
+                    if reevaluates_shape_valid and not (
                         set(resume_reevaluates) >= {"policy", "budget", "release"}
                     ):
                         diagnostics.append(
@@ -9499,11 +9502,23 @@ class TckRunner:
                                 "path": "$.resume.reevaluates",
                             }
                         )
-                    if len(resume_reevaluates) == len(raw_resume_reevaluates) and "idempotency" not in resume_reevaluates:
+                    if reevaluates_shape_valid and "idempotency" not in resume_reevaluates:
                         diagnostics.append(
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
                                 "message": "async callback resume requires idempotency reevaluation",
+                                "path": "$.resume.reevaluates",
+                            }
+                        )
+                    if (
+                        reevaluates_shape_valid
+                        and not diagnostics
+                        and "ownership_lease" not in resume_reevaluates
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires ownership lease reevaluation",
                                 "path": "$.resume.reevaluates",
                             }
                         )

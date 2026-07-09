@@ -4291,6 +4291,41 @@ def test_testing_package_rejects_async_callback_resume_whitespace_callback_ident
         )
 
 
+def test_testing_package_rejects_async_callback_resume_missing_ownership_lease_reevaluation(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
+    fixture = json.loads(
+        json.dumps(
+            next(
+                raw_case
+                for raw_case in raw_cases
+                if raw_case["name"] == "async_callback_resume_auth_schema_stale_and_budget_guards"
+            )
+        )
+    )
+    fixture.pop("expected", None)
+    fixture["resume"]["reevaluates"] = ["policy", "budget", "release", "idempotency"]
+    case = graphblocks_testing.TckCase.durable(
+        case_id="durable/async-callback-resume-missing-ownership-lease-reevaluation",
+        fixture=fixture,
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert not report.ok
+    assert report.results[0].diagnostics == (
+        {
+            "code": "DurableAsyncCallbackResumeInvalid",
+            "message": "async callback resume requires ownership lease reevaluation",
+            "path": "$.resume.reevaluates",
+        },
+    )
+
+
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

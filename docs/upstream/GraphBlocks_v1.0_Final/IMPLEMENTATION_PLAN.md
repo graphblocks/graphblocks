@@ -860,6 +860,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   rejecting surrounding whitespace on `providerOperationId`, `operationId`, `runId`, `nodeId`,
   `attemptId`, `releaseId`, `tenantId`, and `policySnapshotId` before those values can match a
   waiting operation and release, tenant, policy, or provider fence.
+- Python TCK validation now rejects otherwise admissible callback resumes whose `resume.reevaluates`
+  list omits `ownership_lease`, so callback-triggered progress must prove the run ownership fence
+  was rechecked alongside policy, budget, release compatibility, and idempotency.
 - Shared durable async callback resume TCK fixtures now require supplied callback receipt envelopes
   to carry a nonblank `idempotencyKey` and ISO `receivedAt` value, so journal-before-resume
   conformance cannot be proven from an undeduplicable or untimestamped callback receipt.
