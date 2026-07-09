@@ -2501,10 +2501,36 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "tenant_id",
                 "providerOperationId",
                 "provider_operation_id",
+                "eventType",
+                "event_type",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
             if callback_receipt_supplied {
+                if raw_callback.contains_key("eventType") || raw_callback.contains_key("event_type")
+                {
+                    let event_type_path = if raw_callback.contains_key("eventType")
+                        || !raw_callback.contains_key("event_type")
+                    {
+                        "eventType"
+                    } else {
+                        "event_type"
+                    };
+                    if raw_callback
+                        .get("eventType")
+                        .or_else(|| raw_callback.get("event_type"))
+                        .and_then(Value::as_str)
+                        .map_or(true, |event_type| {
+                            event_type.trim() != "ExternalCallbackReceived"
+                        })
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume callback eventType must be ExternalCallbackReceived",
+                            "path": format!("$.callback.{event_type_path}"),
+                        }));
+                    }
+                }
                 let callback_id_path = if raw_callback.contains_key("callbackId")
                     || !raw_callback.contains_key("callback_id")
                 {

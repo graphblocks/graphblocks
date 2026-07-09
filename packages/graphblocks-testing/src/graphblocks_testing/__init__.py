@@ -8606,9 +8606,28 @@ class TckRunner:
                         "tenant_id",
                         "providerOperationId",
                         "provider_operation_id",
+                        "eventType",
+                        "event_type",
                     )
                 )
                 if callback_receipt_supplied:
+                    if "eventType" in raw_callback or "event_type" in raw_callback:
+                        event_type_path = (
+                            "eventType"
+                            if "eventType" in raw_callback or "event_type" not in raw_callback
+                            else "event_type"
+                        )
+                        event_type = raw_callback.get(
+                            "eventType", raw_callback.get("event_type")
+                        )
+                        if not isinstance(event_type, str) or event_type.strip() != "ExternalCallbackReceived":
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback eventType must be ExternalCallbackReceived",
+                                    "path": f"$.callback.{event_type_path}",
+                                }
+                            )
                     callback_id_path = (
                         "callbackId"
                         if "callbackId" in raw_callback or "callback_id" not in raw_callback
