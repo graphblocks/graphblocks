@@ -9639,13 +9639,8 @@ class TckRunner:
                         }
                     )
                 else:
-                    try:
-                        submitted_at_value = datetime.fromisoformat(
-                            submitted_at.replace("Z", "+00:00")
-                            if submitted_at.endswith("Z")
-                            else submitted_at
-                        )
-                    except ValueError:
+                    submitted_at_text = submitted_at.strip()
+                    if len(submitted_at_text) <= 10 or submitted_at_text[10] != "T":
                         diagnostics.append(
                             {
                                 "code": "DurableExternalOperationInvalid",
@@ -9653,6 +9648,21 @@ class TckRunner:
                                 "path": f"$.operation.{submitted_at_path}",
                             }
                         )
+                    else:
+                        try:
+                            submitted_at_value = datetime.fromisoformat(
+                                submitted_at_text.replace("Z", "+00:00")
+                                if submitted_at_text.endswith("Z")
+                                else submitted_at_text
+                            )
+                        except ValueError:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableExternalOperationInvalid",
+                                    "message": "external operation reconciliation requires ISO submittedAt",
+                                    "path": f"$.operation.{submitted_at_path}",
+                                }
+                            )
                 if (
                     created_at_value is not None
                     and submitted_at_value is not None
