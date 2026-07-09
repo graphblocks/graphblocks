@@ -2391,6 +2391,104 @@ def test_server_app_rejection_records_callback_artifact_ids() -> None:
     )
 
 
+def test_server_app_rejects_async_callback_with_whitespace_wrapped_required_identities() -> None:
+    cases = (
+        (
+            {"callback_id": " cb-1"},
+            {"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            "server async callback callback_id must not contain surrounding whitespace",
+        ),
+        (
+            {"callback_id": "cb-1"},
+            {"GraphBlocks-Idempotency-Key": "idem-callback-1 "},
+            "server async callback idempotency_key must not contain surrounding whitespace",
+        ),
+        (
+            {"operationId": "op-ci-1 ", "callback_id": "cb-1"},
+            {"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            "server async callback operation_id must not contain surrounding whitespace",
+        ),
+    )
+    for index, (body_overrides, headers, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={"Authorization": "Bearer token-1", **headers},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        **body_overrides,
+                        "payload": {"status": "completed", "case": index},
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-02T00:00:0{index}Z",
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {"ok": False, "error": expected_error}
+        assert app.callback_submissions("op-ci-1") == ()
+        assert app.async_callback_rejections("op-ci-1") == ()
+
+
+def test_server_app_rejects_async_callback_with_whitespace_wrapped_scope_fences() -> None:
+    cases = (
+        ({"run_id": "run-1 "}, "server async callback run_id must not contain surrounding whitespace"),
+        ({"node_id": " waitCI"}, "server async callback node_id must not contain surrounding whitespace"),
+        ({"attempt_id": "attempt-1 "}, "server async callback attempt_id must not contain surrounding whitespace"),
+        (
+            {"providerOperationId": " provider-ci-1"},
+            "server async callback provider_operation_id must not contain surrounding whitespace",
+        ),
+    )
+    for index, (body_overrides, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+        app._events_by_run_id["run-1"] = (
+            {
+                "kind": "RunStarted",
+                "payload": {"runId": "run-1"},
+                "metadata": {
+                    "runId": "run-1",
+                    "sequence": 1,
+                    "cursor": "run-1:1",
+                    "releaseId": "release-1",
+                    "occurredAt": "2026-07-03T00:00:00Z",
+                },
+            },
+        )
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/callbacks/op-ci-scope-{index}",
+                headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": f"idem-callback-{index}"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": f"cb-{index}",
+                        "run_id": "run-1",
+                        "node_id": "waitCI",
+                        "attempt_id": "attempt-1",
+                        **body_overrides,
+                        "payload": {"status": "completed", "case": index},
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-03T00:00:0{index}Z",
+            )
+        )
+
+        operation_id = f"op-ci-scope-{index}"
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {"ok": False, "error": expected_error}
+        assert app.callback_submissions(operation_id) == ()
+        assert app.async_callback_rejections(operation_id) == ()
+
+
 def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation() -> None:
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay", roles=("operator",))})

@@ -804,17 +804,17 @@ class ServerAsyncCallbackSubmission:
         object.__setattr__(
             self,
             "operation_id",
-            _validate_non_empty_string("server async callback", "operation_id", self.operation_id),
+            _validate_exact_non_empty_string("server async callback", "operation_id", self.operation_id),
         )
         object.__setattr__(
             self,
             "callback_id",
-            _validate_non_empty_string("server async callback", "callback_id", self.callback_id),
+            _validate_exact_non_empty_string("server async callback", "callback_id", self.callback_id),
         )
         object.__setattr__(
             self,
             "idempotency_key",
-            _validate_non_empty_string("server async callback", "idempotency_key", self.idempotency_key),
+            _validate_exact_non_empty_string("server async callback", "idempotency_key", self.idempotency_key),
         )
         if not isinstance(self.payload, Mapping):
             raise ValueError("server async callback payload must be a JSON object")
@@ -874,7 +874,7 @@ class ServerAsyncCallbackSubmission:
                 canonical_hash(_thaw_json_value(self.payload)),
             )
         else:
-            payload_digest = _validate_non_empty_string(
+            payload_digest = _validate_exact_non_empty_string(
                 "server async callback",
                 "payload_digest",
                 self.payload_digest,
@@ -888,7 +888,7 @@ class ServerAsyncCallbackSubmission:
                 object.__setattr__(
                     self,
                     field_name,
-                    _validate_non_empty_string("server async callback", field_name, value),
+                    _validate_exact_non_empty_string("server async callback", field_name, value),
                 )
         if self.received_at != "":
             object.__setattr__(
@@ -899,12 +899,12 @@ class ServerAsyncCallbackSubmission:
         object.__setattr__(
             self,
             "verified_by",
-            _validate_non_empty_string("server async callback", "verified_by", self.verified_by),
+            _validate_exact_non_empty_string("server async callback", "verified_by", self.verified_by),
         )
         object.__setattr__(
             self,
             "policy_snapshot_id",
-            _validate_non_empty_string(
+            _validate_exact_non_empty_string(
                 "server async callback",
                 "policy_snapshot_id",
                 self.policy_snapshot_id,
@@ -924,12 +924,12 @@ class ServerAsyncCallbackSubmission:
             raise ValueError("server async callback body must be a JSON object")
         declared_operation_id = _callback_alias_value(body, "operation_id", "operationId")
         if declared_operation_id is not None:
-            declared_operation_id = _validate_non_empty_string(
+            declared_operation_id = _validate_exact_non_empty_string(
                 "server async callback",
                 "operation_id",
                 declared_operation_id,
             )
-            endpoint_operation_id = _validate_non_empty_string(
+            endpoint_operation_id = _validate_exact_non_empty_string(
                 "server async callback",
                 "operation_id",
                 operation_id,
@@ -942,12 +942,12 @@ class ServerAsyncCallbackSubmission:
             raise ValueError("server async callback payload is required")
         return cls(
             operation_id=operation_id,
-            callback_id=_validate_non_empty_string(
+            callback_id=_validate_exact_non_empty_string(
                 "server async callback",
                 "callback_id",
                 _callback_alias_value(body, "callback_id", "callbackId", ""),
             ),
-            idempotency_key=_validate_non_empty_string(
+            idempotency_key=_validate_exact_non_empty_string(
                 "server async callback",
                 "idempotency_key",
                 idempotency_key,
@@ -965,7 +965,7 @@ class ServerAsyncCallbackSubmission:
             artifacts=body.get("artifacts", ()),
             received_at=request.requested_at or _utc_now_iso(),
             verified_by=verified_by,
-            policy_snapshot_id=_validate_non_empty_string(
+            policy_snapshot_id=_validate_exact_non_empty_string(
                 "server async callback",
                 "policy_snapshot_id",
                 _callback_alias_value(body, "policy_snapshot_id", "policySnapshotId", "local"),
@@ -1637,7 +1637,7 @@ def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str
     value = _callback_alias_value(body, snake, camel)
     if value is None:
         return None
-    return _validate_non_empty_string("server async callback", snake, value)
+    return _validate_exact_non_empty_string("server async callback", snake, value)
 
 
 def _callback_idempotency_key(body: Mapping[str, object], headers: Mapping[str, str]) -> object:
@@ -2614,12 +2614,12 @@ class GraphBlocksServerApp:
                         idempotency_key = _callback_idempotency_key(body, request.headers)
                         submission = ServerAsyncCallbackSubmission(
                             operation_id=route_match.path_params.get("operation_id", ""),
-                            callback_id=_validate_non_empty_string(
+                            callback_id=_validate_exact_non_empty_string(
                                 "server async callback",
                                 "callback_id",
                                 _callback_alias_value(body, "callback_id", "callbackId", ""),
                             ),
-                            idempotency_key=_validate_non_empty_string(
+                            idempotency_key=_validate_exact_non_empty_string(
                                 "server async callback",
                                 "idempotency_key",
                                 idempotency_key,
@@ -2641,7 +2641,7 @@ class GraphBlocksServerApp:
                                 if auth_decision.principal is not None
                                 else "unauthenticated"
                             ),
-                            policy_snapshot_id=_validate_non_empty_string(
+                            policy_snapshot_id=_validate_exact_non_empty_string(
                                 "server async callback",
                                 "policy_snapshot_id",
                                 _callback_alias_value(body, "policy_snapshot_id", "policySnapshotId", "local"),

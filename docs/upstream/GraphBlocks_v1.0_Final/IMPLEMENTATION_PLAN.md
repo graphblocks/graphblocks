@@ -1274,6 +1274,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   both declare an idempotency key, they must also agree before the request can be accepted or
   projected as a route-bound rejection. The preferred `GraphBlocks-Idempotency-Key` header and
   legacy `Idempotency-Key` header are also rejected when both are present with different values.
+  Callback ingress identity and fencing values, including operation id, callback id,
+  idempotency key, run id, node id, attempt id, provider operation id, verifier id, policy
+  snapshot id, and payload digest, are exact tokens; values that only become valid after trimming
+  whitespace are rejected before receipt storage, duplicate detection, or stale-attempt checks.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
   idempotency comparisons. Accepted callback submission projections now also record the canonical
