@@ -10,10 +10,12 @@ from graphblocks.documents import (
     chunk_document_by_lines,
 )
 from graphblocks.rag import (
+    AuthContext,
     ContextPack,
     FederatedRetrievalSource,
     InMemoryChunkRetriever,
     KnowledgeItemRef,
+    QueryPlan,
     RetrievalResult,
     SearchHit,
     SearchRequest,
@@ -137,6 +139,93 @@ def test_rag_request_item_hit_context_and_result_records_validate_wire_shape() -
         RetrievalResult(retrieval_id="ret-1", request=request, hits=[], total_candidates=-1)
     with pytest.raises(ValueError, match="retrieval result latency_ms must be finite"):
         RetrievalResult(retrieval_id="ret-1", request=request, hits=[], latency_ms=float("nan"))
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: SearchRequest(query_text="beta", metadata={" trace": "t1"}),
+            "search request metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: QueryPlan(original="beta", rewritten=[" beta"]),
+            "query plan rewritten item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: AuthContext(tenant_id=" tenant-1", principal_id="user-1"),
+            "auth context tenant_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: AuthContext(tenant_id="tenant-1", principal_id="user-1", groups={" support"}),
+            "auth context groups item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: AuthContext(tenant_id="tenant-1", principal_id="user-1", attributes={" role": "support"}),
+            "auth context attributes metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: RetrievalResult(retrieval_id=" ret-1", request=SearchRequest("beta"), hits=[]),
+            "retrieval result retrieval_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: RetrievalResult(retrieval_id="ret-1", request=SearchRequest("beta"), hits=[], warnings=[" stale"]),
+            "retrieval result warnings item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: FederatedRetrievalSource(source_id=" local", result=RetrievalResult("ret-1", SearchRequest("beta"), [])),
+            "federated retrieval source source_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: KnowledgeItemRef(item_id=" chunk-1", item_kind="document_chunk", source=_source()),
+            "knowledge item ref item_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: KnowledgeItemRef(
+                item_id="chunk-1",
+                item_kind="document_chunk",
+                source=_source(),
+                schema_ref=" schemas/Chunk@1",
+            ),
+            "knowledge item ref schema_ref must not contain surrounding whitespace",
+        ),
+        (
+            lambda: KnowledgeItemRef(
+                item_id="chunk-1",
+                item_kind="document_chunk",
+                source=_source(),
+                preview=[" alpha"],
+            ),
+            "knowledge item ref preview item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SearchHit(hit_id=" hit-1", item=_hit().item, rank=1, retriever="local-test"),
+            "search hit hit_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SearchHit(hit_id="hit-1", item=_hit().item, rank=1, retriever=" local-test"),
+            "search hit retriever must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SearchHit(hit_id="hit-1", item=_hit().item, rank=1, retriever="local-test", score_kind=" bm25"),
+            "search hit score_kind must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ContextPack(context_id=" ctx-1", hits=[]),
+            "context pack context_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ContextPack(context_id="ctx-1", hits=[], metadata={" source": "kb"}),
+            "context pack metadata keys must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_rag_retrieval_records_reject_whitespace_wrapped_identities(
+    factory: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
 
 
 def test_federated_retrieval_source_validates_identity_result_and_weight() -> None:

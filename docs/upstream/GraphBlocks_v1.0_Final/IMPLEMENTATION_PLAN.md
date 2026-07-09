@@ -2539,6 +2539,9 @@ truth.
 - RAG freshness filtering now validates `minimum_source_modified_at` and source-modified metadata as
   strict RFC 3339-style datetimes, rejecting permissive space-separated or timezone-less forms before
   context packing and freshness metrics can treat stale evidence as current.
+- RAG request, result, context, and citation primitives now reject whitespace-wrapped retrieval ids,
+  retriever ids, knowledge item refs, citation/claim ids, metadata keys, and provenance lists before
+  context packing, citation tracing, fusion, or reranking can depend on normalized identifiers.
 - Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
   turn lifecycle, draft/retract semantics, and deterministic conflict handling.
 - `ContentPart` JSON data and metadata now recursively validate strict JSON values at construction

@@ -28,6 +28,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     value = _validate_string(owner, field_name, value)
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -75,6 +77,8 @@ def _copy_metadata(owner: str, value: object, *, field_name: str = "metadata") -
             raise ValueError(f"{owner} {field_name} keys must be strings")
         if not key.strip():
             raise ValueError(f"{owner} {field_name} keys must not be empty")
+        if key != key.strip():
+            raise ValueError(f"{owner} {field_name} keys must not contain surrounding whitespace")
     return metadata
 
 

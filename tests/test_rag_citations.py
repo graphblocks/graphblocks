@@ -172,6 +172,84 @@ def test_resolve_citation_source_trace_links_citation_to_context_hit_and_documen
     assert trace.locator.chunk_id == hit.item.item_id
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: Citation(" cite-1", _single_hit_context().hits[0].item.source),
+            "citation citation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Citation("cite-1", _single_hit_context().hits[0].item.source, claim_id=" claim-1"),
+            "citation claim_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Citation("cite-1", _single_hit_context().hits[0].item.source, metadata={" source": "kb"}),
+            "citation metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Claim(" claim-1", "Alpha policy", citation_ids=["cite-1"]),
+            "claim claim_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Claim("claim-1", "Alpha policy", citation_ids=[" cite-1"]),
+            "claim citation_ids item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Abstention(" no_evidence", "I do not have enough evidence."),
+            "abstention reason must not contain surrounding whitespace",
+        ),
+        (
+            lambda: Answer(" answer-1", "Alpha policy", metadata={" source": "kb"}),
+            "answer answer_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: CitationValidationIssue(" citation.missing", "Citation is missing."),
+            "citation validation issue code must not contain surrounding whitespace",
+        ),
+        (
+            lambda: CitationValidationIssue("citation.missing", "Citation is missing.", citation_id=" cite-1"),
+            "citation validation issue citation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: CitationSourceTrace(
+                citation_id=" cite-1",
+                claim_id=None,
+                context_id="ctx-1",
+                hit_id="hit-1",
+                retriever="local-test",
+                item_id="chunk-1",
+                item_kind="document_chunk",
+                source=_single_hit_context().hits[0].item.source,
+                locator=None,
+            ),
+            "citation source trace citation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: CitationSourceTrace(
+                citation_id="cite-1",
+                claim_id="claim-1",
+                context_id="ctx-1",
+                hit_id="hit-1",
+                retriever="local-test",
+                item_id="chunk-1",
+                item_kind="document_chunk",
+                source=_single_hit_context().hits[0].item.source,
+                locator=None,
+                element_ids=[" el-1"],
+            ),
+            "citation source trace element_ids item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_rag_citation_records_reject_whitespace_wrapped_identities(
+    factory: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_resolve_citation_source_trace_rejects_wrong_locator_on_matching_source() -> None:
     context = _single_hit_context()
     source = context.hits[0].item.source
