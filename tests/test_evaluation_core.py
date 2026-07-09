@@ -665,6 +665,58 @@ def test_change_set_rejects_non_mapping_operations() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: ChangeSet(
+                change_set_id=" change-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+            ),
+            "change set change_set_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ChangeSet(
+                change_set_id="change-1",
+                base=object(),  # type: ignore[arg-type]
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+            ),
+            "change set base must be a ResourceSnapshotRef",
+        ),
+        (
+            lambda: ChangeSet(
+                change_set_id="change-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=object(),  # type: ignore[arg-type]
+            ),
+            "change set candidate must be a ResourceSnapshotRef",
+        ),
+        (
+            lambda: ChangeSet(
+                change_set_id="change-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+                operations=[{object(): "file.write"}],  # type: ignore[dict-item]
+            ),
+            "change set operation keys must be strings",
+        ),
+        (
+            lambda: ChangeSet(
+                change_set_id="change-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+                operations=[{" op": "file.write"}],
+            ),
+            "change set operation key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_change_set_validates_identity_snapshots_and_operation_keys(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_result_bundle_digest_is_stable_without_record_identity() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
     gate = evaluate_gate("quality", subject, checks=[], metrics=[])

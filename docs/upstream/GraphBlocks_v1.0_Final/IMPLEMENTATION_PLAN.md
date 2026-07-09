@@ -2855,6 +2855,9 @@ sandbox
 - Python run provenance now rejects whitespace-wrapped graph, release, deployment revision,
   physical plan, and release-signature digests while validating start/completion timestamps before
   provenance snapshots are attached to result bundle hashes.
+- Python evaluation change sets now reject whitespace-wrapped change-set ids, non-snapshot
+  base/candidate refs, and invalid operation keys before workspace trials can freeze or hash
+  candidate mutations.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

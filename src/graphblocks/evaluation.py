@@ -305,6 +305,11 @@ class ChangeSet:
     summary: str | None = None
 
     def __post_init__(self) -> None:
+        _validate_exact_non_empty_string("change set", "change_set_id", self.change_set_id)
+        if not isinstance(self.base, ResourceSnapshotRef):
+            raise ValueError("change set base must be a ResourceSnapshotRef")
+        if not isinstance(self.candidate, ResourceSnapshotRef):
+            raise ValueError("change set candidate must be a ResourceSnapshotRef")
         operations: list[dict[str, object]] = []
         try:
             raw_operations = tuple(self.operations)
@@ -313,7 +318,7 @@ class ChangeSet:
         for operation in raw_operations:
             if not isinstance(operation, Mapping):
                 raise ValueError("change set operations must be mappings")
-            operations.append(dict(operation))
+            operations.append(_copy_mapping("change set", "operation", operation))
         object.__setattr__(self, "operations", tuple(operations))
 
 
