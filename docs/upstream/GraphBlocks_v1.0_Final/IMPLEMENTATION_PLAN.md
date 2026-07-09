@@ -1047,6 +1047,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Local and S3-compatible blob stores now reject whitespace-only blob keys and key segments before
   artifact writes, reads, listings, or metadata projection. This prevents visually blank artifact
   identities from entering callback payload handling, artifact references, and replayable storage.
+- Blob-store put options, user metadata keys/values, metadata etags, list cursors, and
+  S3-compatible bucket/scheme identities now reject values that only become valid after trimming,
+  so artifact references are not normalized differently by local and remote storage adapters.
 - Local blob-store metadata replay now parses sidecar JSON with strict JSON semantics and requires
   an object root, rejecting non-standard constants such as `NaN` before persisted artifact metadata
   can be projected through `head` or `list`.

@@ -22,6 +22,17 @@ class InvalidBlobKeyError(BlobStoreError):
     pass
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    label = f"{owner} {field_name}" if owner else field_name
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    if not value.strip():
+        raise ValueError(f"{label} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{label} must not contain surrounding whitespace")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class BlobKey:
     key: str
@@ -57,20 +68,18 @@ class PutOptions:
     def __post_init__(self) -> None:
         for field_name in ("media_type", "filename"):
             value = getattr(self, field_name)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"put {field_name} must be a string")
-            if value is not None and not value.strip():
-                raise ValueError(f"put {field_name} must not be empty")
+            if value is not None:
+                _validate_exact_non_empty_string("put", field_name, value)
         if not isinstance(self.metadata, Mapping):
             raise ValueError("put metadata must be a mapping")
         metadata = dict(self.metadata)
-        if any(
-            not isinstance(name, str)
-            or not name.strip()
-            or not isinstance(value, str)
-            for name, value in metadata.items()
-        ):
-            raise ValueError("put metadata keys and values must be strings")
+        for name, value in metadata.items():
+            if not isinstance(name, str) or not name.strip() or not isinstance(value, str) or not value.strip():
+                raise ValueError("put metadata keys and values must be strings")
+            if name != name.strip():
+                raise ValueError("put metadata keys must not contain surrounding whitespace")
+            if value != value.strip():
+                raise ValueError("put metadata values must not contain surrounding whitespace")
         object.__setattr__(self, "metadata", MappingProxyType(metadata))
 
 
@@ -89,6 +98,8 @@ class BlobMetadata:
             raise ValueError("blob metadata etag must be a string")
         if self.etag is not None and not self.etag.strip():
             raise ValueError("blob metadata etag must not be empty")
+        if self.etag is not None and self.etag != self.etag.strip():
+            raise ValueError("blob metadata etag must not contain surrounding whitespace")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +129,8 @@ class ListPage:
             raise ValueError("list page next_cursor must be a string")
         if self.next_cursor is not None and not self.next_cursor.strip():
             raise ValueError("list page next_cursor must not be empty")
+        if self.next_cursor is not None and self.next_cursor != self.next_cursor.strip():
+            raise ValueError("list page next_cursor must not contain surrounding whitespace")
         object.__setattr__(self, "items", items)
 
 
@@ -320,14 +333,8 @@ class S3CompatibleBlobStore:
     uri_scheme: str = "s3"
 
     def __post_init__(self) -> None:
-        if not isinstance(self.bucket, str):
-            raise ValueError("bucket must be a string")
-        if not self.bucket.strip():
-            raise ValueError("bucket must not be empty")
-        if not isinstance(self.uri_scheme, str):
-            raise ValueError("uri_scheme must be a string")
-        if not self.uri_scheme.strip():
-            raise ValueError("uri_scheme must not be empty")
+        _validate_exact_non_empty_string("", "bucket", self.bucket)
+        _validate_exact_non_empty_string("", "uri_scheme", self.uri_scheme)
 
     def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
         self._validate_key(key)

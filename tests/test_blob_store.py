@@ -91,6 +91,51 @@ def test_put_options_rejects_invalid_metadata() -> None:
         PutOptions(metadata={"tenant": object()})  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: PutOptions(media_type=" text/plain"),
+            "put media_type must not contain surrounding whitespace",
+        ),
+        (
+            lambda: PutOptions(filename="policy.txt "),
+            "put filename must not contain surrounding whitespace",
+        ),
+        (
+            lambda: PutOptions(metadata={" tenant": "acme"}),
+            "put metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: PutOptions(metadata={"tenant": " acme"}),
+            "put metadata values must not contain surrounding whitespace",
+        ),
+        (
+            lambda: BlobMetadata(BlobKey("docs/policy.txt"), ArtifactRef("artifact-1", "file:///tmp/policy.txt"), etag=" etag-1"),
+            "blob metadata etag must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ListPage(items=[], next_cursor=" 1"),
+            "list page next_cursor must not contain surrounding whitespace",
+        ),
+        (
+            lambda: S3CompatibleBlobStore(bucket=" kb-artifacts", client=_FakeS3Client()),
+            "bucket must not contain surrounding whitespace",
+        ),
+        (
+            lambda: S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client(), uri_scheme=" s3"),
+            "uri_scheme must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_blob_store_records_reject_whitespace_wrapped_identities(
+    factory: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_local_blob_store_supports_range_reads(tmp_path) -> None:
     store = LocalBlobStore(tmp_path)
     store.put(BlobKey("data.bin"), b"abcdef", PutOptions(media_type="application/octet-stream"))
