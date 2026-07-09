@@ -150,7 +150,13 @@ def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
+def _freeze_json_value(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    key_field_name: str | None = None,
+) -> object:
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int) and not isinstance(value, bool):
@@ -160,17 +166,29 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
             raise ValueError(f"{owner} {field_name} must not contain non-finite numbers")
         return value
     if isinstance(value, _FrozenJsonArray):
-        return _FrozenJsonArray(_freeze_json_value(owner, field_name, item) for item in value)
+        return _FrozenJsonArray(
+            _freeze_json_value(owner, field_name, item, key_field_name=key_field_name) for item in value
+        )
     if isinstance(value, list):
-        return _FrozenJsonArray(_freeze_json_value(owner, field_name, item) for item in value)
+        return _FrozenJsonArray(
+            _freeze_json_value(owner, field_name, item, key_field_name=key_field_name) for item in value
+        )
     if isinstance(value, tuple):
         raise ValueError(f"{owner} {field_name} must contain only JSON values")
     if isinstance(value, Mapping):
+        key_label = field_name if key_field_name is None else key_field_name
         frozen: dict[str, object] = {}
         for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError(f"{owner} {field_name} must contain only string object keys")
-            frozen[key] = _freeze_json_value(owner, field_name, item)
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"{owner} {key_label} keys must be non-empty strings")
+            if key != key.strip():
+                raise ValueError(f"{owner} {key_label} keys must not contain surrounding whitespace")
+            frozen[key] = _freeze_json_value(
+                owner,
+                field_name,
+                item,
+                key_field_name=f"{key_label}.{key}",
+            )
         return MappingProxyType(frozen)
     raise ValueError(f"{owner} {field_name} must contain only JSON values")
 

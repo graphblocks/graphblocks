@@ -233,11 +233,25 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
     with raises_value_error("async operation result output must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1", output=object())
 
+    with raises_value_error("async operation result output keys must be non-empty strings"):
+        graphblocks.AsyncOperationResult.completed("op-1", output={"": "completed"})
+
+    with raises_value_error("async operation result output.summary keys must not contain surrounding whitespace"):
+        graphblocks.AsyncOperationResult.completed(
+            "op-1",
+            output={"summary": {" status": "completed"}},
+        )
+
     with raises_value_error("async operation result output must not contain non-finite numbers"):
         graphblocks.AsyncOperationResult.completed("op-1", output={"value": math.nan})
 
     with raises_value_error("async operation result output must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1", output=("not", "json"))
+
+    with raises_value_error("async operation result artifacts keys must not contain surrounding whitespace"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(
+            artifacts=[{" artifact_id": "artifact-1", "uri": "blob://ci/log"}]
+        )
 
     with raises_value_error("async operation result artifacts must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
@@ -635,6 +649,44 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             received_at="2026-07-02T00:10:00Z",
             verified_by="hmac-sha256:callback-endpoint-1",
             policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received payload.status keys must be non-empty strings"):
+        payload = {"status": {"": "completed"}}
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload=payload,
+            payload_digest=graphblocks.canonical_hash(payload),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+        )
+
+    with raises_value_error("external callback received artifacts keys must not contain surrounding whitespace"):
+        graphblocks.ExternalCallbackReceived(
+            callback_id="cb-1",
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:10:00Z",
+            verified_by="hmac-sha256:callback-endpoint-1",
+            policy_snapshot_id="policy-1",
+            artifacts=[
+                {
+                    "artifact_id": "artifact-ci-log",
+                    "uri": "blob://ci/log",
+                    " checksum": "sha256:" + "b" * 64,
+                }
+            ],
         )
 
     with raises_value_error("external callback received artifacts must be a sequence"):
