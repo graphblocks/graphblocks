@@ -712,6 +712,50 @@
     }
   },
   {
+    "name": "background_run_compact_offset_event_occurred_at_rejected",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "job",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-compact-offset-event",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-compact-offset-event/events",
+      "websocket": "/v1/runs/run-compact-offset-event/ws",
+      "cancel": "/v1/runs/run-compact-offset-event/cancel",
+      "initialCursor": "evt_0"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-compact-offset-1",
+        "runId": "run-compact-offset-event",
+        "releaseId": "release-background-001",
+        "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01+0000",
+        "cursor": "evt_1",
+        "type": "RunStarted",
+        "payload": {}
+      }
+    ],
+    "attach": {
+      "lastCursor": "evt_0"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run event requires ISO occurredAt",
+        "path": "$.events[0].occurredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "background_run_replay_from_initial_cursor_returns_retained_events",
     "kind": "background_run_event_stream",
     "responseMode": "accepted",
