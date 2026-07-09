@@ -4590,6 +4590,11 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_op
             "$.operation.idempotencyKey",
         ),
         (
+            "resumeTokenHash",
+            "external operation reconciliation resumeTokenHash must not contain surrounding whitespace",
+            "$.operation.resumeTokenHash",
+        ),
+        (
             "runId",
             "external operation reconciliation runId must not contain surrounding whitespace",
             "$.operation.runId",

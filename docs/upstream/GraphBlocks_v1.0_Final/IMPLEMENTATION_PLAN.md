@@ -2379,8 +2379,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   conformance by matching only after normalization.
 - Python TCK validation also rejects surrounding whitespace on the operation-side reconciliation
   evidence fields (`operationId`, `providerOperationId`, `idempotencyKey`, `runId`, `nodeId`,
-  `attemptId`, `releaseId`, `tenantId`, `policySnapshotId`, and `expectedSchema`) before those
-  fields can drive callback matching, resume fencing, or late usage reconciliation checks.
+  `attemptId`, `releaseId`, `tenantId`, `policySnapshotId`, `resumeTokenHash`, and
+  `expectedSchema`) before those fields can drive callback matching, resume fencing, or late usage
+  reconciliation checks.
 - Python TCK validation now applies the same exact-value rule to late-callback receipt evidence,
   rejecting surrounding whitespace on callback/run/node/attempt/release/tenant identities,
   payload digest, terminal status, verifier identity, idempotency key, policy snapshot, and

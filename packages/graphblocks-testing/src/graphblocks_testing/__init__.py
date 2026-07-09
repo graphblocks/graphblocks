@@ -9804,9 +9804,24 @@ class TckRunner:
                 resume_token_hash = raw_operation.get(
                     "resumeTokenHash", raw_operation.get("resume_token_hash")
                 )
-                if (
-                    not isinstance(resume_token_hash, str)
-                    or not resume_token_hash.startswith("sha256:")
+                if not isinstance(resume_token_hash, str) or not resume_token_hash.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires resumeTokenHash sha256 digest",
+                            "path": f"$.operation.{resume_token_hash_path}",
+                        }
+                    )
+                elif resume_token_hash != resume_token_hash.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation resumeTokenHash must not contain surrounding whitespace",
+                            "path": f"$.operation.{resume_token_hash_path}",
+                        }
+                    )
+                elif (
+                    not resume_token_hash.startswith("sha256:")
                     or len(resume_token_hash.removeprefix("sha256:")) != 64
                     or any(
                         character not in "0123456789abcdef"
