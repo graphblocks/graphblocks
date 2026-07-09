@@ -4431,6 +4431,71 @@ def test_testing_package_rejects_async_callback_resume_whitespace_operation_evid
         )
 
 
+def test_testing_package_rejects_async_callback_resume_whitespace_receipt_metadata(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
+    base_fixture = json.loads(
+        json.dumps(
+            next(
+                raw_case
+                for raw_case in raw_cases
+                if raw_case["name"] == "async_callback_resume_auth_schema_stale_and_budget_guards"
+            )
+        )
+    )
+    base_fixture.pop("expected", None)
+    cases = (
+        (
+            "callbackId",
+            "async callback resume callback callbackId must not contain surrounding whitespace",
+            "$.callback.callbackId",
+        ),
+        (
+            "payloadDigest",
+            "async callback resume callback payloadDigest must not contain surrounding whitespace",
+            "$.callback.payloadDigest",
+        ),
+        (
+            "verifiedBy",
+            "async callback resume callback verifiedBy must not contain surrounding whitespace",
+            "$.callback.verifiedBy",
+        ),
+        (
+            "idempotencyKey",
+            "async callback resume callback idempotencyKey must not contain surrounding whitespace",
+            "$.callback.idempotencyKey",
+        ),
+        (
+            "receivedAt",
+            "async callback resume callback receivedAt must not contain surrounding whitespace",
+            "$.callback.receivedAt",
+        ),
+    )
+
+    for field_name, message, path in cases:
+        fixture = json.loads(json.dumps(base_fixture))
+        fixture["callback"][field_name] = f" {fixture['callback'][field_name]}"
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/async-callback-resume-callback-receipt-whitespace-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableAsyncCallbackResumeInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

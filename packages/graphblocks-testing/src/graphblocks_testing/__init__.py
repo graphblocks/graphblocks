@@ -9037,6 +9037,14 @@ class TckRunner:
                                 "path": f"$.callback.{callback_id_path}",
                             }
                         )
+                    elif callback_id != callback_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback callbackId must not contain surrounding whitespace",
+                                "path": f"$.callback.{callback_id_path}",
+                            }
+                        )
                     payload_digest_path = (
                         "payloadDigest"
                         if "payloadDigest" in raw_callback or "payload_digest" not in raw_callback
@@ -9045,9 +9053,24 @@ class TckRunner:
                     payload_digest = raw_callback.get(
                         "payloadDigest", raw_callback.get("payload_digest")
                     )
-                    if (
-                        not isinstance(payload_digest, str)
-                        or not payload_digest.startswith("sha256:")
+                    if not isinstance(payload_digest, str) or not payload_digest.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback requires payloadDigest sha256 digest",
+                                "path": f"$.callback.{payload_digest_path}",
+                            }
+                        )
+                    elif payload_digest != payload_digest.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback payloadDigest must not contain surrounding whitespace",
+                                "path": f"$.callback.{payload_digest_path}",
+                            }
+                        )
+                    elif (
+                        not payload_digest.startswith("sha256:")
                         or len(payload_digest.removeprefix("sha256:")) != 64
                         or any(
                             character not in "0123456789abcdef"
@@ -9077,6 +9100,14 @@ class TckRunner:
                                 "path": f"$.callback.{verified_by_path}",
                             }
                         )
+                    elif verified_by != verified_by.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback verifiedBy must not contain surrounding whitespace",
+                                "path": f"$.callback.{verified_by_path}",
+                            }
+                        )
                     elif verified_by.strip().lower() == "unauthenticated":
                         diagnostics.append(
                             {
@@ -9101,6 +9132,14 @@ class TckRunner:
                                 "path": f"$.callback.{idempotency_key_path}",
                             }
                         )
+                    elif idempotency_key != idempotency_key.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback idempotencyKey must not contain surrounding whitespace",
+                                "path": f"$.callback.{idempotency_key_path}",
+                            }
+                        )
                     received_at_path = (
                         "receivedAt"
                         if "receivedAt" in raw_callback or "received_at" not in raw_callback
@@ -9118,8 +9157,16 @@ class TckRunner:
                                 "path": f"$.callback.{received_at_path}",
                             }
                         )
+                    elif received_at != received_at.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback receivedAt must not contain surrounding whitespace",
+                                "path": f"$.callback.{received_at_path}",
+                            }
+                        )
                     else:
-                        received_at_text = received_at.strip()
+                        received_at_text = received_at
                         if len(received_at_text) <= 10 or received_at_text[10] != "T":
                             diagnostics.append(
                                 {

@@ -844,6 +844,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   envelopes, requiring nonblank `callbackId`, canonical `payloadDigest`, and nonblank
   `verifiedBy` evidence before journal-before-resume conformance can be proven from callback
   receipt metadata.
+- Python TCK validation now also treats callback receipt metadata as exact durable evidence,
+  rejecting surrounding whitespace on `callbackId`, `payloadDigest`, `verifiedBy`, `idempotencyKey`,
+  and `receivedAt` before those fields can prove durable receipt identity, authentication,
+  deduplication, or journal-before-resume ordering.
 - Shared durable async callback resume TCK fixtures now reject callback receipt envelopes whose
   payload schema validation evidence is false, so schema-invalid callback payloads cannot satisfy
   resume conformance.
