@@ -2185,15 +2185,25 @@ fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError>
         let (host, suffix) = rest
             .split_once(']')
             .ok_or(WebhookEndpointError::MalformedUrl)?;
-        if !suffix.is_empty() && !suffix.starts_with(':') {
-            return Err(WebhookEndpointError::MalformedUrl);
+        if !suffix.is_empty() {
+            let port = suffix
+                .strip_prefix(':')
+                .ok_or(WebhookEndpointError::MalformedUrl)?;
+            if port.is_empty() || port.parse::<u16>().is_err() {
+                return Err(WebhookEndpointError::MalformedUrl);
+            }
         }
         return Ok(normalize_host(host));
     }
 
-    let host = authority
-        .split_once(':')
-        .map_or(authority, |(host, _port)| host);
+    let host = if let Some((host, port)) = authority.split_once(':') {
+        if port.is_empty() || port.parse::<u16>().is_err() {
+            return Err(WebhookEndpointError::MalformedUrl);
+        }
+        host
+    } else {
+        authority
+    };
     if host.is_empty() || host.contains(':') {
         return Err(WebhookEndpointError::MalformedUrl);
     }
