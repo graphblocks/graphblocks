@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use graphblocks_schema::SchemaId;
 use serde_json::{Map, Value};
@@ -769,23 +769,57 @@ fn has_callback_signing(delivery: &Map<String, Value>) -> bool {
 }
 
 fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
-    let Some(url) = url.and_then(Value::as_str).map(str::trim) else {
+    let Some(url) = url.and_then(Value::as_str) else {
         return true;
     };
+    if url.trim() != url {
+        return true;
+    }
     let Some(rest) = url.strip_prefix("https://") else {
         return true;
     };
-    let authority = rest.split('/').next().unwrap_or_default();
+    let authority = rest.split(&['/', '?', '#'][..]).next().unwrap_or_default();
     if authority.is_empty() || authority.contains('@') {
         return true;
     }
-    let host = authority
-        .split(':')
-        .next()
-        .unwrap_or_default()
-        .trim_matches(['[', ']'])
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        let Some((host, suffix)) = rest.split_once(']') else {
+            return true;
+        };
+        if host.contains('%') || host.parse::<Ipv6Addr>().is_err() {
+            return true;
+        }
+        if !suffix.is_empty() {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return true;
+            };
+            if port.is_empty() || port.parse::<u16>().is_err() {
+                return true;
+            }
+        }
+        host.trim_end_matches('.').to_ascii_lowercase()
+    } else {
+        let host = if let Some((host, port)) = authority.split_once(':') {
+            if port.is_empty() || port.parse::<u16>().is_err() {
+                return true;
+            }
+            host
+        } else {
+            authority
+        };
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        if host.contains(':')
+            || !host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+            || host
+                .split('.')
+                .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+        {
+            return true;
+        }
+        host
+    };
     if host.is_empty()
         || host == "localhost"
         || host.ends_with(".localhost")

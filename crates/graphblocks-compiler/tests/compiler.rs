@@ -418,6 +418,52 @@ fn compile_graph_rejects_alternate_numeric_callback_webhook_loopback_host() {
 }
 
 #[test]
+fn compile_graph_rejects_invalid_callback_webhook_host_syntax() {
+    for url in [
+        "https://hooks example.com/events",
+        "https://hooks.example.com\t/events",
+        "https://hooks.example.com%2fevil.test/events",
+        "https://[not-ipv6]/events",
+    ] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "invalid-callback-host"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [
+                    {
+                        "subscriptionId": "sub-invalid-host",
+                        "scope": "run",
+                        "scopeId": "run-1",
+                        "delivery": {
+                            "kind": "webhook",
+                            "url": url,
+                            "signing": {
+                                "algorithm": "hmac-sha256",
+                                "secretRef": "secret://relay"
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB6011"],
+            "{url} should be rejected as an unsafe callback endpoint"
+        );
+    }
+}
+
+#[test]
 fn compile_graph_allows_mandatory_callback_fallback_policy() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

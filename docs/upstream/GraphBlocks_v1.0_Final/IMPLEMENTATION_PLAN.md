@@ -1064,6 +1064,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime webhook target parsing now rejects invalid authority host syntax, including whitespace,
   control characters, percent-encoded host components, and bracketed authorities that are not valid
   IPv6 literals, before callback egress validation or target identity recording.
+  The normative Rust compiler now reports the same malformed callback webhook hosts as `GB6011`,
+  with shared compiler TCK coverage for runtime/compiler parity.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
   destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
   addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.
