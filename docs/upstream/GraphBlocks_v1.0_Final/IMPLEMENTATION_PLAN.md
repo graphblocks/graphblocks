@@ -2053,8 +2053,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   runners before a late callback can prove it was reconciled under the persisted policy snapshot.
 - Durable external-operation reconciliation shared TCK cases now require ISO
   `lateCallback.receivedAt` evidence in both Rust and Python runners before a late callback can
-  prove a durable callback receipt timestamp, and reject callback receipts recorded after
-  `operation.expiresAt`.
+  prove a durable callback receipt timestamp, and reject callback receipts recorded before
+  `operation.submittedAt` or after `operation.expiresAt`.
 - Durable external-operation reconciliation shared TCK cases now require nonempty object-shaped
   provider usage records with nonblank `metric` and non-negative integer `amount` fields in both
   Rust and Python runners when late usage is marked reconciled, so billing reconciliation cannot be

@@ -9883,6 +9883,18 @@ class TckRunner:
                             }
                         )
                 if (
+                    submitted_at_value is not None
+                    and received_at_value is not None
+                    and received_at_value < submitted_at_value
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation receivedAt must not precede operation submittedAt",
+                            "path": f"$.lateCallback.{received_at_path}",
+                        }
+                    )
+                if (
                     expires_at_value is not None
                     and received_at_value is not None
                     and received_at_value > expires_at_value

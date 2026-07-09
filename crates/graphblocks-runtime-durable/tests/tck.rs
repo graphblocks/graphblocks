@@ -3979,6 +3979,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_str)
                 .map(str::trim);
             if received_at_is_iso
+                && submitted_at_is_iso
+                && received_at_text.is_some_and(|received_at| {
+                    submitted_at_text.is_some_and(|submitted_at| received_at < submitted_at)
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation receivedAt must not precede operation submittedAt",
+                    "path": format!("$.lateCallback.{received_at_path}"),
+                }));
+            }
+            if received_at_is_iso
                 && expires_at_is_iso
                 && received_at_text.is_some_and(|received_at| {
                     expires_at_text.is_some_and(|expires_at| received_at > expires_at)
