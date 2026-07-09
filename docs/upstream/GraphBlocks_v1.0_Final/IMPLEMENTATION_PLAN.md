@@ -1980,6 +1980,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now also reject calendar-invalid callback
   `receivedAt` timestamps in the Rust runner, so invalid receipt times cannot satisfy
   journal-before-resume or timeout evidence.
+- Durable async callback resume-guard shared TCK cases now reject callback `receivedAt` timestamps
+  that use a space instead of the RFC 3339 `T` separator in the Python runner, keeping receipt
+  parsing aligned with the Rust runner before journal-before-resume evidence is accepted.
 - Durable async callback resume-guard shared TCK cases now expose `diagnosticCount` on success
   projections and include a valid fractional-second `receivedAt` receipt case, so Rust and Python
   both prove callback resume admission accepts RFC 3339-style fractional timestamps without hidden

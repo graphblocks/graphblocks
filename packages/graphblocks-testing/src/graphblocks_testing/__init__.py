@@ -8814,14 +8814,7 @@ class TckRunner:
                         )
                     else:
                         received_at_text = received_at.strip()
-                        if received_at_text.endswith("Z"):
-                            received_at_text = f"{received_at_text[:-1]}+00:00"
-                        try:
-                            callback_received_at = datetime.fromisoformat(received_at_text)
-                            if callback_received_at.tzinfo is None:
-                                callback_received_at = callback_received_at.replace(tzinfo=timezone.utc)
-                            callback_received_at = callback_received_at.astimezone(timezone.utc)
-                        except ValueError:
+                        if len(received_at_text) <= 10 or received_at_text[10] != "T":
                             diagnostics.append(
                                 {
                                     "code": "DurableAsyncCallbackResumeInvalid",
@@ -8829,6 +8822,22 @@ class TckRunner:
                                     "path": f"$.callback.{received_at_path}",
                                 }
                             )
+                        else:
+                            if received_at_text.endswith("Z"):
+                                received_at_text = f"{received_at_text[:-1]}+00:00"
+                            try:
+                                callback_received_at = datetime.fromisoformat(received_at_text)
+                                if callback_received_at.tzinfo is None:
+                                    callback_received_at = callback_received_at.replace(tzinfo=timezone.utc)
+                                callback_received_at = callback_received_at.astimezone(timezone.utc)
+                            except ValueError:
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableAsyncCallbackResumeInvalid",
+                                        "message": "async callback resume callback requires ISO receivedAt",
+                                        "path": f"$.callback.{received_at_path}",
+                                    }
+                                )
                     if (
                         callback_received_at is not None
                         and operation_deadline_at is not None
