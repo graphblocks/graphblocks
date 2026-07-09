@@ -3109,7 +3109,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .or_else(|| raw_resume.get("successful_resume_count"));
             let successful_resume_count = match raw_successful_resume_count {
                 Some(value) => match value.as_u64() {
-                    Some(count) => count,
+                    Some(count) => {
+                        if count != 1 {
+                            diagnostics.push(json!({
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires successfulResumeCount of 1",
+                                "path": "$.resume.successfulResumeCount",
+                            }));
+                        }
+                        count
+                    }
                     None => {
                         diagnostics.push(json!({
                             "code": "DurableAsyncCallbackResumeInvalid",

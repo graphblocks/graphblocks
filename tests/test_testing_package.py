@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 275
+    assert [case.kind for case in cases] == ["durable"] * 276
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1389,6 +1389,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_resume_before_journal_rejected",
         "async_callback_resume_non_integer_success_count_rejected",
         "async_callback_resume_missing_success_count_rejected",
+        "async_callback_resume_multiple_successful_resumes_rejected",
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
         "async_callback_resume_missing_idempotency_reevaluation_rejected",
@@ -2331,6 +2332,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_missing_success_count_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_multiple_successful_resumes_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6401,6 +6407,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_resume_before_journal_rejected",
         "async_callback_resume_non_integer_success_count_rejected",
         "async_callback_resume_missing_success_count_rejected",
+        "async_callback_resume_multiple_successful_resumes_rejected",
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
         "async_callback_resume_missing_idempotency_reevaluation_rejected",

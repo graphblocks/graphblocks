@@ -9081,6 +9081,14 @@ class TckRunner:
                     successful_resume_count = 0
                 else:
                     successful_resume_count = raw_successful_resume_count
+                    if successful_resume_count != 1:
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires successfulResumeCount of 1",
+                                "path": "$.resume.successfulResumeCount",
+                            }
+                        )
                 budget_exhaustion_state_path = (
                     "budgetExhaustionState"
                     if "budgetExhaustionState" in raw_resume

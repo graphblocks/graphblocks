@@ -7941,6 +7941,44 @@
     }
   },
   {
+    "name": "async_callback_resume_multiple_successful_resumes_rejected",
+    "kind": "async_callback_resume_guards",
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release",
+        "idempotency"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 2
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume requires successfulResumeCount of 1",
+        "path": "$.resume.successfulResumeCount"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_non_sequence_reevaluates_rejected",
     "kind": "async_callback_resume_guards",
     "checks": {
