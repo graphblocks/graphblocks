@@ -2269,9 +2269,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     return None;
                 }
-                let offset_seconds = match value.get(19..) {
-                    Some("Z") => 0,
-                    Some(offset) if offset.len() == 6 => {
+                let mut suffix = value.get(19..)?;
+                if let Some(fraction) = suffix.strip_prefix('.') {
+                    let boundary = fraction.find(['Z', '+', '-'])?;
+                    let fractional_digits = &fraction[..boundary];
+                    if fractional_digits.is_empty()
+                        || !fractional_digits.bytes().all(|byte| byte.is_ascii_digit())
+                    {
+                        return None;
+                    }
+                    suffix = &fraction[boundary..];
+                }
+                let offset_seconds = match suffix {
+                    "Z" => 0,
+                    offset if offset.len() == 6 => {
                         let sign = match offset.as_bytes().first() {
                             Some(b'+') => 1,
                             Some(b'-') => -1,
@@ -3138,6 +3149,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .get("providerOperationMismatchCanResume")
                     .copied()
                     .unwrap_or(true),
+                "diagnosticCount": diagnostics.len(),
                 "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
                 "resumeReevaluatesPolicyBudgetRelease": reevaluates.contains("policy")
                     && reevaluates.contains("budget")

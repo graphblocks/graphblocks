@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 293
+    assert [case.kind for case in cases] == ["durable"] * 294
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1339,6 +1339,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "webhook_delivery_non_boolean_outage_flag_rejected",
         "webhook_delivery_missing_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
+        "async_callback_resume_fractional_received_at_allowed",
         "async_callback_resume_blank_operation_id_rejected",
         "async_callback_resume_blank_run_id_rejected",
         "async_callback_resume_blank_node_id_rejected",
@@ -2100,6 +2101,13 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.case_id == "webhook_delivery_non_boolean_redrive_assertion_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_fractional_received_at_allowed"
+        and result.observed.get("diagnosticCount") == 0
+        and result.observed.get("receiptJournaledBeforeResume") is True
+        and result.observed.get("resumeReevaluatesPolicyBudgetRelease") is True
         for result in report.results
     )
     assert any(
@@ -6459,6 +6467,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "webhook_delivery_non_boolean_outage_flag_rejected",
         "webhook_delivery_missing_outage_flag_rejected",
         "async_callback_resume_auth_schema_stale_and_budget_guards",
+        "async_callback_resume_fractional_received_at_allowed",
         "async_callback_resume_blank_operation_id_rejected",
         "async_callback_resume_blank_run_id_rejected",
         "async_callback_resume_blank_node_id_rejected",

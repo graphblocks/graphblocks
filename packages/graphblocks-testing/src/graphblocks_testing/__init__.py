@@ -9176,6 +9176,7 @@ class TckRunner:
                     "unauthenticatedCallbackCanResume": async_resume_guard_values["unauthenticatedCallbackCanResume"],
                     "nonExternalCallbackEventCanBecomeReceipt": async_resume_guard_values["nonExternalCallbackEventCanBecomeReceipt"],
                     "providerOperationMismatchCanResume": async_resume_guard_values["providerOperationMismatchCanResume"],
+                    "diagnosticCount": len(diagnostics),
                     "receiptJournaledBeforeResume": callback_journal_sequence < resume_sequence,
                     "resumeReevaluatesPolicyBudgetRelease": set(resume_reevaluates) >= {"policy", "budget", "release"},
                     "budgetExhaustionPausesResume": str(raw_resume.get("budgetExhaustionState", raw_resume.get("budget_exhaustion_state", ""))) == "paused_budget",
