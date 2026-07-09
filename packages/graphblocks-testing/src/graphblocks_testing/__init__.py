@@ -8345,11 +8345,7 @@ class TckRunner:
                             )
                         else:
                             delivered_at_text = raw_delivered_at.strip()
-                            if delivered_at_text.endswith("Z"):
-                                delivered_at_text = f"{delivered_at_text[:-1]}+00:00"
-                            try:
-                                delivered_at = datetime.fromisoformat(delivered_at_text)
-                            except ValueError:
+                            if len(delivered_at_text) <= 10 or delivered_at_text[10] != "T":
                                 diagnostics.append(
                                     {
                                         "code": "DurableCallbackDeliveryInvalid",
@@ -8357,6 +8353,19 @@ class TckRunner:
                                         "path": f"$.deliveries[{index}].deliveredAt",
                                     }
                                 )
+                            else:
+                                if delivered_at_text.endswith("Z"):
+                                    delivered_at_text = f"{delivered_at_text[:-1]}+00:00"
+                                try:
+                                    delivered_at = datetime.fromisoformat(delivered_at_text)
+                                except ValueError:
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableCallbackDeliveryInvalid",
+                                            "message": f"{status} callback delivery requires deliveredAt",
+                                            "path": f"$.deliveries[{index}].deliveredAt",
+                                        }
+                                    )
                     if status == "acknowledged":
                         acknowledged_at = None
                         raw_acknowledged_at = delivery.get(
