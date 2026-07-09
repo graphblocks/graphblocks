@@ -851,13 +851,22 @@ class ServerAsyncCallbackSubmission:
             artifact_id = artifact.get("artifact_id")
             if not isinstance(artifact_id, str) or not artifact_id.strip():
                 raise ValueError("server async callback artifacts artifact_id must be a non-empty string")
+            if artifact_id != artifact_id.strip():
+                raise ValueError("server async callback artifacts artifact_id must not contain surrounding whitespace")
             uri = artifact.get("uri")
             if not isinstance(uri, str) or not uri.strip():
                 raise ValueError("server async callback artifacts uri must be a non-empty string")
+            if uri != uri.strip():
+                raise ValueError("server async callback artifacts uri must not contain surrounding whitespace")
             for field_name in ("media_type", "checksum"):
                 value = artifact.get(field_name)
-                if value is not None and (not isinstance(value, str) or not value.strip()):
-                    raise ValueError(f"server async callback artifacts {field_name} must be a non-empty string")
+                if value is not None:
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError(f"server async callback artifacts {field_name} must be a non-empty string")
+                    if value != value.strip():
+                        raise ValueError(
+                            f"server async callback artifacts {field_name} must not contain surrounding whitespace"
+                        )
             size_bytes = artifact.get("size_bytes")
             if size_bytes is not None and (
                 isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0

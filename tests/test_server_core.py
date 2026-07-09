@@ -3847,6 +3847,40 @@ def test_server_async_callback_submission_rejects_invalid_artifacts() -> None:
         )
 
 
+def test_server_async_callback_submission_rejects_whitespace_wrapped_artifact_fields() -> None:
+    cases = (
+        (
+            {"artifact_id": " artifact-ci-log", "uri": "blob://ci/log"},
+            "server async callback artifacts artifact_id must not contain surrounding whitespace",
+        ),
+        (
+            {"artifactId": "artifact-ci-log ", "uri": "blob://ci/log"},
+            "server async callback artifacts artifact_id must not contain surrounding whitespace",
+        ),
+        (
+            {"artifact_id": "artifact-ci-log", "uri": " blob://ci/log"},
+            "server async callback artifacts uri must not contain surrounding whitespace",
+        ),
+        (
+            {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "media_type": " application/json"},
+            "server async callback artifacts media_type must not contain surrounding whitespace",
+        ),
+        (
+            {"artifact_id": "artifact-ci-log", "uri": "blob://ci/log", "checksum": "sha256:abc "},
+            "server async callback artifacts checksum must not contain surrounding whitespace",
+        ),
+    )
+    for artifact, expected_error in cases:
+        with pytest.raises(ValueError, match=expected_error):
+            ServerAsyncCallbackSubmission(
+                operation_id="op-ci-1",
+                callback_id="cb-1",
+                idempotency_key="idem-callback-1",
+                payload={"status": "completed"},
+                artifacts=[artifact],
+            )
+
+
 def test_server_async_callback_submission_rejects_payload_digest_mismatch() -> None:
     with pytest.raises(ValueError, match="server async callback payload_digest must match payload"):
         ServerAsyncCallbackSubmission(

@@ -1289,8 +1289,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and provider-operation fences when present, matching the stored receipt identity. Callback artifact
   references are immutable JSON objects with non-empty
   `artifact_id` and `uri` fields; optional `media_type` and `checksum` fields are validated when
-  present, optional `size_bytes` must be a non-negative integer, camelCase aliases are normalized at
-  ingress, and artifact refs are included in idempotency conflict detection.
+  present, artifact string fields reject whitespace-normalized values, optional `size_bytes` must be
+  a non-negative integer, camelCase aliases are normalized at ingress, and artifact refs are
+  included in idempotency conflict detection.
   The Rust `graphblocks-runtime-core` async operation journal now records the same payload digest,
   verifying principal, and policy snapshot metadata on `ExternalCallbackRejected` events, including
   idempotency-conflict rejections for mutated callback replays.
