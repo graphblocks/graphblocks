@@ -8610,6 +8610,8 @@ class TckRunner:
                         "event_type",
                         "payloadSchemaValid",
                         "payload_schema_valid",
+                        "signatureVerified",
+                        "signature_verified",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8628,6 +8630,24 @@ class TckRunner:
                                     "code": "DurableAsyncCallbackResumeInvalid",
                                     "message": "async callback resume callback eventType must be ExternalCallbackReceived",
                                     "path": f"$.callback.{event_type_path}",
+                                }
+                            )
+                    if "signatureVerified" in raw_callback or "signature_verified" in raw_callback:
+                        signature_verified_path = (
+                            "signatureVerified"
+                            if "signatureVerified" in raw_callback
+                            or "signature_verified" not in raw_callback
+                            else "signature_verified"
+                        )
+                        signature_verified = raw_callback.get(
+                            "signatureVerified", raw_callback.get("signature_verified")
+                        )
+                        if signature_verified is not True:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback signature must verify before receipt",
+                                    "path": f"$.callback.{signature_verified_path}",
                                 }
                             )
                     if "payloadSchemaValid" in raw_callback or "payload_schema_valid" in raw_callback:

@@ -768,6 +768,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Shared durable async callback resume TCK fixtures now reject callback receipts whose
   `verifiedBy` evidence is explicitly `unauthenticated`, so a nonblank placeholder cannot satisfy
   callback authentication conformance.
+- Shared durable async callback resume TCK fixtures now reject callback receipt envelopes whose
+  signature verification evidence is false, so a failed HMAC, Ed25519, mTLS, OIDC, or
+  provider-specific signature cannot satisfy resume conformance.
 - Shared durable async callback resume TCK fixtures now reject callback receipt envelopes that
   identify a non-`ExternalCallbackReceived` event type, so ordinary application events cannot be
   used as durable callback receipts.

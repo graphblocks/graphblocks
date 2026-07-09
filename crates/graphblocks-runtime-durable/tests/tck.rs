@@ -2505,6 +2505,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "event_type",
                 "payloadSchemaValid",
                 "payload_schema_valid",
+                "signatureVerified",
+                "signature_verified",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2530,6 +2532,30 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "code": "DurableAsyncCallbackResumeInvalid",
                             "message": "async callback resume callback eventType must be ExternalCallbackReceived",
                             "path": format!("$.callback.{event_type_path}"),
+                        }));
+                    }
+                }
+                if raw_callback.contains_key("signatureVerified")
+                    || raw_callback.contains_key("signature_verified")
+                {
+                    let signature_verified_path = if raw_callback.contains_key("signatureVerified")
+                        || !raw_callback.contains_key("signature_verified")
+                    {
+                        "signatureVerified"
+                    } else {
+                        "signature_verified"
+                    };
+                    if !raw_callback
+                        .get("signatureVerified")
+                        .or_else(|| raw_callback.get("signature_verified"))
+                        .is_some_and(|signature_verified| {
+                            signature_verified.as_bool() == Some(true)
+                        })
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume callback signature must verify before receipt",
+                            "path": format!("$.callback.{signature_verified_path}"),
                         }));
                     }
                 }
