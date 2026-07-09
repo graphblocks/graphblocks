@@ -9374,6 +9374,18 @@ class TckRunner:
                             "path": "$.race.resultCommitted",
                         }
                     )
+                if (
+                    str(raw_race.get("winner", "")) == "cancel"
+                    and raw_race.get("usageReconciled", raw_race.get("usage_reconciled"))
+                    is False
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race requires late usage reconciliation",
+                            "path": "$.race.usageReconciled",
+                        }
+                    )
                 observed = {
                     "journalOrderingDecidesRace": (
                         str(raw_race.get("winner", "")) == "cancel"

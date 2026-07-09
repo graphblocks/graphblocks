@@ -1995,6 +1995,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   stale operation result.
 - Durable async cancel-race shared TCK cases now reject resume attempts after a cancel-winning race,
   so a late callback cannot restart cancelled work even when the callback receipt is journaled.
+- Durable async cancel-race shared TCK cases now require late usage reconciliation after a
+  cancel-winning race, so cancelling work cannot skip UsageLedger accounting for late callback or
+  provider usage.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.

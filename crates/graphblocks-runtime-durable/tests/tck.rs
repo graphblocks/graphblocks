@@ -3416,6 +3416,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": "$.race.resultCommitted",
                 }));
             }
+            if raw_race
+                .get("winner")
+                .and_then(Value::as_str)
+                .is_some_and(|winner| winner == "cancel")
+                && raw_race
+                    .get("usageReconciled")
+                    .or_else(|| raw_race.get("usage_reconciled"))
+                    .and_then(Value::as_bool)
+                    .is_some_and(|reconciled| !reconciled)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race requires late usage reconciliation",
+                    "path": "$.race.usageReconciled",
+                }));
+            }
             json!({
                 "journalOrderingDecidesRace": raw_race
                     .get("winner")

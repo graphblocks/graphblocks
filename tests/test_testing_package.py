@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 283
+    assert [case.kind for case in cases] == ["durable"] * 284
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1404,6 +1404,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "callback_cancel_race_missing_callback_journal_entry_rejected",
         "callback_cancel_race_late_result_commit_rejected",
         "callback_cancel_race_resume_after_cancel_rejected",
+        "callback_cancel_race_missing_usage_reconciliation_rejected",
         "callback_cancel_race_non_boolean_receipt_rejected",
         "callback_cancel_race_missing_receipt_rejected",
         "callback_cancel_race_missing_resume_attempted_rejected",
@@ -2410,6 +2411,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "callback_cancel_race_resume_after_cancel_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "callback_cancel_race_missing_usage_reconciliation_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6464,6 +6470,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "callback_cancel_race_missing_callback_journal_entry_rejected",
         "callback_cancel_race_late_result_commit_rejected",
         "callback_cancel_race_resume_after_cancel_rejected",
+        "callback_cancel_race_missing_usage_reconciliation_rejected",
         "callback_cancel_race_non_boolean_receipt_rejected",
         "callback_cancel_race_missing_receipt_rejected",
         "callback_cancel_race_missing_resume_attempted_rejected",
