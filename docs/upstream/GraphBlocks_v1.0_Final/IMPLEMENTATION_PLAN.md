@@ -1975,7 +1975,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   operation cancellation/expiry do not commit durable results, rejects
   `lateCallback.diagnosticRecorded: false` so late callback handling remains auditable, and rejects
   `lateCallback.payloadConvertedToArtifactRef: false` so untrusted late callback payload evidence
-  remains artifact-backed.
+  remains artifact-backed. It also rejects `usage.reconciled: false`, preserving late provider
+  usage reconciliation even after cancellation or expiry.
 - Durable external-operation reconciliation shared TCK cases now require `operation.effectState` to
   be `committed` in both Rust and Python runners before accepting side-effect preservation evidence.
 - Durable external-operation reconciliation shared TCK cases now also require

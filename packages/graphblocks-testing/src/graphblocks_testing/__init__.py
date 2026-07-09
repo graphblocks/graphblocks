@@ -10012,6 +10012,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{payload_artifact_path}",
                         }
                     )
+                if raw_usage.get("reconciled") is False:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires late usage reconciliation",
+                            "path": "$.usage.reconciled",
+                        }
+                    )
                 raw_provider_usage_records = raw_usage.get(
                     "providerUsageRecords", raw_usage.get("provider_usage_records", ())
                 )

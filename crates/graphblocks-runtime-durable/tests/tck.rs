@@ -4115,6 +4115,17 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{payload_artifact_path}"),
                 }));
             }
+            if raw_usage
+                .get("reconciled")
+                .and_then(Value::as_bool)
+                .is_some_and(|reconciled| !reconciled)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires late usage reconciliation",
+                    "path": "$.usage.reconciled",
+                }));
+            }
             if reconciliation_values
                 .get(&("usage", "reconciled"))
                 .copied()
