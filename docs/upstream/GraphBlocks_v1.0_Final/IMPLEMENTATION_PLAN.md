@@ -1053,9 +1053,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Local blob-store metadata replay now parses sidecar JSON with strict JSON semantics and requires
   an object root, rejecting non-standard constants such as `NaN` before persisted artifact metadata
   can be projected through `head` or `list`.
-- Application protocol replay now treats whitespace-only cursors as invalid replay positions and
-  returns no unretained replay instead of widening the request to the beginning of the authoritative
-  event stream.
+- Application protocol replay now treats whitespace-only or whitespace-wrapped cursors as invalid
+  replay positions and returns no unretained replay instead of widening the request to the beginning
+  of the authoritative event stream.
 - Durable sink commit records now require structured JSON object metadata, so idempotent external
   effect commits cannot be represented by opaque scalar payloads that lose audit, reconciliation,
   or compensation fields.

@@ -711,6 +711,10 @@ class ApplicationProtocolLog:
     ) -> tuple[ApplicationProtocolEvent, ...]:
         if cursor is not None and not isinstance(cursor, str):
             raise ApplicationProtocolError("application protocol replay cursor must be a string")
+        if cursor is not None and not cursor.strip():
+            raise ApplicationProtocolError("application protocol replay cursor must not be empty")
+        if cursor is not None and cursor != cursor.strip():
+            raise ApplicationProtocolError("application protocol replay cursor must not contain surrounding whitespace")
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ApplicationProtocolError("application protocol replay limit must be an integer")
         if limit < 0:

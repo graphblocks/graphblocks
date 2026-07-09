@@ -868,6 +868,18 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.replay_after(limit=-1)
 
 
+def test_application_protocol_log_rejects_blank_or_wrapped_replay_cursor() -> None:
+    log = ApplicationProtocolLog()
+
+    with pytest.raises(ApplicationProtocolError, match="application protocol replay cursor must not be empty"):
+        log.replay_after(" ")
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application protocol replay cursor must not contain surrounding whitespace",
+    ):
+        log.replay_after(" cursor-1")
+
+
 def test_application_protocol_log_rejects_event_id_reuse_with_changed_content() -> None:
     def protocol_event(event_id: str, sequence: int, cursor: str, payload: dict[str, object]) -> ApplicationProtocolEvent:
         return ApplicationProtocolEvent.new(
