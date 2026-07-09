@@ -269,6 +269,53 @@ fn callback_endpoint_rejects_partial_operation_binding() {
 }
 
 #[test]
+fn callback_endpoint_rejects_surrounding_whitespace_in_bound_identity() {
+    for field in [
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "release_id",
+        "tenant_id",
+    ] {
+        let mut endpoint = CallbackEndpointRef::new_bound(
+            "callback-endpoint-1",
+            "https://graphblocks.example.com/v1/callbacks/op-1",
+            "schemas/CICallback@1",
+            CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "release-1",
+            Some("tenant-1"),
+        )
+        .expect("endpoint is initially valid");
+
+        match field {
+            "operation_id" => endpoint.operation_id = Some(" op-1".to_owned()),
+            "run_id" => endpoint.run_id = Some("run-1 ".to_owned()),
+            "node_id" => endpoint.node_id = Some("\tnode-ci".to_owned()),
+            "attempt_id" => endpoint.attempt_id = Some("attempt-1\n".to_owned()),
+            "release_id" => endpoint.release_id = Some(" release-1 ".to_owned()),
+            "tenant_id" => endpoint.tenant_id = Some(" tenant-1 ".to_owned()),
+            _ => unreachable!("test field list is exhaustive"),
+        }
+
+        assert_eq!(
+            endpoint.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "callback-endpoint-1".to_owned(),
+                reason: format!(
+                    "callback endpoint bound identity field {field} must not include surrounding whitespace"
+                ),
+            }),
+            "{field} should preserve exact signed callback route identity",
+        );
+    }
+}
+
+#[test]
 fn callback_endpoint_rejects_zero_expiration() {
     let endpoint = CallbackEndpointRef::new(
         "callback-endpoint-1",

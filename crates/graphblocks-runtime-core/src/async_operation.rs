@@ -693,10 +693,20 @@ impl CallbackEndpointRef {
             ("release_id", &self.release_id),
             ("tenant_id", &self.tenant_id),
         ] {
-            if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
-                return Err(AsyncOperationError::EmptyField {
-                    field: field.to_owned(),
-                });
+            if let Some(value) = value {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+                if value.trim() != value {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: self.endpoint_id.clone(),
+                        reason: format!(
+                            "callback endpoint bound identity field {field} must not include surrounding whitespace"
+                        ),
+                    });
+                }
             }
         }
         let required_binding_fields = [

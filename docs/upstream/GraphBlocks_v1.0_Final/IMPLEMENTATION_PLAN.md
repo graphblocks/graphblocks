@@ -658,7 +658,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   tenant identity into the runtime endpoint reference, exposes the same canonical resume binding key
   as the Python callback projection, and rejects stale or wrong-scope callback submissions before
   they can reach journal or scheduler admission. Runtime validation also rejects partial endpoint
-  bindings so public-field mutations cannot create ambiguous callback resume identities.
+  bindings so public-field mutations cannot create ambiguous callback resume identities. Bound
+  callback route identity fields reject surrounding whitespace before authentication or resume-key
+  derivation, preserving the exact signed callback route identity.
 - `CallbackEndpointRef` now validates `expires_at` as an ISO-8601 timestamp at creation time, so
   invalid callback endpoint deadlines are rejected before resume admission. The Python callback
   projection also denies resume when a durable callback receipt was recorded after the endpoint
