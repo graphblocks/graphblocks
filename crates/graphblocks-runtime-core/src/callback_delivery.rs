@@ -2267,10 +2267,21 @@ fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
         return is_forbidden_ipv4(mapped_address);
     }
 
+    let segments = address.segments();
+    if segments[..6].iter().all(|segment| *segment == 0) {
+        let compatible_address = Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        );
+        return is_forbidden_ipv4(compatible_address);
+    }
+
     address.is_loopback()
         || address.is_unspecified()
-        || matches!(address.segments()[0] & 0xfe00, 0xfc00)
-        || matches!(address.segments()[0] & 0xffc0, 0xfe80)
+        || matches!(segments[0] & 0xfe00, 0xfc00)
+        || matches!(segments[0] & 0xffc0, 0xfe80)
 }
 
 fn webhook_http_response_to_delivery_response(

@@ -3118,6 +3118,25 @@ fn webhook_target_rejects_ipv4_mapped_ipv6_internal_literals() {
 }
 
 #[test]
+fn webhook_target_rejects_ipv4_compatible_ipv6_internal_literals() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "http://[::127.0.0.1]/callback",
+        "http://[::169.254.169.254]/callback",
+        "http://[::10.0.0.4]/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+            ),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let policy = WebhookEgressPolicy::default_deny_internal();
     let target =
@@ -3170,6 +3189,23 @@ fn webhook_egress_policy_rejects_resolved_ipv4_mapped_ipv6_internal_addresses() 
         WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
             .expect("public hostname syntax is valid before DNS resolution");
     let metadata_address = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xa9fe, 0xa9fe));
+
+    assert_eq!(
+        policy.validate_resolved_addresses(&target, [metadata_address]),
+        Err(WebhookEndpointError::UnsafeResolvedAddress {
+            host: "hooks.example.com".to_owned(),
+            address: metadata_address,
+        })
+    );
+}
+
+#[test]
+fn webhook_egress_policy_rejects_resolved_ipv4_compatible_ipv6_internal_addresses() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+    let metadata_address = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0xa9fe, 0xa9fe));
 
     assert_eq!(
         policy.validate_resolved_addresses(&target, [metadata_address]),
