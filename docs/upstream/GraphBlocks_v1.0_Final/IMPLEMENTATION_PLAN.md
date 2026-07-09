@@ -1799,6 +1799,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python approval request and approval record metadata now deep-freeze nested mappings and
   sequences, so audit/review annotations attached to an approval cannot be mutated after approval
   admission decisions are constructed.
+- Python tool approval requests now validate approval ids, call ids, tool names, definition,
+  binding, and argument digests, policy snapshots, principals, and approver ids as exact
+  immutable identities, rejecting values that only become valid after trimming whitespace before an
+  approval can authorize a tool-call revision.
 - Required idempotency keys are covered by the shared tool-lifecycle TCK after approval succeeds,
   proving that state-changing tools still cannot admit without retry-safe operation identity.
 - Blank idempotency keys are covered in the same TCK suite, so whitespace-only operation identity

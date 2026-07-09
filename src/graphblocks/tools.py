@@ -740,7 +740,7 @@ class ToolApprovalRequest:
             "policy_snapshot_id",
             "principal_id",
         ):
-            _validate_non_empty_string("approval", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("approval", field_name, getattr(self, field_name))
         _validate_positive_integer("approval", "revision", self.revision)
         _validate_non_negative_integer("approval", "requested_at", self.requested_at)
         _validate_non_negative_integer("approval", "expires_at", self.expires_at)
@@ -759,8 +759,8 @@ class ToolApprovalRequest:
         expires_at: int,
     ) -> ToolApprovalRequest:
         try:
-            _validate_non_empty_string("approval", "approval_id", approval_id)
-            _validate_non_empty_string("approval", "principal_id", principal_id)
+            _validate_exact_non_empty_string("approval", "approval_id", approval_id)
+            _validate_exact_non_empty_string("approval", "principal_id", principal_id)
             _validate_non_negative_integer("approval", "requested_at", requested_at)
             _validate_non_negative_integer("approval", "expires_at", expires_at)
         except ValueError as error:
@@ -812,7 +812,7 @@ class ToolApprovalRecord:
         if self.status in {"approved", "denied"}:
             if self.approver_id is None:
                 raise ValueError("approval approver_id must not be empty")
-            _validate_non_empty_string("approval", "approver_id", self.approver_id)
+            _validate_exact_non_empty_string("approval", "approver_id", self.approver_id)
             if self.decided_at is None:
                 raise ValueError(f"{self.status} approval record requires decided_at")
         if self.status == "denied":

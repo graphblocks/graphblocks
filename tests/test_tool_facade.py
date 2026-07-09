@@ -1084,6 +1084,40 @@ def test_tool_approval_records_reject_non_string_identity_fields() -> None:
         )
 
 
+def test_tool_approval_records_reject_whitespace_wrapped_identity_fields() -> None:
+    base = {
+        "approval_id": "approval-1",
+        "tool_call_id": "call-1",
+        "tool_name": "knowledge.search",
+        "revision": 1,
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "arguments_digest": "sha256:args",
+        "policy_snapshot_id": "policy-1",
+        "principal_id": "user-1",
+        "requested_at": 100,
+        "expires_at": 200,
+    }
+    cases = (
+        ("approval_id", " approval-1"),
+        ("tool_call_id", "call-1 "),
+        ("tool_name", " knowledge.search"),
+        ("definition_digest", "sha256:def "),
+        ("binding_digest", " sha256:binding"),
+        ("arguments_digest", "sha256:args "),
+        ("policy_snapshot_id", " policy-1"),
+        ("principal_id", "user-1 "),
+    )
+
+    for field_name, value in cases:
+        with pytest.raises(ValueError, match=f"approval {field_name} must not contain surrounding whitespace"):
+            ToolApprovalRequest(**{**base, field_name: value})
+
+    request = ToolApprovalRequest(**base)
+    with pytest.raises(ValueError, match="approval approver_id must not contain surrounding whitespace"):
+        ToolApprovalRecord.approve(request, approver_id=" admin-1", decided_at=110)
+
+
 def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
     with pytest.raises(ValueError, match="tool call draft response_id must not be empty"):
         ToolCallDraft(" ", "call-1", "knowledge.search")
@@ -1356,6 +1390,28 @@ def test_tool_approval_request_rejects_mismatch_and_invalid_expiration() -> None
             expires_at=2_000,
         )
     assert str(principal_id.value) == "approval principal_id must not be empty"
+
+    with pytest.raises(ToolApprovalError) as wrapped_approval_id:
+        ToolApprovalRequest.for_call(
+            " approval-1",
+            resolved,
+            call,
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(wrapped_approval_id.value) == "approval approval_id must not contain surrounding whitespace"
+
+    with pytest.raises(ToolApprovalError) as wrapped_principal_id:
+        ToolApprovalRequest.for_call(
+            "approval-1",
+            resolved,
+            call,
+            principal_id="user-1 ",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(wrapped_principal_id.value) == "approval principal_id must not contain surrounding whitespace"
 
     mismatched = call.__class__(
         tool_call_id=call.tool_call_id,
