@@ -1962,6 +1962,41 @@ def test_callback_replay_guard_rejects_event_replay_with_changed_idempotency() -
     assert conflict.replay_record == accepted.replay_record
 
 
+def test_callback_replay_record_requires_canonical_envelope_digest() -> None:
+    replay_record = CallbackReplayRecord(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        cursor="evt_1042",
+        idempotency_key="sub_001:evt_1042",
+        envelope_digest=canonical_hash({"delivery": "accepted"}),
+    )
+
+    _assert_raises_value_error(
+        "envelope_digest must be a sha256 digest",
+        lambda: CallbackReplayRecord(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            cursor="evt_1042",
+            idempotency_key="sub_001:evt_1042",
+            envelope_digest="sha256:not-a-digest",
+        ),
+    )
+    _assert_raises_value_error(
+        "incoming_digest must be a sha256 digest",
+        lambda: CallbackReplayDecision(
+            status="accepted",
+            replay_record=replay_record,
+            incoming_digest="sha256:not-a-digest",
+            duplicate=False,
+            conflict=False,
+        ),
+    )
+
+
 def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
     first = CallbackReplayRecord(
         delivery_id="del_001",
@@ -1970,7 +2005,7 @@ def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
         run_id="run_coding_001",
         cursor="evt_1042",
         idempotency_key="sub_001:evt_1042:first",
-        envelope_digest="sha256:first",
+        envelope_digest=canonical_hash({"delivery": "first"}),
     )
     conflicting_delivery = CallbackReplayRecord(
         delivery_id="del_001",
@@ -1979,7 +2014,7 @@ def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
         run_id="run_coding_002",
         cursor="evt_2048",
         idempotency_key="sub_002:evt_2048",
-        envelope_digest="sha256:second",
+        envelope_digest=canonical_hash({"delivery": "second"}),
     )
     conflicting_event = CallbackReplayRecord(
         delivery_id="del_002",
@@ -1988,7 +2023,7 @@ def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
         run_id="run_coding_001",
         cursor="evt_1042",
         idempotency_key="sub_001:evt_1042:second",
-        envelope_digest="sha256:third",
+        envelope_digest=canonical_hash({"delivery": "third"}),
     )
 
     _assert_raises_value_error(

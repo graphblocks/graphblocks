@@ -956,9 +956,9 @@ class CallbackReplayRecord:
             "run_id",
             "cursor",
             "idempotency_key",
-            "envelope_digest",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
+        _require_sha256_digest("envelope_digest", self.envelope_digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,7 +975,7 @@ class CallbackReplayDecision:
             raise ValueError("status must be accepted, duplicate, or conflict")
         if not isinstance(self.replay_record, CallbackReplayRecord):
             raise ValueError("replay_record must be a CallbackReplayRecord")
-        _require_non_empty_string("incoming_digest", self.incoming_digest)
+        _require_sha256_digest("incoming_digest", self.incoming_digest)
         if not isinstance(self.duplicate, bool):
             raise ValueError("duplicate must be a boolean")
         if not isinstance(self.conflict, bool):
