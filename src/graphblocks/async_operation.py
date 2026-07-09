@@ -610,7 +610,6 @@ class ExternalCallbackReceived:
             "node_id",
             "attempt_id",
             "idempotency_key",
-            "received_at",
             "verified_by",
             "policy_snapshot_id",
         ):

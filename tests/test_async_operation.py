@@ -524,6 +524,22 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             policy_snapshot_id="policy-1",
         )
 
+    for received_at in ("2026-07-02T00:10:00Z ", "2026-07-02T00:10:00z"):
+        with raises_value_error("external callback received received_at must be an ISO datetime"):
+            graphblocks.ExternalCallbackReceived(
+                callback_id="cb-1",
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                idempotency_key="idem-callback-1",
+                payload={"status": "completed"},
+                payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+                received_at=received_at,
+                verified_by="hmac-sha256:callback-endpoint-1",
+                policy_snapshot_id="policy-1",
+            )
+
     with raises_value_error("external callback received payload must contain only JSON values"):
         graphblocks.ExternalCallbackReceived(
             callback_id="cb-1",
