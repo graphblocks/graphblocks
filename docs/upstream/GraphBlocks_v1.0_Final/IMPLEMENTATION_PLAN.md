@@ -1559,8 +1559,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   required headers, and HMAC-SHA256 signing/verification helpers while keeping callback delivery
   non-authoritative relative to the event stream and runtime journals.
 - The callback projection facade now validates webhook payloads as strict JSON before signing:
-  object keys must be strings, non-finite numbers are rejected, payloads are stored as immutable
-  JSON snapshots, and a deterministic fuzz-style test pins signature stability under key
+  object keys must be non-empty exact strings, non-finite numbers are rejected, payloads are
+  stored as immutable JSON snapshots, and a deterministic fuzz-style test pins signature stability under key
   reordering and caller mutation. Webhook envelope sequence numbers reject booleans as non-integer
   protocol values, preserving unambiguous replay ordering for subscribers.
 - `graphblocks-callbacks` also exposes receiver-side HMAC-SHA256 header verification with required
@@ -1582,12 +1582,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now provides callback payload projection helpers that canonicalize
   strict JSON payloads, keep bounded payloads inline with a digest, and require an `ArtifactRef`
   when payloads exceed the configured inline byte limit. Payload projections now require canonical
-  `sha256:` digest shape, and artifact-reference projections reject inline payload content,
-  preserving the invariant that large callback bodies are referenced rather than embedded in
-  durable callback records. Inline projection payloads are immutable snapshots, while outbound
-  webhook and receipt helpers thaw fresh plain JSON values for delivery callers. Artifact-reference
-  projections also require positive original payload size metadata so omitted payloads cannot be
-  confused with empty inline callbacks.
+  `sha256:` digest shape and reject empty or whitespace-wrapped nested object keys before digesting,
+  and artifact-reference projections reject inline payload content, preserving the invariant that
+  large callback bodies are referenced rather than embedded in durable callback records. Inline
+  projection payloads are immutable snapshots, while outbound webhook and receipt helpers thaw fresh
+  plain JSON values for delivery callers. Artifact-reference projections also require positive
+  original payload size metadata so omitted payloads cannot be confused with empty inline callbacks.
 - `graphblocks-callbacks` now maps webhook receiver HTTP responses into delivery decisions:
   2xx delivered, 409 acknowledged duplicate, 410 gone, 429/5xx retry, and other 4xx terminal
   failure, including `Retry-After` parsing and policy max-delay capping for retry scheduling.

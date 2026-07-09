@@ -192,7 +192,7 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     return normalized
 
 
-def _freeze_json_value(value: object) -> object:
+def _freeze_json_value(value: object, *, key_path: str = "payload") -> object:
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -202,9 +202,9 @@ def _freeze_json_value(value: object) -> object:
             raise ValueError("payload must not contain non-finite numbers")
         return value
     if isinstance(value, _FrozenJsonArray):
-        return _FrozenJsonArray(_freeze_json_value(item) for item in value)
+        return _FrozenJsonArray(_freeze_json_value(item, key_path=key_path) for item in value)
     if isinstance(value, list):
-        return _FrozenJsonArray(_freeze_json_value(item) for item in value)
+        return _FrozenJsonArray(_freeze_json_value(item, key_path=key_path) for item in value)
     if isinstance(value, tuple):
         raise ValueError("payload must contain only JSON values")
     if isinstance(value, Mapping):
@@ -212,7 +212,11 @@ def _freeze_json_value(value: object) -> object:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("payload must contain only string object keys")
-            frozen[key] = _freeze_json_value(item)
+            if not key.strip():
+                raise ValueError(f"{key_path} keys must be non-empty strings")
+            if key != key.strip():
+                raise ValueError(f"{key_path} keys must not contain surrounding whitespace")
+            frozen[key] = _freeze_json_value(item, key_path=f"{key_path}.{key}")
         return _FrozenJsonObject(frozen)
     raise ValueError("payload must contain only JSON values")
 

@@ -153,6 +153,36 @@ def test_callback_envelope_rejects_non_json_payload_values() -> None:
         ),
     )
     _assert_raises_value_error(
+        "payload keys must be non-empty strings",
+        lambda: CallbackEnvelope(
+            delivery_id="del_empty_key",
+            subscription_id="sub_001",
+            event_id="evt_empty_key",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_empty_key",
+            type="ReviewRequested",
+            payload={"": "not-json-object-key"},
+            idempotency_key="sub_001:evt_empty_key",
+            occurred_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "payload.summary keys must not contain surrounding whitespace",
+        lambda: CallbackEnvelope(
+            delivery_id="del_wrapped_key",
+            subscription_id="sub_001",
+            event_id="evt_wrapped_key",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_wrapped_key",
+            type="ReviewRequested",
+            payload={"summary": {" status": "completed"}},
+            idempotency_key="sub_001:evt_wrapped_key",
+            occurred_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
         "payload must not contain non-finite numbers",
         lambda: CallbackEnvelope(
             delivery_id="del_001",
@@ -1309,6 +1339,17 @@ def test_callback_payload_projection_requires_payload_digest() -> None:
             payload_size_bytes=211,
             artifact=artifact,
         ),
+    )
+
+
+def test_callback_payload_projection_rejects_empty_or_wrapped_payload_keys() -> None:
+    _assert_raises_value_error(
+        "payload keys must be non-empty strings",
+        lambda: project_callback_payload({"": "completed"}, max_inline_bytes=256),
+    )
+    _assert_raises_value_error(
+        "payload.result keys must not contain surrounding whitespace",
+        lambda: project_callback_payload({"result": {" status": "completed"}}, max_inline_bytes=256),
     )
 
 
