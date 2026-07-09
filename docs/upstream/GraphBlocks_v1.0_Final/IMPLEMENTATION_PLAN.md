@@ -1993,6 +1993,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now reject compact timezone offsets such as
   `+0000` in operation deadlines, so Python's permissive `datetime.fromisoformat` behavior cannot
   accept non-RFC3339 callback timeout evidence that Rust rejects.
+- Durable async callback resume-guard shared TCK cases now reject compact timezone offsets in
+  callback `receivedAt` timestamps as well, keeping journal-before-resume receipt evidence aligned
+  between the Python and Rust TCK runners.
 - Durable async callback resume-guard shared TCK cases now also reject calendar-invalid callback
   `receivedAt` timestamps in the Rust runner, so invalid receipt times cannot satisfy
   journal-before-resume or timeout evidence.

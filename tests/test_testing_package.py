@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 312
+    assert [case.kind for case in cases] == ["durable"] * 313
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1388,6 +1388,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_missing_callback_received_at_rejected",
         "async_callback_resume_invalid_callback_received_at_rejected",
         "async_callback_resume_space_separator_callback_received_at_rejected",
+        "async_callback_resume_compact_offset_callback_received_at_rejected",
         "async_callback_resume_invalid_day_callback_received_at_rejected",
         "async_callback_resume_callback_after_deadline_rejected",
         "async_callback_resume_missing_callback_release_id_rejected",
@@ -2366,6 +2367,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_space_separator_callback_received_at_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_compact_offset_callback_received_at_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6627,6 +6633,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_missing_callback_received_at_rejected",
         "async_callback_resume_invalid_callback_received_at_rejected",
         "async_callback_resume_space_separator_callback_received_at_rejected",
+        "async_callback_resume_compact_offset_callback_received_at_rejected",
         "async_callback_resume_invalid_day_callback_received_at_rejected",
         "async_callback_resume_callback_after_deadline_rejected",
         "async_callback_resume_missing_callback_release_id_rejected",

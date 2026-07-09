@@ -8919,14 +8919,36 @@ class TckRunner:
                                 }
                             )
                         else:
-                            if received_at_text.endswith("Z"):
-                                received_at_text = f"{received_at_text[:-1]}+00:00"
-                            try:
-                                callback_received_at = datetime.fromisoformat(received_at_text)
-                                if callback_received_at.tzinfo is None:
-                                    callback_received_at = callback_received_at.replace(tzinfo=timezone.utc)
-                                callback_received_at = callback_received_at.astimezone(timezone.utc)
-                            except ValueError:
+                            suffix = received_at_text[19:]
+                            suffix_valid = False
+                            if suffix.startswith("."):
+                                offset_start = min(
+                                    (
+                                        position
+                                        for position in (
+                                            suffix.find("Z"),
+                                            suffix.find("+"),
+                                            suffix.find("-"),
+                                        )
+                                        if position >= 0
+                                    ),
+                                    default=-1,
+                                )
+                                if offset_start > 1 and suffix[1:offset_start].isdigit():
+                                    suffix = suffix[offset_start:]
+                            if suffix == "Z":
+                                suffix_valid = True
+                            elif (
+                                len(suffix) == 6
+                                and suffix[0] in "+-"
+                                and suffix[1:3].isdigit()
+                                and suffix[3] == ":"
+                                and suffix[4:6].isdigit()
+                                and 0 <= int(suffix[1:3]) <= 23
+                                and 0 <= int(suffix[4:6]) <= 59
+                            ):
+                                suffix_valid = True
+                            if not suffix_valid:
                                 diagnostics.append(
                                     {
                                         "code": "DurableAsyncCallbackResumeInvalid",
@@ -8934,6 +8956,22 @@ class TckRunner:
                                         "path": f"$.callback.{received_at_path}",
                                     }
                                 )
+                            else:
+                                if received_at_text.endswith("Z"):
+                                    received_at_text = f"{received_at_text[:-1]}+00:00"
+                                try:
+                                    callback_received_at = datetime.fromisoformat(received_at_text)
+                                    if callback_received_at.tzinfo is None:
+                                        callback_received_at = callback_received_at.replace(tzinfo=timezone.utc)
+                                    callback_received_at = callback_received_at.astimezone(timezone.utc)
+                                except ValueError:
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableAsyncCallbackResumeInvalid",
+                                            "message": "async callback resume callback requires ISO receivedAt",
+                                            "path": f"$.callback.{received_at_path}",
+                                        }
+                                    )
                     if (
                         callback_received_at is not None
                         and operation_deadline_at is not None
