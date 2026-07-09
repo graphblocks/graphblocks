@@ -9843,6 +9843,7 @@ class TckRunner:
                 received_at = raw_late_callback.get(
                     "receivedAt", raw_late_callback.get("received_at")
                 )
+                received_at_value = None
                 if not isinstance(received_at, str) or not received_at.strip():
                     diagnostics.append(
                         {
@@ -9853,7 +9854,7 @@ class TckRunner:
                     )
                 else:
                     try:
-                        datetime.fromisoformat(
+                        received_at_value = datetime.fromisoformat(
                             received_at.replace("Z", "+00:00")
                             if received_at.endswith("Z")
                             else received_at
@@ -9866,6 +9867,18 @@ class TckRunner:
                                 "path": f"$.lateCallback.{received_at_path}",
                             }
                         )
+                if (
+                    expires_at_value is not None
+                    and received_at_value is not None
+                    and received_at_value > expires_at_value
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation receivedAt must not exceed operation expiresAt",
+                            "path": f"$.lateCallback.{received_at_path}",
+                        }
+                    )
                 effect_state_path = (
                     "effectState"
                     if "effectState" in raw_operation or "effect_state" not in raw_operation

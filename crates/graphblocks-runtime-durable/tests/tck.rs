@@ -3952,6 +3952,23 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{received_at_path}"),
                 }));
             }
+            let received_at_text = raw_late_callback
+                .get("receivedAt")
+                .or_else(|| raw_late_callback.get("received_at"))
+                .and_then(Value::as_str)
+                .map(str::trim);
+            if received_at_is_iso
+                && expires_at_is_iso
+                && received_at_text.is_some_and(|received_at| {
+                    expires_at_text.is_some_and(|expires_at| received_at > expires_at)
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation receivedAt must not exceed operation expiresAt",
+                    "path": format!("$.lateCallback.{received_at_path}"),
+                }));
+            }
             let effect_state_path = if raw_operation.contains_key("effectState")
                 || !raw_operation.contains_key("effect_state")
             {
