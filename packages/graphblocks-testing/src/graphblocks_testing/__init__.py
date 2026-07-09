@@ -14106,6 +14106,9 @@ class TckRunner:
             try:
                 decision: OutputPolicyDecision | None = None
                 expected_cutoff: object = None
+                expected_update: object = operation.get(
+                    "expectedUpdate", operation.get("expected_update")
+                )
                 if op == "chunk":
                     result = gate.record_chunk(
                         GenerationChunk.text(
@@ -14230,6 +14233,23 @@ class TckRunner:
                         raise ValueError("missing_occurred_at_unix_ms")
                     update = gate.apply_decision(decision, occurred_at=occurred_at)
                     actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
+                    if isinstance(expected_update, Mapping):
+                        update_fields = {
+                            "pendingToolCalls": update.pending_tool_calls,
+                            "providerCancellation": update.provider_cancellation,
+                        }
+                        for field_name, actual_value in update_fields.items():
+                            if (
+                                field_name in expected_update
+                                and expected_update[field_name] != actual_value
+                            ):
+                                diagnostics.append(
+                                    {
+                                        "code": "PolicyUpdateMismatch",
+                                        "message": "policy TCK update field did not match expected value",
+                                        "path": f"$.operations[{operation_index}].expectedUpdate.{field_name}",
+                                    }
+                                )
                     if isinstance(expected_cutoff, Mapping):
                         if update.cutoff is None:
                             diagnostics.append(

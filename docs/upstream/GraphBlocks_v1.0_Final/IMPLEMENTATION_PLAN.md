@@ -311,6 +311,10 @@ Message
 - Terminal output-gate decisions validate the constructed canonical `OutputCutoff` before clearing
   pending output or marking the gate stopped, so invalid draft/disposition semantics cannot become
   durable cutoff state.
+- Python policy TCK validation now compares terminal `OutputGateUpdate` projections for
+  `pendingToolCalls` and `providerCancellation` when fixtures provide `expectedUpdate`, so policy
+  stop conformance proves the values that tool admission and provider cancellation consume after
+  cutoff.
 - `ApplicationEventStream` cutoff enforcement treats event metadata `response_id` as authoritative
   for both normal events and `OutputCutoff` events, and rejects events whose payload `response_id`
   disagrees, preventing malformed late deltas from bypassing an `OutputCutoff` by claiming a

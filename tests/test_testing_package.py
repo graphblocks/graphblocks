@@ -479,6 +479,80 @@ def test_testing_package_policy_tck_maps_invalid_generation_sequence(monkeypatch
     assert report.results[0].observed["lastGeneratedSequence"] == 0
 
 
+def test_testing_package_policy_tck_rejects_expected_update_field_mismatch(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    cases = (
+        (
+            "pendingToolCalls",
+            "deny",
+            "cancel_admitted",
+            "$.operations[1].expectedUpdate.pendingToolCalls",
+        ),
+        (
+            "providerCancellation",
+            "request",
+            "required_if_supported",
+            "$.operations[1].expectedUpdate.providerCancellation",
+        ),
+    )
+
+    for field_name, actual_value, expected_value, path in cases:
+        abort_operation = {
+            "op": "abort_response",
+            "decisionId": "decision-abort",
+            "inputDigest": "sha256:abort",
+            "occurredAt": 1000,
+            field_name: actual_value,
+            "cutoff": {
+                "lastGeneratedSequence": 1,
+                "lastPolicyAcceptedSequence": 0,
+                "lastClientDeliveredSequence": 0,
+                "terminalReason": "policy_denied",
+                "draftDisposition": "retract",
+                "durableResult": "none",
+                "policyDecisionId": "decision-abort",
+                "occurredAt": "1970-01-01T00:00:01.000Z",
+            },
+            "expectedUpdate": {
+                field_name: expected_value,
+            },
+        }
+        case = graphblocks_testing.TckCase.policy(
+            case_id=f"policy/output-update-mismatch-{field_name}",
+            delivery={
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response",
+            },
+            operations=(
+                {
+                    "op": "chunk",
+                    "sequence": 1,
+                    "text": "blocked",
+                },
+                abort_operation,
+            ),
+            expected={
+                "lastGeneratedSequence": 1,
+                "lastPolicyAcceptedSequence": 0,
+                "lastClientDeliveredSequence": 0,
+                "stopped": True,
+            },
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "PolicyUpdateMismatch",
+                "message": "policy TCK update field did not match expected value",
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
