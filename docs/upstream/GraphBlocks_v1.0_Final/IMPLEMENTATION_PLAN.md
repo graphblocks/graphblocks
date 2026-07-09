@@ -1204,6 +1204,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `run`, `conversation`, `project`, `tenant`, and `deployment` set. The compiler and server reject
   scopes that only become valid after trimming whitespace, preserving the configured capability
   scope as an exact literal.
+- Runtime event subscriptions and callback registrations now treat `subscription_id`, `run_id`,
+  and `scope_id` as exact durable identities. Values that only become valid after trimming
+  whitespace are rejected before replay, storage, revoke, or acknowledgement state can alias a
+  different capability.
 - Runtime callback subscription construction now validates typed webhook delivery targets so direct
   target construction cannot bypass non-empty URL checks.
 - Runtime callback event filters now match both spec camelCase `nodeId`/`operationId` payload

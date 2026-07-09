@@ -90,6 +90,13 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return stripped
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    text = _validate_non_empty_string(owner, field_name, value)
+    if value != text:
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return text
+
+
 def _validate_route_path(owner: str, value: object) -> str:
     path = _validate_non_empty_string(owner, "path", value)
     if not path.startswith("/"):
@@ -1346,12 +1353,12 @@ class ServerEventSubscription:
         object.__setattr__(
             self,
             "subscription_id",
-            _validate_non_empty_string("server event subscription", "subscription_id", self.subscription_id),
+            _validate_exact_non_empty_string("server event subscription", "subscription_id", self.subscription_id),
         )
         object.__setattr__(
             self,
             "run_id",
-            _validate_non_empty_string("server event subscription", "run_id", self.run_id),
+            _validate_exact_non_empty_string("server event subscription", "run_id", self.run_id),
         )
         if not isinstance(self.event_filter, Mapping):
             raise ValueError("server event subscription event_filter must be a mapping")
@@ -1426,7 +1433,7 @@ class ServerEventSubscription:
         _validate_callback_not_authoritative("server event subscription", body)
         _validate_mandatory_callback_policy("server event subscription", body, delivery, failure_policy)
         return cls(
-            subscription_id=_validate_non_empty_string(
+            subscription_id=_validate_exact_non_empty_string(
                 "server event subscription",
                 "subscription_id",
                 subscription_id,
@@ -1483,17 +1490,17 @@ class ServerCallbackRegistration:
         object.__setattr__(
             self,
             "subscription_id",
-            _validate_non_empty_string("server callback registration", "subscription_id", self.subscription_id),
+            _validate_exact_non_empty_string("server callback registration", "subscription_id", self.subscription_id),
         )
         object.__setattr__(
             self,
             "scope",
-            _validate_non_empty_string("server callback registration", "scope", self.scope),
+            _validate_callback_subscription_scope(self.scope),
         )
         object.__setattr__(
             self,
             "scope_id",
-            _validate_non_empty_string("server callback registration", "scope_id", self.scope_id),
+            _validate_exact_non_empty_string("server callback registration", "scope_id", self.scope_id),
         )
         if not isinstance(self.event_filter, Mapping):
             raise ValueError("server callback registration event_filter must be a mapping")
@@ -1567,13 +1574,13 @@ class ServerCallbackRegistration:
         _validate_callback_not_authoritative("server callback registration", body)
         _validate_mandatory_callback_policy("server callback registration", body, delivery, failure_policy)
         return cls(
-            subscription_id=_validate_non_empty_string(
+            subscription_id=_validate_exact_non_empty_string(
                 "server callback registration",
                 "subscription_id",
                 subscription_id,
             ),
             scope=_validate_callback_subscription_scope(body.get("scope", "")),
-            scope_id=_validate_non_empty_string(
+            scope_id=_validate_exact_non_empty_string(
                 "server callback registration",
                 "scope_id",
                 body.get("scope_id", body.get("scopeId", "")),

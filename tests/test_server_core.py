@@ -6201,6 +6201,36 @@ def test_server_app_rejects_subscription_with_whitespace_wrapped_identity_filter
         assert app.subscriptions("run-subscribe-identity-invalid-1") == ()
 
 
+def test_server_app_rejects_subscription_with_whitespace_wrapped_subscription_id() -> None:
+    for index, subscription_id in enumerate((" sub-identity-invalid", "sub-identity-invalid "), start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id[f"run-subscribe-id-invalid-{index}"] = ()
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/run-subscribe-id-invalid-{index}/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": subscription_id,
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server event subscription subscription_id must not contain surrounding whitespace",
+        }
+        assert app.subscriptions(f"run-subscribe-id-invalid-{index}") == ()
+
+
 def test_server_app_unsubscribes_without_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -8622,6 +8652,46 @@ def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identi
                         "scope": "tenant",
                         "scopeId": "tenant-1",
                         "eventFilter": event_filter,
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identity_fields() -> None:
+    cases = (
+        (
+            {"subscriptionId": " callback-sub-identity-invalid", "scopeId": "tenant-1"},
+            "server callback registration subscription_id must not contain surrounding whitespace",
+        ),
+        (
+            {"subscriptionId": "callback-sub-identity-invalid", "scopeId": "tenant-1 "},
+            "server callback registration scope_id must not contain surrounding whitespace",
+        ),
+    )
+    for body_overrides, expected_error in cases:
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        **body_overrides,
+                        "scope": "tenant",
+                        "eventFilter": {"types": ["RunSucceeded"]},
                         "delivery": {"kind": "local_callback", "callback_name": "ide"},
                     }
                 ).encode("utf-8"),
