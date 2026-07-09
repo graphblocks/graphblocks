@@ -9691,13 +9691,8 @@ class TckRunner:
                         }
                     )
                 else:
-                    try:
-                        expires_at_value = datetime.fromisoformat(
-                            expires_at.replace("Z", "+00:00")
-                            if expires_at.endswith("Z")
-                            else expires_at
-                        )
-                    except ValueError:
+                    expires_at_text = expires_at.strip()
+                    if len(expires_at_text) <= 10 or expires_at_text[10] != "T":
                         diagnostics.append(
                             {
                                 "code": "DurableExternalOperationInvalid",
@@ -9705,6 +9700,21 @@ class TckRunner:
                                 "path": f"$.operation.{expires_at_path}",
                             }
                         )
+                    else:
+                        try:
+                            expires_at_value = datetime.fromisoformat(
+                                expires_at_text.replace("Z", "+00:00")
+                                if expires_at_text.endswith("Z")
+                                else expires_at_text
+                            )
+                        except ValueError:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableExternalOperationInvalid",
+                                    "message": "external operation reconciliation requires ISO expiresAt",
+                                    "path": f"$.operation.{expires_at_path}",
+                                }
+                            )
                 if (
                     submitted_at_value is not None
                     and expires_at_value is not None

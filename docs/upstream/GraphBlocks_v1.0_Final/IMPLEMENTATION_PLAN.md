@@ -2096,10 +2096,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now reject zero-year operation
   `createdAt` timestamps in the Rust runner, preserving RFC 3339-style year bounds before late
   usage or side-effect reconciliation evidence is accepted.
-- Durable external-operation reconciliation shared TCK cases now reject operation `createdAt` and
-  `submittedAt` timestamps that use a space instead of the RFC 3339 `T` separator in the Python
-  runner, keeping operation lifecycle timestamp validation aligned with the Rust runner before
-  reconciliation evidence is accepted.
+- Durable external-operation reconciliation shared TCK cases now reject operation `createdAt`,
+  `submittedAt`, and `expiresAt` timestamps that use a space instead of the RFC 3339 `T` separator
+  in the Python runner, keeping operation lifecycle timestamp validation aligned with the Rust
+  runner before reconciliation evidence is accepted.
 - Durable external-operation reconciliation shared TCK cases now expose `diagnosticCount` on
   successful projections and include a valid fractional-second late callback `receivedAt` case,
   keeping Rust and Python aligned on RFC 3339-style callback receipt timestamps before late usage
