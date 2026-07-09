@@ -2474,6 +2474,11 @@ truth.
 ### Documents
 
 - Artifact/SourceAsset/Revision/ParsedDocument/Element/Chunk
+- Python document lineage primitives now reject whitespace-wrapped artifact ids, URIs, source asset
+  ids, revision ids, document ids, element kinds, span/source/chunk references, metadata keys, and
+  element-id collections instead of trimming them before parser selection, chunking, or citation
+  lineage can depend on those identifiers. The shared documents TCK now keeps artifact inputs exact
+  while preserving parser descriptor normalization coverage.
 - MIME routing과 parser plugin SPI
 - deterministic parser selection lock
 - OCR fallback interface

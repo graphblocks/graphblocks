@@ -96,8 +96,8 @@
     "artifact": {
       "artifactId": "artifact-1",
       "uri": "file:///tmp/POLICY.TXT",
-      "mediaType": " TEXT/PLAIN ",
-      "filename": " POLICY.TXT ",
+      "mediaType": "TEXT/PLAIN",
+      "filename": "POLICY.TXT",
       "checksum": "sha256:content"
     },
     "descriptors": [

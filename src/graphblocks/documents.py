@@ -85,6 +85,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -170,8 +172,8 @@ class ArtifactRef:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "artifact_id", _validate_non_empty_string("artifact", "artifact_id", self.artifact_id).strip())
-        object.__setattr__(self, "uri", _validate_non_empty_string("artifact", "uri", self.uri).strip())
+        object.__setattr__(self, "artifact_id", _validate_non_empty_string("artifact", "artifact_id", self.artifact_id))
+        object.__setattr__(self, "uri", _validate_non_empty_string("artifact", "uri", self.uri))
         for field_name in ("media_type", "checksum", "etag", "version", "filename"):
             object.__setattr__(
                 self,
@@ -202,8 +204,8 @@ class SourceAsset:
     current_revision_id: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "asset_id", _validate_non_empty_string("source asset", "asset_id", self.asset_id).strip())
-        object.__setattr__(self, "source_uri", _validate_non_empty_string("source asset", "source_uri", self.source_uri).strip())
+        object.__setattr__(self, "asset_id", _validate_non_empty_string("source asset", "asset_id", self.asset_id))
+        object.__setattr__(self, "source_uri", _validate_non_empty_string("source asset", "source_uri", self.source_uri))
         if self.source_kind not in SOURCE_KINDS:
             raise ValueError(f"invalid source asset source_kind {self.source_kind}")
         object.__setattr__(self, "tenant_id", _validate_optional_non_empty_string("source asset", "tenant_id", self.tenant_id))
@@ -226,10 +228,10 @@ class AssetRevision:
     acl: JsonObject | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "revision_id", _validate_non_empty_string("asset revision", "revision_id", self.revision_id).strip())
-        object.__setattr__(self, "asset_id", _validate_non_empty_string("asset revision", "asset_id", self.asset_id).strip())
-        object.__setattr__(self, "content_hash", _validate_non_empty_string("asset revision", "content_hash", self.content_hash).strip())
-        object.__setattr__(self, "observed_at", _validate_non_empty_string("asset revision", "observed_at", self.observed_at).strip())
+        object.__setattr__(self, "revision_id", _validate_non_empty_string("asset revision", "revision_id", self.revision_id))
+        object.__setattr__(self, "asset_id", _validate_non_empty_string("asset revision", "asset_id", self.asset_id))
+        object.__setattr__(self, "content_hash", _validate_non_empty_string("asset revision", "content_hash", self.content_hash))
+        object.__setattr__(self, "observed_at", _validate_non_empty_string("asset revision", "observed_at", self.observed_at))
         if not isinstance(self.artifact, ArtifactRef):
             raise ValueError("asset revision artifact must be ArtifactRef")
         object.__setattr__(self, "modified_at", _validate_optional_non_empty_string("asset revision", "modified_at", self.modified_at))
@@ -270,8 +272,8 @@ class DocumentElement:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "element_id", _validate_non_empty_string("document element", "element_id", self.element_id).strip())
-        object.__setattr__(self, "kind", _validate_non_empty_string("document element", "kind", self.kind).strip())
+        object.__setattr__(self, "element_id", _validate_non_empty_string("document element", "element_id", self.element_id))
+        object.__setattr__(self, "kind", _validate_non_empty_string("document element", "kind", self.kind))
         if not isinstance(self.order, int) or isinstance(self.order, bool):
             raise ValueError("document element order must be an integer")
         if self.order < 0:
@@ -298,7 +300,7 @@ class ParsedDocument:
 
     def __post_init__(self) -> None:
         for field_name in ("document_id", "asset_id", "revision_id"):
-            object.__setattr__(self, field_name, _validate_non_empty_string("parsed document", field_name, getattr(self, field_name)).strip())
+            object.__setattr__(self, field_name, _validate_non_empty_string("parsed document", field_name, getattr(self, field_name)))
         object.__setattr__(self, "parser", _freeze_mapping("parsed document", "parser", self.parser))
         elements = tuple(self.elements)
         if any(not isinstance(element, DocumentElement) for element in elements):
@@ -331,7 +333,7 @@ class DocumentSpan:
 
     def __post_init__(self) -> None:
         for field_name in ("asset_id", "revision_id", "document_id"):
-            object.__setattr__(self, field_name, _validate_non_empty_string("document span", field_name, getattr(self, field_name)).strip())
+            object.__setattr__(self, field_name, _validate_non_empty_string("document span", field_name, getattr(self, field_name)))
         for field_name in ("element_id", "chunk_id", "sheet", "cell_range"):
             object.__setattr__(
                 self,
@@ -369,8 +371,8 @@ class SourceRef:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "source_id", _validate_non_empty_string("source ref", "source_id", self.source_id).strip())
-        object.__setattr__(self, "source_kind", _validate_non_empty_string("source ref", "source_kind", self.source_kind).strip())
+        object.__setattr__(self, "source_id", _validate_non_empty_string("source ref", "source_id", self.source_id))
+        object.__setattr__(self, "source_kind", _validate_non_empty_string("source ref", "source_kind", self.source_kind))
         for field_name in ("revision", "digest", "observed_at", "relevant_as_of"):
             object.__setattr__(
                 self,
@@ -401,7 +403,7 @@ class DocumentChunk:
 
     def __post_init__(self) -> None:
         for field_name in ("chunk_id", "document_id", "asset_id", "revision_id"):
-            object.__setattr__(self, field_name, _validate_non_empty_string("document chunk", field_name, getattr(self, field_name)).strip())
+            object.__setattr__(self, field_name, _validate_non_empty_string("document chunk", field_name, getattr(self, field_name)))
         if not isinstance(self.text, str):
             raise ValueError("document chunk text must be a string")
         object.__setattr__(self, "element_ids", _validate_string_tuple("document chunk", "element_ids", self.element_ids))

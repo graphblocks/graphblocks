@@ -38,9 +38,76 @@ def test_artifact_ref_rejects_invalid_string_fields() -> None:
         ArtifactRef("artifact-1", "file:///tmp/example.txt", metadata={"owner": object()})  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize(
+    ("constructor", "expected_error"),
+    (
+        (
+            lambda: ArtifactRef(" artifact-1", "file:///tmp/example.txt"),
+            "artifact artifact_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ArtifactRef("artifact-1", " file:///tmp/example.txt"),
+            "artifact uri must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ArtifactRef("artifact-1", "file:///tmp/example.txt", media_type=" text/plain"),
+            "artifact media_type must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ArtifactRef("artifact-1", "file:///tmp/example.txt", metadata={" owner": "docs"}),
+            "artifact metadata key must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SourceAsset(" asset-1", "file:///tmp/example.txt", "local"),
+            "source asset asset_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SourceAsset("asset-1", "file:///tmp/example.txt", "local", current_revision_id=" rev-1"),
+            "source asset current_revision_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: AssetRevision(
+                "rev-1",
+                "asset-1",
+                " sha256:content",
+                "2026-06-22T00:00:00Z",
+                ArtifactRef("artifact-1", "file:///tmp/example.txt"),
+            ),
+            "asset revision content_hash must not contain surrounding whitespace",
+        ),
+        (
+            lambda: DocumentElement("el-1", " paragraph", 0, "hello", SourceLocation()),
+            "document element kind must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParsedDocument(" doc-1", "asset-1", "rev-1", {}),
+            "parsed document document_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: DocumentSpan("asset-1", "rev-1", "doc-1", element_id=" el-1"),
+            "document span element_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SourceRef("source-1", "document_chunk", digest=" sha256:content"),
+            "source ref digest must not contain surrounding whitespace",
+        ),
+        (
+            lambda: DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", [" el-1"], [], {}),
+            "document chunk element_ids item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_document_lineage_records_reject_whitespace_wrapped_identities(
+    constructor: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        constructor()
+
+
 def test_document_lineage_records_validate_identity_types_and_snapshots() -> None:
     artifact_metadata = {"owner": "docs"}
-    artifact = ArtifactRef(" artifact-1 ", " file:///tmp/example.txt ", metadata=artifact_metadata)
+    artifact = ArtifactRef("artifact-1", "file:///tmp/example.txt", metadata=artifact_metadata)
     artifact_metadata["owner"] = "mutated"
 
     assert artifact.artifact_id == "artifact-1"
@@ -145,7 +212,7 @@ def test_document_chunk_source_ref_contains_full_lineage_ids() -> None:
 
 
 def test_document_payload_records_validate_nested_types_and_copy_collections() -> None:
-    element = DocumentElement(" el-1 ", " paragraph ", 0, "hello", SourceLocation(section_path=["body"]))
+    element = DocumentElement("el-1", "paragraph", 0, "hello", SourceLocation(section_path=["body"]))
     parser = {"processor_id": "plain-text", "version": "1", "config": {"enabled": True}}
     document = ParsedDocument(
         "doc-1",

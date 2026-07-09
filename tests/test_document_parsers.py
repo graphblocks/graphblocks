@@ -68,7 +68,7 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
         ParserSelectionLock("plain-text", "1", "media_type", metadata={" ": "value"})
 
 
-def test_parser_registry_normalizes_registered_fields_and_selection_inputs() -> None:
+def test_parser_registry_normalizes_registered_fields_and_selection_case() -> None:
     registry = DocumentParserRegistry()
     registry.register(
         ParserDescriptor(
@@ -83,12 +83,12 @@ def test_parser_registry_normalizes_registered_fields_and_selection_inputs() -> 
         ArtifactRef(
             "artifact-1",
             "file:///tmp/POLICY.TXT",
-            media_type=" TEXT/PLAIN ",
-            filename=" POLICY.TXT ",
+            media_type="TEXT/PLAIN",
+            filename="POLICY.TXT",
         )
     )
     extension_lock = registry.select(
-        ArtifactRef("artifact-2", "file:///tmp/POLICY.TXT", filename=" POLICY.TXT ")
+        ArtifactRef("artifact-2", "file:///tmp/POLICY.TXT", filename="POLICY.TXT")
     )
 
     assert media_lock.processor_id == "plain-text"
