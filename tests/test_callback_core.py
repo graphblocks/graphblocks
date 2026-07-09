@@ -94,6 +94,63 @@ def test_callback_subscription_rejects_invalid_scope_status_and_expiration() -> 
         graphblocks.EventFilter(visibility=["private"])
 
 
+def test_callback_schema_rejects_whitespace_wrapped_subscription_and_filter_values() -> None:
+    filter_cases = (
+        (lambda: graphblocks.EventFilter(types=[" RunStarted"]), "event filter types must not contain surrounding whitespace"),
+        (lambda: graphblocks.EventFilter(visibility=["client "]), "event filter visibility must not contain surrounding whitespace"),
+        (lambda: graphblocks.EventFilter(node_ids=[" node-1"]), "event filter node_ids must not contain surrounding whitespace"),
+        (
+            lambda: graphblocks.EventFilter(operation_ids=["operation-1 "]),
+            "event filter operation_ids must not contain surrounding whitespace",
+        ),
+        (
+            lambda: graphblocks.EventFilter(severity_min=" warning"),
+            "event filter severity_min must not contain surrounding whitespace",
+        ),
+        (
+            lambda: graphblocks.EventFilter(visibility=["client"]).authorized_for_visibility([" operator"]),
+            "event filter authorized visibility must not contain surrounding whitespace",
+        ),
+    )
+    for construct, message in filter_cases:
+        with raises_value_error(message):
+            construct()
+
+    subscription_base = {
+        "subscription_id": "sub-1",
+        "owner": "principal:ide",
+        "scope": "run",
+        "scope_id": "run-1",
+        "event_filter": graphblocks.EventFilter(),
+        "delivery_target": "webhook:ide-relay",
+        "status": "active",
+        "created_at": "2026-07-02T00:00:00Z",
+        "failure_policy": "retry_then_dead_letter",
+    }
+    subscription_cases = (
+        ({"subscription_id": " sub-1"}, "callback subscription subscription_id must not contain surrounding whitespace"),
+        ({"owner": "principal:ide "}, "callback subscription owner must not contain surrounding whitespace"),
+        ({"scope": " run"}, "callback subscription scope must not contain surrounding whitespace"),
+        ({"scope_id": "run-1 "}, "callback subscription scope_id must not contain surrounding whitespace"),
+        (
+            {"delivery_target": " webhook:ide-relay"},
+            "callback subscription delivery_target must not contain surrounding whitespace",
+        ),
+        ({"status": "active "}, "callback subscription status must not contain surrounding whitespace"),
+        (
+            {"replay_from_cursor": " run-1:7"},
+            "callback subscription replay_from_cursor must not contain surrounding whitespace",
+        ),
+        (
+            {"failure_policy": " retry_then_dead_letter"},
+            "callback subscription failure_policy must not contain surrounding whitespace",
+        ),
+    )
+    for overrides, message in subscription_cases:
+        with raises_value_error(message):
+            graphblocks.CallbackSubscription(**{**subscription_base, **overrides})
+
+
 def test_callback_subscription_rejects_non_rfc3339_timestamps() -> None:
     with raises_value_error("callback subscription created_at must be an ISO datetime"):
         graphblocks.CallbackSubscription(
@@ -461,6 +518,39 @@ def test_callback_delivery_rejects_non_rfc3339_timestamps() -> None:
             delivered_at="2026-07-02T00:00:01Z",
             acknowledged_at="2026-07-02 00:00:02Z",
         )
+
+
+def test_callback_delivery_rejects_whitespace_wrapped_identifiers_and_status() -> None:
+    delivery_base = {
+        "delivery_id": "del-1",
+        "subscription_id": "sub-1",
+        "event_id": "evt-1",
+        "run_id": "run-1",
+        "sequence": 7,
+        "cursor": "run-1:7",
+        "attempt": 1,
+        "idempotency_key": "sub-1:evt-1",
+        "status": "failed",
+        "next_retry_at": "2026-07-02T00:00:30Z",
+        "last_error": "receiver returned 503",
+    }
+    cases = (
+        ({"delivery_id": " del-1"}, "callback delivery delivery_id must not contain surrounding whitespace"),
+        ({"subscription_id": "sub-1 "}, "callback delivery subscription_id must not contain surrounding whitespace"),
+        ({"event_id": " evt-1"}, "callback delivery event_id must not contain surrounding whitespace"),
+        ({"run_id": "run-1 "}, "callback delivery run_id must not contain surrounding whitespace"),
+        ({"cursor": " run-1:7"}, "callback delivery cursor must not contain surrounding whitespace"),
+        (
+            {"idempotency_key": "sub-1:evt-1 "},
+            "callback delivery idempotency_key must not contain surrounding whitespace",
+        ),
+        ({"status": "failed "}, "callback delivery status must not contain surrounding whitespace"),
+        ({"last_error": " receiver returned 503"}, "callback delivery last_error must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in cases:
+        with raises_value_error(message):
+            graphblocks.CallbackDelivery(**{**delivery_base, **overrides})
 
 
 def test_callback_schema_exports_are_available() -> None:

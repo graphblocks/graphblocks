@@ -982,6 +982,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `CallbackSubscription`, and `CallbackDelivery`, covering subscription scope/status/failure-policy
   validation, terminal-event filter projection, delivery idempotency metadata, and terminal delivery
   timestamp invariants.
+- Python callback schema facades now reject whitespace-wrapped filter selectors, subscription
+  identities, replay cursors, lifecycle/failure-policy literals, delivery identities,
+  idempotency keys, statuses, and terminal error text before callback projections can be stored or
+  redriven.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

@@ -76,10 +76,11 @@ TERMINAL_CALLBACK_DELIVERY_STATUSES = frozenset({
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
-    stripped = value.strip()
-    if not stripped:
+    if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
-    return stripped
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
 
 
 def _validate_non_negative_int(owner: str, field_name: str, value: object) -> int:
