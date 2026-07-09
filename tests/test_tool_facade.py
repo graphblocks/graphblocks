@@ -2515,6 +2515,31 @@ def test_content_part_requires_payload_for_its_kind() -> None:
             kind="artifact_ref",
             data={"artifact_id": "artifact-1", "uri": "blob://artifact-1", "checksum": " "},
         )
+    artifact_ref_cases = (
+        ("artifact_id", " artifact-1", "artifact_id"),
+        ("uri", "blob://artifact-1 ", "uri"),
+        ("media_type", "\tapplication/json", "media_type"),
+        ("checksum", "sha256:artifact\n", "checksum"),
+        ("etag", " etag-1", "etag"),
+        ("version", "v1 ", "version"),
+        ("filename", "\tresult.json", "filename"),
+    )
+    for field_name, wrapped_value, canonical_field_name in artifact_ref_cases:
+        data = {
+            "artifact_id": "artifact-1",
+            "uri": "blob://artifact-1",
+            "media_type": "application/json",
+            "checksum": "sha256:artifact",
+            "etag": "etag-1",
+            "version": "v1",
+            "filename": "result.json",
+        }
+        data[field_name] = wrapped_value
+        with pytest.raises(
+            ValueError,
+            match=f"artifact_ref content part {canonical_field_name} must not contain surrounding whitespace",
+        ):
+            ContentPart(kind="artifact_ref", data=data)
 
     with pytest.raises(ValueError, match="text content part must not carry data"):
         ContentPart(kind="text", text="ok", data={"unexpected": True})

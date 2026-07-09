@@ -240,6 +240,8 @@ Message
 - Python `ToolResult` artifact references now validate artifact ids, URIs, media types, checksums,
   etags, versions, and filenames as exact metadata values, rejecting strings that only become valid
   after trimming whitespace before untrusted tool output can publish durable artifact references.
+- Python `artifact_ref` content parts apply the same exact metadata checks to inline tool-result
+  artifact references before those content parts can enter output validation or model delivery.
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
 - Rust `ToolExecutionPlan` validation rejects duplicate dependency references per call before
   dependency graph normalization, so dependent tool execution remains deterministic and auditable.

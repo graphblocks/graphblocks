@@ -169,6 +169,10 @@ class ContentPart:
                     raise ValueError(f"artifact_ref content part {field_name} must be a string")
                 if not value.strip():
                     raise ValueError(f"artifact_ref content part {field_name} must not be empty")
+                if value != value.strip():
+                    raise ValueError(
+                        f"artifact_ref content part {field_name} must not contain surrounding whitespace"
+                    )
             for field_name in ("media_type", "checksum", "etag", "version", "filename"):
                 value = data.get(field_name)
                 if value is not None:
@@ -176,6 +180,10 @@ class ContentPart:
                         raise ValueError(f"artifact_ref content part {field_name} must be a string")
                     if not value.strip():
                         raise ValueError(f"artifact_ref content part {field_name} must not be empty")
+                    if value != value.strip():
+                        raise ValueError(
+                            f"artifact_ref content part {field_name} must not contain surrounding whitespace"
+                        )
             size_bytes = data.get("size_bytes")
             if size_bytes is not None:
                 if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):
