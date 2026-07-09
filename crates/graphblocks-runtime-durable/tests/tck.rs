@@ -1553,6 +1553,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                 let Ok(second) = value.get(17..19).unwrap_or_default().parse::<i64>() else {
                     return false;
                 };
+                if year < 1 {
+                    return false;
+                }
                 let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
                 let max_day = match month {
                     1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,

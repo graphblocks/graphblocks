@@ -1891,6 +1891,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   both Rust and Python runners, so impossible dates such as an invalid `nextRetryAt` day cannot
   satisfy retry, delivery, or acknowledgement evidence even when their text shape resembles an RFC
   3339 timestamp.
+- Durable callback projection shared TCK cases now reject zero-year `nextRetryAt` retry timestamps
+  in the Rust runner, preserving RFC 3339-style year bounds before accepting retry evidence.
 - Durable callback projection shared TCK cases now require nonblank redrive operator and reason
   audit metadata in both Rust and Python runners, so dead-letter redrive conformance preserves the
   operator action context required for durable audit and redrive review.

@@ -4355,6 +4355,37 @@
     }
   },
   {
+    "name": "webhook_delivery_zero_year_next_retry_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-retry-year-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0203-year",
+        "runId": "run-coding-001",
+        "sequence": 203,
+        "cursor": "evt-0203-year",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0203-year",
+        "receiverStatus": 500,
+        "status": "failed",
+        "nextRetryAt": "0000-07-02T00:01:00Z",
+        "lastError": "receiver_error"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "callback delivery requires nextRetryAt timestamp",
+        "path": "$.deliveries[0].nextRetryAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_failed_missing_last_error_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
