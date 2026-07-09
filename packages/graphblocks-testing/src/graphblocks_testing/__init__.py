@@ -10314,6 +10314,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_id_path}",
                         }
                     )
+                elif callback_id != callback_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callbackId must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{callback_id_path}",
+                        }
+                    )
                 callback_operation_id_path = (
                     "operationId"
                     if "operationId" in raw_late_callback
@@ -10328,6 +10336,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires callback operationId",
+                            "path": f"$.lateCallback.{callback_operation_id_path}",
+                        }
+                    )
+                elif callback_operation_id != callback_operation_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback operationId must not contain surrounding whitespace",
                             "path": f"$.lateCallback.{callback_operation_id_path}",
                         }
                     )
@@ -10365,6 +10381,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_provider_operation_id_path}",
                         }
                     )
+                elif callback_provider_operation_id != callback_provider_operation_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback providerOperationId must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{callback_provider_operation_id_path}",
+                        }
+                    )
                 elif (
                     isinstance(provider_operation_id, str)
                     and provider_operation_id.strip()
@@ -10392,6 +10416,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires callback runId",
+                            "path": f"$.lateCallback.{callback_run_id_path}",
+                        }
+                    )
+                elif callback_run_id != callback_run_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback runId must not contain surrounding whitespace",
                             "path": f"$.lateCallback.{callback_run_id_path}",
                         }
                     )
@@ -10425,6 +10457,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_node_id_path}",
                         }
                     )
+                elif callback_node_id != callback_node_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback nodeId must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{callback_node_id_path}",
+                        }
+                    )
                 elif (
                     isinstance(node_id, str)
                     and node_id.strip()
@@ -10452,6 +10492,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires callback attemptId",
+                            "path": f"$.lateCallback.{callback_attempt_id_path}",
+                        }
+                    )
+                elif callback_attempt_id != callback_attempt_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback attemptId must not contain surrounding whitespace",
                             "path": f"$.lateCallback.{callback_attempt_id_path}",
                         }
                     )
@@ -10485,6 +10533,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{callback_release_id_path}",
                         }
                     )
+                elif callback_release_id != callback_release_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback releaseId must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{callback_release_id_path}",
+                        }
+                    )
                 elif (
                     isinstance(release_id, str)
                     and release_id.strip()
@@ -10512,6 +10568,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires callback tenantId",
+                            "path": f"$.lateCallback.{callback_tenant_id_path}",
+                        }
+                    )
+                elif callback_tenant_id != callback_tenant_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation callback tenantId must not contain surrounding whitespace",
                             "path": f"$.lateCallback.{callback_tenant_id_path}",
                         }
                     )
@@ -10584,6 +10648,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{verified_by_path}",
                         }
                     )
+                elif verified_by != verified_by.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation verifiedBy must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{verified_by_path}",
+                        }
+                    )
                 elif verified_by.strip().lower() == "unauthenticated":
                     diagnostics.append(
                         {
@@ -10609,6 +10681,14 @@ class TckRunner:
                             "path": f"$.lateCallback.{idempotency_key_path}",
                         }
                     )
+                elif idempotency_key != idempotency_key.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation idempotencyKey must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{idempotency_key_path}",
+                        }
+                    )
                 policy_snapshot_path = (
                     "policySnapshotId"
                     if "policySnapshotId" in raw_late_callback
@@ -10623,6 +10703,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank policySnapshotId",
+                            "path": f"$.lateCallback.{policy_snapshot_path}",
+                        }
+                    )
+                elif policy_snapshot_id != policy_snapshot_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation policySnapshotId must not contain surrounding whitespace",
                             "path": f"$.lateCallback.{policy_snapshot_path}",
                         }
                     )
@@ -10657,8 +10745,16 @@ class TckRunner:
                             "path": f"$.lateCallback.{received_at_path}",
                         }
                     )
+                elif received_at != received_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation receivedAt must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{received_at_path}",
+                        }
+                    )
                 else:
-                    received_at_text = received_at.strip()
+                    received_at_text = received_at
                     if len(received_at_text) <= 10 or received_at_text[10] != "T":
                         diagnostics.append(
                             {

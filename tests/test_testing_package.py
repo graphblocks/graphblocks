@@ -4498,7 +4498,7 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_id
 
     for field_name, message, path in cases:
         fixture = json.loads(json.dumps(base_fixture))
-        fixture["lateCallback"][field_name] = f"{fixture['lateCallback'][field_name]} "
+        fixture["lateCallback"][field_name] = f"{fixture['lateCallback'][field_name]}-other"
         case = graphblocks_testing.TckCase.durable(
             case_id=f"durable/external-operation-reconciliation-whitespace-{field_name}",
             fixture=fixture,
@@ -4631,6 +4631,146 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_op
         fixture["operation"][field_name] = f" {fixture['operation'][field_name]}"
         case = graphblocks_testing.TckCase.durable(
             case_id=f"durable/external-operation-reconciliation-operation-whitespace-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableExternalOperationInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
+def test_testing_package_rejects_external_operation_reconciliation_whitespace_late_callback_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    base_fixture = {
+        "kind": "external_operation_reconciliation",
+        "operation": {
+            "operationId": "op-ci-002",
+            "providerOperationId": "gh-run-002",
+            "idempotencyKey": "idem-ci-operation-001",
+            "runId": "run-coding-002",
+            "nodeId": "runExternalCI",
+            "attemptId": "attempt-ci-001",
+            "state": "cancelled",
+            "releaseId": "release-2026-06-23",
+            "tenantId": "tenant-support-001",
+            "policySnapshotId": "pol-callback-001",
+            "effectState": "committed",
+            "effectJournaled": True,
+            "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expectedSchema": "schemas/CICallback@1",
+            "createdAt": "2026-06-23T00:00:00Z",
+            "kind": "ci_job",
+            "expiresAt": "2026-06-23T00:30:00Z",
+            "submittedAt": "2026-06-23T00:00:01Z",
+        },
+        "lateCallback": {
+            "callbackId": "cb-ci-late-001",
+            "operationId": "op-ci-002",
+            "providerOperationId": "gh-run-002",
+            "runId": "run-coding-002",
+            "nodeId": "runExternalCI",
+            "attemptId": "attempt-ci-001",
+            "releaseId": "release-2026-06-23",
+            "tenantId": "tenant-support-001",
+            "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verifiedBy": "hmac-sha256:callback-endpoint-1",
+            "idempotencyKey": "idem-ci-callback-001",
+            "policySnapshotId": "pol-callback-001",
+            "receivedAt": "2026-06-23T00:00:30Z",
+            "commitsResult": False,
+            "diagnosticRecorded": True,
+            "payloadConvertedToArtifactRef": True,
+        },
+        "usage": {
+            "providerUsageRecords": [
+                {
+                    "metric": "ci.minutes",
+                    "amount": 1,
+                }
+            ],
+            "reconciled": True,
+        },
+    }
+    cases = (
+        (
+            "callbackId",
+            "external operation reconciliation callbackId must not contain surrounding whitespace",
+            "$.lateCallback.callbackId",
+        ),
+        (
+            "operationId",
+            "external operation reconciliation callback operationId must not contain surrounding whitespace",
+            "$.lateCallback.operationId",
+        ),
+        (
+            "providerOperationId",
+            "external operation reconciliation callback providerOperationId must not contain surrounding whitespace",
+            "$.lateCallback.providerOperationId",
+        ),
+        (
+            "runId",
+            "external operation reconciliation callback runId must not contain surrounding whitespace",
+            "$.lateCallback.runId",
+        ),
+        (
+            "nodeId",
+            "external operation reconciliation callback nodeId must not contain surrounding whitespace",
+            "$.lateCallback.nodeId",
+        ),
+        (
+            "attemptId",
+            "external operation reconciliation callback attemptId must not contain surrounding whitespace",
+            "$.lateCallback.attemptId",
+        ),
+        (
+            "releaseId",
+            "external operation reconciliation callback releaseId must not contain surrounding whitespace",
+            "$.lateCallback.releaseId",
+        ),
+        (
+            "tenantId",
+            "external operation reconciliation callback tenantId must not contain surrounding whitespace",
+            "$.lateCallback.tenantId",
+        ),
+        (
+            "verifiedBy",
+            "external operation reconciliation verifiedBy must not contain surrounding whitespace",
+            "$.lateCallback.verifiedBy",
+        ),
+        (
+            "idempotencyKey",
+            "external operation reconciliation idempotencyKey must not contain surrounding whitespace",
+            "$.lateCallback.idempotencyKey",
+        ),
+        (
+            "policySnapshotId",
+            "external operation reconciliation policySnapshotId must not contain surrounding whitespace",
+            "$.lateCallback.policySnapshotId",
+        ),
+        (
+            "receivedAt",
+            "external operation reconciliation receivedAt must not contain surrounding whitespace",
+            "$.lateCallback.receivedAt",
+        ),
+    )
+
+    for field_name, message, path in cases:
+        fixture = json.loads(json.dumps(base_fixture))
+        fixture["lateCallback"][field_name] = f"{fixture['lateCallback'][field_name]} "
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/external-operation-reconciliation-late-callback-whitespace-{field_name}",
             fixture=fixture,
         )
 
