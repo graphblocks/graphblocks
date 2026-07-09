@@ -29,12 +29,21 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    value = _validate_non_empty_string(owner, field_name, value)
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
+
+
 def _freeze_metadata(owner: str, metadata: object) -> MappingProxyType[str, object]:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
     metadata_copy = dict(metadata)
     if any(not isinstance(key, str) or not key.strip() for key in metadata_copy):
         raise ValueError(f"{owner} metadata keys must be non-empty strings")
+    if any(key != key.strip() for key in metadata_copy):
+        raise ValueError(f"{owner} metadata keys must not contain surrounding whitespace")
     return MappingProxyType({key: _freeze_metadata_value(owner, value) for key, value in metadata_copy.items()})
 
 
@@ -101,8 +110,9 @@ class ApprovalRequest:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for field_name in ("approval_id", "run_id", "action", "arguments_digest", "risk", "summary"):
-            _validate_non_empty_string("approval request", field_name, getattr(self, field_name))
+        for field_name in ("approval_id", "run_id", "action", "arguments_digest", "risk"):
+            _validate_exact_non_empty_string("approval request", field_name, getattr(self, field_name))
+        _validate_non_empty_string("approval request", "summary", self.summary)
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("approval request subject must be a ResourceSnapshotRef")
         _validate_optional_non_empty_string("approval request", "expires_at", self.expires_at)
@@ -151,7 +161,7 @@ class ApprovalRecord:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("approval record", "approval_id", self.approval_id)
+        _validate_exact_non_empty_string("approval record", "approval_id", self.approval_id)
         if not isinstance(self.request, ApprovalRequest):
             raise ValueError("approval record request must be an ApprovalRequest")
         if self.approval_id != self.request.approval_id:
@@ -191,6 +201,8 @@ class ApprovalRecord:
                 raise ValueError("approval credential_refs items must be strings")
             if not credential_ref.strip():
                 raise ValueError("approval credential_refs item must not be empty")
+            if credential_ref != credential_ref.strip():
+                raise ValueError("approval credential_refs item must not contain surrounding whitespace")
         object.__setattr__(self, "credential_refs", credential_refs)
         object.__setattr__(self, "metadata", _freeze_metadata("approval record", self.metadata))
 

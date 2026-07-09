@@ -1854,8 +1854,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Expired approval records are covered by the shared tool-lifecycle TCK, proving that approval
   validity is rechecked at admission time rather than treated as a permanent grant.
 - Python approval request and approval record metadata now deep-freeze nested mappings and
-  sequences, so audit/review annotations attached to an approval cannot be mutated after approval
-  admission decisions are constructed.
+  sequences. Metadata keys and credential refs are exact values, so audit/review annotations
+  attached to an approval cannot be mutated or whitespace-normalized after approval admission
+  decisions are constructed.
 - Python tool approval requests now validate approval ids, call ids, tool names, definition,
   binding, and argument digests, policy snapshots, principals, and approver ids as exact
   immutable identities, rejecting values that only become valid after trimming whitespace before an

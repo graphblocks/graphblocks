@@ -93,6 +93,58 @@ def test_approval_request_rejects_invalid_identity_fields() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"approval_id": " approval-1"},
+            "approval request approval_id must not contain surrounding whitespace",
+        ),
+        (
+            {"run_id": "run-1 "},
+            "approval request run_id must not contain surrounding whitespace",
+        ),
+        (
+            {"action": " process.execute"},
+            "approval request action must not contain surrounding whitespace",
+        ),
+        (
+            {"arguments_digest": " sha256:arguments"},
+            "approval request arguments_digest must not contain surrounding whitespace",
+        ),
+        (
+            {"risk": " external_process"},
+            "approval request risk must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {" ticket": "T-1"}},
+            "approval request metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {"scope": {" label": "approval"}}},
+            "approval request metadata keys must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_approval_request_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
+    base_request = {
+        "approval_id": "approval-1",
+        "run_id": "run-1",
+        "subject": subject,
+        "action": "process.execute",
+        "arguments_digest": "sha256:arguments",
+        "risk": "external_process",
+        "summary": "Run a process",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ApprovalRequest(**(base_request | overrides))
+
+
 def test_approval_request_metadata_is_copied_and_read_only() -> None:
     metadata = {"ticket": "T-1", "scope": {"labels": ["approval"]}}
     request = ApprovalRequest.from_arguments(
@@ -259,6 +311,47 @@ def test_approval_record_rejects_invalid_state() -> None:
         ApprovalRecord("approval-1", request, "requested", metadata={object(): "T-1"})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="approval record metadata keys must be non-empty strings"):
         ApprovalRecord("approval-1", request, "requested", metadata={" ": "T-1"})
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda request: ApprovalRecord(" approval-1", request, "requested"),
+            "approval record approval_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda request: ApprovalRecord("approval-1", request, "requested", credential_refs=(" cred-1",)),
+            "approval credential_refs item must not contain surrounding whitespace",
+        ),
+        (
+            lambda request: ApprovalRecord("approval-1", request, "requested", metadata={" review": "security"}),
+            "approval record metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda request: ApprovalRecord(
+                "approval-1",
+                request,
+                "requested",
+                metadata={"review": {" label": "security"}},
+            ),
+            "approval record metadata keys must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_approval_record_rejects_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+    )
+
+    with pytest.raises(ValueError, match=expected_error):
+        factory(request)
 
 
 def test_approval_record_metadata_is_copied_and_read_only() -> None:
