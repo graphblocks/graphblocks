@@ -3001,18 +3001,22 @@ class GraphBlocksServerApp:
         )
 
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
-        operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
+        operation_id = _validate_exact_non_empty_string("server async callback", "operation_id", operation_id)
         return self._callbacks_by_operation_id.get(operation_id, ())
 
     def async_callback_rejections(self, operation_id: str) -> tuple[dict[str, object], ...]:
-        operation_id = _validate_non_empty_string("server async callback rejection", "operation_id", operation_id)
+        operation_id = _validate_exact_non_empty_string(
+            "server async callback rejection",
+            "operation_id",
+            operation_id,
+        )
         return tuple(
             rejection.protocol_value()
             for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
         )
 
     def late_async_callbacks(self, operation_id: str) -> tuple[dict[str, object], ...]:
-        operation_id = _validate_non_empty_string("server late async callback", "operation_id", operation_id)
+        operation_id = _validate_exact_non_empty_string("server late async callback", "operation_id", operation_id)
         return tuple(
             {"kind": "LateExternalCallbackReceived", **rejection.protocol_value()}
             for rejection in self._async_callback_rejections_by_operation_id.get(operation_id, ())
@@ -3020,20 +3024,24 @@ class GraphBlocksServerApp:
         )
 
     def detachments(self, run_id: str) -> tuple[dict[str, object], ...]:
-        run_id = _validate_non_empty_string("server detach", "run_id", run_id)
+        run_id = _validate_exact_non_empty_string("server detach", "run_id", run_id)
         return self._detachments_by_run_id.get(run_id, ())
 
     def run_controls(self, run_id: str) -> tuple[dict[str, object], ...]:
-        run_id = _validate_non_empty_string("server run control", "run_id", run_id)
+        run_id = _validate_exact_non_empty_string("server run control", "run_id", run_id)
         return self._run_controls_by_run_id.get(run_id, ())
 
     def subscriptions(self, run_id: str) -> tuple[ServerEventSubscription, ...]:
-        run_id = _validate_non_empty_string("server event subscription", "run_id", run_id)
+        run_id = _validate_exact_non_empty_string("server event subscription", "run_id", run_id)
         return self._subscriptions_by_run_id.get(run_id, ())
 
     def event_acks(self, run_id: str, subscription_id: str) -> tuple[dict[str, object], ...]:
-        run_id = _validate_non_empty_string("server event ack", "run_id", run_id)
-        subscription_id = _validate_non_empty_string("server event ack", "subscription_id", subscription_id)
+        run_id = _validate_exact_non_empty_string("server event ack", "run_id", run_id)
+        subscription_id = _validate_exact_non_empty_string(
+            "server event ack",
+            "subscription_id",
+            subscription_id,
+        )
         return self._acks_by_subscription.get((run_id, subscription_id), ())
 
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:

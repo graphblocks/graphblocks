@@ -3600,6 +3600,47 @@ def test_server_timestamp_fields_reject_surrounding_whitespace() -> None:
             constructor()
 
 
+def test_server_inspection_accessors_reject_whitespace_wrapped_identities() -> None:
+    app = GraphBlocksServerApp()
+    cases = (
+        (
+            lambda: app.callback_submissions(" op-ci-1"),
+            "server async callback operation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.async_callback_rejections("op-ci-1 "),
+            "server async callback rejection operation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.late_async_callbacks(" op-ci-1"),
+            "server late async callback operation_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.detachments("run-1 "),
+            "server detach run_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.run_controls(" run-1"),
+            "server run control run_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.subscriptions("run-1 "),
+            "server event subscription run_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.event_acks(" run-1", "sub-1"),
+            "server event ack run_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: app.event_acks("run-1", " sub-1"),
+            "server event ack subscription_id must not contain surrounding whitespace",
+        ),
+    )
+    for accessor, expected_error in cases:
+        with pytest.raises(ValueError, match=expected_error):
+            accessor()
+
+
 def test_server_async_callback_from_request_preserves_artifacts() -> None:
     request = ServerRequest(
         method="POST",

@@ -1456,6 +1456,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   resolve to the same retained event before an acknowledgement is recorded. Acknowledged events must
   also be visible to the subscription owner and match the active subscription's event filter, so
   malformed or unauthorized event visibility cannot be acknowledged through the control route.
+- Server inspection accessors for callback receipts, callback rejections, late callbacks,
+  detachments, run controls, subscriptions, and event acknowledgements now validate lookup ids as
+  exact durable identities, rejecting values that would only match after trimming whitespace.
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events
