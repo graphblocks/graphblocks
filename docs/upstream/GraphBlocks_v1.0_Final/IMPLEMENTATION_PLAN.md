@@ -2047,7 +2047,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   ISO `operation.expiresAt` timestamp, and a valid AsyncOperation `operation.state` literal in both
   Rust and Python runners before accepting late side-effect, callback, or usage reconciliation
   evidence. The Rust runner now parses those timestamps as calendar-valid instants instead of
-  accepting digit-shaped dates with impossible months or days. The same TCK path rejects
+  accepting digit-shaped dates with impossible months or days, and rejects lowercase `z` timestamp
+  suffixes so Rust and Python agree on the accepted UTC designator. The same TCK path rejects
   non-terminal operation states before late reconciliation, because late callback, effect, and
   usage reconciliation must not be confused with active resumable operations. It also rejects
   `operation.submittedAt` values that precede

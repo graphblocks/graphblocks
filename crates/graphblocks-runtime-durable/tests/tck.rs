@@ -3529,7 +3529,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     return None;
                 }
                 let offset_seconds = match value.get(19..) {
-                    Some("Z" | "z") => 0,
+                    Some("Z") => 0,
                     Some(offset) if offset.len() == 6 => {
                         let sign = match offset.as_bytes().first() {
                             Some(b'+') => 1,
