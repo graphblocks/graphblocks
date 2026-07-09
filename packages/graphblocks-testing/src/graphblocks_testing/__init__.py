@@ -8587,14 +8587,7 @@ class TckRunner:
                         )
                     else:
                         deadline_text = deadline.strip()
-                        if deadline_text.endswith("Z"):
-                            deadline_text = f"{deadline_text[:-1]}+00:00"
-                        try:
-                            operation_deadline_at = datetime.fromisoformat(deadline_text)
-                            if operation_deadline_at.tzinfo is None:
-                                operation_deadline_at = operation_deadline_at.replace(tzinfo=timezone.utc)
-                            operation_deadline_at = operation_deadline_at.astimezone(timezone.utc)
-                        except ValueError:
+                        if len(deadline_text) <= 10 or deadline_text[10] != "T":
                             diagnostics.append(
                                 {
                                     "code": "DurableAsyncCallbackResumeInvalid",
@@ -8602,6 +8595,22 @@ class TckRunner:
                                     "path": "$.operation.deadline",
                                 }
                             )
+                        else:
+                            if deadline_text.endswith("Z"):
+                                deadline_text = f"{deadline_text[:-1]}+00:00"
+                            try:
+                                operation_deadline_at = datetime.fromisoformat(deadline_text)
+                                if operation_deadline_at.tzinfo is None:
+                                    operation_deadline_at = operation_deadline_at.replace(tzinfo=timezone.utc)
+                                operation_deadline_at = operation_deadline_at.astimezone(timezone.utc)
+                            except ValueError:
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableAsyncCallbackResumeInvalid",
+                                        "message": "async callback resume operation requires ISO deadline",
+                                        "path": "$.operation.deadline",
+                                    }
+                                )
                     budget_state_path = (
                         "budgetState"
                         if "budgetState" in raw_operation or "budget_state" not in raw_operation
