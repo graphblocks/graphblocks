@@ -1500,6 +1500,93 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut duplicate_409_acknowledged = false;
             let mut subscription_gone_after_410 = false;
             let mut non_retryable_4xx_terminal = false;
+            let is_iso_timestamp = |value: &str| -> bool {
+                let value = value.trim();
+                let bytes = value.as_bytes();
+                let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                if bytes.len() < 20
+                    || !digit_positions
+                        .into_iter()
+                        .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                    || bytes.get(4) != Some(&b'-')
+                    || bytes.get(7) != Some(&b'-')
+                    || bytes.get(10) != Some(&b'T')
+                    || bytes.get(13) != Some(&b':')
+                    || bytes.get(16) != Some(&b':')
+                {
+                    return false;
+                }
+                let Ok(year) = value.get(0..4).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(month) = value.get(5..7).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(day) = value.get(8..10).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(hour) = value.get(11..13).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(minute) = value.get(14..16).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(second) = value.get(17..19).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+                let max_day = match month {
+                    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                    4 | 6 | 9 | 11 => 30,
+                    2 if leap_year => 29,
+                    2 => 28,
+                    _ => return false,
+                };
+                if day < 1
+                    || day > max_day
+                    || !(0..=23).contains(&hour)
+                    || !(0..=59).contains(&minute)
+                    || !(0..=59).contains(&second)
+                {
+                    return false;
+                }
+
+                let mut suffix = value.get(19..).unwrap_or_default();
+                if let Some(fraction) = suffix.strip_prefix('.') {
+                    let boundary = fraction.find(['Z', '+', '-']);
+                    let Some(boundary) = boundary else {
+                        return false;
+                    };
+                    let fractional_digits = &fraction[..boundary];
+                    if fractional_digits.is_empty()
+                        || !fractional_digits.bytes().all(|byte| byte.is_ascii_digit())
+                    {
+                        return false;
+                    }
+                    suffix = &fraction[boundary..];
+                }
+                match suffix {
+                    "Z" => true,
+                    offset if offset.len() == 6 => {
+                        let Some(sign) = offset.as_bytes().first() else {
+                            return false;
+                        };
+                        if !matches!(sign, b'+' | b'-') || offset.as_bytes().get(3) != Some(&b':') {
+                            return false;
+                        }
+                        let Ok(offset_hour) = offset.get(1..3).unwrap_or_default().parse::<i64>()
+                        else {
+                            return false;
+                        };
+                        let Ok(offset_minute) = offset.get(4..6).unwrap_or_default().parse::<i64>()
+                        else {
+                            return false;
+                        };
+                        (0..=23).contains(&offset_hour) && (0..=59).contains(&offset_minute)
+                    }
+                    _ => false,
+                }
+            };
             for (index, delivery) in deliveries.iter().enumerate() {
                 if !delivery.is_object() {
                     diagnostics.push(json!({
@@ -1725,61 +1812,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .get("nextRetryAt")
                     .or_else(|| delivery.get("next_retry_at"))
                 {
-                    let next_retry_at_valid = next_retry_at.as_str().is_some_and(|value| {
-                        let trimmed = value.trim();
-                        if trimmed.is_empty() {
-                            return false;
-                        }
-                        let without_z = trimmed.strip_suffix('Z').unwrap_or(trimmed);
-                        let Some((date, time_with_offset)) = without_z.split_once('T') else {
-                            return false;
-                        };
-                        let mut date_parts = date.split('-');
-                        let year = date_parts.next();
-                        let month = date_parts.next();
-                        let day = date_parts.next();
-                        if date_parts.next().is_some() {
-                            return false;
-                        }
-                        let Some(year) = year.and_then(|part| part.parse::<u16>().ok()) else {
-                            return false;
-                        };
-                        let Some(month) = month.and_then(|part| part.parse::<u8>().ok()) else {
-                            return false;
-                        };
-                        let Some(day) = day.and_then(|part| part.parse::<u8>().ok()) else {
-                            return false;
-                        };
-                        if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-                            return false;
-                        }
-                        let offset_start =
-                            time_with_offset.find(|character| character == '+' || character == '-');
-                        let time = offset_start
-                            .map_or(time_with_offset, |index| &time_with_offset[..index]);
-                        let mut time_parts = time.split(':');
-                        let hour = time_parts.next();
-                        let minute = time_parts.next();
-                        let second = time_parts.next();
-                        if time_parts.next().is_some() {
-                            return false;
-                        }
-                        let Some(hour) = hour.and_then(|part| part.parse::<u8>().ok()) else {
-                            return false;
-                        };
-                        let Some(minute) = minute.and_then(|part| part.parse::<u8>().ok()) else {
-                            return false;
-                        };
-                        let Some(second_text) = second else {
-                            return false;
-                        };
-                        let second_integer = second_text.split('.').next();
-                        let Some(second) = second_integer.and_then(|part| part.parse::<u8>().ok())
-                        else {
-                            return false;
-                        };
-                        hour <= 23 && minute <= 59 && second <= 59
-                    });
+                    let next_retry_at_valid = next_retry_at
+                        .as_str()
+                        .is_some_and(|value| !value.trim().is_empty() && is_iso_timestamp(value));
                     if !next_retry_at_valid {
                         diagnostics.push(json!({
                             "code": "DurableCallbackDeliveryInvalid",
@@ -1877,68 +1912,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                             .or_else(|| delivery.get("delivered_at"))
                         {
                             let delivered_at_valid = delivered_at.as_str().is_some_and(|value| {
-                                let trimmed = value.trim();
-                                if trimmed.is_empty() {
-                                    return false;
-                                }
-                                let without_z = trimmed.strip_suffix('Z').unwrap_or(trimmed);
-                                let Some((date, time_with_offset)) = without_z.split_once('T')
-                                else {
-                                    return false;
-                                };
-                                let mut date_parts = date.split('-');
-                                let year = date_parts.next();
-                                let month = date_parts.next();
-                                let day = date_parts.next();
-                                if date_parts.next().is_some() {
-                                    return false;
-                                }
-                                let Some(year) = year.and_then(|part| part.parse::<u16>().ok())
-                                else {
-                                    return false;
-                                };
-                                let Some(month) = month.and_then(|part| part.parse::<u8>().ok())
-                                else {
-                                    return false;
-                                };
-                                let Some(day) = day.and_then(|part| part.parse::<u8>().ok()) else {
-                                    return false;
-                                };
-                                if year == 0
-                                    || !(1..=12).contains(&month)
-                                    || !(1..=31).contains(&day)
-                                {
-                                    return false;
-                                }
-                                let offset_start = time_with_offset
-                                    .find(|character| character == '+' || character == '-');
-                                let time = offset_start
-                                    .map_or(time_with_offset, |index| &time_with_offset[..index]);
-                                let mut time_parts = time.split(':');
-                                let hour = time_parts.next();
-                                let minute = time_parts.next();
-                                let second = time_parts.next();
-                                if time_parts.next().is_some() {
-                                    return false;
-                                }
-                                let Some(hour) = hour.and_then(|part| part.parse::<u8>().ok())
-                                else {
-                                    return false;
-                                };
-                                let Some(minute) = minute.and_then(|part| part.parse::<u8>().ok())
-                                else {
-                                    return false;
-                                };
-                                let Some(second_text) = second else {
-                                    return false;
-                                };
-                                let second_integer = second_text.split('.').next();
-                                let Some(second) =
-                                    second_integer.and_then(|part| part.parse::<u8>().ok())
-                                else {
-                                    return false;
-                                };
-                                hour <= 23 && minute <= 59 && second <= 59
+                                !value.trim().is_empty() && is_iso_timestamp(value)
                             });
                             if !delivered_at_valid {
                                 diagnostics.push(json!({
@@ -2011,61 +1985,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         .or_else(|| delivery.get("acknowledged_at"))
                     {
                         let acknowledged_at_valid = acknowledged_at.as_str().is_some_and(|value| {
-                            let trimmed = value.trim();
-                            if trimmed.is_empty() {
-                                return false;
-                            }
-                            let without_z = trimmed.strip_suffix('Z').unwrap_or(trimmed);
-                            let Some((date, time_with_offset)) = without_z.split_once('T') else {
-                                return false;
-                            };
-                            let mut date_parts = date.split('-');
-                            let year = date_parts.next();
-                            let month = date_parts.next();
-                            let day = date_parts.next();
-                            if date_parts.next().is_some() {
-                                return false;
-                            }
-                            let Some(year) = year.and_then(|part| part.parse::<u16>().ok()) else {
-                                return false;
-                            };
-                            let Some(month) = month.and_then(|part| part.parse::<u8>().ok()) else {
-                                return false;
-                            };
-                            let Some(day) = day.and_then(|part| part.parse::<u8>().ok()) else {
-                                return false;
-                            };
-                            if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-                                return false;
-                            }
-                            let offset_start = time_with_offset
-                                .find(|character| character == '+' || character == '-');
-                            let time = offset_start
-                                .map_or(time_with_offset, |index| &time_with_offset[..index]);
-                            let mut time_parts = time.split(':');
-                            let hour = time_parts.next();
-                            let minute = time_parts.next();
-                            let second = time_parts.next();
-                            if time_parts.next().is_some() {
-                                return false;
-                            }
-                            let Some(hour) = hour.and_then(|part| part.parse::<u8>().ok()) else {
-                                return false;
-                            };
-                            let Some(minute) = minute.and_then(|part| part.parse::<u8>().ok())
-                            else {
-                                return false;
-                            };
-                            let Some(second_text) = second else {
-                                return false;
-                            };
-                            let second_integer = second_text.split('.').next();
-                            let Some(second) =
-                                second_integer.and_then(|part| part.parse::<u8>().ok())
-                            else {
-                                return false;
-                            };
-                            hour <= 23 && minute <= 59 && second <= 59
+                            !value.trim().is_empty() && is_iso_timestamp(value)
                         });
                         if !acknowledged_at_valid {
                             diagnostics.push(json!({
