@@ -1068,6 +1068,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   with shared compiler TCK coverage for runtime/compiler parity.
   The Python `graphblocks-callbacks` helper now rejects the same malformed authority syntax before
   reporting a target as allowed, so local callback tooling fails closed during development.
+  Server-side callback registration now applies the same malformed-authority rejection before
+  storing webhook delivery subscriptions.
   The `graphblocksd` standard webhook HTTP client now applies the same malformed-authority rejection
   before opening a TCP connection, protecting direct adapter use from bypassing target validation.
   The same client now rejects raw control or whitespace bytes in the HTTP request target before

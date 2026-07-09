@@ -253,19 +253,53 @@ def _validate_callback_not_authoritative(owner: str, config: Mapping[str, object
 
 
 def _webhook_url_is_unsafe(url: str) -> bool:
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return True
     if parsed.scheme in {"file", "unix"}:
         return True
     if parsed.scheme not in {"http", "https", "secret"}:
         return True
     if parsed.scheme == "secret":
         return False
-    if parsed.username is not None or parsed.password is not None:
+    raw_rest = url.split("://", 1)[1] if "://" in url else ""
+    raw_authority = raw_rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if any(character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F for character in raw_authority):
         return True
-    host = parsed.hostname
+    try:
+        username = parsed.username
+        password = parsed.password
+        _ = parsed.port
+        host = parsed.hostname
+    except ValueError:
+        return True
+    if username is not None or password is not None:
+        return True
     if host is None:
         return True
-    normalized_host = host.rstrip(".").lower()
+    normalized_host = host.strip().rstrip(".").lower()
+    if normalized_host != host.rstrip(".").lower() or "%" in normalized_host:
+        return True
+    try:
+        parsed_address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        if parsed.netloc.startswith("[") or ":" in normalized_host:
+            return True
+        if (
+            any(
+                not (character.isascii() and (character.isalnum() or character in "-."))
+                for character in normalized_host
+            )
+            or any(
+                not label or label.startswith("-") or label.endswith("-")
+                for label in normalized_host.split(".")
+            )
+        ):
+            return True
+    else:
+        if parsed.netloc.startswith("[") and parsed_address.version != 6:
+            return True
     if normalized_host in FORBIDDEN_WEBHOOK_HOSTS or normalized_host.endswith(".localhost"):
         return True
     try:

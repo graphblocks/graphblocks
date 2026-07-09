@@ -9009,6 +9009,47 @@ def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_tar
         assert app.callback_registrations() == ()
 
 
+def test_server_app_rejects_invalid_webhook_callback_registration_host_syntax() -> None:
+    for url in (
+        "https://hooks example.com/events",
+        "https://hooks.example.com\t/events",
+        "https://hooks.example.com%2fevil.test/events",
+        "https://[not-ipv6]/events",
+        "https://[fe80::1%25eth0]/events",
+    ):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": "callback-sub-invalid-host-target",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": {
+                            "kind": "webhook",
+                            "url": url,
+                            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                        },
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
+        }
+        assert app.callback_registrations() == ()
+
+
 def test_server_app_rejects_webhook_callback_registration_target_with_userinfo() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
