@@ -1982,6 +1982,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
   rejecting missing flags as well as truthy strings before they can prove cancellation/resume race
   behavior.
+- Durable async cancel-race shared TCK cases now require `race.winner` to identify `cancel`, so
+  callback/cancellation races cannot satisfy conformance when the callback path is declared the
+  winner after cancellation.
 - Durable async cancel-race shared TCK cases now require integer journal entry `sequence` values in
   both Rust and Python runners before proving cancel-before-callback ordering, preventing string
   coercion from satisfying race ordering conformance.

@@ -9260,6 +9260,14 @@ class TckRunner:
                             "path": "$.journal",
                         }
                     )
+                if str(raw_race.get("winner", "")) != "cancel":
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race requires cancel winner",
+                            "path": "$.race.winner",
+                        }
+                    )
                 cancel_sequence = min(
                     (journal_sequences[id(entry)] for entry in cancel_entries if id(entry) in journal_sequences),
                     default=0,
