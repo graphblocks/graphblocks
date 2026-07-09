@@ -249,6 +249,8 @@ Message
   carry `completed_at`, and completed calls must prove prior admission before durable completion.
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
+- Python `ToolResult` now validates `tool_call_id` as an exact lifecycle identity, rejecting
+  whitespace-wrapped ids before output validation, audit records, or model feedback can bind to them.
 - Python `ToolResult` artifact references now validate artifact ids, URIs, media types, checksums,
   etags, versions, and filenames as exact metadata values, rejecting strings that only become valid
   after trimming whitespace before untrusted tool output can publish durable artifact references.

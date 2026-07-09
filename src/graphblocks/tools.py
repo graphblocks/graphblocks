@@ -1936,7 +1936,7 @@ class ToolResult:
     effect_outcome: ToolEffectOutcome = "unknown"
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("tool result", "tool_call_id", self.tool_call_id)
+        _validate_exact_non_empty_string("tool result", "tool_call_id", self.tool_call_id)
         if self.status not in VALID_TOOL_RESULT_STATUSES:
             raise ValueError(f"invalid tool result status {self.status}")
         if self.effect_outcome not in VALID_TOOL_EFFECT_OUTCOMES:

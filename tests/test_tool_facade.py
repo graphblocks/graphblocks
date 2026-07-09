@@ -2762,6 +2762,8 @@ def test_tool_result_rejects_non_content_part_output_entries() -> None:
 def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
     with pytest.raises(ValueError, match="tool result tool_call_id must not be empty"):
         ToolResult(tool_call_id=" ", status="completed")
+    with pytest.raises(ValueError, match="tool result tool_call_id must not contain surrounding whitespace"):
+        ToolResult(tool_call_id=" call-1", status="completed")
 
     with pytest.raises(ValueError, match="tool result completed_at must not be before started_at"):
         ToolResult.completed(
