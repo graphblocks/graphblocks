@@ -354,12 +354,8 @@ def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeyp
             offset_valid,
             validation_time="2026-06-23T05:00:01Z",
         )
-    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="valid_until must be an ISO datetime"):
-        graphblocks_mcp.prepare_mcp_tool_invocation(
-            admitted,
-            replace(resolved, valid_until="2026-06-23T00:00:00+0000"),
-            validation_time="2026-06-23T00:00:00Z",
-        )
+    with pytest.raises(ValueError, match="resolved tool valid_until must be an ISO datetime"):
+        replace(resolved, valid_until="2026-06-23T00:00:00+0000")
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="validation_time must be an ISO datetime"):
         graphblocks_mcp.prepare_mcp_tool_invocation(
             admitted,
@@ -1075,12 +1071,8 @@ def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(mon
             offset_valid,
             validation_time="2026-06-23T05:00:01Z",
         )
-    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="valid_until must be an ISO datetime"):
-        graphblocks_openapi.prepare_openapi_operation_invocation(
-            admitted,
-            replace(resolved, valid_until="2026-06-23T00:00:00+0000"),
-            validation_time="2026-06-23T00:00:00Z",
-        )
+    with pytest.raises(ValueError, match="resolved tool valid_until must be an ISO datetime"):
+        replace(resolved, valid_until="2026-06-23T00:00:00+0000")
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="validation_time must be an ISO datetime"):
         graphblocks_openapi.prepare_openapi_operation_invocation(
             admitted,

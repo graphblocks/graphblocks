@@ -685,6 +685,8 @@ class ResolvedTool:
         ):
             _validate_exact_non_empty_string("resolved tool", field_name, getattr(self, field_name))
         _validate_optional_exact_non_empty_string("resolved tool", "valid_until", self.valid_until)
+        if self.valid_until is not None:
+            _parse_iso_datetime(self.valid_until, owner="resolved tool", field="valid_until")
         if self.binding.tool_name != self.definition.name:
             raise ToolResolutionError(
                 f"tool binding {self.binding.binding_id} references "

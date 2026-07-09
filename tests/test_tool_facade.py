@@ -767,6 +767,39 @@ def test_resolved_tool_rejects_whitespace_wrapped_policy_and_digest_identities()
             replace(resolved, **{field_name: f'{getattr(resolved, field_name)} '})
 
 
+@pytest.mark.parametrize(
+    "valid_until",
+    (
+        "2026-07-02 00:00:00Z",
+        "2026-07-02T00:00:00",
+        "2026-07-02T00:00:00+0000",
+        "2026-07-02T00:00:00z",
+        "2026-07-02T00:00:00.Z",
+    ),
+)
+def test_resolved_tool_rejects_malformed_expiration_at_resolution(valid_until: str) -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-knowledge-search",
+        tool_name="knowledge.search",
+        implementation=BlockToolImplementation(block="knowledge.search@1"),
+    )
+
+    with pytest.raises(ValueError, match="resolved tool valid_until must be an ISO datetime"):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id="resolved-1",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="policy-snapshot-1",
+            allowed_for_principal=True,
+            valid_until=valid_until,
+        )
+
+
 def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:
     definition = ToolDefinition(
         name="knowledge.search",
@@ -2145,20 +2178,8 @@ def test_tool_admission_compares_resolved_tool_expiration_as_datetime() -> None:
         )
     assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00-05:00"
 
-    compact_offset_resolved = replace(resolved, valid_until="2026-06-23T00:00:00+0000")
-    compact_call = _process_call(compact_offset_resolved)
-    with pytest.raises(ToolAdmissionError) as compact_error:
-        admit_tool_call(
-            compact_call,
-            compact_offset_resolved,
-            _process_schema_registry(),
-            policy_decision=_allow_tool_policy_decision(),
-            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
-            principal_id="user-1",
-            admitted_at="2026-06-23T00:00:00Z",
-            now=1_202,
-        )
-    assert str(compact_error.value) == "resolved tool valid_until must be an ISO datetime"
+    with pytest.raises(ValueError, match="resolved tool valid_until must be an ISO datetime"):
+        replace(resolved, valid_until="2026-06-23T00:00:00+0000")
 
     with pytest.raises(ToolAdmissionError) as admitted_at_error:
         admit_tool_call(

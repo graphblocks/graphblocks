@@ -229,6 +229,9 @@ Message
   validate schema refs, tool names, binding ids, execution targets, policy snapshot ids, and
   digests as exact contract identities, rejecting values that only become valid after trimming
   whitespace before canonical hashes or run provenance can depend on them.
+- Python `ResolvedTool.valid_until` now validates as a strict RFC 3339-style datetime during tool
+  resolution, rejecting space-separated, timezone-less, lowercase-`z`, malformed fractional, and
+  compact-offset forms before an expired or malformed capability can reach admission.
 - model invocation 전에 application/graph/principal/tenant/conversation/data-classification/deployment/budget intersection으로 `ResolvedTool` set을 생성하고 run provenance에 기록한다.
 - `ToolCallDraft`는 streaming argument fragment만 표현하며 side effect를 실행할 수 없다.
 - final `ToolCall`은 schema-valid immutable arguments와 `arguments_digest`를 가진다. argument mutation은 revision과 approval을 invalidation한다.
