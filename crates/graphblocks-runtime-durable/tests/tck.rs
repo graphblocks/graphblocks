@@ -3472,6 +3472,81 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_object)
                 .ok_or_else(|| format!("{name} requires late callback"))?;
             let raw_usage = required_object(case, "usage", name)?;
+            let timestamp_seconds = |value: &str| -> Option<i64> {
+                let value = value.trim();
+                let bytes = value.as_bytes();
+                let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                if bytes.len() < 20
+                    || !digit_positions
+                        .into_iter()
+                        .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                    || bytes.get(4) != Some(&b'-')
+                    || bytes.get(7) != Some(&b'-')
+                    || bytes.get(10) != Some(&b'T')
+                    || bytes.get(13) != Some(&b':')
+                    || bytes.get(16) != Some(&b':')
+                {
+                    return None;
+                }
+                let year = value.get(0..4)?.parse::<i64>().ok()?;
+                let month = value.get(5..7)?.parse::<i64>().ok()?;
+                let day = value.get(8..10)?.parse::<i64>().ok()?;
+                let hour = value.get(11..13)?.parse::<i64>().ok()?;
+                let minute = value.get(14..16)?.parse::<i64>().ok()?;
+                let second = value.get(17..19)?.parse::<i64>().ok()?;
+                let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+                let max_day = match month {
+                    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                    4 | 6 | 9 | 11 => 30,
+                    2 if leap_year => 29,
+                    2 => 28,
+                    _ => return None,
+                };
+                if day < 1
+                    || day > max_day
+                    || !(0..=23).contains(&hour)
+                    || !(0..=59).contains(&minute)
+                    || !(0..=60).contains(&second)
+                {
+                    return None;
+                }
+                let offset_seconds = match value.get(19..) {
+                    Some("Z" | "z") => 0,
+                    Some(offset) if offset.len() == 6 => {
+                        let sign = match offset.as_bytes().first() {
+                            Some(b'+') => 1,
+                            Some(b'-') => -1,
+                            _ => return None,
+                        };
+                        if offset.as_bytes().get(3) != Some(&b':') {
+                            return None;
+                        }
+                        let offset_hour = offset.get(1..3)?.parse::<i64>().ok()?;
+                        let offset_minute = offset.get(4..6)?.parse::<i64>().ok()?;
+                        if !(0..=23).contains(&offset_hour) || !(0..=59).contains(&offset_minute) {
+                            return None;
+                        }
+                        sign * ((offset_hour * 60 + offset_minute) * 60)
+                    }
+                    _ => return None,
+                };
+                let adjusted_year = year - i64::from(month <= 2);
+                let era = if adjusted_year >= 0 {
+                    adjusted_year
+                } else {
+                    adjusted_year - 399
+                } / 400;
+                let year_of_era = adjusted_year - era * 400;
+                let month_prime = month + if month > 2 { -3 } else { 9 };
+                let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+                let day_of_era =
+                    year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+                let days_since_epoch = era * 146_097 + day_of_era - 719_468;
+                Some(
+                    days_since_epoch * 86_400 + hour * 3_600 + minute * 60 + second
+                        - offset_seconds,
+                )
+            };
             let operation_id_path = if raw_operation.contains_key("operationId")
                 || !raw_operation.contains_key("operation_id")
             {
@@ -3608,29 +3683,12 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 "created_at"
             };
-            let created_at_is_iso = raw_operation
+            let created_at_seconds = raw_operation
                 .get("createdAt")
                 .or_else(|| raw_operation.get("created_at"))
                 .and_then(Value::as_str)
-                .is_some_and(|created_at| {
-                    let created_at = created_at.trim();
-                    let bytes = created_at.as_bytes();
-                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                    bytes.len() >= 20
-                        && digit_positions
-                            .into_iter()
-                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                        && bytes.get(4) == Some(&b'-')
-                        && bytes.get(7) == Some(&b'-')
-                        && bytes.get(10) == Some(&b'T')
-                        && bytes.get(13) == Some(&b':')
-                        && bytes.get(16) == Some(&b':')
-                        && (created_at.ends_with('Z')
-                            || created_at
-                                .get(19..)
-                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
-                });
-            if !created_at_is_iso {
+                .and_then(timestamp_seconds);
+            if created_at_seconds.is_none() {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
                     "message": "external operation reconciliation requires ISO createdAt",
@@ -3644,29 +3702,12 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 "submitted_at"
             };
-            let submitted_at_is_iso = raw_operation
+            let submitted_at_seconds = raw_operation
                 .get("submittedAt")
                 .or_else(|| raw_operation.get("submitted_at"))
                 .and_then(Value::as_str)
-                .is_some_and(|submitted_at| {
-                    let submitted_at = submitted_at.trim();
-                    let bytes = submitted_at.as_bytes();
-                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                    bytes.len() >= 20
-                        && digit_positions
-                            .into_iter()
-                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                        && bytes.get(4) == Some(&b'-')
-                        && bytes.get(7) == Some(&b'-')
-                        && bytes.get(10) == Some(&b'T')
-                        && bytes.get(13) == Some(&b':')
-                        && bytes.get(16) == Some(&b':')
-                        && (submitted_at.ends_with('Z')
-                            || submitted_at
-                                .get(19..)
-                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
-                });
-            if !submitted_at_is_iso {
+                .and_then(timestamp_seconds);
+            if submitted_at_seconds.is_none() {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
                     "message": "external operation reconciliation requires ISO submittedAt",
@@ -3680,55 +3721,21 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 "expires_at"
             };
-            let expires_at_is_iso = raw_operation
+            let expires_at_seconds = raw_operation
                 .get("expiresAt")
                 .or_else(|| raw_operation.get("expires_at"))
                 .and_then(Value::as_str)
-                .is_some_and(|expires_at| {
-                    let expires_at = expires_at.trim();
-                    let bytes = expires_at.as_bytes();
-                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                    bytes.len() >= 20
-                        && digit_positions
-                            .into_iter()
-                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                        && bytes.get(4) == Some(&b'-')
-                        && bytes.get(7) == Some(&b'-')
-                        && bytes.get(10) == Some(&b'T')
-                        && bytes.get(13) == Some(&b':')
-                        && bytes.get(16) == Some(&b':')
-                        && (expires_at.ends_with('Z')
-                            || expires_at
-                                .get(19..)
-                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
-                });
-            if !expires_at_is_iso {
+                .and_then(timestamp_seconds);
+            if expires_at_seconds.is_none() {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
                     "message": "external operation reconciliation requires ISO expiresAt",
                     "path": format!("$.operation.{expires_at_path}"),
                 }));
             }
-            let created_at_text = raw_operation
-                .get("createdAt")
-                .or_else(|| raw_operation.get("created_at"))
-                .and_then(Value::as_str)
-                .map(str::trim);
-            let submitted_at_text = raw_operation
-                .get("submittedAt")
-                .or_else(|| raw_operation.get("submitted_at"))
-                .and_then(Value::as_str)
-                .map(str::trim);
-            let expires_at_text = raw_operation
-                .get("expiresAt")
-                .or_else(|| raw_operation.get("expires_at"))
-                .and_then(Value::as_str)
-                .map(str::trim);
-            if created_at_is_iso
-                && submitted_at_is_iso
-                && created_at_text.is_some_and(|created_at| {
-                    submitted_at_text.is_some_and(|submitted_at| submitted_at < created_at)
-                })
+            if created_at_seconds
+                .zip(submitted_at_seconds)
+                .is_some_and(|(created_at, submitted_at)| submitted_at < created_at)
             {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
@@ -3736,11 +3743,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.operation.{submitted_at_path}"),
                 }));
             }
-            if submitted_at_is_iso
-                && expires_at_is_iso
-                && submitted_at_text.is_some_and(|submitted_at| {
-                    expires_at_text.is_some_and(|expires_at| expires_at <= submitted_at)
-                })
+            if submitted_at_seconds
+                .zip(expires_at_seconds)
+                .is_some_and(|(submitted_at, expires_at)| expires_at <= submitted_at)
             {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
@@ -4323,45 +4328,21 @@ fn run_case(case: &Value) -> Result<(), String> {
             } else {
                 "received_at"
             };
-            let received_at_is_iso = raw_late_callback
+            let received_at_seconds = raw_late_callback
                 .get("receivedAt")
                 .or_else(|| raw_late_callback.get("received_at"))
                 .and_then(Value::as_str)
-                .is_some_and(|received_at| {
-                    let received_at = received_at.trim();
-                    let bytes = received_at.as_bytes();
-                    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                    bytes.len() >= 20
-                        && digit_positions
-                            .into_iter()
-                            .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                        && bytes.get(4) == Some(&b'-')
-                        && bytes.get(7) == Some(&b'-')
-                        && bytes.get(10) == Some(&b'T')
-                        && bytes.get(13) == Some(&b':')
-                        && bytes.get(16) == Some(&b':')
-                        && (received_at.ends_with('Z')
-                            || received_at
-                                .get(19..)
-                                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
-                });
-            if !received_at_is_iso {
+                .and_then(timestamp_seconds);
+            if received_at_seconds.is_none() {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
                     "message": "external operation reconciliation requires ISO receivedAt",
                     "path": format!("$.lateCallback.{received_at_path}"),
                 }));
             }
-            let received_at_text = raw_late_callback
-                .get("receivedAt")
-                .or_else(|| raw_late_callback.get("received_at"))
-                .and_then(Value::as_str)
-                .map(str::trim);
-            if received_at_is_iso
-                && submitted_at_is_iso
-                && received_at_text.is_some_and(|received_at| {
-                    submitted_at_text.is_some_and(|submitted_at| received_at < submitted_at)
-                })
+            if received_at_seconds
+                .zip(submitted_at_seconds)
+                .is_some_and(|(received_at, submitted_at)| received_at < submitted_at)
             {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
@@ -4369,11 +4350,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{received_at_path}"),
                 }));
             }
-            if received_at_is_iso
-                && expires_at_is_iso
-                && received_at_text.is_some_and(|received_at| {
-                    expires_at_text.is_some_and(|expires_at| received_at > expires_at)
-                })
+            if received_at_seconds
+                .zip(expires_at_seconds)
+                .is_some_and(|(received_at, expires_at)| received_at > expires_at)
             {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",
