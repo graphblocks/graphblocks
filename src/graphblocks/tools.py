@@ -282,6 +282,15 @@ def _validate_string_mapping(kind: str, field_name: str, value: object) -> Mappi
     mapping = dict(value)
     if any(not isinstance(key, str) or not isinstance(item, str) for key, item in mapping.items()):
         raise ValueError(f"{kind} tool implementation {field_name} entries must be strings")
+    for key, item in mapping.items():
+        if not key.strip():
+            raise ValueError(f"{kind} tool implementation {field_name} key must not be empty")
+        if not item.strip():
+            raise ValueError(f"{kind} tool implementation {field_name} value must not be empty")
+        if key != key.strip():
+            raise ValueError(f"{kind} tool implementation {field_name} key must not contain surrounding whitespace")
+        if item != item.strip():
+            raise ValueError(f"{kind} tool implementation {field_name} value must not contain surrounding whitespace")
     return MappingProxyType(mapping)
 
 

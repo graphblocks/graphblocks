@@ -1784,6 +1784,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python tool resolution scope now treats every scoped-capability item as an exact identity,
   rejecting whitespace-wrapped capability names before catalog resolution can silently widen or
   narrow the model-visible tool set.
+- Python block and graph tool implementations now reject empty or whitespace-wrapped
+  `input_mapping` and `output_mapping` entries, keeping argument/result projection contracts from
+  aliasing different source or destination fields after implicit trimming.
 - Rust tool admission now rejects expired `before_tool_or_effect` policy decisions before applying
   allow/deny effects, so stale policy approvals cannot admit a tool side effect after their
   `valid_until` boundary.

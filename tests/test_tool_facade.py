@@ -485,6 +485,47 @@ def test_block_and_graph_tool_implementations_reject_invalid_mappings() -> None:
         GraphToolImplementation(graph="graphs/knowledge-search", output_mapping={1: "$result.items"})  # type: ignore[arg-type]
 
 
+def test_block_and_graph_tool_implementations_reject_inexact_mappings() -> None:
+    cases = (
+        (
+            lambda: BlockToolImplementation(block="knowledge.search@1", input_mapping={" ": "$args.query"}),
+            "block tool implementation input_mapping key must not be empty",
+        ),
+        (
+            lambda: BlockToolImplementation(block="knowledge.search@1", input_mapping={"query": " "}),
+            "block tool implementation input_mapping value must not be empty",
+        ),
+        (
+            lambda: BlockToolImplementation(block="knowledge.search@1", output_mapping={" items": "$result.items"}),
+            "block tool implementation output_mapping key must not contain surrounding whitespace",
+        ),
+        (
+            lambda: BlockToolImplementation(block="knowledge.search@1", output_mapping={"items": "$result.items "}),
+            "block tool implementation output_mapping value must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GraphToolImplementation(graph="graphs/knowledge-search", input_mapping={" query": "$args.query"}),
+            "graph tool implementation input_mapping key must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GraphToolImplementation(graph="graphs/knowledge-search", input_mapping={"query": " $args.query"}),
+            "graph tool implementation input_mapping value must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GraphToolImplementation(graph="graphs/knowledge-search", output_mapping={"": "$result.items"}),
+            "graph tool implementation output_mapping key must not be empty",
+        ),
+        (
+            lambda: GraphToolImplementation(graph="graphs/knowledge-search", output_mapping={"items": ""}),
+            "graph tool implementation output_mapping value must not be empty",
+        ),
+    )
+
+    for construct, message in cases:
+        with pytest.raises(ValueError, match=message):
+            construct()
+
+
 def test_tool_implementation_mapping_mutation_cannot_change_binding_digest() -> None:
     input_mapping = {"query": "$args.query"}
     output_mapping = {"items": "$result.items"}
