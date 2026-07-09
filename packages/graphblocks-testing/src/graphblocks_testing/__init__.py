@@ -9352,6 +9352,18 @@ class TckRunner:
                         )
                 if (
                     str(raw_race.get("winner", "")) == "cancel"
+                    and raw_race.get("resumeAttempted", raw_race.get("resume_attempted"))
+                    is True
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race forbids resume after cancel winner",
+                            "path": "$.race.resumeAttempted",
+                        }
+                    )
+                if (
+                    str(raw_race.get("winner", "")) == "cancel"
                     and raw_race.get("resultCommitted", raw_race.get("result_committed"))
                     is True
                 ):

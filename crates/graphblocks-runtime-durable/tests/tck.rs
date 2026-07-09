@@ -3389,6 +3389,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                 .and_then(Value::as_str)
                 .is_some_and(|winner| winner == "cancel")
                 && raw_race
+                    .get("resumeAttempted")
+                    .or_else(|| raw_race.get("resume_attempted"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race forbids resume after cancel winner",
+                    "path": "$.race.resumeAttempted",
+                }));
+            }
+            if raw_race
+                .get("winner")
+                .and_then(Value::as_str)
+                .is_some_and(|winner| winner == "cancel")
+                && raw_race
                     .get("resultCommitted")
                     .or_else(|| raw_race.get("result_committed"))
                     .and_then(Value::as_bool)
