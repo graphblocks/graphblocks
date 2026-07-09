@@ -1566,6 +1566,34 @@ def test_compile_reports_userinfo_callback_webhook_url_as_unsafe() -> None:
     assert "GB6011" in _error_codes(graph)
 
 
+def test_compile_reports_whitespace_wrapped_callback_webhook_url_as_unsafe() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "whitespace-callback-subscription-url"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-whitespace-url",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events ",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6011"]
+
+
 def test_compile_reports_non_post_callback_webhook_method() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

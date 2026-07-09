@@ -274,8 +274,9 @@ def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object
     method = _validate_non_empty_string(owner, "delivery.method", delivery.get("method", "POST"))
     if method != "POST":
         raise ValueError(f"{owner} delivery.method must be POST for webhook delivery")
-    url = _validate_non_empty_string(owner, "delivery.url", delivery.get("url", ""))
-    if _webhook_url_is_unsafe(url):
+    raw_url = delivery.get("url", "")
+    url = _validate_non_empty_string(owner, "delivery.url", raw_url)
+    if raw_url != url or _webhook_url_is_unsafe(url):
         raise ValueError(f"{owner} delivery.url is unsafe or forbidden by default egress policy")
     signing = delivery.get("signing")
     if not isinstance(signing, Mapping):

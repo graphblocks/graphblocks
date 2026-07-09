@@ -8206,6 +8206,41 @@ def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> Non
     assert app.callback_registrations() == ()
 
 
+def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_target() -> None:
+    for url in (" https://relay.example/events", "https://relay.example/events "):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": "callback-sub-whitespace-target",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": {
+                            "kind": "webhook",
+                            "url": url,
+                            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                        },
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
+        }
+        assert app.callback_registrations() == ()
+
+
 def test_server_app_rejects_webhook_callback_registration_target_with_userinfo() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 

@@ -528,7 +528,7 @@ def _has_callback_signing(delivery: dict[str, Any]) -> bool:
 
 
 def _callback_url_is_unsafe(url: object) -> bool:
-    if not isinstance(url, str) or not url.strip():
+    if not isinstance(url, str) or not url.strip() or url != url.strip():
         return True
     parsed = urlparse(url)
     if parsed.scheme != "https":
