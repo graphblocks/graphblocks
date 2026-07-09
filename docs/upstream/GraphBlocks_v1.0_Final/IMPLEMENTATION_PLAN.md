@@ -243,6 +243,10 @@ Message
 - Python `artifact_ref` content parts apply the same exact metadata checks to inline tool-result
   artifact references before those content parts can enter output validation or model delivery.
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
+- Python `ToolExecutionPlan` and `ToolPlanCall` validation now treats plan ids, response ids,
+  effect serialization keys, failure/cancellation policy literals, and per-call cancellation
+  literals as exact scheduling values, so whitespace-normalized keys cannot alter dependency or
+  state-changing effect serialization.
 - Rust `ToolExecutionPlan` validation rejects duplicate dependency references per call before
   dependency graph normalization, so dependent tool execution remains deterministic and auditable.
 - Rust `ToolExecutionPlan` validation now reports `UnsafeParallelEffects` when independent

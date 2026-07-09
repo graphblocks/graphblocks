@@ -4040,6 +4040,40 @@ def test_tool_execution_plan_rejects_empty_identity_fields() -> None:
         )
 
 
+def test_tool_execution_plan_rejects_whitespace_wrapped_identities_and_literals() -> None:
+    calls = (ToolPlanCall(_tool_call("call-a")),)
+    plan_cases = (
+        ({"plan_id": " plan-1"}, "plan_id must not contain surrounding whitespace"),
+        ({"response_id": "response-1 "}, "response_id must not contain surrounding whitespace"),
+        ({"failure_policy": " fail_fast"}, "failure_policy must not contain surrounding whitespace"),
+        (
+            {"cancellation_policy": "cancel_dependents "},
+            "cancellation_policy must not contain surrounding whitespace",
+        ),
+    )
+
+    for overrides, message in plan_cases:
+        base = {
+            "plan_id": "plan-1",
+            "response_id": "response-1",
+            "calls": calls,
+            "maximum_parallelism": 1,
+        }
+        with pytest.raises(ToolExecutionPlanError, match=message):
+            ToolExecutionPlan(**{**base, **overrides})
+
+    with pytest.raises(
+        ToolExecutionPlanError,
+        match="tool call call-a effect_key must not contain surrounding whitespace",
+    ):
+        ToolPlanCall(_tool_call("call-a"), effect_key=" ticket:1")
+    with pytest.raises(
+        ToolExecutionPlanError,
+        match="tool call call-a cancellation must not contain surrounding whitespace",
+    ):
+        ToolPlanCall(_tool_call("call-a"), cancellation=" cooperative")
+
+
 def test_tool_execution_plan_rejects_invalid_metadata_types() -> None:
     call = _tool_call("call-a")
     calls = (ToolPlanCall(call),)

@@ -1485,10 +1485,18 @@ class ToolPlanCall:
         if "none" in effects and len(effects) > 1:
             raise ToolExecutionPlanError("tool effect none cannot be combined with other effects")
         if self.effect_key is not None:
-            if not isinstance(self.effect_key, str):
-                raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must be a string")
-            if not self.effect_key.strip():
-                raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must not be empty")
+            try:
+                _validate_exact_non_empty_string(
+                    f"tool call {self.call.tool_call_id}",
+                    "effect_key",
+                    self.effect_key,
+                )
+            except ValueError as error:
+                raise ToolExecutionPlanError(str(error)) from error
+        if isinstance(self.cancellation, str) and self.cancellation != self.cancellation.strip():
+            raise ToolExecutionPlanError(
+                f"tool call {self.call.tool_call_id} cancellation must not contain surrounding whitespace"
+            )
         if self.cancellation not in VALID_TOOL_CANCELLATIONS:
             raise ToolExecutionPlanError(f"invalid tool cancellation {self.cancellation}")
         object.__setattr__(self, "effects", effects)
@@ -1556,14 +1564,21 @@ class ToolExecutionPlan:
     _calls_by_id: dict[str, ToolPlanCall] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.plan_id, str):
-            raise ToolExecutionPlanError("plan_id must be a string")
-        if not self.plan_id.strip():
-            raise ToolExecutionPlanError("plan_id must not be empty")
-        if not isinstance(self.response_id, str):
-            raise ToolExecutionPlanError("response_id must be a string")
-        if not self.response_id.strip():
-            raise ToolExecutionPlanError("response_id must not be empty")
+        for field_name in ("plan_id", "response_id"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ToolExecutionPlanError(f"{field_name} must be a string")
+            if not value.strip():
+                raise ToolExecutionPlanError(f"{field_name} must not be empty")
+            if value != value.strip():
+                raise ToolExecutionPlanError(f"{field_name} must not contain surrounding whitespace")
+        if isinstance(self.failure_policy, str) and self.failure_policy != self.failure_policy.strip():
+            raise ToolExecutionPlanError("failure_policy must not contain surrounding whitespace")
+        if (
+            isinstance(self.cancellation_policy, str)
+            and self.cancellation_policy != self.cancellation_policy.strip()
+        ):
+            raise ToolExecutionPlanError("cancellation_policy must not contain surrounding whitespace")
         if self.failure_policy not in VALID_TOOL_EXECUTION_FAILURE_POLICIES:
             raise ToolExecutionPlanError(f"invalid failure policy {self.failure_policy}")
         if self.cancellation_policy not in VALID_TOOL_EXECUTION_CANCELLATION_POLICIES:
