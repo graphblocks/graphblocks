@@ -381,6 +381,46 @@ def test_review_record_validates_identity_decision_timestamps_and_lists() -> Non
     assert review.credential_refs == ["cred-1"]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"review_id": " review-1"},
+            "review record review_id must not contain surrounding whitespace",
+        ),
+        (
+            {"subject_digest": " sha256:old"},
+            "review record subject_digest must not contain surrounding whitespace",
+        ),
+        (
+            {"scope": " quality"},
+            "review record scope must not contain surrounding whitespace",
+        ),
+        (
+            {"credential_refs": [" cred-1"]},
+            "review record credential_refs item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_review_record_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:old")
+    base = {
+        "review_id": "review-1",
+        "subject": subject,
+        "subject_digest": "sha256:old",
+        "scope": "quality",
+        "reviewer": PrincipalRef("reviewer-1"),
+        "decision": "accept",
+        "created_at": "2026-06-22T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ReviewRecord(**(base | overrides))  # type: ignore[arg-type]
+
+
 def test_evaluation_timestamps_reject_non_rfc3339_forms() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:old")
     review_base = {

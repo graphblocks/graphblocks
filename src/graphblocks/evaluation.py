@@ -40,6 +40,13 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return value
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    value = _validate_non_empty_string(owner, field_name, value)
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
+
+
 def _parse_datetime(owner: str, field_name: str, value: object) -> datetime:
     normalized = _validate_non_empty_string(owner, field_name, value)
     if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
@@ -581,11 +588,11 @@ class ReviewRecord:
     invalidated_at: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("review record", "review_id", self.review_id)
+        _validate_exact_non_empty_string("review record", "review_id", self.review_id)
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("review record subject must be a ResourceSnapshotRef")
-        _validate_non_empty_string("review record", "subject_digest", self.subject_digest)
-        _validate_non_empty_string("review record", "scope", self.scope)
+        _validate_exact_non_empty_string("review record", "subject_digest", self.subject_digest)
+        _validate_exact_non_empty_string("review record", "scope", self.scope)
         if not isinstance(self.reviewer, PrincipalRef):
             raise ValueError("review record reviewer must be a PrincipalRef")
         if self.decision not in VALID_REVIEW_DECISIONS:
@@ -599,7 +606,14 @@ class ReviewRecord:
         object.__setattr__(
             self,
             "credential_refs",
-            _validate_string_list("review record", "credential_refs", self.credential_refs),
+            [
+                _validate_exact_non_empty_string("review record", "credential_refs item", credential_ref)
+                for credential_ref in _validate_string_list(
+                    "review record",
+                    "credential_refs",
+                    self.credential_refs,
+                )
+            ],
         )
 
     def is_valid_for(self, subject: ResourceSnapshotRef) -> bool:

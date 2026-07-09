@@ -2837,6 +2837,9 @@ sandbox
   RFC 3339-style datetimes, rejecting space-separated forms, timezone-less values, lowercase `z`,
   compact offsets such as `+0000`, and surrounding whitespace before review invalidation or
   model-tool visibility windows can be projected.
+- Python evaluation review records now reject whitespace-wrapped review ids, subject digests,
+  scopes, and credential refs before review evidence can satisfy workspace trial gates or result
+  bundle provenance.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.
