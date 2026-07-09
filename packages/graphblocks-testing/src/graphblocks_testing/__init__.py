@@ -10206,13 +10206,8 @@ class TckRunner:
                         }
                     )
                 else:
-                    try:
-                        received_at_value = datetime.fromisoformat(
-                            received_at.replace("Z", "+00:00")
-                            if received_at.endswith("Z")
-                            else received_at
-                        )
-                    except ValueError:
+                    received_at_text = received_at.strip()
+                    if len(received_at_text) <= 10 or received_at_text[10] != "T":
                         diagnostics.append(
                             {
                                 "code": "DurableExternalOperationInvalid",
@@ -10220,6 +10215,21 @@ class TckRunner:
                                 "path": f"$.lateCallback.{received_at_path}",
                             }
                         )
+                    else:
+                        try:
+                            received_at_value = datetime.fromisoformat(
+                                received_at_text.replace("Z", "+00:00")
+                                if received_at_text.endswith("Z")
+                                else received_at_text
+                            )
+                        except ValueError:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableExternalOperationInvalid",
+                                    "message": "external operation reconciliation requires ISO receivedAt",
+                                    "path": f"$.lateCallback.{received_at_path}",
+                                }
+                            )
                 if (
                     submitted_at_value is not None
                     and received_at_value is not None
