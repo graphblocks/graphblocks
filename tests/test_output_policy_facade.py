@@ -368,6 +368,20 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:input",
         ).evaluated_at_time("not-a-date")
 
+    with pytest.raises(ValueError, match="output policy evaluated_at must be an ISO datetime"):
+        OutputPolicyDecision.allow(
+            "decision-compact-offset",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        ).evaluated_at_time("2026-06-23T00:00:00+0000")
+
+    with pytest.raises(ValueError, match="output policy evaluated_at must be an ISO datetime"):
+        OutputPolicyDecision.allow(
+            "decision-space-separator",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        ).evaluated_at_time("2026-06-23 00:00:00Z")
+
     with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
 
@@ -395,6 +409,20 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             last_policy_accepted_sequence=1,
             last_client_delivered_sequence=2,
             draft_disposition="keep",
+        )
+
+    with pytest.raises(ValueError, match="output cutoff occurred_at must be an ISO datetime"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            occurred_at="2026-06-23T00:00:00+0000",
+        )
+
+    with pytest.raises(ValueError, match="output cutoff occurred_at must be an ISO datetime"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            occurred_at="2026-06-23 00:00:00Z",
         )
 
 
@@ -1281,6 +1309,12 @@ def test_output_delivery_gate_terminal_decision_requires_occurred_at() -> None:
         gate.apply_decision(
             OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:blocked"),
             occurred_at=" ",
+        )
+
+    with pytest.raises(ValueError, match="output gate occurred_at must be an ISO datetime"):
+        gate.apply_decision(
+            OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:blocked"),
+            occurred_at="2026-06-23T00:00:02+0000",
         )
 
     assert gate.cutoff is None

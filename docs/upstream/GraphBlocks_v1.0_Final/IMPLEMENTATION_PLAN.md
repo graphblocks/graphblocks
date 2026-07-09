@@ -250,8 +250,10 @@ Message
   delivery gate can ignore contradictory policy content.
 - Declarative output policy evaluation now rejects zero evaluation timestamps before constructing
   an `OutputPolicyDecision`, so generated decisions always carry a valid evaluation time.
-- The Python `OutputPolicyDecision` facade now validates `evaluated_at` as an ISO datetime string,
-  matching the schema-level `datetime` contract while preserving the caller-provided timestamp.
+- The Python output-policy facade now validates `OutputPolicyDecision.evaluated_at`,
+  `OutputCutoff.occurred_at`, and delivery-gate decision occurrence timestamps as RFC
+  3339-style datetimes, rejecting space-separated forms, timezone-less values, and compact offsets
+  such as `+0000` before mandatory output gate state is projected.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `buffer_until_commit` and `immediate_draft` delivery policies now reject flush boundaries, keeping

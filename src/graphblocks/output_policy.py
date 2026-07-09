@@ -66,11 +66,37 @@ def _validate_non_negative_integer(field_name: str, value: object, *, owner: str
 
 def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
     value = _validate_non_empty_string(owner, field_name, value)
-    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    if len(value) <= 19 or value[10] != "T":
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    suffix_start = 19
+    if value[suffix_start] == ".":
+        suffix_start += 1
+        fraction_start = suffix_start
+        while suffix_start < len(value) and value[suffix_start].isdigit():
+            suffix_start += 1
+        if suffix_start == fraction_start:
+            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    timezone_suffix = value[suffix_start:]
+    if value.endswith("Z"):
+        candidate = f"{value[:-1]}+00:00"
+    elif (
+        len(timezone_suffix) != 6
+        or timezone_suffix[0] not in {"+", "-"}
+        or timezone_suffix[3] != ":"
+        or not timezone_suffix[1:3].isdigit()
+        or not timezone_suffix[4:6].isdigit()
+        or int(timezone_suffix[1:3]) > 23
+        or int(timezone_suffix[4:6]) > 59
+    ):
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    else:
+        candidate = value
     try:
-        datetime.fromisoformat(candidate)
+        parsed = datetime.fromisoformat(candidate)
     except ValueError as error:
         raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     return value
 
 
@@ -650,7 +676,7 @@ class OutputCutoff:
             and self.draft_disposition == "keep"
         ):
             raise ValueError("delivered draft beyond policy acceptance cannot be kept")
-        _validate_non_empty_string("output cutoff", "occurred_at", self.occurred_at)
+        _validate_iso_datetime("output cutoff", "occurred_at", self.occurred_at)
 
     def accepts(self, output: GenerationChunk) -> bool:
         if not isinstance(output, GenerationChunk):
@@ -912,7 +938,7 @@ class OutputDeliveryGate:
             raise TypeError("OutputDeliveryGate.apply_decision requires an OutputPolicyDecision")
         if self.cutoff is not None:
             raise OutputGateError("output gate is policy stopped")
-        _validate_non_empty_string("output gate", "occurred_at", occurred_at)
+        _validate_iso_datetime("output gate", "occurred_at", occurred_at)
 
         if decision.disposition == "allow":
             if decision.accepted_through_sequence is not None:
