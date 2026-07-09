@@ -93,17 +93,18 @@ class _FrozenJsonArray(tuple[object, ...]):
     pass
 
 
-def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
-    stripped = value.strip()
-    if not stripped:
+    if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
-    return stripped
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
 
 
 def _validate_sha256_digest(owner: str, field_name: str, value: object) -> str:
-    digest_value = _validate_non_empty_string(owner, field_name, value)
+    digest_value = _validate_exact_non_empty_string(owner, field_name, value)
     if not digest_value.startswith("sha256:"):
         raise ValueError(f"{owner} {field_name} must be a canonical sha256 digest")
     digest = digest_value.removeprefix("sha256:")
@@ -183,7 +184,7 @@ def _thaw_json_value(value: object) -> object:
 
 
 def _validate_status(value: object) -> AsyncOperationResultStatusValue:
-    status = _validate_non_empty_string("async operation result", "status", value)
+    status = _validate_exact_non_empty_string("async operation result", "status", value)
     if status not in VALID_ASYNC_OPERATION_RESULT_STATUSES:
         raise ValueError(
             "async operation result status must be one of completed, failed, cancelled, expired, or incomplete"
@@ -192,21 +193,21 @@ def _validate_status(value: object) -> AsyncOperationResultStatusValue:
 
 
 def _validate_operation_state(value: object) -> AsyncOperationStateValue:
-    state = _validate_non_empty_string("async operation", "state", value)
+    state = _validate_exact_non_empty_string("async operation", "state", value)
     if state not in VALID_ASYNC_OPERATION_STATES:
         raise ValueError("async operation state must be a valid async operation state")
     return state  # type: ignore[return-value]
 
 
 def _validate_operation_kind(value: object) -> str:
-    kind = _validate_non_empty_string("async operation", "kind", value)
+    kind = _validate_exact_non_empty_string("async operation", "kind", value)
     if kind not in VALID_ASYNC_OPERATION_KINDS:
         raise ValueError("async operation kind must be a valid async operation kind")
     return kind
 
 
 def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
-    outcome = _validate_non_empty_string("external effect", "outcome", value)
+    outcome = _validate_exact_non_empty_string("external effect", "outcome", value)
     if outcome not in VALID_TOOL_EFFECT_OUTCOMES:
         raise ValueError(
             "external effect outcome must be one of no_external_effect, committed, not_committed, or unknown"
@@ -286,7 +287,7 @@ class AsyncOperation:
             object.__setattr__(
                 self,
                 field_name,
-                _validate_non_empty_string("async operation", field_name, getattr(self, field_name)),
+                _validate_exact_non_empty_string("async operation", field_name, getattr(self, field_name)),
             )
         object.__setattr__(
             self,
@@ -306,7 +307,7 @@ class AsyncOperation:
                 object.__setattr__(
                     self,
                     field_name,
-                    _validate_non_empty_string("async operation", field_name, value),
+                    _validate_exact_non_empty_string("async operation", field_name, value),
                 )
         for field_name in ("created_at", "submitted_at", "expires_at", "callback_received_at", "completed_at"):
             value = getattr(self, field_name)
@@ -616,7 +617,7 @@ class ExternalCallbackReceived:
             object.__setattr__(
                 self,
                 field_name,
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "external callback received",
                     field_name,
                     getattr(self, field_name),
@@ -626,7 +627,7 @@ class ExternalCallbackReceived:
             object.__setattr__(
                 self,
                 "provider_operation_id",
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "external callback received",
                     "provider_operation_id",
                     self.provider_operation_id,
@@ -736,24 +737,24 @@ class ExternalEffectRecord:
         object.__setattr__(
             self,
             "effect_id",
-            _validate_non_empty_string("external effect", "effect_id", self.effect_id),
+            _validate_exact_non_empty_string("external effect", "effect_id", self.effect_id),
         )
         object.__setattr__(
             self,
             "target",
-            _validate_non_empty_string("external effect", "target", self.target),
+            _validate_exact_non_empty_string("external effect", "target", self.target),
         )
         object.__setattr__(
             self,
             "operation",
-            _validate_non_empty_string("external effect", "operation", self.operation),
+            _validate_exact_non_empty_string("external effect", "operation", self.operation),
         )
         object.__setattr__(self, "outcome", _validate_effect_outcome(self.outcome))
         if self.idempotency_key is not None:
             object.__setattr__(
                 self,
                 "idempotency_key",
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "external effect",
                     "idempotency_key",
                     self.idempotency_key,
@@ -763,7 +764,7 @@ class ExternalEffectRecord:
             object.__setattr__(
                 self,
                 "provider_effect_id",
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "external effect",
                     "provider_effect_id",
                     self.provider_effect_id,
@@ -797,7 +798,7 @@ class AsyncOperationResult:
         object.__setattr__(
             self,
             "operation_id",
-            _validate_non_empty_string("async operation result", "operation_id", self.operation_id),
+            _validate_exact_non_empty_string("async operation result", "operation_id", self.operation_id),
         )
         object.__setattr__(self, "status", _validate_status(self.status))
         object.__setattr__(self, "output", _freeze_json_value("async operation result", "output", self.output))

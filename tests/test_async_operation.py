@@ -494,6 +494,39 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
             policy_snapshot_id="policy-1",
         )
 
+    callback_base = {
+        "callback_id": "cb-1",
+        "operation_id": "op-ci-1",
+        "run_id": "run-1",
+        "node_id": "startCI",
+        "attempt_id": "attempt-1",
+        "provider_operation_id": "gha-run-1",
+        "idempotency_key": "idem-callback-1",
+        "payload": {"status": "completed"},
+        "payload_digest": graphblocks.canonical_hash({"status": "completed"}),
+        "received_at": "2026-07-02T00:10:00Z",
+        "verified_by": "hmac-sha256:callback-endpoint-1",
+        "policy_snapshot_id": "policy-1",
+    }
+    for field_name in (
+        "callback_id",
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "provider_operation_id",
+        "idempotency_key",
+        "payload_digest",
+        "verified_by",
+        "policy_snapshot_id",
+    ):
+        kwargs = dict(callback_base)
+        kwargs[field_name] = f"{kwargs[field_name]} "
+        with raises_value_error(
+            re.escape(f"external callback received {field_name} must not contain surrounding whitespace")
+        ):
+            graphblocks.ExternalCallbackReceived(**kwargs)
+
     with raises_value_error("external callback received payload_digest must match payload"):
         graphblocks.ExternalCallbackReceived(
             callback_id="cb-1",
@@ -676,6 +709,23 @@ def test_external_callback_received_rejects_invalid_identity_digest_and_json() -
         )
 
 
+def test_external_effect_record_rejects_whitespace_wrapped_identity_inputs() -> None:
+    for field_name in ("effect_id", "target", "operation", "outcome", "idempotency_key", "provider_effect_id"):
+        kwargs = {
+            "effect_id": "effect-ci-1",
+            "target": "github-actions",
+            "operation": "workflow_dispatch",
+            "outcome": "committed",
+            "idempotency_key": "idem-ci-1",
+            "provider_effect_id": "gha-run-1",
+        }
+        kwargs[field_name] = f"\t{kwargs[field_name]}"
+        with raises_value_error(
+            re.escape(f"external effect {field_name} must not contain surrounding whitespace")
+        ):
+            graphblocks.ExternalEffectRecord(**kwargs)
+
+
 def test_async_operation_result_rejects_projection_from_non_terminal_operation() -> None:
     waiting = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
@@ -728,6 +778,108 @@ def test_async_operation_requires_resume_token_hash_digest() -> None:
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
     ).resume_token_hash == VALID_RESUME_TOKEN_HASH
+
+
+def test_async_operation_rejects_whitespace_wrapped_identity_inputs() -> None:
+    base = {
+        "operation_id": "op-ci-1",
+        "run_id": "run-1",
+        "node_id": "startCI",
+        "attempt_id": "attempt-1",
+        "kind": "ci_job",
+        "expected_schema": "schemas/CICallback@1",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+        "idempotency_key": "idem-ci-1",
+        "created_at": "2026-07-02T00:00:00Z",
+        "callback_ref": "cbep-ci-1",
+    }
+
+    for field_name in (
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "kind",
+        "expected_schema",
+        "resume_token_hash",
+        "idempotency_key",
+        "callback_ref",
+    ):
+        kwargs = dict(base)
+        kwargs[field_name] = f" {kwargs[field_name]}"
+        with raises_value_error(
+            re.escape(f"async operation {field_name} must not contain surrounding whitespace")
+        ):
+            graphblocks.AsyncOperation.created(**kwargs)
+
+    with raises_value_error("async operation provider_operation_id must not contain surrounding whitespace"):
+        graphblocks.AsyncOperation.created(**base).mark_submitted(
+            provider_operation_id=" gha-run-1",
+            submitted_at="2026-07-02T00:00:01Z",
+        )
+
+    with raises_value_error("async operation infinite_wait_policy must not contain surrounding whitespace"):
+        graphblocks.AsyncOperation.created(**base).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
+            infinite_wait_policy=" operator_review_required",
+        )
+
+    with raises_value_error("async operation polling_ref must not contain surrounding whitespace"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-batch-1",
+            run_id="run-1",
+            node_id="waitBatch",
+            attempt_id="attempt-1",
+            kind="external_provider_job",
+            expected_schema="schemas/BatchResult@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-batch-1",
+            created_at="2026-07-02T00:00:00Z",
+            polling_ref=" poll-batch-1",
+        )
+
+    with raises_value_error("async operation result operation_id must not contain surrounding whitespace"):
+        graphblocks.AsyncOperationResult.completed(" op-ci-1")
+
+
+def test_async_operation_identity_exactness_deterministic_fuzz() -> None:
+    rng = random.Random(6017)
+    fields = (
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "expected_schema",
+        "idempotency_key",
+        "callback_ref",
+    )
+    wrappers: tuple[Callable[[str], str], ...] = (
+        lambda value: f" {value}",
+        lambda value: f"{value} ",
+        lambda value: f"\t{value}",
+        lambda value: f"{value}\n",
+    )
+
+    for case in range(160):
+        kwargs: dict[str, object] = {
+            "operation_id": f"op-ci-{case:03d}",
+            "run_id": f"run-{case:03d}",
+            "node_id": "startCI",
+            "attempt_id": f"attempt-{case:03d}",
+            "kind": "ci_job",
+            "expected_schema": "schemas/CICallback@1",
+            "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+            "idempotency_key": f"idem-ci-{case:03d}",
+            "created_at": "2026-07-02T00:00:00Z",
+            "callback_ref": f"cbep-ci-{case:03d}",
+        }
+        field_name = rng.choice(fields)
+        kwargs[field_name] = rng.choice(wrappers)(str(kwargs[field_name]))
+
+        with raises_value_error(
+            re.escape(f"async operation {field_name} must not contain surrounding whitespace")
+        ):
+            graphblocks.AsyncOperation.created(**kwargs)
 
 
 def test_async_operation_records_callback_wait_metadata_and_state_transitions() -> None:

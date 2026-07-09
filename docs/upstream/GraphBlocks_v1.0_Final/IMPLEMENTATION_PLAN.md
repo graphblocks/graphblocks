@@ -778,6 +778,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   as immutable JSON snapshots and thawed into fresh plain JSON values for `to_json()` callers.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
+- Python async operation, callback receipt, result, and external-effect facades now validate
+  operation ids, run/node/attempt ids, callback ids, schema refs, provider operation ids,
+  idempotency keys, verifier/policy identities, digest strings, and lifecycle/status literals as
+  exact values, rejecting inputs that only become valid after trimming whitespace before callback
+  fencing, duplicate detection, or late-effect reconciliation can depend on them.
 - Rust `AsyncOperation` validation now applies the same canonical `sha256:<64 lowercase hex>`
   requirement to `resume_token_hash`, keeping durable callback fencing tokens aligned across the
   Python schema facade and Rust runtime backend.
