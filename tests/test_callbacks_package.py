@@ -1210,6 +1210,20 @@ def test_webhook_target_safety_rejects_surrounding_url_whitespace() -> None:
         assert safety.host is None
 
 
+def test_webhook_target_safety_rejects_invalid_host_syntax() -> None:
+    for url in (
+        "https://hooks example.com/events",
+        "https://hooks.example.com\t/events",
+        "https://hooks.example.com%2fevil.test/events",
+        "https://[not-ipv6]/events",
+        "https://[fe80::1%25eth0]/events",
+    ):
+        safety = validate_webhook_target_url(url)
+
+        assert safety.allowed is False
+        assert safety.reason == "invalid_host"
+
+
 def test_webhook_target_safety_can_allow_private_hosts_explicitly() -> None:
     safety = validate_webhook_target_url("https://10.0.0.7/callback", allow_private=True)
 

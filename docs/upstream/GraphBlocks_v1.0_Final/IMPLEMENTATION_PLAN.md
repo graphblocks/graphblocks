@@ -1066,6 +1066,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   IPv6 literals, before callback egress validation or target identity recording.
   The normative Rust compiler now reports the same malformed callback webhook hosts as `GB6011`,
   with shared compiler TCK coverage for runtime/compiler parity.
+  The Python `graphblocks-callbacks` helper now rejects the same malformed authority syntax before
+  reporting a target as allowed, so local callback tooling fails closed during development.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
   destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
   addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.
