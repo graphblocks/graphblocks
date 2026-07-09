@@ -1153,7 +1153,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   unsupported userinfo component instead of collapsing it into a generic malformed URL. Compiler
   diagnostics now also flag decimal and hex numeric IPv4 callback hosts that resolve to forbidden
   internal addresses, matching runtime webhook egress validation; decimal loopback host rejection
-  is now pinned in the shared compiler TCK.
+  is now pinned in the shared compiler TCK. Compiler diagnostics now also reject webhook callback
+  delivery configs whose `method` is not `POST`, matching the `WebhookDeliveryTarget` schema before
+  deployment.
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`, with shared compiler TCK coverage.
@@ -1438,9 +1440,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and does not rewrite the stored projection. Callback registrations share the same route-level
   ordered delivery, mandatory failure-policy, non-authoritative projection, retained event
   sequence validation during replay, and creation timestamp validation as run-scoped subscriptions;
-  `pause_run_on_failure` and `fail_run_on_failure` are
-  treated as mandatory failure policies and require configured dead-letter or fallback behavior via
-  `deadLetterPolicy`/`deadLetterRef` or `fallbackPolicy`/`fallbackRef` fields.
+  webhook delivery targets reject non-`POST` methods before registration storage.
+  `pause_run_on_failure` and `fail_run_on_failure` are treated as mandatory failure policies and
+  require configured dead-letter or fallback behavior via `deadLetterPolicy`/`deadLetterRef` or
+  `fallbackPolicy`/`fallbackRef` fields.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,

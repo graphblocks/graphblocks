@@ -590,6 +590,15 @@ def _diagnose_callback_subscription_config(
         return
     delivery_kind = delivery.get("kind")
     if delivery_kind == "webhook":
+        method = delivery.get("method", "POST")
+        if method != "POST":
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidCallbackSubscription",
+                    "webhook callback delivery method must be POST",
+                    f"{path}.delivery.method",
+                )
+            )
         if not _has_callback_signing(delivery):
             diagnostics.append(
                 Diagnostic(

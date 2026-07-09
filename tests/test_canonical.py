@@ -1566,6 +1566,38 @@ def test_compile_reports_userinfo_callback_webhook_url_as_unsafe() -> None:
     assert "GB6011" in _error_codes(graph)
 
 
+def test_compile_reports_non_post_callback_webhook_method() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "non-post-callback-webhook"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-webhook-get",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "method": "GET",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    errors = [diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"]
+
+    assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+    assert errors[0].message == "webhook callback delivery method must be POST"
+
+
 def test_compile_allows_safe_callback_subscription_contract() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

@@ -8136,6 +8136,42 @@ def test_server_app_rejects_webhook_callback_registration_without_signing() -> N
     assert app.callback_registrations() == ()
 
 
+def test_server_app_rejects_non_post_webhook_callback_registration_method() -> None:
+    for method in ("GET", "post"):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"callback-sub-webhook-{method.lower()}",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": {
+                            "kind": "webhook",
+                            "url": "https://relay.example/events",
+                            "method": method,
+                            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                        },
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server callback registration delivery.method must be POST for webhook delivery",
+        }
+        assert app.callback_registrations() == ()
+
+
 def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
