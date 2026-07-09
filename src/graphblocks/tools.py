@@ -108,6 +108,10 @@ VALID_TOOL_CALL_STATUSES = frozenset(
         "expired",
     }
 )
+PRE_ADMISSION_TOOL_CALL_STATUSES = frozenset({"validated", "policy_pending", "approval_pending"})
+TERMINAL_TOOL_CALL_STATUSES = frozenset(
+    {"completed", "failed", "denied", "cancelled", "policy_stopped", "expired"}
+)
 VALID_TOOL_RESULT_STATUSES = frozenset(
     {"completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"}
 )
@@ -1215,6 +1219,16 @@ class ToolCall:
             and completed_at_time < admitted_at_time
         ):
             raise ValueError("tool call completed_at must not be before admitted_at")
+        if self.status in PRE_ADMISSION_TOOL_CALL_STATUSES and self.admitted_at is not None:
+            raise ValueError("tool call admitted_at is only valid after admission")
+        if self.completed_at is not None and self.status not in TERMINAL_TOOL_CALL_STATUSES:
+            raise ValueError("tool call completed_at is only valid for terminal statuses")
+        if self.status in {"admitted", "running"} and self.admitted_at is None:
+            raise ValueError(f"tool call admitted_at must be set for status {self.status}")
+        if self.status == "completed" and self.admitted_at is None:
+            raise ValueError("tool call admitted_at must be set for completed calls")
+        if self.status in TERMINAL_TOOL_CALL_STATUSES and self.completed_at is None:
+            raise ValueError(f"tool call completed_at must be set for terminal status {self.status}")
         try:
             actual_arguments_digest = canonical_hash(self.arguments)
         except (TypeError, ValueError) as error:

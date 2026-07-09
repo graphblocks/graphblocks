@@ -1309,6 +1309,7 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         )
     offset_ordered = replace(
         call,
+        status="completed",
         created_at="2026-06-24T00:30:00+09:00",
         admitted_at="2026-06-23T16:00:00Z",
         completed_at="2026-06-23T16:05:00Z",
@@ -2462,8 +2463,8 @@ def test_admitted_tool_call_requires_admitted_call_with_timestamp() -> None:
         AdmittedToolCall(call=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool call call-1 is validated, not admitted"):
         AdmittedToolCall(call=call)
-    with pytest.raises(ValueError, match="tool call call-1 admitted_at must be set"):
-        AdmittedToolCall(call=call.with_status("admitted"))
+    with pytest.raises(ValueError, match="tool call admitted_at must be set for status admitted"):
+        call.with_status("admitted")
     with pytest.raises(ValueError, match="tool call call-1 idempotency_key must be a string"):
         AdmittedToolCall(call=admitted, idempotency_key=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool call call-1 requires a non-empty idempotency key"):
@@ -2585,6 +2586,37 @@ def test_tool_call_status_transition_rejects_skipped_and_post_terminal_edges() -
     with pytest.raises(ToolCallError) as terminal:
         denied.transition_status("running", at="2026-06-23T00:00:02Z")
     assert str(terminal.value) == "invalid tool call status transition denied -> running"
+
+
+def test_tool_call_status_timestamps_must_match_lifecycle_state() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"title":"old"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    with pytest.raises(ValueError, match="tool call admitted_at must be set for status admitted"):
+        call.with_status("admitted")
+    with pytest.raises(ValueError, match="tool call admitted_at must be set for status running"):
+        call.with_status("running")
+    with pytest.raises(ValueError, match="tool call admitted_at is only valid after admission"):
+        call.with_status("policy_pending", admitted_at="2026-06-23T00:00:01Z")
+    with pytest.raises(ValueError, match="tool call completed_at is only valid for terminal statuses"):
+        call.with_status(
+            "running",
+            admitted_at="2026-06-23T00:00:01Z",
+            completed_at="2026-06-23T00:00:02Z",
+        )
+    with pytest.raises(ValueError, match="tool call completed_at must be set for terminal status completed"):
+        call.with_status("completed", admitted_at="2026-06-23T00:00:01Z")
+    with pytest.raises(ValueError, match="tool call admitted_at must be set for completed calls"):
+        call.with_status("completed", completed_at="2026-06-23T00:00:02Z")
+
+    denied = call.with_status("denied", completed_at="2026-06-23T00:00:01Z")
+    assert denied.status == "denied"
+    assert denied.admitted_at is None
+    assert denied.completed_at == "2026-06-23T00:00:01Z"
 
 
 def test_tool_call_arguments_are_immutable_after_digesting() -> None:

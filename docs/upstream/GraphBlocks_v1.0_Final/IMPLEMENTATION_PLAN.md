@@ -244,6 +244,9 @@ Message
 - Python `ToolCallDraft` now enforces status/fragment/sequence invariants, so proposed drafts
   cannot carry argument fragments and streaming or complete drafts cannot carry impossible fragment
   counts before JSON assembly creates an immutable `ToolCall`.
+- Python `ToolCall` now enforces status/timestamp consistency, so pre-admission calls cannot carry
+  admission timestamps, admitted or running calls must carry `admitted_at`, non-terminal calls cannot
+  carry `completed_at`, and completed calls must prove prior admission before durable completion.
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
 - Python `ToolResult` artifact references now validate artifact ids, URIs, media types, checksums,
