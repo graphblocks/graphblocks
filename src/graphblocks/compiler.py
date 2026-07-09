@@ -623,7 +623,19 @@ def _diagnose_callback_subscription_config(
         or delivery.get("mandatory") is True
         or failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES
     )
-    if mandatory and not failure_policy and not _has_callback_dead_letter_behavior(config, delivery):
+    retry_policy = (
+        config.get("retryPolicyRef")
+        or config.get("retry_policy_ref")
+        or delivery.get("retryPolicyRef")
+        or delivery.get("retry_policy_ref")
+    )
+    has_retry_policy = _has_non_empty_string(retry_policy) or isinstance(retry_policy, dict)
+    if (
+        mandatory
+        and not failure_policy
+        and not has_retry_policy
+        and not _has_callback_dead_letter_behavior(config, delivery)
+    ):
         diagnostics.append(
             Diagnostic(
                 "GB6006",

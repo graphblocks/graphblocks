@@ -1656,6 +1656,36 @@ def test_compile_allows_mandatory_callback_delivery_with_dead_letter_policy() ->
     assert "GB6006" not in _error_codes(graph)
 
 
+def test_compile_allows_mandatory_callback_delivery_with_retry_policy_ref() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "mandatory-callback-retry-policy"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-mandatory-retry-policy",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "mandatory": True,
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "retryPolicyRef": "webhook-standard",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    assert "GB6006" not in _error_codes(graph)
+
+
 def test_compile_reports_retrying_callback_subscription_without_dead_letter_behavior() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
