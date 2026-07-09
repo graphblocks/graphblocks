@@ -579,6 +579,51 @@
     }
   },
   {
+    "name": "background_run_fractional_event_occurred_at_allowed",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "job",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-fractional-event",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-fractional-event/events",
+      "websocket": "/v1/runs/run-fractional-event/ws",
+      "cancel": "/v1/runs/run-fractional-event/cancel",
+      "initialCursor": "evt_0"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-fractional-1",
+        "runId": "run-fractional-event",
+        "releaseId": "release-background-001",
+        "sequence": 1,
+        "occurredAt": "2026-06-23T00:00:01.250Z",
+        "cursor": "evt_1",
+        "type": "RunStarted",
+        "payload": {}
+      }
+    ],
+    "attach": {
+      "lastCursor": "evt_0"
+    },
+    "expected": {
+      "runContinuesAfterDetach": true,
+      "acceptedResponseReturnsRunId": true,
+      "replayEventIds": [
+        "evt-fractional-1"
+      ],
+      "cursorExpired": false,
+      "summaryIncluded": false,
+      "authoritativeStream": true,
+      "diagnosticCount": 0
+    }
+  },
+  {
     "name": "background_run_replay_from_initial_cursor_returns_retained_events",
     "kind": "background_run_event_stream",
     "responseMode": "accepted",

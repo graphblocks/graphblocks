@@ -7722,6 +7722,7 @@ class TckRunner:
                     and expired_cursor_index < retained_from_index,
                     "summaryIncluded": summary_included,
                     "authoritativeStream": authoritative_stream,
+                    "diagnosticCount": len(diagnostics),
                 }
             elif kind == "callback_delivery_projection":
                 raw_deliveries = fixture.get("deliveries", [])

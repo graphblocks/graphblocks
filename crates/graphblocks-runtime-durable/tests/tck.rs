@@ -544,9 +544,24 @@ fn run_case(case: &Value) -> Result<(), String> {
                 {
                     return false;
                 }
-                match value.get(19..) {
-                    Some("Z") => true,
-                    Some(offset) if offset.len() == 6 => {
+                let Some(mut suffix) = value.get(19..) else {
+                    return false;
+                };
+                if let Some(fraction) = suffix.strip_prefix('.') {
+                    let Some(boundary) = fraction.find(['Z', '+', '-']) else {
+                        return false;
+                    };
+                    let fractional_digits = &fraction[..boundary];
+                    if fractional_digits.is_empty()
+                        || !fractional_digits.bytes().all(|byte| byte.is_ascii_digit())
+                    {
+                        return false;
+                    }
+                    suffix = &fraction[boundary..];
+                }
+                match suffix {
+                    "Z" => true,
+                    offset if offset.len() == 6 => {
                         let Some(sign) = offset.as_bytes().first() else {
                             return false;
                         };
@@ -1203,6 +1218,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .is_some_and(|(expired_index, retained_index)| expired_index < retained_index),
                 "summaryIncluded": summary_on_expired_cursor,
                 "authoritativeStream": authoritative_stream,
+                "diagnosticCount": diagnostics.len(),
             })
         }
         "callback_delivery_projection" => {
