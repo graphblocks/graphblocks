@@ -1035,7 +1035,7 @@ class ToolCallDraft:
 
     def __post_init__(self) -> None:
         for field_name in ("response_id", "tool_call_id", "tool_name"):
-            _validate_non_empty_string("tool call draft", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("tool call draft", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
             raise ValueError(f"invalid tool call draft status {self.status}")
         _validate_non_negative_integer("tool call draft", "sequence", self.sequence)
@@ -1122,7 +1122,7 @@ class ToolCall:
             "name",
             "arguments_digest",
         ):
-            _validate_non_empty_string("tool call", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("tool call", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
         _validate_positive_integer("tool call", "revision", self.revision)
@@ -1137,6 +1137,8 @@ class ToolCall:
         object.__setattr__(self, "depends_on", depends_on)
         if any(not dependency.strip() for dependency in depends_on):
             raise ValueError("tool call dependency ids must not be empty")
+        if any(dependency != dependency.strip() for dependency in depends_on):
+            raise ValueError("tool call dependency ids must not contain surrounding whitespace")
         created_at_time = (
             _parse_iso_datetime(self.created_at, owner="tool call", field="created_at")
             if self.created_at is not None

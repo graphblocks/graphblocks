@@ -1227,6 +1227,38 @@ def test_tool_call_lifecycle_rejects_non_string_fields() -> None:
             replace(call, **overrides)
 
 
+def test_tool_call_lifecycle_rejects_whitespace_wrapped_identities() -> None:
+    draft_cases = (
+        ({"response_id": " response-1"}, "tool call draft response_id must not contain surrounding whitespace"),
+        ({"tool_call_id": "call-1 "}, "tool call draft tool_call_id must not contain surrounding whitespace"),
+        ({"tool_name": " knowledge.search"}, "tool call draft tool_name must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in draft_cases:
+        base = {
+            "response_id": "response-1",
+            "tool_call_id": "call-1",
+            "tool_name": "knowledge.search",
+        }
+        with pytest.raises(ValueError, match=message):
+            ToolCallDraft(**{**base, **overrides})
+
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    call_cases = (
+        ({"tool_call_id": " call-1"}, "tool call tool_call_id must not contain surrounding whitespace"),
+        ({"response_id": "response-1 "}, "tool call response_id must not contain surrounding whitespace"),
+        ({"resolved_tool_id": " resolved-tool-1"}, "tool call resolved_tool_id must not contain surrounding whitespace"),
+        ({"name": "knowledge.search "}, "tool call name must not contain surrounding whitespace"),
+        ({"arguments_digest": f"{call.arguments_digest} "}, "tool call arguments_digest must not contain surrounding whitespace"),
+        ({"depends_on": (" call-a",)}, "tool call dependency ids must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in call_cases:
+        with pytest.raises(ValueError, match=message):
+            replace(call, **overrides)
+
+
 def test_tool_call_draft_append_rejects_non_string_argument_fragment() -> None:
     draft = ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
 

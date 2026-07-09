@@ -232,6 +232,9 @@ Message
 - model invocation 전에 application/graph/principal/tenant/conversation/data-classification/deployment/budget intersection으로 `ResolvedTool` set을 생성하고 run provenance에 기록한다.
 - `ToolCallDraft`는 streaming argument fragment만 표현하며 side effect를 실행할 수 없다.
 - final `ToolCall`은 schema-valid immutable arguments와 `arguments_digest`를 가진다. argument mutation은 revision과 approval을 invalidation한다.
+- Python tool-call drafts and final tool calls now validate response ids, tool-call ids,
+  resolved-tool ids, tool names, argument digests, and dependency ids as exact lifecycle
+  identities before argument assembly, admission, or dependency planning can depend on them.
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
