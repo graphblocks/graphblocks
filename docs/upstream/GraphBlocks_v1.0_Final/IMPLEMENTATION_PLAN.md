@@ -1990,6 +1990,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now reject operation deadlines that use a
   space instead of the RFC 3339 `T` separator in the Python runner, keeping deadline parsing aligned
   with the Rust runner before callback resume admission.
+- Durable async callback resume-guard shared TCK cases now reject compact timezone offsets such as
+  `+0000` in operation deadlines, so Python's permissive `datetime.fromisoformat` behavior cannot
+  accept non-RFC3339 callback timeout evidence that Rust rejects.
 - Durable async callback resume-guard shared TCK cases now also reject calendar-invalid callback
   `receivedAt` timestamps in the Rust runner, so invalid receipt times cannot satisfy
   journal-before-resume or timeout evidence.
