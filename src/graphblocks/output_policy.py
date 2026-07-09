@@ -55,6 +55,19 @@ def _validate_non_empty_string(
     return value
 
 
+def _validate_exact_non_empty_string(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    empty_message: str | None = None,
+) -> str:
+    value = _validate_non_empty_string(owner, field_name, value, empty_message=empty_message)
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return value
+
+
 def _validate_non_negative_integer(field_name: str, value: object, *, owner: str | None = None) -> int:
     prefix = f"{owner} {field_name}" if owner is not None else field_name
     if not isinstance(value, int) or isinstance(value, bool):
@@ -334,12 +347,20 @@ class OutputPolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string(
+        _validate_exact_non_empty_string(
             "output policy",
             "decision_id",
             self.decision_id,
             empty_message="output policy decisions require a decision id",
         )
+        for field_name in ("disposition", "provider_cancellation", "draft_disposition", "pending_tool_calls"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ValueError(f"output policy {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"output policy {field_name} must not be empty")
+            if value != value.strip():
+                raise ValueError(f"output policy {field_name} must not contain surrounding whitespace")
         if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
             raise ValueError(f"invalid output disposition {self.disposition}")
         if self.provider_cancellation not in VALID_PROVIDER_CANCELLATIONS:
@@ -348,7 +369,7 @@ class OutputPolicyDecision:
             raise ValueError(f"invalid draft disposition {self.draft_disposition}")
         if self.pending_tool_calls not in VALID_PENDING_TOOL_CALLS_DISPOSITIONS:
             raise ValueError(f"invalid pending tool calls disposition {self.pending_tool_calls}")
-        _validate_non_empty_string(
+        _validate_exact_non_empty_string(
             "output policy",
             "input_digest",
             self.input_digest,
@@ -380,6 +401,8 @@ class OutputPolicyDecision:
                 raise ValueError("redaction path must be a string")
             if not path.strip():
                 raise ValueError("redaction path must not be empty")
+            if path != path.strip():
+                raise ValueError("redaction path must not contain surrounding whitespace")
             start = redaction_copy.get("start")
             end = redaction_copy.get("end")
             if start is not None or end is not None:
@@ -397,6 +420,8 @@ class OutputPolicyDecision:
             replacement = redaction_copy.get("replacement")
             if replacement is not None and not isinstance(replacement, str):
                 raise ValueError("redaction replacement must be a string")
+            if isinstance(replacement, str) and replacement != replacement.strip():
+                raise ValueError("redaction replacement must not contain surrounding whitespace")
             redactions.append(MappingProxyType(redaction_copy))
         try:
             reason_codes = tuple(self.reason_codes)
@@ -406,6 +431,8 @@ class OutputPolicyDecision:
             not isinstance(code, str) or not code.strip() for code in reason_codes
         ):
             raise ValueError("output policy reason codes must be non-empty strings")
+        if any(code != code.strip() for code in reason_codes):
+            raise ValueError("output policy reason codes must not contain surrounding whitespace")
         try:
             policy_refs = tuple(self.policy_refs)
         except TypeError as error:
@@ -414,6 +441,8 @@ class OutputPolicyDecision:
             not isinstance(policy_ref, str) or not policy_ref.strip() for policy_ref in policy_refs
         ):
             raise ValueError("output policy policy refs must be non-empty strings")
+        if any(policy_ref != policy_ref.strip() for policy_ref in policy_refs):
+            raise ValueError("output policy policy refs must not contain surrounding whitespace")
         object.__setattr__(self, "replacement_parts", replacement_parts)
         object.__setattr__(self, "redactions", tuple(redactions))
         object.__setattr__(self, "reason_codes", reason_codes)
@@ -666,12 +695,20 @@ class OutputCutoff:
     occurred_at: str = ""
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("output cutoff", "stream_id", self.stream_id)
-        _validate_non_empty_string("output cutoff", "response_id", self.response_id)
+        _validate_exact_non_empty_string("output cutoff", "stream_id", self.stream_id)
+        _validate_exact_non_empty_string("output cutoff", "response_id", self.response_id)
         if self.turn_id is not None:
-            _validate_non_empty_string("output cutoff", "turn_id", self.turn_id)
+            _validate_exact_non_empty_string("output cutoff", "turn_id", self.turn_id)
         if self.policy_decision_id is not None:
-            _validate_non_empty_string("output cutoff", "policy_decision_id", self.policy_decision_id)
+            _validate_exact_non_empty_string("output cutoff", "policy_decision_id", self.policy_decision_id)
+        for field_name in ("terminal_reason", "draft_disposition", "durable_result"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ValueError(f"output cutoff {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"output cutoff {field_name} must not be empty")
+            if value != value.strip():
+                raise ValueError(f"output cutoff {field_name} must not contain surrounding whitespace")
         if self.terminal_reason not in VALID_TERMINAL_REASONS:
             raise ValueError(f"invalid terminal reason {self.terminal_reason}")
         if self.draft_disposition not in VALID_DRAFT_DISPOSITIONS:

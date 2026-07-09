@@ -265,6 +265,73 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             "force"
         )
 
+    with pytest.raises(ValueError, match="output policy disposition must be a string"):
+        OutputPolicyDecision("decision-1", disposition=1, input_digest="sha256:input")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy disposition must not contain surrounding whitespace"):
+        OutputPolicyDecision("decision-1", disposition=" allow", input_digest="sha256:input")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy provider_cancellation must be a string"):
+        OutputPolicyDecision.abort_response(
+            "decision-1",
+            input_digest="sha256:input",
+        ).with_provider_cancellation(1)  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="output policy provider_cancellation must not contain surrounding whitespace",
+    ):
+        OutputPolicyDecision.abort_response(
+            "decision-1",
+            input_digest="sha256:input",
+        ).with_provider_cancellation(" request")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy draft_disposition must not contain surrounding whitespace"):
+        OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_draft_disposition(
+            "retract "
+        )  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy pending_tool_calls must not contain surrounding whitespace"):
+        OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_pending_tool_calls(
+            " deny"
+        )  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy decision_id must not contain surrounding whitespace"):
+        OutputPolicyDecision.allow(
+            " decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        )
+
+    with pytest.raises(ValueError, match="output policy input_digest must not contain surrounding whitespace"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:input ",
+        )
+
+    with pytest.raises(ValueError, match="output policy reason codes must not contain surrounding whitespace"):
+        OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold").with_reason_codes((" code",))
+
+    with pytest.raises(ValueError, match="output policy policy refs must not contain surrounding whitespace"):
+        OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold").with_policy_refs(("policy ",))
+
+    with pytest.raises(ValueError, match="redaction path must not contain surrounding whitespace"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": " content.text", "replacement": "[redacted]"},),
+            input_digest="sha256:redact",
+        )
+
+    with pytest.raises(ValueError, match="redaction replacement must not contain surrounding whitespace"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": "content.text", "replacement": " [redacted]"},),
+            input_digest="sha256:redact",
+        )
+
     with pytest.raises(ValueError, match="invalid output delivery mode stream"):
         OutputDeliveryPolicy(mode="stream")
 
@@ -340,17 +407,57 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid terminal reason throttled"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason="throttled")
 
+    with pytest.raises(ValueError, match="output cutoff terminal_reason must be a string"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason=1)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output cutoff terminal_reason must not contain surrounding whitespace"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            terminal_reason=" policy_denied",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output cutoff draft_disposition must not contain surrounding whitespace"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            draft_disposition="retract ",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output cutoff durable_result must not contain surrounding whitespace"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            durable_result=" none",  # type: ignore[arg-type]
+        )
+
     with pytest.raises(ValueError, match="output cutoff stream_id must not be empty"):
         OutputCutoff(stream_id=" ", response_id="response-1")
 
     with pytest.raises(ValueError, match="output cutoff response_id must not be empty"):
         OutputCutoff(stream_id="stream-1", response_id="")
 
+    with pytest.raises(ValueError, match="output cutoff stream_id must not contain surrounding whitespace"):
+        OutputCutoff(stream_id=" stream-1", response_id="response-1")
+
+    with pytest.raises(ValueError, match="output cutoff response_id must not contain surrounding whitespace"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1 ")
+
     with pytest.raises(ValueError, match="output cutoff turn_id must not be empty"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", turn_id=" ")
 
     with pytest.raises(ValueError, match="output cutoff policy_decision_id must not be empty"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", policy_decision_id=" ")
+
+    with pytest.raises(ValueError, match="output cutoff turn_id must not contain surrounding whitespace"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", turn_id=" turn-1")
+
+    with pytest.raises(ValueError, match="output cutoff policy_decision_id must not contain surrounding whitespace"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            policy_decision_id="decision-1 ",
+        )
 
     with pytest.raises(ValueError, match="output cutoff occurred_at must not be empty"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", occurred_at=" ")

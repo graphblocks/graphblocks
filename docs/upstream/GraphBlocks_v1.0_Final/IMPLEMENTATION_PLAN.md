@@ -275,6 +275,10 @@ Message
   `OutputCutoff.occurred_at`, and delivery-gate decision occurrence timestamps as RFC
   3339-style datetimes, rejecting space-separated forms, timezone-less values, and compact offsets
   such as `+0000` before mandatory output gate state is projected.
+- Python `OutputPolicyDecision` and `OutputCutoff` now validate durable identities, disposition
+  literals, pending-tool-call dispositions, provider cancellation choices, redaction paths,
+  reason codes, policy refs, terminal reasons, draft dispositions, and durable-result markers as
+  exact values, rejecting values that only become valid after trimming whitespace.
 - output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
 - `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
 - `buffer_until_commit` and `immediate_draft` delivery policies now reject flush boundaries, keeping
