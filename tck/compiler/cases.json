@@ -1788,5 +1788,77 @@
       "graph_hash": "sha256:9fd7fbd4b2492c0082df93bec891237da0cde072bb52e7b9b381f60c9eddaa12",
       "error_codes": ["GB6011"]
     }
+  },
+  {
+    "name": "embedded_ipv4_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "embedded-ipv4-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-embedded-ipv4",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://[::ffff:127.0.0.1]/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3a54a61cee83eba4c2c01b908321995880e6dc62e0f54cd8d3967df1ff0b3233",
+      "error_codes": ["GB6011"]
+    }
+  },
+  {
+    "name": "reserved_ipv4_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "reserved-ipv4-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-reserved-ipv4",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://255.255.255.255/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a9e0c2f6a5fdc66ca40697fa2ba57121e5d4d49b0e7e9515e94b74b4fa695297",
+      "error_codes": ["GB6011"]
+    }
   }
 ]

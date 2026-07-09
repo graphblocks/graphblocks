@@ -827,6 +827,15 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
     {
         return true;
     }
+    let forbidden_ipv4 = |address: Ipv4Addr| {
+        address.is_loopback()
+            || address.is_private()
+            || address.is_link_local()
+            || address.is_multicast()
+            || address.is_unspecified()
+            || address.octets()[0] == 0
+            || address.octets()[0] >= 224
+    };
     let Ok(address) = host.parse::<IpAddr>() else {
         let numeric_ipv4 = if let Some(hex) = host.strip_prefix("0x") {
             u32::from_str_radix(hex, 16).ok()
@@ -835,23 +844,28 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         } else {
             None
         };
-        return numeric_ipv4.map(Ipv4Addr::from).is_some_and(|address| {
-            address.is_loopback()
-                || address.is_private()
-                || address.is_link_local()
-                || address.is_multicast()
-                || address.is_unspecified()
-        });
+        return numeric_ipv4
+            .map(Ipv4Addr::from)
+            .is_some_and(forbidden_ipv4);
     };
     match address {
-        IpAddr::V4(address) => {
-            address.is_loopback()
-                || address.is_private()
-                || address.is_link_local()
-                || address.is_multicast()
-                || address.is_unspecified()
-        }
+        IpAddr::V4(address) => forbidden_ipv4(address),
         IpAddr::V6(address) => {
+            if let Some(mapped_address) = address.to_ipv4_mapped() {
+                return forbidden_ipv4(mapped_address);
+            }
+
+            let segments = address.segments();
+            if segments[..6].iter().all(|segment| *segment == 0) {
+                let compatible_address = Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    segments[6] as u8,
+                    (segments[7] >> 8) as u8,
+                    segments[7] as u8,
+                );
+                return forbidden_ipv4(compatible_address);
+            }
+
             address.is_loopback()
                 || address.is_unique_local()
                 || address.is_unicast_link_local()

@@ -1073,6 +1073,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   their embedded IPv4 addresses for both literal webhook hosts and DNS-resolved addresses, so mapped
   or compatible loopback, link-local metadata, and private network targets cannot bypass SSRF
   policy.
+  The normative Rust compiler now reports embedded-IPv4 IPv6 callback URLs and reserved or
+  broadcast IPv4 callback URLs as `GB6011`, with shared compiler TCK coverage for the endpoint
+  classes that runtime egress rejects.
 - Callback event filters now include visibility, node ID, operation ID, and minimum severity
   predicates in addition to event type and terminal-event inclusion. Runtime filters now treat
   `include_terminal_events: false` as an explicit terminal-event exclusion even for otherwise broad

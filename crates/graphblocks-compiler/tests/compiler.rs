@@ -464,6 +464,52 @@ fn compile_graph_rejects_invalid_callback_webhook_host_syntax() {
 }
 
 #[test]
+fn compile_graph_rejects_mapped_compatible_and_reserved_callback_hosts() {
+    for url in [
+        "https://[::ffff:127.0.0.1]/events",
+        "https://[::169.254.169.254]/events",
+        "https://240.0.0.1/events",
+        "https://255.255.255.255/events",
+    ] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "unsafe-callback-ip"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [
+                    {
+                        "subscriptionId": "sub-unsafe-ip",
+                        "scope": "run",
+                        "scopeId": "run-1",
+                        "delivery": {
+                            "kind": "webhook",
+                            "url": url,
+                            "signing": {
+                                "algorithm": "hmac-sha256",
+                                "secretRef": "secret://relay"
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB6011"],
+            "{url} should be rejected as an unsafe callback endpoint"
+        );
+    }
+}
+
+#[test]
 fn compile_graph_allows_mandatory_callback_fallback_policy() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
