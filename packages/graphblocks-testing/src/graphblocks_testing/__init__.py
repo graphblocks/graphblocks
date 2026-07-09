@@ -9084,6 +9084,14 @@ class TckRunner:
                         else:
                             resume_reevaluates_values.append(reevaluate.strip())
                     resume_reevaluates = tuple(resume_reevaluates_values)
+                    if len(resume_reevaluates) == len(raw_resume_reevaluates) and "idempotency" not in resume_reevaluates:
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume requires idempotency reevaluation",
+                                "path": "$.resume.reevaluates",
+                            }
+                        )
                 observed = {
                     "signatureFailureRevealsOperation": async_resume_guard_values["signatureFailureRevealsOperation"],
                     "schemaFailureResumesRun": async_resume_guard_values["schemaFailureResumesRun"],

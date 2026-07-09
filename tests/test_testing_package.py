@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 271
+    assert [case.kind for case in cases] == ["durable"] * 272
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1390,6 +1390,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_missing_success_count_rejected",
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
+        "async_callback_resume_missing_idempotency_reevaluation_rejected",
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "callback_cancel_race_non_boolean_receipt_rejected",
@@ -2332,6 +2333,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_missing_reevaluates_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_missing_idempotency_reevaluation_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -3718,7 +3724,7 @@ def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> 
             },
             "resume": {
                 "resumeSequence": 42,
-                "reevaluates": ["policy", "budget", "release"],
+                "reevaluates": ["policy", "budget", "release", "idempotency"],
                 "budgetExhaustionState": "paused_budget",
                 "successfulResumeCount": 1,
             },
@@ -3760,7 +3766,7 @@ def test_testing_package_rejects_non_integer_async_resume_journal_sequence(monke
             },
             "resume": {
                 "resumeSequence": 42,
-                "reevaluates": ["policy", "budget", "release"],
+                "reevaluates": ["policy", "budget", "release", "idempotency"],
                 "budgetExhaustionState": "paused_budget",
                 "successfulResumeCount": 1,
             },
@@ -3802,7 +3808,7 @@ def test_testing_package_rejects_non_integer_async_resume_success_count(monkeypa
             },
             "resume": {
                 "resumeSequence": 42,
-                "reevaluates": ["policy", "budget", "release"],
+                "reevaluates": ["policy", "budget", "release", "idempotency"],
                 "budgetExhaustionState": "paused_budget",
                 "successfulResumeCount": "1",
             },
@@ -6378,6 +6384,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_missing_success_count_rejected",
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
+        "async_callback_resume_missing_idempotency_reevaluation_rejected",
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
         "callback_cancel_race_non_boolean_receipt_rejected",

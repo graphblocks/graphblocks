@@ -1964,6 +1964,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   of nonblank strings in both Rust and Python runners before proving policy, budget, and release
   compatibility re-evaluation, so missing lists, object keys, or malformed entries cannot satisfy
   resume-admission conformance.
+- Durable async callback resume-guard shared TCK cases now require valid `reevaluates` sequences to
+  include `idempotency`, so callback resume conformance proves idempotency-state reevaluation as
+  required by the async callback protocol.
 - Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
   rejecting missing flags as well as truthy strings before they can prove cancellation/resume race

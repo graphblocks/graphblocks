@@ -2960,6 +2960,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            if raw_resume
+                .get("reevaluates")
+                .and_then(Value::as_array)
+                .is_some_and(|entries| {
+                    entries.iter().all(|entry| {
+                        entry
+                            .as_str()
+                            .map(str::trim)
+                            .is_some_and(|entry| !entry.is_empty())
+                    })
+                })
+                && !reevaluates.contains("idempotency")
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCallbackResumeInvalid",
+                    "message": "async callback resume requires idempotency reevaluation",
+                    "path": "$.resume.reevaluates",
+                }));
+            }
             let raw_callback_journal_sequence = raw_callback
                 .get("journalSequence")
                 .or_else(|| raw_callback.get("journal_sequence"));
