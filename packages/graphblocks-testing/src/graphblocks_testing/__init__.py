@@ -10254,7 +10254,7 @@ class TckRunner:
                 elif (
                     isinstance(operation_id, str)
                     and operation_id.strip()
-                    and callback_operation_id.strip() != operation_id.strip()
+                    and callback_operation_id != operation_id
                 ):
                     diagnostics.append(
                         {
@@ -10287,8 +10287,7 @@ class TckRunner:
                 elif (
                     isinstance(provider_operation_id, str)
                     and provider_operation_id.strip()
-                    and callback_provider_operation_id.strip()
-                    != provider_operation_id.strip()
+                    and callback_provider_operation_id != provider_operation_id
                 ):
                     diagnostics.append(
                         {
@@ -10317,7 +10316,7 @@ class TckRunner:
                 elif (
                     isinstance(run_id, str)
                     and run_id.strip()
-                    and callback_run_id.strip() != run_id.strip()
+                    and callback_run_id != run_id
                 ):
                     diagnostics.append(
                         {
@@ -10346,7 +10345,7 @@ class TckRunner:
                 elif (
                     isinstance(node_id, str)
                     and node_id.strip()
-                    and callback_node_id.strip() != node_id.strip()
+                    and callback_node_id != node_id
                 ):
                     diagnostics.append(
                         {
@@ -10375,7 +10374,7 @@ class TckRunner:
                 elif (
                     isinstance(attempt_id, str)
                     and attempt_id.strip()
-                    and callback_attempt_id.strip() != attempt_id.strip()
+                    and callback_attempt_id != attempt_id
                 ):
                     diagnostics.append(
                         {
@@ -10404,7 +10403,7 @@ class TckRunner:
                 elif (
                     isinstance(release_id, str)
                     and release_id.strip()
-                    and callback_release_id.strip() != release_id.strip()
+                    and callback_release_id != release_id
                 ):
                     diagnostics.append(
                         {
@@ -10433,7 +10432,7 @@ class TckRunner:
                 elif (
                     isinstance(tenant_id, str)
                     and tenant_id.strip()
-                    and callback_tenant_id.strip() != tenant_id.strip()
+                    and callback_tenant_id != tenant_id
                 ):
                     diagnostics.append(
                         {
@@ -10543,7 +10542,7 @@ class TckRunner:
                 elif (
                     isinstance(operation_policy_snapshot_id, str)
                     and operation_policy_snapshot_id.strip()
-                    and policy_snapshot_id.strip() != operation_policy_snapshot_id.strip()
+                    and policy_snapshot_id != operation_policy_snapshot_id
                 ):
                     diagnostics.append(
                         {

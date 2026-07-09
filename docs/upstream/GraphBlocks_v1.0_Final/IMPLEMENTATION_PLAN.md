@@ -2373,6 +2373,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require
   `lateCallback.policySnapshotId` to match `operation.policySnapshotId` in both Rust and Python
   runners before a late callback can prove it was reconciled under the persisted policy snapshot.
+- Python TCK validation now compares the late-callback operation, provider-operation, run, node,
+  attempt, release, tenant, and policy snapshot identities as exact durable strings rather than
+  trim-normalized values, so whitespace-mutated callback evidence cannot satisfy reconciliation
+  conformance by matching only after normalization.
 - Durable external-operation reconciliation shared TCK cases now require ISO
   `lateCallback.receivedAt` evidence in both Rust and Python runners before a late callback can
   prove a durable callback receipt timestamp, and reject callback receipts recorded before
