@@ -393,6 +393,9 @@ fn parse_http_url(url: &str) -> Result<ParsedHttpEndpoint, WebhookHttpClientErro
         .map_or((rest, "/".to_owned()), |(authority, path)| {
             (authority, format!("/{path}"))
         });
+    if path_and_query.bytes().any(|byte| byte <= 32 || byte == 127) {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    }
     if authority.is_empty() || authority.contains('@') {
         return Err(WebhookHttpClientError::MalformedUrl);
     }

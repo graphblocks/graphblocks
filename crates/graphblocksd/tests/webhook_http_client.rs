@@ -137,3 +137,27 @@ fn std_webhook_http_client_rejects_malformed_authority_before_network_io() {
         );
     }
 }
+
+#[test]
+fn std_webhook_http_client_rejects_malformed_request_target_before_network_io() {
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+
+    for url in [
+        "http://127.0.0.1:9/callback\r\nX-Injected: true",
+        "http://127.0.0.1:9/callback\ttrail",
+        "http://127.0.0.1:9/callback with space",
+    ] {
+        let request = WebhookHttpRequest {
+            url: url.to_owned(),
+            method: "POST".to_owned(),
+            headers: BTreeMap::new(),
+            body: json!({}),
+        };
+
+        assert_eq!(
+            client.send(request),
+            Err(WebhookHttpClientError::MalformedUrl),
+            "{url:?} should be rejected before connect"
+        );
+    }
+}

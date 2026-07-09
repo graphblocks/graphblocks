@@ -1070,6 +1070,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reporting a target as allowed, so local callback tooling fails closed during development.
   The `graphblocksd` standard webhook HTTP client now applies the same malformed-authority rejection
   before opening a TCP connection, protecting direct adapter use from bypassing target validation.
+  The same client now rejects raw control or whitespace bytes in the HTTP request target before
+  opening a TCP connection, preventing direct adapter use from injecting request-line content.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
   destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
   addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.
