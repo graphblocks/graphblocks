@@ -65,6 +65,64 @@ def test_workspace_snapshot_validates_identity_revision_resources_and_metadata()
         WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata={object(): "value"})  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: WorkspaceSnapshot(" workspace-1", "snapshot-1", 1),
+            "workspace snapshot workspace_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceSnapshot("workspace-1", " snapshot-1", 1),
+            "workspace snapshot snapshot_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceSnapshot("workspace-1", "snapshot-1", 1, base_snapshot_id=" snapshot-0"),
+            "workspace snapshot base_snapshot_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceSnapshot("workspace-1", "snapshot-1", 1, base_snapshot_digest=" sha256:base"),
+            "workspace snapshot base_snapshot_digest must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata={" phase": "candidate"}),
+            "workspace snapshot metadata key must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationDecision(False, (" workspace.denied",)),
+            "workspace mutation decision reason_codes item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy(" policy-1", ("file",)),
+            "workspace mutation policy policy_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy("policy-1", (" file",)),
+            "workspace mutation policy allowed_resource_kinds item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy("policy-1", ("file",), denied_operations=(" process.exec",)),
+            "workspace mutation policy denied_operations item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy("policy-1", ("file",), required_review_scopes=(" quality",)),
+            "workspace mutation policy required_review_scopes item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy("policy-1", ("file",), read_only_resource_ids=(" rtl/top.sv",)),
+            "workspace mutation policy read_only_resource_ids item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: WorkspaceMutationPolicy("policy-1", ("file",), read_only_resource_kinds=(" source",)),
+            "workspace mutation policy read_only_resource_kinds item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_workspace_records_reject_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_workspace_fork_preserves_base_snapshot_digest() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",
@@ -136,6 +194,39 @@ def test_workspace_commit_validates_identity_links_and_copies_snapshot() -> None
             "2026-06-24T00:05:00Z",
             "change-1",
         )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "expected_error"),
+    (
+        ("commit_id", "workspace commit commit_id must not contain surrounding whitespace"),
+        ("workspace_id", "workspace commit workspace_id must not contain surrounding whitespace"),
+        ("previous_snapshot_id", "workspace commit previous_snapshot_id must not contain surrounding whitespace"),
+        ("committed_at", "workspace commit committed_at must not contain surrounding whitespace"),
+        ("change_set_id", "workspace commit change_set_id must not contain surrounding whitespace"),
+    ),
+)
+def test_workspace_commit_rejects_whitespace_wrapped_identities(field_name: str, expected_error: str) -> None:
+    snapshot = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-2",
+        revision=2,
+        resources=(ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),),
+        created_at="2026-06-24T00:05:00Z",
+    )
+    values = {
+        "commit_id": "commit-1",
+        "workspace_id": "workspace-1",
+        "previous_snapshot_id": "snapshot-1",
+        "snapshot": snapshot,
+        "committed_by": PrincipalRef("author-1"),
+        "committed_at": "2026-06-24T00:05:00Z",
+        "change_set_id": "change-1",
+    }
+    values[field_name] = f" {values[field_name]}"
+
+    with pytest.raises(ValueError, match=expected_error):
+        WorkspaceCommit(**values)
 
 
 def test_workspace_mutation_decision_validates_boolean_and_reason_codes() -> None:

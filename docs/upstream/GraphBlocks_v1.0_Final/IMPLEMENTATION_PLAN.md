@@ -2821,6 +2821,10 @@ sandbox
 - `WorkspaceTrialPlan` now materializes a commit request only after a verified trial has the
   required passing checks, passing gate, active trial-scoped leases, allowed mutation decision, and
   valid review scopes for the candidate digest.
+- Python workspace snapshots, commits, mutation decisions, and mutation policies now reject
+  whitespace-wrapped workspace/snapshot/commit/change-set ids, metadata keys, reason codes, and
+  policy selector values before CAS commits or protected-resource checks can depend on normalized
+  identities.
 - Python review requests and reviewer credentials now deep-freeze nested metadata while thawing
   those snapshots for canonical review-request digests, so retained caller references cannot alter
   review evidence or digest inputs after construction.

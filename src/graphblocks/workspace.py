@@ -13,6 +13,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -76,6 +78,8 @@ class WorkspaceSnapshot:
                 raise ValueError("workspace snapshot metadata keys must be strings")
             if not key.strip():
                 raise ValueError("workspace snapshot metadata key must not be empty")
+            if key != key.strip():
+                raise ValueError("workspace snapshot metadata key must not contain surrounding whitespace")
         resources = tuple(
             sorted(
                 (_copy_resource_snapshot_ref(resource) for resource in self.resources),
