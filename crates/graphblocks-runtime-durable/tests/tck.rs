@@ -4057,6 +4057,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            let commits_result_path = if raw_late_callback.contains_key("commitsResult")
+                || !raw_late_callback.contains_key("commits_result")
+            {
+                "commitsResult"
+            } else {
+                "commits_result"
+            };
+            if raw_late_callback
+                .get("commitsResult")
+                .or_else(|| raw_late_callback.get("commits_result"))
+                .and_then(Value::as_bool)
+                .is_some_and(|commits_result| commits_result)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation late callback must not commit result",
+                    "path": format!("$.lateCallback.{commits_result_path}"),
+                }));
+            }
             if reconciliation_values
                 .get(&("usage", "reconciled"))
                 .copied()

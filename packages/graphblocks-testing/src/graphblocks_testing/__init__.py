@@ -9960,6 +9960,23 @@ class TckRunner:
                                 "path": f"$.{source_name}.{path_key}",
                             }
                         )
+                commits_result_path = (
+                    "commitsResult"
+                    if "commitsResult" in raw_late_callback
+                    or "commits_result" not in raw_late_callback
+                    else "commits_result"
+                )
+                commits_result = raw_late_callback.get(
+                    "commitsResult", raw_late_callback.get("commits_result")
+                )
+                if commits_result is True:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation late callback must not commit result",
+                            "path": f"$.lateCallback.{commits_result_path}",
+                        }
+                    )
                 raw_provider_usage_records = raw_usage.get(
                     "providerUsageRecords", raw_usage.get("provider_usage_records", ())
                 )

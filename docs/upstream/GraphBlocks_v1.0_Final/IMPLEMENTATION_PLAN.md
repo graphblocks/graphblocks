@@ -1970,7 +1970,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now require real boolean values for
   late callback commit/diagnostic/artifact-reference flags and late usage reconciliation in both
   Rust and Python runners, rejecting missing flags as well as truthy strings before they can prove
-  cancellation, payload extraction, or billing reconciliation behavior.
+  cancellation, payload extraction, or billing reconciliation behavior. The same path rejects
+  `lateCallback.commitsResult: true`, preserving the rule that late callbacks after terminal
+  operation cancellation/expiry do not commit durable results.
 - Durable external-operation reconciliation shared TCK cases now require `operation.effectState` to
   be `committed` in both Rust and Python runners before accepting side-effect preservation evidence.
 - Durable external-operation reconciliation shared TCK cases now also require
