@@ -9977,6 +9977,23 @@ class TckRunner:
                             "path": f"$.lateCallback.{commits_result_path}",
                         }
                     )
+                diagnostic_recorded_path = (
+                    "diagnosticRecorded"
+                    if "diagnosticRecorded" in raw_late_callback
+                    or "diagnostic_recorded" not in raw_late_callback
+                    else "diagnostic_recorded"
+                )
+                diagnostic_recorded = raw_late_callback.get(
+                    "diagnosticRecorded", raw_late_callback.get("diagnostic_recorded")
+                )
+                if diagnostic_recorded is False:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires recorded late-callback diagnostic",
+                            "path": f"$.lateCallback.{diagnostic_recorded_path}",
+                        }
+                    )
                 payload_artifact_path = (
                     "payloadConvertedToArtifactRef"
                     if "payloadConvertedToArtifactRef" in raw_late_callback

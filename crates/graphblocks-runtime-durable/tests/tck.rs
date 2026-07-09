@@ -4076,6 +4076,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{commits_result_path}"),
                 }));
             }
+            let diagnostic_recorded_path = if raw_late_callback.contains_key("diagnosticRecorded")
+                || !raw_late_callback.contains_key("diagnostic_recorded")
+            {
+                "diagnosticRecorded"
+            } else {
+                "diagnostic_recorded"
+            };
+            if raw_late_callback
+                .get("diagnosticRecorded")
+                .or_else(|| raw_late_callback.get("diagnostic_recorded"))
+                .and_then(Value::as_bool)
+                .is_some_and(|diagnostic_recorded| !diagnostic_recorded)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires recorded late-callback diagnostic",
+                    "path": format!("$.lateCallback.{diagnostic_recorded_path}"),
+                }));
+            }
             let payload_artifact_path = if raw_late_callback
                 .contains_key("payloadConvertedToArtifactRef")
                 || !raw_late_callback.contains_key("payload_converted_to_artifact_ref")
