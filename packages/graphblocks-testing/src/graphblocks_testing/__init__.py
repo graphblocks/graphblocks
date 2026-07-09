@@ -9731,6 +9731,14 @@ class TckRunner:
                             "path": f"$.operation.{operation_id_path}",
                         }
                     )
+                elif operation_id != operation_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation operationId must not contain surrounding whitespace",
+                            "path": f"$.operation.{operation_id_path}",
+                        }
+                    )
                 provider_operation_id_path = (
                     "providerOperationId"
                     if "providerOperationId" in raw_operation
@@ -9751,6 +9759,14 @@ class TckRunner:
                             "path": f"$.operation.{provider_operation_id_path}",
                         }
                     )
+                elif provider_operation_id != provider_operation_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation providerOperationId must not contain surrounding whitespace",
+                            "path": f"$.operation.{provider_operation_id_path}",
+                        }
+                    )
                 operation_idempotency_key_path = (
                     "idempotencyKey"
                     if "idempotencyKey" in raw_operation
@@ -9768,6 +9784,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank operation idempotencyKey",
+                            "path": f"$.operation.{operation_idempotency_key_path}",
+                        }
+                    )
+                elif operation_idempotency_key != operation_idempotency_key.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation operation idempotencyKey must not contain surrounding whitespace",
                             "path": f"$.operation.{operation_idempotency_key_path}",
                         }
                     )
@@ -9810,6 +9834,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank expectedSchema",
+                            "path": f"$.operation.{expected_schema_path}",
+                        }
+                    )
+                elif expected_schema != expected_schema.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation expectedSchema must not contain surrounding whitespace",
                             "path": f"$.operation.{expected_schema_path}",
                         }
                     )
@@ -10141,6 +10173,14 @@ class TckRunner:
                             "path": f"$.operation.{run_id_path}",
                         }
                     )
+                elif run_id != run_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation runId must not contain surrounding whitespace",
+                            "path": f"$.operation.{run_id_path}",
+                        }
+                    )
                 node_id_path = (
                     "nodeId"
                     if "nodeId" in raw_operation or "node_id" not in raw_operation
@@ -10152,6 +10192,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank nodeId",
+                            "path": f"$.operation.{node_id_path}",
+                        }
+                    )
+                elif node_id != node_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation nodeId must not contain surrounding whitespace",
                             "path": f"$.operation.{node_id_path}",
                         }
                     )
@@ -10169,6 +10217,14 @@ class TckRunner:
                             "path": f"$.operation.{attempt_id_path}",
                         }
                     )
+                elif attempt_id != attempt_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation attemptId must not contain surrounding whitespace",
+                            "path": f"$.operation.{attempt_id_path}",
+                        }
+                    )
                 release_id_path = (
                     "releaseId"
                     if "releaseId" in raw_operation or "release_id" not in raw_operation
@@ -10183,6 +10239,14 @@ class TckRunner:
                             "path": f"$.operation.{release_id_path}",
                         }
                     )
+                elif release_id != release_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation releaseId must not contain surrounding whitespace",
+                            "path": f"$.operation.{release_id_path}",
+                        }
+                    )
                 tenant_id_path = (
                     "tenantId"
                     if "tenantId" in raw_operation or "tenant_id" not in raw_operation
@@ -10194,6 +10258,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank tenantId",
+                            "path": f"$.operation.{tenant_id_path}",
+                        }
+                    )
+                elif tenant_id != tenant_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation tenantId must not contain surrounding whitespace",
                             "path": f"$.operation.{tenant_id_path}",
                         }
                     )
@@ -10214,6 +10286,14 @@ class TckRunner:
                         {
                             "code": "DurableExternalOperationInvalid",
                             "message": "external operation reconciliation requires nonblank operation policySnapshotId",
+                            "path": f"$.operation.{operation_policy_snapshot_path}",
+                        }
+                    )
+                elif operation_policy_snapshot_id != operation_policy_snapshot_id.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation operation policySnapshotId must not contain surrounding whitespace",
                             "path": f"$.operation.{operation_policy_snapshot_path}",
                         }
                     )
@@ -10254,6 +10334,7 @@ class TckRunner:
                 elif (
                     isinstance(operation_id, str)
                     and operation_id.strip()
+                    and operation_id == operation_id.strip()
                     and callback_operation_id != operation_id
                 ):
                     diagnostics.append(
@@ -10287,6 +10368,7 @@ class TckRunner:
                 elif (
                     isinstance(provider_operation_id, str)
                     and provider_operation_id.strip()
+                    and provider_operation_id == provider_operation_id.strip()
                     and callback_provider_operation_id != provider_operation_id
                 ):
                     diagnostics.append(
@@ -10316,6 +10398,7 @@ class TckRunner:
                 elif (
                     isinstance(run_id, str)
                     and run_id.strip()
+                    and run_id == run_id.strip()
                     and callback_run_id != run_id
                 ):
                     diagnostics.append(
@@ -10345,6 +10428,7 @@ class TckRunner:
                 elif (
                     isinstance(node_id, str)
                     and node_id.strip()
+                    and node_id == node_id.strip()
                     and callback_node_id != node_id
                 ):
                     diagnostics.append(
@@ -10374,6 +10458,7 @@ class TckRunner:
                 elif (
                     isinstance(attempt_id, str)
                     and attempt_id.strip()
+                    and attempt_id == attempt_id.strip()
                     and callback_attempt_id != attempt_id
                 ):
                     diagnostics.append(
@@ -10403,6 +10488,7 @@ class TckRunner:
                 elif (
                     isinstance(release_id, str)
                     and release_id.strip()
+                    and release_id == release_id.strip()
                     and callback_release_id != release_id
                 ):
                     diagnostics.append(
@@ -10432,6 +10518,7 @@ class TckRunner:
                 elif (
                     isinstance(tenant_id, str)
                     and tenant_id.strip()
+                    and tenant_id == tenant_id.strip()
                     and callback_tenant_id != tenant_id
                 ):
                     diagnostics.append(
@@ -10542,6 +10629,7 @@ class TckRunner:
                 elif (
                     isinstance(operation_policy_snapshot_id, str)
                     and operation_policy_snapshot_id.strip()
+                    and operation_policy_snapshot_id == operation_policy_snapshot_id.strip()
                     and policy_snapshot_id != operation_policy_snapshot_id
                 ):
                     diagnostics.append(

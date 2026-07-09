@@ -4516,6 +4516,136 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_id
         )
 
 
+def test_testing_package_rejects_external_operation_reconciliation_whitespace_operation_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    base_fixture = {
+        "kind": "external_operation_reconciliation",
+        "operation": {
+            "operationId": "op-ci-002",
+            "providerOperationId": "gh-run-002",
+            "idempotencyKey": "idem-ci-operation-001",
+            "runId": "run-coding-002",
+            "nodeId": "runExternalCI",
+            "attemptId": "attempt-ci-001",
+            "state": "cancelled",
+            "releaseId": "release-2026-06-23",
+            "tenantId": "tenant-support-001",
+            "policySnapshotId": "pol-callback-001",
+            "effectState": "committed",
+            "effectJournaled": True,
+            "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expectedSchema": "schemas/CICallback@1",
+            "createdAt": "2026-06-23T00:00:00Z",
+            "kind": "ci_job",
+            "expiresAt": "2026-06-23T00:30:00Z",
+            "submittedAt": "2026-06-23T00:00:01Z",
+        },
+        "lateCallback": {
+            "callbackId": "cb-ci-late-001",
+            "operationId": "op-ci-002",
+            "providerOperationId": "gh-run-002",
+            "runId": "run-coding-002",
+            "nodeId": "runExternalCI",
+            "attemptId": "attempt-ci-001",
+            "releaseId": "release-2026-06-23",
+            "tenantId": "tenant-support-001",
+            "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "verifiedBy": "hmac-sha256:callback-endpoint-1",
+            "idempotencyKey": "idem-ci-callback-001",
+            "policySnapshotId": "pol-callback-001",
+            "receivedAt": "2026-06-23T00:00:30Z",
+            "commitsResult": False,
+            "diagnosticRecorded": True,
+            "payloadConvertedToArtifactRef": True,
+        },
+        "usage": {
+            "providerUsageRecords": [
+                {
+                    "metric": "ci.minutes",
+                    "amount": 1,
+                }
+            ],
+            "reconciled": True,
+        },
+    }
+    cases = (
+        (
+            "operationId",
+            "external operation reconciliation operationId must not contain surrounding whitespace",
+            "$.operation.operationId",
+        ),
+        (
+            "providerOperationId",
+            "external operation reconciliation providerOperationId must not contain surrounding whitespace",
+            "$.operation.providerOperationId",
+        ),
+        (
+            "idempotencyKey",
+            "external operation reconciliation operation idempotencyKey must not contain surrounding whitespace",
+            "$.operation.idempotencyKey",
+        ),
+        (
+            "runId",
+            "external operation reconciliation runId must not contain surrounding whitespace",
+            "$.operation.runId",
+        ),
+        (
+            "nodeId",
+            "external operation reconciliation nodeId must not contain surrounding whitespace",
+            "$.operation.nodeId",
+        ),
+        (
+            "attemptId",
+            "external operation reconciliation attemptId must not contain surrounding whitespace",
+            "$.operation.attemptId",
+        ),
+        (
+            "releaseId",
+            "external operation reconciliation releaseId must not contain surrounding whitespace",
+            "$.operation.releaseId",
+        ),
+        (
+            "tenantId",
+            "external operation reconciliation tenantId must not contain surrounding whitespace",
+            "$.operation.tenantId",
+        ),
+        (
+            "policySnapshotId",
+            "external operation reconciliation operation policySnapshotId must not contain surrounding whitespace",
+            "$.operation.policySnapshotId",
+        ),
+        (
+            "expectedSchema",
+            "external operation reconciliation expectedSchema must not contain surrounding whitespace",
+            "$.operation.expectedSchema",
+        ),
+    )
+
+    for field_name, message, path in cases:
+        fixture = json.loads(json.dumps(base_fixture))
+        fixture["operation"][field_name] = f" {fixture['operation'][field_name]}"
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/external-operation-reconciliation-operation-whitespace-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableExternalOperationInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

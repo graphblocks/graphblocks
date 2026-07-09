@@ -2377,6 +2377,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   attempt, release, tenant, and policy snapshot identities as exact durable strings rather than
   trim-normalized values, so whitespace-mutated callback evidence cannot satisfy reconciliation
   conformance by matching only after normalization.
+- Python TCK validation also rejects surrounding whitespace on the operation-side reconciliation
+  evidence fields (`operationId`, `providerOperationId`, `idempotencyKey`, `runId`, `nodeId`,
+  `attemptId`, `releaseId`, `tenantId`, `policySnapshotId`, and `expectedSchema`) before those
+  fields can drive callback matching, resume fencing, or late usage reconciliation checks.
 - Durable external-operation reconciliation shared TCK cases now require ISO
   `lateCallback.receivedAt` evidence in both Rust and Python runners before a late callback can
   prove a durable callback receipt timestamp, and reject callback receipts recorded before
