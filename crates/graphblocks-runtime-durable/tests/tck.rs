@@ -3495,7 +3495,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     || day > max_day
                     || !(0..=23).contains(&hour)
                     || !(0..=59).contains(&minute)
-                    || !(0..=60).contains(&second)
+                    || !(0..=59).contains(&second)
                 {
                     return None;
                 }
