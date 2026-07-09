@@ -2269,6 +2269,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                 let hour = value.get(11..13)?.parse::<i64>().ok()?;
                 let minute = value.get(14..16)?.parse::<i64>().ok()?;
                 let second = value.get(17..19)?.parse::<i64>().ok()?;
+                if year < 1 {
+                    return None;
+                }
                 let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
                 let max_day = match month {
                     1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
