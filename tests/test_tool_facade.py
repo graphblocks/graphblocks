@@ -1631,22 +1631,8 @@ def test_tool_admission_rejects_expired_policy_decision() -> None:
         "policy decision decision-allow-tool expired at 2026-06-23T00:00:00Z"
     )
 
-    compact_offset_decision = replace(
-        _allow_tool_policy_decision(), valid_until="2026-06-23T00:00:02+0000"
-    )
-    with pytest.raises(ToolAdmissionError) as compact_error:
-        admit_tool_call(
-            call,
-            resolved,
-            _process_schema_registry(),
-            policy_decision=compact_offset_decision,
-            expected_policy_input_digest=compact_offset_decision.input_digest,
-            principal_id="user-1",
-            admitted_at="2026-06-23T00:00:00Z",
-            now=1_200,
-        )
-
-    assert str(compact_error.value) == "policy decision valid_until must be an ISO datetime"
+    with pytest.raises(ValueError, match="policy decision valid_until must be an ISO datetime"):
+        replace(_allow_tool_policy_decision(), valid_until="2026-06-23T00:00:02+0000")
 
 
 def test_tool_admission_rejects_empty_principal_id() -> None:

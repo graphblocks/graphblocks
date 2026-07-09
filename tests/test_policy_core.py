@@ -143,6 +143,14 @@ def test_policy_models_reject_unknown_typed_values() -> None:
             status="maybe",
             occurred_at="2026-06-23T00:00:02Z",
         )
+    with pytest.raises(ValueError, match="policy enforcement occurred_at must be an ISO datetime"):
+        PolicyEnforcementRecord(
+            record_id="enforce-compact-timezone",
+            decision_id="decision-1",
+            enforcement_point="before_provider_call",
+            status="enforced",
+            occurred_at="2026-06-23T00:00:02+0000",
+        )
     with pytest.raises(ValueError, match="unknown enforcement point"):
         PolicyEnforcementRecord(
             record_id="enforce-invalid",
@@ -194,6 +202,14 @@ def test_policy_models_reject_empty_identity_fields() -> None:
             resource=ResourceRef("tool:search"),
             occurred_at=" ",
         )
+    with pytest.raises(ValueError, match="policy request occurred_at must be an ISO datetime"):
+        PolicyRequest(
+            request_id="req-compact-timezone",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=ResourceRef("tool:search"),
+            occurred_at="2026-06-23T00:00:00+0000",
+        )
     with pytest.raises(ValueError, match="policy request resource must be a ResourceRef"):
         PolicyRequest(
             request_id="req-1",
@@ -217,6 +233,25 @@ def test_policy_models_reject_empty_identity_fields() -> None:
             effect="allow",
             reason_codes=(),
             policy_refs=(),
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision evaluated_at must be an ISO datetime"):
+        PolicyDecision(
+            decision_id="decision-compact-timezone",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=(),
+            evaluated_at="2026-06-23T00:00:01+0000",
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision valid_until must be an ISO datetime"):
+        PolicyDecision(
+            decision_id="decision-space-time",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=(),
+            evaluated_at="2026-06-23T00:00:01Z",
+            valid_until="2026-06-23 00:05:00Z",
             input_digest="sha256:input",
         )
 
@@ -528,6 +563,13 @@ def test_unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() -> No
 
     assert reused == cached
     assert offset_reused == offset_cached
+    with pytest.raises(PolicyUnavailableError, match="expired"):
+        unavailable_policy_decision(
+            request,
+            fail_mode="use_cached_decision",
+            evaluated_at="2026-06-23 00:01:00Z",
+            cached_decision=cached,
+        )
     with pytest.raises(PolicyUnavailableError, match="cached policy decision is required"):
         unavailable_policy_decision(
             request,
@@ -660,4 +702,11 @@ def test_policy_test_case_rejects_invalid_case_id() -> None:
             request,
             PolicyTestExpectation(effect="allow"),
             evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="policy test evaluated_at must be an ISO datetime"):
+        PolicyTestCase(
+            "compact-timezone",
+            request,
+            PolicyTestExpectation(effect="allow"),
+            evaluated_at="2026-06-23T00:00:01+0000",
         )

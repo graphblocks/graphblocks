@@ -241,6 +241,10 @@ Message
   tool output or caller-supplied `ContentPart` metadata from self-labeling as trusted model
   context.
 - `PolicyRequest.enforcement_point`에 `on_generation_chunk`, `before_client_delivery`, `before_output_commit`, `before_tool_or_effect`를 추가한다.
+- The Python policy facade now validates policy request occurrence, decision evaluation/expiry,
+  enforcement record occurrence, and policy-test evaluation timestamps as RFC 3339-style datetimes,
+  rejecting space-separated forms, timezone-less values, and compact offsets such as `+0000`
+  before policy decisions or enforcement evidence can be projected.
 - `OutputPolicyDecision`, `OutputDeliveryPolicy`, `OutputCutoff` schema와 terminal semantics를 canonical contract로 추가한다.
 - `OutputPolicyDecision` redaction instructions validate replacement values at construction time,
   so malformed redaction payloads cannot enter the delivery gate and fail after partial state

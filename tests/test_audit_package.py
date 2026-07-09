@@ -36,6 +36,7 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
         effect="allow",
         reason_codes=("allow-output",),
         policy_refs=("policy/output",),
+        evaluated_at="2026-06-23T00:00:01Z",
         input_digest="sha256:input",
     )
     enforcement = graphblocks_audit.PolicyEnforcementRecord.from_decision(

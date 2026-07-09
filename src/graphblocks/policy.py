@@ -314,7 +314,7 @@ class PolicyRequest:
         object.__setattr__(
             self,
             "occurred_at",
-            _validate_non_empty_string("policy request", "occurred_at", self.occurred_at),
+            _validate_policy_datetime("policy request", "occurred_at", self.occurred_at),
         )
         if not isinstance(self.resource, ResourceRef):
             raise ValueError("policy request resource must be a ResourceRef")
@@ -427,6 +427,17 @@ class PolicyDecision:
             raise ValueError("policy decision advice must contain mappings")
         object.__setattr__(self, "obligations", obligations)
         object.__setattr__(self, "advice", tuple(MappingProxyType(dict(item)) for item in advice_items))
+        object.__setattr__(
+            self,
+            "evaluated_at",
+            _validate_policy_datetime("policy decision", "evaluated_at", self.evaluated_at),
+        )
+        if self.valid_until is not None:
+            object.__setattr__(
+                self,
+                "valid_until",
+                _validate_policy_datetime("policy decision", "valid_until", self.valid_until),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +457,12 @@ class PolicyEnforcementRecord:
             raise ValueError(f"unknown policy enforcement status {self.status!r}")
         object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
         object.__setattr__(self, "metadata", _freeze_mapping("policy enforcement", "metadata", self.metadata))
+        if self.occurred_at:
+            object.__setattr__(
+                self,
+                "occurred_at",
+                _validate_policy_datetime("policy enforcement", "occurred_at", self.occurred_at),
+            )
 
     @classmethod
     def from_decision(
@@ -712,6 +729,11 @@ class PolicyTestCase:
             raise ValueError("policy test case_id must be a string")
         if not self.case_id.strip():
             raise ValueError("policy test case_id must not be empty")
+        object.__setattr__(
+            self,
+            "evaluated_at",
+            _validate_policy_datetime("policy test", "evaluated_at", self.evaluated_at),
+        )
         if self.enforced_obligation_ids is not None:
             object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
 
@@ -834,13 +856,46 @@ def _policy_datetime_expired(valid_until: str, evaluated_at: str) -> bool:
         return True
 
 
+def _validate_policy_datetime(owner: str, field_name: str, value: object) -> str:
+    timestamp = _validate_non_empty_string(owner, field_name, value)
+    try:
+        _parse_policy_datetime(timestamp)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
+    return timestamp
+
+
 def _parse_policy_datetime(value: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("policy datetime must be a non-empty ISO datetime")
     normalized = value.strip()
+    if normalized != value or len(normalized) <= 19 or normalized[10] != "T":
+        raise ValueError("policy datetime must be an ISO datetime")
+    suffix_start = 19
+    if normalized[suffix_start] == ".":
+        suffix_start += 1
+        fraction_start = suffix_start
+        while suffix_start < len(normalized) and normalized[suffix_start].isdigit():
+            suffix_start += 1
+        if suffix_start == fraction_start:
+            raise ValueError("policy datetime must be an ISO datetime")
+    timezone_suffix = normalized[suffix_start:]
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
-    parsed = datetime.fromisoformat(normalized)
+    elif (
+        len(timezone_suffix) != 6
+        or timezone_suffix[0] not in {"+", "-"}
+        or timezone_suffix[3] != ":"
+        or not timezone_suffix[1:3].isdigit()
+        or not timezone_suffix[4:6].isdigit()
+        or int(timezone_suffix[1:3]) > 23
+        or int(timezone_suffix[4:6]) > 59
+    ):
+        raise ValueError("policy datetime must be an ISO datetime")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError("policy datetime must be an ISO datetime") from error
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        raise ValueError("policy datetime must be an ISO datetime")
     return parsed.astimezone(timezone.utc)
