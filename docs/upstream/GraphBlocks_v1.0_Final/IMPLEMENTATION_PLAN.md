@@ -1896,6 +1896,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable callback projection shared TCK cases now reject `nextRetryAt` retry timestamps that use a
   space instead of the RFC 3339 `T` separator in the Python runner, keeping retry scheduling
   timestamp validation aligned with the Rust runner before accepting retry evidence.
+- Durable callback projection shared TCK cases now reject compact timezone offsets such as `+0000`
+  on `nextRetryAt` retry timestamps, so Python cannot accept retry scheduling evidence that the
+  Rust TCK parser treats as non-RFC3339.
 - Durable callback projection shared TCK cases now reject delivered-row `deliveredAt` timestamps
   that use a space instead of the RFC 3339 `T` separator in the Python runner, keeping terminal
   delivery timestamp validation aligned with the Rust runner before accepting delivery evidence.
