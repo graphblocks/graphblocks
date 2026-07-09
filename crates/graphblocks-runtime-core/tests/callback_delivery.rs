@@ -3356,6 +3356,10 @@ fn webhook_target_rejects_malformed_or_empty_urls() {
         "https://hooks.example.com:65536/events",
         "https://[2001:4860:4860::8888]:abc/events",
         "https://[2001:4860:4860::8888]:/events",
+        "https://[not-ipv6]/events",
+        "https://hooks example.com/events",
+        "https://hooks.example.com\t/events",
+        "https://hooks.example.com%2fevil.test/events",
     ] {
         assert_eq!(
             WebhookDeliveryTarget::new(url, &policy),

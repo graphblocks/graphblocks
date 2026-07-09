@@ -2188,6 +2188,9 @@ fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError>
         if host.contains('%') {
             return Err(WebhookEndpointError::MalformedUrl);
         }
+        if host.parse::<Ipv6Addr>().is_err() {
+            return Err(WebhookEndpointError::MalformedUrl);
+        }
         if !suffix.is_empty() {
             let port = suffix
                 .strip_prefix(':')
@@ -2207,10 +2210,23 @@ fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError>
     } else {
         authority
     };
+    let host = normalize_host(host);
     if host.is_empty() || host.contains(':') {
         return Err(WebhookEndpointError::MalformedUrl);
     }
-    Ok(normalize_host(host))
+    if !host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+    {
+        return Err(WebhookEndpointError::MalformedUrl);
+    }
+    if host
+        .split('.')
+        .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+    {
+        return Err(WebhookEndpointError::MalformedUrl);
+    }
+    Ok(host)
 }
 
 fn normalize_host(host: &str) -> String {
