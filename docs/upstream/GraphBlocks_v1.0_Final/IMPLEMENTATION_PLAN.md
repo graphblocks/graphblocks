@@ -1199,7 +1199,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before replay or storage, so unauthorized event visibility cannot be obtained by requesting a
   broader callback filter.
 - Runtime callback subscription construction now validates scope literals against the specification's
-  `run`, `conversation`, `project`, `tenant`, and `deployment` set.
+  `run`, `conversation`, `project`, `tenant`, and `deployment` set. The compiler and server reject
+  scopes that only become valid after trimming whitespace, preserving the configured capability
+  scope as an exact literal.
 - Runtime callback subscription construction now validates typed webhook delivery targets so direct
   target construction cannot bypass non-empty URL checks.
 - Runtime callback event filters now match both spec camelCase `nodeId`/`operationId` payload

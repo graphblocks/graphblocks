@@ -44,6 +44,7 @@ FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
     }
 )
 MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
+VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({"run", "conversation", "project", "tenant", "deployment"})
 VALID_CALLBACK_DELIVERY_KINDS = frozenset({
     "webhook",
     "websocket",
@@ -618,6 +619,15 @@ def _diagnose_callback_subscription_config(
     delivery = config.get("delivery")
     if not isinstance(delivery, dict):
         return
+    scope = config.get("scope")
+    if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
+        diagnostics.append(
+            Diagnostic(
+                "InvalidCallbackSubscription",
+                "callback subscription scope must be one of run, conversation, project, tenant, or deployment",
+                f"{path}.scope",
+            )
+        )
     delivery_kind = delivery.get("kind")
     if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
         diagnostics.append(

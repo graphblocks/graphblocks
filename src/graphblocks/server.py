@@ -154,7 +154,7 @@ def _server_request_json_body(request: ServerRequest, owner: str) -> object:
 
 def _validate_callback_subscription_scope(value: object) -> str:
     scope = _validate_non_empty_string("server callback registration", "scope", value)
-    if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
+    if value != scope or scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
         raise ValueError(
             "server callback registration scope must be one of run, conversation, project, tenant, or deployment"
         )

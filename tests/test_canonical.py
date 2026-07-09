@@ -1538,6 +1538,36 @@ def test_compile_reports_callback_subscription_safety_diagnostics() -> None:
     ]
 
 
+def test_compile_reports_invalid_callback_subscription_scope() -> None:
+    for scope in ("run ", "workspace"):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"invalid-callback-subscription-scope-{scope.strip()}"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [
+                    {
+                        "subscriptionId": "sub-invalid-scope",
+                        "scope": scope,
+                        "scopeId": "scope-1",
+                        "delivery": {"kind": "local_callback", "callbackName": "ide"},
+                    },
+                ],
+            },
+        }
+
+        errors = [
+            diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"
+        ]
+
+        assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+        assert (
+            errors[0].message
+            == "callback subscription scope must be one of run, conversation, project, tenant, or deployment"
+        )
+
+
 def test_compile_reports_userinfo_callback_webhook_url_as_unsafe() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
