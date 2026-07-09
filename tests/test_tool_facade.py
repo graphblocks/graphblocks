@@ -823,6 +823,30 @@ def test_tool_resolution_scope_rejects_invalid_tool_collections() -> None:
             ToolResolutionScope(**overrides)  # type: ignore[arg-type]
 
 
+def test_tool_resolution_scope_rejects_whitespace_wrapped_capability_names() -> None:
+    for field_name in (
+        "application_tools",
+        "graph_tools",
+        "principal_tools",
+        "tenant_policy_tools",
+        "conversation_policy_tools",
+        "data_classification_tools",
+        "deployment_tools",
+        "budget_tools",
+    ):
+        with pytest.raises(
+            ValueError,
+            match=f"tool resolution scope {field_name} item must not contain surrounding whitespace",
+        ):
+            ToolResolutionScope(**{field_name: frozenset({" knowledge.search"})})
+
+        with pytest.raises(
+            ValueError,
+            match=f"tool resolution scope {field_name} item must not contain surrounding whitespace",
+        ):
+            ToolResolutionScope(**{field_name: frozenset({"knowledge.search "})})
+
+
 def test_tool_catalog_reports_visible_tool_without_binding() -> None:
     catalog = ToolCatalog(
         definitions=(

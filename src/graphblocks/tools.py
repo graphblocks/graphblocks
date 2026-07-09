@@ -920,6 +920,10 @@ class ToolResolutionScope:
                 tools = _validate_string_collection("tool resolution scope", field_name, value)
                 if any(not tool_name.strip() for tool_name in tools):
                     raise ValueError(f"tool resolution scope {field_name} item must not be empty")
+                if any(tool_name != tool_name.strip() for tool_name in tools):
+                    raise ValueError(
+                        f"tool resolution scope {field_name} item must not contain surrounding whitespace"
+                    )
                 object.__setattr__(self, field_name, tools)
 
     def allows(self, tool_name: str) -> bool:

@@ -1781,6 +1781,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   (`application_tools`, graph, principal, tenant/conversation/data policy, deployment, and budget)
   before resolving visible tools, matching the scoped-capability contract and Python facade
   validation.
+- Python tool resolution scope now treats every scoped-capability item as an exact identity,
+  rejecting whitespace-wrapped capability names before catalog resolution can silently widen or
+  narrow the model-visible tool set.
 - Rust tool admission now rejects expired `before_tool_or_effect` policy decisions before applying
   allow/deny effects, so stale policy approvals cannot admit a tool side effect after their
   `valid_until` boundary.
