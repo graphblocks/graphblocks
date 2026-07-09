@@ -9212,6 +9212,7 @@ class TckRunner:
                     if str(entry.get("kind", "")).lower()
                     in {"externalcallbackreceived", "external_callback_received"}
                 ]
+                has_callback_entry = bool(callback_entries)
                 journal_sequences = {}
                 fences = set()
                 for entry_index, entry in journal_entries:
@@ -9290,6 +9291,22 @@ class TckRunner:
                         {
                             "code": "DurableAsyncCancelRaceInvalid",
                             "message": "async cancel race requires cancel journal entry",
+                            "path": "$.journal",
+                        }
+                    )
+                if (
+                    not diagnostics
+                    and raw_race.get(
+                        "callbackReceiptRecorded",
+                        raw_race.get("callback_receipt_recorded"),
+                    )
+                    is True
+                    and not has_callback_entry
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race requires callback journal entry",
                             "path": "$.journal",
                         }
                     )

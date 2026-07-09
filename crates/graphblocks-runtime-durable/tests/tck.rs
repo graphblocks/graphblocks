@@ -3218,6 +3218,7 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut cancel_sequence = None;
             let mut callback_sequence = None;
             let mut has_cancel_entry = false;
+            let mut has_callback_entry = false;
             let mut fences = BTreeSet::new();
             for (entry_index, raw_entry) in raw_journal.iter().enumerate() {
                 let Some(entry) = raw_entry.as_object() else {
@@ -3288,6 +3289,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                         );
                     }
                     "externalcallbackreceived" | "external_callback_received" => {
+                        has_callback_entry = true;
                         callback_sequence = Some(
                             callback_sequence
                                 .map_or(sequence, |current| std::cmp::min(current, sequence)),
@@ -3324,6 +3326,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                 diagnostics.push(json!({
                     "code": "DurableAsyncCancelRaceInvalid",
                     "message": "async cancel race requires cancel journal entry",
+                    "path": "$.journal",
+                }));
+            }
+            if diagnostics.is_empty()
+                && raw_race
+                    .get("callbackReceiptRecorded")
+                    .or_else(|| raw_race.get("callback_receipt_recorded"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && !has_callback_entry
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race requires callback journal entry",
                     "path": "$.journal",
                 }));
             }
