@@ -1686,6 +1686,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python tool admission now applies the same `PolicyDecision.valid_until` freshness gate as the
   Rust runtime before allowing a tool call, keeping the authoring/schema facade aligned with the
   normative admission semantics.
+- Python tool admission now rejects space-separated datetimes and compact timezone offsets such
+  as `+0000` in `admitted_at`, resolved-tool `valid_until`, and policy-decision `valid_until`,
+  keeping freshness checks aligned with RFC 3339-style runtime timestamp parsing.
 - The shared tool-lifecycle TCK now covers expired `before_tool_or_effect` policy decisions in
   both the Rust runtime runner and Python conformance runner, proving that stale decisions are
   rejected before approval or side-effect admission.

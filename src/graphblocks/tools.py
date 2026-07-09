@@ -276,14 +276,35 @@ def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{owner} {field} must be a non-empty ISO datetime")
     normalized = value.strip()
+    if normalized != value or len(normalized) <= 19 or normalized[10] != "T":
+        raise ValueError(f"{owner} {field} must be an ISO datetime")
+    suffix_start = 19
+    if normalized[suffix_start] == ".":
+        suffix_start += 1
+        fraction_start = suffix_start
+        while suffix_start < len(normalized) and normalized[suffix_start].isdigit():
+            suffix_start += 1
+        if suffix_start == fraction_start:
+            raise ValueError(f"{owner} {field} must be an ISO datetime")
+    timezone_suffix = normalized[suffix_start:]
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
+    elif (
+        len(timezone_suffix) != 6
+        or timezone_suffix[0] not in {"+", "-"}
+        or timezone_suffix[3] != ":"
+        or not timezone_suffix[1:3].isdigit()
+        or not timezone_suffix[4:6].isdigit()
+        or int(timezone_suffix[1:3]) > 23
+        or int(timezone_suffix[4:6]) > 59
+    ):
+        raise ValueError(f"{owner} {field} must be an ISO datetime")
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as error:
         raise ValueError(f"{owner} {field} must be an ISO datetime") from error
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        raise ValueError(f"{owner} {field} must be an ISO datetime")
     return parsed.astimezone(timezone.utc)
 
 

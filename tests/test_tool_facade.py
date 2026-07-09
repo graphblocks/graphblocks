@@ -1631,6 +1631,23 @@ def test_tool_admission_rejects_expired_policy_decision() -> None:
         "policy decision decision-allow-tool expired at 2026-06-23T00:00:00Z"
     )
 
+    compact_offset_decision = replace(
+        _allow_tool_policy_decision(), valid_until="2026-06-23T00:00:02+0000"
+    )
+    with pytest.raises(ToolAdmissionError) as compact_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=compact_offset_decision,
+            expected_policy_input_digest=compact_offset_decision.input_digest,
+            principal_id="user-1",
+            admitted_at="2026-06-23T00:00:00Z",
+            now=1_200,
+        )
+
+    assert str(compact_error.value) == "policy decision valid_until must be an ISO datetime"
+
 
 def test_tool_admission_rejects_empty_principal_id() -> None:
     base_resolved = _resolved_process_tool()
@@ -1810,6 +1827,34 @@ def test_tool_admission_compares_resolved_tool_expiration_as_datetime() -> None:
             now=1_201,
         )
     assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00-05:00"
+
+    compact_offset_resolved = replace(resolved, valid_until="2026-06-23T00:00:00+0000")
+    compact_call = _process_call(compact_offset_resolved)
+    with pytest.raises(ToolAdmissionError) as compact_error:
+        admit_tool_call(
+            compact_call,
+            compact_offset_resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            admitted_at="2026-06-23T00:00:00Z",
+            now=1_202,
+        )
+    assert str(compact_error.value) == "resolved tool valid_until must be an ISO datetime"
+
+    with pytest.raises(ToolAdmissionError) as admitted_at_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            admitted_at="2026-06-23 04:59:59Z",
+            now=1_203,
+        )
+    assert str(admitted_at_error.value) == "tool admission admitted_at must be an ISO datetime"
 
 
 def test_tool_admission_requires_approval_and_idempotency_key() -> None:
