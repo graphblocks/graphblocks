@@ -3312,18 +3312,24 @@ class GraphBlocksServerApp:
         if operator_value is None and principal is not None:
             operator = principal.principal_id
         else:
+            raw_operator = operator_value if operator_value is not None else ""
             operator = _validate_non_empty_string(
                 "callback delivery control request",
                 "operator",
-                operator_value if operator_value is not None else "",
+                raw_operator,
             )
+            if raw_operator != operator:
+                raise ValueError("callback delivery control request operator must not contain surrounding whitespace")
         if principal is not None and operator != principal.principal_id:
             raise PermissionError("callback delivery control request operator must match authenticated principal")
+        raw_reason = payload.get("reason", "")
         reason = _validate_non_empty_string(
             "callback delivery control request",
             "reason",
-            payload.get("reason", ""),
+            raw_reason,
         )
+        if raw_reason != reason:
+            raise ValueError("callback delivery control request reason must not contain surrounding whitespace")
         status = (
             "redrive_requested"
             if operation == "redrive_callback_delivery"

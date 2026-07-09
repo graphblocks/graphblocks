@@ -1630,7 +1630,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   dead-letter moves for the same delivery are idempotent and return the first terminal move;
   redrive requests remain repeatable operator actions. Authenticated control requests derive the
   audit operator from the authorized principal when the body omits it and reject body-supplied
-  operators that do not match the authenticated principal.
+  operators that do not match the authenticated principal. Body-supplied operator and reason values
+  are rejected if they only become valid after trimming whitespace, preserving audit identity and
+  redrive/dead-letter reason text.
 - `graphblocks-client` now exposes HTTP helpers for callback delivery redrive and dead-letter
   moves. The helpers validate delivery id and reason locally, optionally accept an explicit
   operator, omit it when bearer authentication should let the server derive the operator, preserve

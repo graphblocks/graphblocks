@@ -8830,6 +8830,40 @@ def test_server_app_rejects_malformed_callback_delivery_control_request() -> Non
     assert app.callback_delivery_redrives("del-1") == ()
 
 
+def test_server_app_rejects_callback_delivery_control_with_whitespace_wrapped_operator_or_reason() -> None:
+    cases = (
+        (
+            {"operator": "operator-1 ", "reason": "receiver recovered"},
+            "callback delivery control request operator must not contain surrounding whitespace",
+        ),
+        (
+            {"operator": "operator-1", "reason": " receiver recovered"},
+            "callback delivery control request reason must not contain surrounding whitespace",
+        ),
+    )
+    for index, (body, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/callbacks/deliveries/del-whitespace-{index}/redrive",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(body).encode("utf-8"),
+                requested_at="2026-07-02T00:04:00Z",
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.callback_delivery_redrives(f"del-whitespace-{index}") == ()
+
+
 def test_server_app_rejects_callback_delivery_control_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
 
