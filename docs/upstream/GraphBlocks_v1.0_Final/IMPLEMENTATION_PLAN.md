@@ -1056,8 +1056,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   forbidden internal addresses, such as decimal or hex loopback forms, before delivery can reach an
   HTTP transport.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
-  destinations for both literal webhook hosts and DNS-resolved addresses, preventing non-unicast
-  callback delivery targets from bypassing endpoint safety checks.
+  destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
+  addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.
 - Runtime webhook egress validation now treats IPv4-mapped and IPv4-compatible IPv6 addresses as
   their embedded IPv4 addresses for both literal webhook hosts and DNS-resolved addresses, so mapped
   or compatible loopback, link-local metadata, and private network targets cannot bypass SSRF

@@ -2281,6 +2281,7 @@ fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
 
     address.is_loopback()
         || address.is_unspecified()
+        || address.is_multicast()
         || matches!(segments[0] & 0xfe00, 0xfc00)
         || matches!(segments[0] & 0xffc0, 0xfe80)
 }

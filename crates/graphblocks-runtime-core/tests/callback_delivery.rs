@@ -3156,6 +3156,24 @@ fn webhook_target_rejects_ipv4_compatible_ipv6_internal_literals() {
 }
 
 #[test]
+fn webhook_target_rejects_ipv6_multicast_destinations_by_default() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "https://[ff02::1]/callback",
+        "https://[ff05::2]/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+            ),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let policy = WebhookEgressPolicy::default_deny_internal();
     let target =
@@ -3220,6 +3238,23 @@ fn webhook_egress_policy_rejects_public_hostname_resolving_to_reserved_ipv4_addr
             })
         );
     }
+}
+
+#[test]
+fn webhook_egress_policy_rejects_public_hostname_resolving_to_ipv6_multicast() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+    let multicast_address = IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1));
+
+    assert_eq!(
+        policy.validate_resolved_addresses(&target, [multicast_address]),
+        Err(WebhookEndpointError::UnsafeResolvedAddress {
+            host: "hooks.example.com".to_owned(),
+            address: multicast_address,
+        })
+    );
 }
 
 #[test]
