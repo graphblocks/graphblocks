@@ -30,6 +30,8 @@ VALID_CONSTRAINT_OPERATORS = frozenset(("at_least", "at_most", "equals"))
 VALID_REVIEW_DECISIONS = frozenset(("accept", "accept_with_conditions", "revise", "reject"))
 VALID_SLO_COMPARISONS = frozenset(("at_least", "at_most"))
 VALID_SLO_REPORT_STATUSES = frozenset(("pass", "fail", "no_data"))
+_DEFAULT_PROVENANCE_GRAPH_HASH = "sha256:" + ("0" * 64)
+_DEFAULT_PROVENANCE_STARTED_AT = "1970-01-01T00:00:00Z"
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -230,8 +232,8 @@ class ModelVisibleToolRef:
 
 @dataclass(frozen=True, slots=True)
 class RunProvenance:
-    graph_hash: str
-    started_at: str
+    graph_hash: str = _DEFAULT_PROVENANCE_GRAPH_HASH
+    started_at: str = _DEFAULT_PROVENANCE_STARTED_AT
     completed_at: str | None = None
     release_id: str | None = None
     deployment_revision_id: str | None = None
@@ -242,6 +244,21 @@ class RunProvenance:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_exact_non_empty_string("run provenance", "graph_hash", self.graph_hash)
+        started_at = _parse_datetime("run provenance", "started_at", self.started_at)
+        if self.completed_at is not None:
+            completed_at = _parse_datetime("run provenance", "completed_at", self.completed_at)
+            if completed_at < started_at:
+                raise ValueError("run provenance completed_at must not be before started_at")
+        for field_name in (
+            "release_id",
+            "deployment_revision_id",
+            "physical_plan_hash",
+            "release_signature_digest",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_exact_non_empty_string("run provenance", field_name, value)
         try:
             model_visible_tools = tuple(self.model_visible_tools)
         except TypeError as error:
@@ -649,7 +666,7 @@ class ResultBundle:
     reviews: list[ReviewRecord] = field(default_factory=list)
     usage_records: list[str] = field(default_factory=list)
     policy_decision_refs: list[str] = field(default_factory=list)
-    provenance: RunProvenance = field(default_factory=lambda: RunProvenance(graph_hash="", started_at=""))
+    provenance: RunProvenance = field(default_factory=RunProvenance)
 
     def __post_init__(self) -> None:
         for field_name in ("bundle_id", "run_id", "release_id"):

@@ -2852,6 +2852,9 @@ sandbox
 - Python result bundles now reject whitespace-wrapped bundle, run, release, deployment revision,
   usage record, and policy decision refs before durable evaluation provenance is hashed or
   persisted.
+- Python run provenance now rejects whitespace-wrapped graph, release, deployment revision,
+  physical plan, and release-signature digests while validating start/completion timestamps before
+  provenance snapshots are attached to result bundle hashes.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

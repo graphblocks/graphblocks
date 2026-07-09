@@ -942,6 +942,65 @@ def test_run_provenance_validates_model_visible_tools_and_copies_metadata() -> N
         )  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        ({"graph_hash": " "}, "run provenance graph_hash must not be empty"),
+        ({"graph_hash": " sha256:graph"}, "run provenance graph_hash must not contain surrounding whitespace"),
+        ({"started_at": "2026-06-22 00:00:00Z"}, "run provenance started_at must be an ISO datetime"),
+        ({"started_at": "2026-06-22T00:00:00"}, "run provenance started_at must be an ISO datetime"),
+        ({"completed_at": "2026-06-22T00:05:00+0000"}, "run provenance completed_at must be an ISO datetime"),
+        (
+            {"completed_at": "2026-06-21T23:59:59Z"},
+            "run provenance completed_at must not be before started_at",
+        ),
+        ({"release_id": " release-1"}, "run provenance release_id must not contain surrounding whitespace"),
+        (
+            {"deployment_revision_id": " rev-1"},
+            "run provenance deployment_revision_id must not contain surrounding whitespace",
+        ),
+        (
+            {"physical_plan_hash": " sha256:plan"},
+            "run provenance physical_plan_hash must not contain surrounding whitespace",
+        ),
+        (
+            {"release_signature_digest": " sha256:signature"},
+            "run provenance release_signature_digest must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_run_provenance_rejects_invalid_identities_and_timestamps(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "graph_hash": "sha256:graph",
+        "started_at": "2026-06-22T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        RunProvenance(**(base | overrides))  # type: ignore[arg-type]
+
+
+def test_run_provenance_helpers_validate_identity_values() -> None:
+    provenance = RunProvenance(graph_hash="sha256:graph", started_at="2026-06-22T00:00:00Z")
+
+    with pytest.raises(ValueError, match="run provenance release_id must not contain surrounding whitespace"):
+        provenance.with_release(" release-1", "rev-1")
+    with pytest.raises(
+        ValueError,
+        match="run provenance deployment_revision_id must not contain surrounding whitespace",
+    ):
+        provenance.with_release("release-1", " rev-1")
+    with pytest.raises(ValueError, match="run provenance physical_plan_hash must not contain surrounding whitespace"):
+        provenance.with_physical_plan_hash(" sha256:plan")
+    with pytest.raises(
+        ValueError,
+        match="run provenance release_signature_digest must not contain surrounding whitespace",
+    ):
+        provenance.with_release_signature_digest(" sha256:signature")
+
+
 def test_trial_result_carries_gate_and_outcome() -> None:
     base = ResourceSnapshotRef("base", "sha256:base")
     candidate = ResourceSnapshotRef("candidate", "sha256:candidate")
