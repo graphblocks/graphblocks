@@ -2383,8 +2383,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   fields can drive callback matching, resume fencing, or late usage reconciliation checks.
 - Python TCK validation now applies the same exact-value rule to late-callback receipt evidence,
   rejecting surrounding whitespace on callback/run/node/attempt/release/tenant identities,
-  verifier identity, idempotency key, policy snapshot, and `receivedAt` before parsing timestamps
-  or comparing callback evidence to the operation envelope.
+  payload digest, terminal status, verifier identity, idempotency key, policy snapshot, and
+  `receivedAt` before parsing timestamps or comparing callback evidence to the operation envelope.
 - Durable external-operation reconciliation shared TCK cases now require ISO
   `lateCallback.receivedAt` evidence in both Rust and Python runners before a late callback can
   prove a durable callback receipt timestamp, and reject callback receipts recorded before

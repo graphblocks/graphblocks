@@ -10601,9 +10601,24 @@ class TckRunner:
                 payload_digest = raw_late_callback.get(
                     "payloadDigest", raw_late_callback.get("payload_digest")
                 )
-                if (
-                    not isinstance(payload_digest, str)
-                    or not payload_digest.startswith("sha256:")
+                if not isinstance(payload_digest, str) or not payload_digest.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires payloadDigest sha256 digest",
+                            "path": f"$.lateCallback.{payload_digest_path}",
+                        }
+                    )
+                elif payload_digest != payload_digest.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation payloadDigest must not contain surrounding whitespace",
+                            "path": f"$.lateCallback.{payload_digest_path}",
+                        }
+                    )
+                elif (
+                    not payload_digest.startswith("sha256:")
                     or len(payload_digest.removeprefix("sha256:")) != 64
                     or any(
                         character not in "0123456789abcdef"
@@ -10617,7 +10632,24 @@ class TckRunner:
                             "path": f"$.lateCallback.{payload_digest_path}",
                         }
                     )
-                if raw_late_callback.get("status") not in (
+                callback_status = raw_late_callback.get("status")
+                if not isinstance(callback_status, str) or not callback_status.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires terminal callback status",
+                            "path": "$.lateCallback.status",
+                        }
+                    )
+                elif callback_status != callback_status.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation status must not contain surrounding whitespace",
+                            "path": "$.lateCallback.status",
+                        }
+                    )
+                elif callback_status not in (
                     "completed",
                     "failed",
                     "cancelled",
