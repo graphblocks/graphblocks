@@ -3312,6 +3312,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": "$.race.winner",
                 }));
             }
+            if raw_race
+                .get("winner")
+                .and_then(Value::as_str)
+                .is_some_and(|winner| winner == "cancel")
+                && cancel_sequence.is_some_and(|cancel| {
+                    callback_sequence.is_some_and(|callback| callback <= cancel)
+                })
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race requires callback journal sequence after cancel sequence",
+                    "path": "$.journal",
+                }));
+            }
             let mut race_boolean_values = BTreeMap::new();
             for (key, alias, default) in [
                 (

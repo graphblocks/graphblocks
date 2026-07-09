@@ -1991,6 +1991,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async cancel-race shared TCK cases now require journal entry `sequence` values to be
   positive integers, preventing zero sentinels from satisfying cancellation/callback race ordering
   evidence.
+- Durable async cancel-race shared TCK cases now require a callback receipt sequence to be after
+  the cancel sequence when `race.winner` is `cancel`, turning cancel-before-callback ordering into
+  a structural diagnostic instead of only a failed observation.
 - Durable async cancel-race shared TCK cases now reject non-object journal entries in both Rust and
   Python runners before evaluating cancel/callback ordering, preventing placeholder rows from being
   silently dropped from race evidence.

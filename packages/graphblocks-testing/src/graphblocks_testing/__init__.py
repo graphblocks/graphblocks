@@ -9280,6 +9280,19 @@ class TckRunner:
                     ),
                     default=0,
                 )
+                if (
+                    str(raw_race.get("winner", "")) == "cancel"
+                    and cancel_sequence > 0
+                    and callback_sequence > 0
+                    and callback_sequence <= cancel_sequence
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race requires callback journal sequence after cancel sequence",
+                            "path": "$.journal",
+                        }
+                    )
                 cancel_race_boolean_values = {}
                 for key, alias, default in (
                     ("callbackReceiptRecorded", "callback_receipt_recorded", False),
