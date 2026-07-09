@@ -9155,6 +9155,14 @@ class TckRunner:
                                 "path": f"$.callback.{release_id_path}",
                             }
                         )
+                    elif release_id != release_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback releaseId must not contain surrounding whitespace",
+                                "path": f"$.callback.{release_id_path}",
+                            }
+                        )
                     tenant_id_path = (
                         "tenantId"
                         if "tenantId" in raw_callback or "tenant_id" not in raw_callback
@@ -9168,6 +9176,14 @@ class TckRunner:
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
                                 "message": "async callback resume callback requires nonblank tenantId",
+                                "path": f"$.callback.{tenant_id_path}",
+                            }
+                        )
+                    elif tenant_id != tenant_id.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback tenantId must not contain surrounding whitespace",
                                 "path": f"$.callback.{tenant_id_path}",
                             }
                         )
@@ -9192,6 +9208,14 @@ class TckRunner:
                                     "path": f"$.callback.{path_key}",
                                 }
                             )
+                        elif value != value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": f"async callback resume callback {key} must not contain surrounding whitespace",
+                                    "path": f"$.callback.{path_key}",
+                                }
+                            )
                     if operation_provider_operation_id is not None:
                         provider_operation_id_path = (
                             "providerOperationId"
@@ -9209,7 +9233,15 @@ class TckRunner:
                                     "path": f"$.callback.{provider_operation_id_path}",
                                 }
                             )
-                        elif callback_provider_operation_id.strip() != operation_provider_operation_id:
+                        elif callback_provider_operation_id != callback_provider_operation_id.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback providerOperationId must not contain surrounding whitespace",
+                                    "path": f"$.callback.{provider_operation_id_path}",
+                                }
+                            )
+                        elif callback_provider_operation_id != operation_provider_operation_id:
                             diagnostics.append(
                                 {
                                     "code": "DurableAsyncCallbackResumeInvalid",

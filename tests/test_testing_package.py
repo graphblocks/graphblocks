@@ -4172,6 +4172,125 @@ def test_testing_package_rejects_non_sequence_async_resume_reevaluates(monkeypat
     )
 
 
+def test_testing_package_rejects_async_callback_resume_whitespace_callback_identity(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    base_fixture = {
+        "kind": "async_callback_resume_guards",
+        "operation": {
+            "operationId": "op-ci-001",
+            "idempotencyKey": "idem-ci-operation-001",
+            "runId": "run-coding-001",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "providerOperationId": "gh-run-async-001",
+            "releaseId": "rel-coding-001",
+            "tenantId": "tenant-coding-001",
+            "policySnapshotId": "policy-snap-callback-001",
+            "deadline": "2026-07-02T00:30:00Z",
+            "budgetState": "resume_reserved",
+            "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expectedSchema": "schemas/CICallback@1",
+        },
+        "checks": {
+            "signatureFailureRevealsOperation": False,
+            "schemaFailureResumesRun": False,
+            "timeoutCallbackResumesExpiredOperation": False,
+            "cancelledCallbackCommitsResult": False,
+            "staleAttemptCanResume": False,
+            "unauthenticatedCallbackCanResume": False,
+            "nonExternalCallbackEventCanBecomeReceipt": False,
+            "providerOperationMismatchCanResume": False,
+        },
+        "callback": {
+            "callbackId": "cb-ci-001",
+            "idempotencyKey": "idem-ci-callback-001",
+            "receivedAt": "2026-07-02T00:00:41Z",
+            "releaseId": "rel-coding-001",
+            "tenantId": "tenant-coding-001",
+            "providerOperationId": "gh-run-async-001",
+            "operationId": "op-ci-001",
+            "runId": "run-coding-001",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "policySnapshotId": "policy-snap-callback-001",
+            "journalSequence": 41,
+            "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "verifiedBy": "hmac-sha256:callback-endpoint-1",
+        },
+        "resume": {
+            "resumeSequence": 42,
+            "reevaluates": ["policy", "budget", "release", "ownership_lease", "idempotency"],
+            "budgetExhaustionState": "paused_budget",
+            "successfulResumeCount": 1,
+        },
+    }
+    cases = (
+        (
+            "providerOperationId",
+            "async callback resume callback providerOperationId must not contain surrounding whitespace",
+            "$.callback.providerOperationId",
+        ),
+        (
+            "operationId",
+            "async callback resume callback operationId must not contain surrounding whitespace",
+            "$.callback.operationId",
+        ),
+        (
+            "runId",
+            "async callback resume callback runId must not contain surrounding whitespace",
+            "$.callback.runId",
+        ),
+        (
+            "nodeId",
+            "async callback resume callback nodeId must not contain surrounding whitespace",
+            "$.callback.nodeId",
+        ),
+        (
+            "attemptId",
+            "async callback resume callback attemptId must not contain surrounding whitespace",
+            "$.callback.attemptId",
+        ),
+        (
+            "releaseId",
+            "async callback resume callback releaseId must not contain surrounding whitespace",
+            "$.callback.releaseId",
+        ),
+        (
+            "tenantId",
+            "async callback resume callback tenantId must not contain surrounding whitespace",
+            "$.callback.tenantId",
+        ),
+        (
+            "policySnapshotId",
+            "async callback resume callback policySnapshotId must not contain surrounding whitespace",
+            "$.callback.policySnapshotId",
+        ),
+    )
+
+    for field_name, message, path in cases:
+        fixture = json.loads(json.dumps(base_fixture))
+        fixture["callback"][field_name] = f" {fixture['callback'][field_name]}"
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/async-callback-resume-callback-whitespace-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableAsyncCallbackResumeInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

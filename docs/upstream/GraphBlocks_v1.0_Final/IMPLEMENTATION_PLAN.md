@@ -856,6 +856,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `operationId`, `runId`, `nodeId`, `attemptId`, and `policySnapshotId` values against the
   waiting `AsyncOperation` envelope, so stale, misrouted, or policy-snapshot-mismatched callbacks
   cannot satisfy resume conformance.
+- Python TCK validation now treats callback resume receipt identity fields as exact durable strings,
+  rejecting surrounding whitespace on `providerOperationId`, `operationId`, `runId`, `nodeId`,
+  `attemptId`, `releaseId`, `tenantId`, and `policySnapshotId` before those values can match a
+  waiting operation and release, tenant, policy, or provider fence.
 - Shared durable async callback resume TCK fixtures now require supplied callback receipt envelopes
   to carry a nonblank `idempotencyKey` and ISO `receivedAt` value, so journal-before-resume
   conformance cannot be proven from an undeduplicable or untimestamped callback receipt.
