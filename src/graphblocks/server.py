@@ -3204,7 +3204,10 @@ class GraphBlocksServerApp:
             status = pause_states[pause_kind]
         reason = payload.get("reason")
         if reason is not None:
-            reason = _validate_non_empty_string("run control request", "reason", reason)
+            raw_reason = reason
+            reason = _validate_non_empty_string("run control request", "reason", raw_reason)
+            if raw_reason != reason:
+                raise ValueError("run control request reason must not contain surrounding whitespace")
         existing = self._run_controls_by_run_id.get(run_id, ())
         if existing:
             latest_control = existing[-1]

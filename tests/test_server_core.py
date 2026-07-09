@@ -1162,6 +1162,42 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
     }
 
 
+def test_server_app_rejects_run_control_with_whitespace_wrapped_reason() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-control-whitespace-reason-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-control-whitespace-reason-1"},
+            "metadata": {
+                "runId": "run-control-whitespace-reason-1",
+                "sequence": 1,
+                "cursor": "run-control-whitespace-reason-1:1",
+                "releaseId": "release-control-whitespace-reason-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-whitespace-reason-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": " operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run control request reason must not contain surrounding whitespace",
+    }
+    assert app.run_controls("run-control-whitespace-reason-1") == ()
+
+
 def test_server_app_rejects_run_control_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-control-invalid-time-1"] = (
