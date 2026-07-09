@@ -2110,8 +2110,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   of the RFC 3339 `T` separator in the Python runner, keeping operation lifecycle and late receipt
   timestamp validation aligned with the Rust runner before reconciliation evidence is accepted.
 - Durable external-operation reconciliation shared TCK cases now reject compact timezone offsets
-  such as `+0000` on `operation.createdAt` and `operation.submittedAt`, so Python cannot accept
-  operation lifecycle evidence that the Rust TCK parser treats as non-RFC3339.
+  such as `+0000` on `operation.createdAt`, `operation.submittedAt`, and `operation.expiresAt`,
+  so Python cannot accept operation lifecycle evidence that the Rust TCK parser treats as
+  non-RFC3339.
 - Durable external-operation reconciliation shared TCK cases now expose `diagnosticCount` on
   successful projections and include a valid fractional-second late callback `receivedAt` case,
   keeping Rust and Python aligned on RFC 3339-style callback receipt timestamps before late usage
