@@ -538,6 +538,14 @@ class OutputDeliveryPolicy:
     delivered_draft_disposition: DraftDisposition = "retract"
 
     def __post_init__(self) -> None:
+        for field_name in ("mode", "on_violation", "delivered_draft_disposition"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ValueError(f"output delivery {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"output delivery {field_name} must not be empty")
+            if value != value.strip():
+                raise ValueError(f"output delivery {field_name} must not contain surrounding whitespace")
         if self.mode not in VALID_DELIVERY_MODES:
             raise ValueError(f"invalid output delivery mode {self.mode}")
         if self.on_violation not in VALID_VIOLATION_ACTIONS:
@@ -553,6 +561,12 @@ class OutputDeliveryPolicy:
                 "output delivery flush_boundaries must be a collection of flush boundary names"
             ) from error
         for boundary in flush_boundaries:
+            if not isinstance(boundary, str):
+                raise ValueError("output delivery flush_boundaries item must be a string")
+            if not boundary.strip():
+                raise ValueError("output delivery flush_boundaries item must not be empty")
+            if boundary != boundary.strip():
+                raise ValueError("output delivery flush_boundaries item must not contain surrounding whitespace")
             if boundary not in VALID_FLUSH_BOUNDARIES:
                 raise ValueError(f"invalid flush boundary {boundary}")
         object.__setattr__(self, "flush_boundaries", flush_boundaries)

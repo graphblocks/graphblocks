@@ -285,6 +285,9 @@ Message
   shape before deployment. Holdback size/time semantics remain scoped to `bounded_holdback`.
   The Python facade enforces the same constraints even when callers construct
   `OutputDeliveryPolicy` directly instead of using the named factory helpers.
+- Python `OutputDeliveryPolicy` now validates delivery modes, violation actions, draft
+  dispositions, and flush-boundary names as exact literals, rejecting non-string, empty, or
+  whitespace-wrapped values before a streaming output route can be admitted.
 - `abort_response`는 local delivery cutoff를 즉시 수행하고 provider/worker cancellation은 cooperative request로 처리한다. local cutoff가 authoritative하다.
 - policy-aborted response는 assistant message나 tool result를 durable commit하지 않는다. safe replacement는 새 `response_id`를 사용한다.
 - Terminal output-gate decisions validate the constructed canonical `OutputCutoff` before clearing

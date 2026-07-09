@@ -295,6 +295,48 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             flush_boundaries=object(),  # type: ignore[arg-type]
         )
 
+    with pytest.raises(ValueError, match="output delivery mode must be a string"):
+        OutputDeliveryPolicy(mode=1)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output delivery mode must not contain surrounding whitespace"):
+        OutputDeliveryPolicy(mode=" bounded_holdback")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output delivery on_violation must not contain surrounding whitespace"):
+        OutputDeliveryPolicy(mode="bounded_holdback", on_violation="abort_response ")  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="output delivery delivered_draft_disposition must not contain surrounding whitespace",
+    ):
+        OutputDeliveryPolicy(
+            mode="bounded_holdback",
+            delivered_draft_disposition=" retract",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output delivery flush_boundaries item must be a string"):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries=frozenset({1}),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output delivery flush_boundaries item must not be empty"):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries=frozenset({""}),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="output delivery flush_boundaries item must not contain surrounding whitespace",
+    ):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries=frozenset({"sentence "}),  # type: ignore[arg-type]
+        )
+
     with pytest.raises(ValueError, match="invalid terminal reason throttled"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason="throttled")
 
