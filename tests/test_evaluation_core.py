@@ -274,6 +274,74 @@ def test_gate_constraint_and_result_validate_literals_and_copy_lists() -> None:
         GateResult("quality", subject, "pass", metrics=[object()])  # type: ignore[list-item]
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: CheckResult(" lint", ResourceSnapshotRef("candidate-1", "sha256:candidate"), "passed"),
+            "check result check_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: MetricObservation(" latency_ms", Decimal("1")),
+            "metric observation name must not contain surrounding whitespace",
+        ),
+        (
+            lambda: MetricObservation("latency_ms", Decimal("1"), unit=" ms"),
+            "metric observation unit must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GateConstraint(" latency_ms", "at_most", Decimal("150")),
+            "gate constraint metric_name must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GateResult(" quality", ResourceSnapshotRef("candidate-1", "sha256:candidate"), "pass"),
+            "gate result gate_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GateResult(
+                "quality",
+                ResourceSnapshotRef("candidate-1", "sha256:candidate"),
+                "pass",
+                check_ids=[" lint"],
+            ),
+            "gate result check_ids item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GateResult(
+                "quality",
+                ResourceSnapshotRef("candidate-1", "sha256:candidate"),
+                "fail",
+                violated_constraints=[" metric:latency_ms"],
+            ),
+            "gate result violated_constraints item must not contain surrounding whitespace",
+        ),
+        (
+            lambda: TrialResult(
+                " trial-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+            ),
+            "trial result trial_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: TrialResult(
+                "trial-1",
+                base=ResourceSnapshotRef("base", "sha256:base"),
+                candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+                usage=[" usage-1"],
+            ),
+            "trial result usage item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_evaluation_result_primitives_reject_whitespace_wrapped_identities(
+    factory,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_slo_objective_passes_when_ratio_meets_objective() -> None:
     objective = SloObjective.at_least(
         "chat-availability",

@@ -96,6 +96,14 @@ def _validate_string_list(owner: str, field_name: str, values: object) -> list[s
     return list(normalized)
 
 
+def _validate_exact_string_list(owner: str, field_name: str, values: object) -> list[str]:
+    normalized = _validate_string_list(owner, field_name, values)
+    for item in normalized:
+        if item != item.strip():
+            raise ValueError(f"{owner} {field_name} item must not contain surrounding whitespace")
+    return normalized
+
+
 def _validate_record_list(owner: str, field_name: str, values: object, item_type: type) -> list[object]:
     if isinstance(values, (str, bytes)):
         raise ValueError(f"{owner} {field_name} must be a collection")
@@ -304,7 +312,7 @@ class CheckResult:
     environment: ResourceSnapshotRef | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("check result", "check_id", self.check_id)
+        _validate_exact_non_empty_string("check result", "check_id", self.check_id)
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("check result subject must be a ResourceSnapshotRef")
         if self.status not in VALID_CHECK_STATUSES:
@@ -340,9 +348,9 @@ class MetricObservation:
     evaluator: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("metric observation", "name", self.name)
+        _validate_exact_non_empty_string("metric observation", "name", self.name)
         if self.unit is not None:
-            _validate_non_empty_string("metric observation", "unit", self.unit)
+            _validate_exact_non_empty_string("metric observation", "unit", self.unit)
         if self.direction not in VALID_METRIC_DIRECTIONS:
             raise ValueError(f"invalid metric direction {self.direction}")
         if isinstance(self.value, float):
@@ -362,7 +370,7 @@ class GateConstraint:
     threshold: Decimal | bool | str
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("gate constraint", "metric_name", self.metric_name)
+        _validate_exact_non_empty_string("gate constraint", "metric_name", self.metric_name)
         if self.operator not in VALID_CONSTRAINT_OPERATORS:
             raise ValueError(f"invalid gate constraint operator {self.operator}")
         if isinstance(self.threshold, (int, float)) and not isinstance(self.threshold, bool):
@@ -379,16 +387,20 @@ class GateResult:
     metrics: list[MetricObservation] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("gate result", "gate_id", self.gate_id)
+        _validate_exact_non_empty_string("gate result", "gate_id", self.gate_id)
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("gate result subject must be a ResourceSnapshotRef")
         if self.decision not in VALID_GATE_DECISIONS:
             raise ValueError(f"invalid gate decision {self.decision}")
-        object.__setattr__(self, "check_ids", _validate_string_list("gate result", "check_ids", self.check_ids))
+        object.__setattr__(
+            self,
+            "check_ids",
+            _validate_exact_string_list("gate result", "check_ids", self.check_ids),
+        )
         object.__setattr__(
             self,
             "violated_constraints",
-            _validate_string_list("gate result", "violated_constraints", self.violated_constraints),
+            _validate_exact_string_list("gate result", "violated_constraints", self.violated_constraints),
         )
         object.__setattr__(
             self,
@@ -552,7 +564,7 @@ class TrialResult:
     outcome: str = ""
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("trial result", "trial_id", self.trial_id)
+        _validate_exact_non_empty_string("trial result", "trial_id", self.trial_id)
         if not isinstance(self.base, ResourceSnapshotRef):
             raise ValueError("trial result base must be a ResourceSnapshotRef")
         if not isinstance(self.candidate, ResourceSnapshotRef):
@@ -569,7 +581,7 @@ class TrialResult:
             "metrics",
             tuple(_validate_record_list("trial result", "metrics", self.metrics, MetricObservation)),
         )
-        object.__setattr__(self, "usage", tuple(_validate_string_list("trial result", "usage", self.usage)))
+        object.__setattr__(self, "usage", tuple(_validate_exact_string_list("trial result", "usage", self.usage)))
 
 
 @dataclass(frozen=True, slots=True)

@@ -2846,6 +2846,9 @@ sandbox
 - Python evaluation resource snapshots, evidence refs, and typed-value refs now reject
   whitespace-wrapped resource ids, digests, schema ids, encodings, evidence kinds, URIs, and
   metadata keys before result bundles or trial checks can treat them as provenance evidence.
+- Python evaluation check, metric, gate, and trial result primitives now reject
+  whitespace-wrapped check ids, metric names and units, gate ids, violated constraint refs, trial
+  ids, and usage refs before quality gates or result bundles can depend on normalized evidence.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.
