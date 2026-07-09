@@ -5402,6 +5402,24 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
+def test_server_event_subscription_rejects_invalid_status() -> None:
+    cases = (
+        ("running", "server event subscription status must be one of active, paused, expired, or revoked"),
+        ("active ", "server event subscription status must not contain surrounding whitespace"),
+    )
+    for status, expected_error in cases:
+        with pytest.raises(ValueError, match=expected_error):
+            ServerEventSubscription(
+                subscription_id="sub-status-1",
+                run_id="run-status-1",
+                event_filter={},
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+                status=status,
+                failure_policy="best_effort",
+                created_at="2026-07-02T00:00:00Z",
+            )
+
+
 def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -7789,6 +7807,25 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
         "RunStarted",
         "RunSucceeded",
     ]
+
+
+def test_server_callback_registration_rejects_invalid_status() -> None:
+    cases = (
+        ("running", "server callback registration status must be one of active, paused, expired, or revoked"),
+        ("active ", "server callback registration status must not contain surrounding whitespace"),
+    )
+    for status, expected_error in cases:
+        with pytest.raises(ValueError, match=expected_error):
+            ServerCallbackRegistration(
+                subscription_id="callback-sub-status-1",
+                scope="tenant",
+                scope_id="tenant-1",
+                event_filter={},
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+                status=status,
+                failure_policy="best_effort",
+                created_at="2026-07-02T00:00:00Z",
+            )
 
 
 def test_server_app_constrains_callback_registration_visibility_to_principal_authority() -> None:

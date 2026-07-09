@@ -1211,6 +1211,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime callback subscription `failure_policy` values are now exact enum literals.
   Whitespace-wrapped values are rejected instead of being normalized into a different
   retry/dead-letter contract.
+- Runtime callback subscription and registration `status` values are now exact enum literals for
+  `active`, `paused`, `expired`, and `revoked`; whitespace-wrapped or unknown lifecycle states are
+  rejected before subscription, revocation, replay, or delivery projection storage can depend on
+  them.
 - Run event subscription and callback registration replay cursors are now exact cursor tokens.
   Whitespace-wrapped `replayFromCursor` values are rejected before cursor replay so clients cannot
   silently attach to a different retained event boundary.

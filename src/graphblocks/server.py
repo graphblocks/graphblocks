@@ -27,6 +27,7 @@ VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({
     "tenant",
     "deployment",
 })
+VALID_CALLBACK_SUBSCRIPTION_STATUSES = frozenset({"active", "paused", "expired", "revoked"})
 VALID_CALLBACK_FAILURE_POLICIES = frozenset({
     "best_effort",
     "retry_then_dead_letter",
@@ -186,6 +187,13 @@ def _validate_callback_failure_policy(value: object) -> str:
             "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
         )
     return failure_policy
+
+
+def _validate_callback_subscription_status(owner: str, value: object) -> str:
+    status = _validate_exact_non_empty_string(owner, "status", value)
+    if status not in VALID_CALLBACK_SUBSCRIPTION_STATUSES:
+        raise ValueError(f"{owner} status must be one of active, paused, expired, or revoked")
+    return status
 
 
 def _has_callback_dead_letter_config(config: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
@@ -1392,7 +1400,7 @@ class ServerEventSubscription:
         object.__setattr__(
             self,
             "status",
-            _validate_non_empty_string("server event subscription", "status", self.status),
+            _validate_callback_subscription_status("server event subscription", self.status),
         )
         object.__setattr__(
             self,
@@ -1534,7 +1542,7 @@ class ServerCallbackRegistration:
         object.__setattr__(
             self,
             "status",
-            _validate_non_empty_string("server callback registration", "status", self.status),
+            _validate_callback_subscription_status("server callback registration", self.status),
         )
         object.__setattr__(
             self,
