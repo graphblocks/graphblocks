@@ -1952,6 +1952,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before accepting cursor replay evidence.
 - Durable background-run shared TCK cases now reject zero-year event `occurredAt` values in the
   Rust runner, preserving RFC 3339-style year bounds before accepting replay evidence.
+- Durable background-run shared TCK cases now reject event `occurredAt` timestamps that use a space
+  instead of the RFC 3339 `T` separator in the Python runner, keeping background replay timestamp
+  validation aligned with the Rust runner before replay evidence is accepted.
 - Durable background-run shared TCK cases now expose `diagnosticCount` on successful event-stream
   projections and include a valid fractional-second event `occurredAt` fixture, so Rust and Python
   both accept RFC 3339-style replay event timestamps without hidden structural diagnostics.

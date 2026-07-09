@@ -7508,13 +7508,8 @@ class TckRunner:
                             }
                         )
                     else:
-                        try:
-                            datetime.fromisoformat(
-                                occurred_at.replace("Z", "+00:00")
-                                if occurred_at.endswith("Z")
-                                else occurred_at
-                            )
-                        except ValueError:
+                        occurred_at_text = occurred_at.strip()
+                        if len(occurred_at_text) <= 10 or occurred_at_text[10] != "T":
                             event_valid = False
                             diagnostics.append(
                                 {
@@ -7523,6 +7518,22 @@ class TckRunner:
                                     "path": f"$.events[{event_index}].{occurred_at_path}",
                                 }
                             )
+                        else:
+                            try:
+                                datetime.fromisoformat(
+                                    occurred_at_text.replace("Z", "+00:00")
+                                    if occurred_at_text.endswith("Z")
+                                    else occurred_at_text
+                                )
+                            except ValueError:
+                                event_valid = False
+                                diagnostics.append(
+                                    {
+                                        "code": "DurableBackgroundRunInvalid",
+                                        "message": "background run event requires ISO occurredAt",
+                                        "path": f"$.events[{event_index}].{occurred_at_path}",
+                                    }
+                                )
                     sequence = raw_event.get("sequence")
                     event_sequence = None
                     if (
