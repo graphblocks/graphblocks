@@ -8392,11 +8392,36 @@ class TckRunner:
                                     }
                                 )
                             else:
-                                if delivered_at_text.endswith("Z"):
-                                    delivered_at_text = f"{delivered_at_text[:-1]}+00:00"
-                                try:
-                                    delivered_at = datetime.fromisoformat(delivered_at_text)
-                                except ValueError:
+                                suffix = delivered_at_text[19:]
+                                suffix_valid = False
+                                if suffix.startswith("."):
+                                    offset_start = min(
+                                        (
+                                            position
+                                            for position in (
+                                                suffix.find("Z"),
+                                                suffix.find("+"),
+                                                suffix.find("-"),
+                                            )
+                                            if position >= 0
+                                        ),
+                                        default=-1,
+                                    )
+                                    if offset_start > 1 and suffix[1:offset_start].isdigit():
+                                        suffix = suffix[offset_start:]
+                                if suffix == "Z":
+                                    suffix_valid = True
+                                elif (
+                                    len(suffix) == 6
+                                    and suffix[0] in "+-"
+                                    and suffix[1:3].isdigit()
+                                    and suffix[3] == ":"
+                                    and suffix[4:6].isdigit()
+                                    and 0 <= int(suffix[1:3]) <= 23
+                                    and 0 <= int(suffix[4:6]) <= 59
+                                ):
+                                    suffix_valid = True
+                                if not suffix_valid:
                                     diagnostics.append(
                                         {
                                             "code": "DurableCallbackDeliveryInvalid",
@@ -8404,6 +8429,19 @@ class TckRunner:
                                             "path": f"$.deliveries[{index}].deliveredAt",
                                         }
                                     )
+                                else:
+                                    if delivered_at_text.endswith("Z"):
+                                        delivered_at_text = f"{delivered_at_text[:-1]}+00:00"
+                                    try:
+                                        delivered_at = datetime.fromisoformat(delivered_at_text)
+                                    except ValueError:
+                                        diagnostics.append(
+                                            {
+                                                "code": "DurableCallbackDeliveryInvalid",
+                                                "message": f"{status} callback delivery requires deliveredAt",
+                                                "path": f"$.deliveries[{index}].deliveredAt",
+                                            }
+                                        )
                     if status == "acknowledged":
                         acknowledged_at = None
                         raw_acknowledged_at = delivery.get(
@@ -8431,11 +8469,36 @@ class TckRunner:
                                     }
                                 )
                             else:
-                                if acknowledged_at_text.endswith("Z"):
-                                    acknowledged_at_text = f"{acknowledged_at_text[:-1]}+00:00"
-                                try:
-                                    acknowledged_at = datetime.fromisoformat(acknowledged_at_text)
-                                except ValueError:
+                                suffix = acknowledged_at_text[19:]
+                                suffix_valid = False
+                                if suffix.startswith("."):
+                                    offset_start = min(
+                                        (
+                                            position
+                                            for position in (
+                                                suffix.find("Z"),
+                                                suffix.find("+"),
+                                                suffix.find("-"),
+                                            )
+                                            if position >= 0
+                                        ),
+                                        default=-1,
+                                    )
+                                    if offset_start > 1 and suffix[1:offset_start].isdigit():
+                                        suffix = suffix[offset_start:]
+                                if suffix == "Z":
+                                    suffix_valid = True
+                                elif (
+                                    len(suffix) == 6
+                                    and suffix[0] in "+-"
+                                    and suffix[1:3].isdigit()
+                                    and suffix[3] == ":"
+                                    and suffix[4:6].isdigit()
+                                    and 0 <= int(suffix[1:3]) <= 23
+                                    and 0 <= int(suffix[4:6]) <= 59
+                                ):
+                                    suffix_valid = True
+                                if not suffix_valid:
                                     diagnostics.append(
                                         {
                                             "code": "DurableCallbackDeliveryInvalid",
@@ -8443,6 +8506,21 @@ class TckRunner:
                                             "path": f"$.deliveries[{index}].acknowledgedAt",
                                         }
                                     )
+                                else:
+                                    if acknowledged_at_text.endswith("Z"):
+                                        acknowledged_at_text = f"{acknowledged_at_text[:-1]}+00:00"
+                                    try:
+                                        acknowledged_at = datetime.fromisoformat(
+                                            acknowledged_at_text
+                                        )
+                                    except ValueError:
+                                        diagnostics.append(
+                                            {
+                                                "code": "DurableCallbackDeliveryInvalid",
+                                                "message": "acknowledged callback delivery requires acknowledgedAt",
+                                                "path": f"$.deliveries[{index}].acknowledgedAt",
+                                            }
+                                        )
                         if (
                             delivered_at is not None
                             and acknowledged_at is not None

@@ -4101,6 +4101,37 @@
     }
   },
   {
+    "name": "webhook_delivery_compact_offset_acknowledged_at_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-ack-offset-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-ack-offset-invalid",
+        "runId": "run-coding-001",
+        "sequence": 142,
+        "cursor": "evt-ack-offset-invalid",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-ack-offset-invalid",
+        "receiverStatus": 409,
+        "status": "acknowledged",
+        "deliveredAt": "2026-07-02T00:00:05Z",
+        "acknowledgedAt": "2026-07-02T00:00:06+0000"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "acknowledged callback delivery requires acknowledgedAt",
+        "path": "$.deliveries[0].acknowledgedAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_acknowledged_before_delivered_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
@@ -4292,6 +4323,36 @@
         "receiverStatus": 204,
         "status": "delivered",
         "deliveredAt": "2026-07-02 00:00:01Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "delivered callback delivery requires deliveredAt",
+        "path": "$.deliveries[0].deliveredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
+    "name": "webhook_delivery_compact_offset_delivered_at_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-delivered-offset-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-delivered-offset-invalid",
+        "runId": "run-coding-001",
+        "sequence": 153,
+        "cursor": "evt-delivered-offset-invalid",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-delivered-offset-invalid",
+        "receiverStatus": 200,
+        "status": "delivered",
+        "deliveredAt": "2026-07-02T00:00:01+0000"
       }
     ],
     "nonMandatoryOutageBlocksRun": false,
