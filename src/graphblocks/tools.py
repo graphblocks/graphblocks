@@ -1285,10 +1285,12 @@ class AdmittedToolCall:
         if self.call.admitted_at is None:
             raise ValueError(f"tool call {self.call.tool_call_id} admitted_at must be set")
         if self.idempotency_key is not None:
-            if not isinstance(self.idempotency_key, str):
-                raise ValueError(f"tool call {self.call.tool_call_id} idempotency_key must be a string")
-            if not self.idempotency_key.strip():
-                raise ValueError(f"tool call {self.call.tool_call_id} requires a non-empty idempotency key")
+            try:
+                _validate_exact_non_empty_string("admitted tool call", "idempotency_key", self.idempotency_key)
+            except ValueError as error:
+                if str(error) == "admitted tool call idempotency_key must not be empty":
+                    raise ValueError(f"tool call {self.call.tool_call_id} requires a non-empty idempotency key") from error
+                raise ValueError(str(error).replace("admitted tool call", f"tool call {self.call.tool_call_id}")) from error
 
 
 def admit_tool_call(
@@ -1306,7 +1308,7 @@ def admit_tool_call(
     now: int,
 ) -> AdmittedToolCall:
     try:
-        _validate_non_empty_string("tool admission", "principal_id", principal_id)
+        _validate_exact_non_empty_string("tool admission", "principal_id", principal_id)
     except ValueError as error:
         raise ToolAdmissionError(str(error)) from error
     if not isinstance(call, ToolCall):
@@ -1422,10 +1424,12 @@ def admit_tool_call(
         raise ToolAdmissionError(f"approval {approval.approval_id} is not valid for tool call {call.tool_call_id}")
 
     if idempotency_key is not None:
-        if not isinstance(idempotency_key, str):
-            raise ToolAdmissionError(f"tool call {call.tool_call_id} idempotency_key must be a string")
-        if not idempotency_key.strip():
-            raise ToolAdmissionError(f"tool call {call.tool_call_id} requires a non-empty idempotency key")
+        try:
+            _validate_exact_non_empty_string("tool admission", "idempotency_key", idempotency_key)
+        except ValueError as error:
+            if str(error) == "tool admission idempotency_key must not be empty":
+                raise ToolAdmissionError(f"tool call {call.tool_call_id} requires a non-empty idempotency key") from error
+            raise ToolAdmissionError(str(error).replace("tool admission", f"tool call {call.tool_call_id}")) from error
     if resolved_tool.binding.idempotency == "required" and idempotency_key is None:
         raise ToolAdmissionError(f"tool call {call.tool_call_id} requires an idempotency key")
 

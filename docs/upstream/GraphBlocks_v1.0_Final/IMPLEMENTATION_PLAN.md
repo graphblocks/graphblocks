@@ -1810,6 +1810,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   proving that state-changing tools still cannot admit without retry-safe operation identity.
 - Blank idempotency keys are covered in the same TCK suite, so whitespace-only operation identity
   cannot satisfy retry or cancellation safety checks.
+- Python tool admission now validates admission principals and optional/required idempotency keys
+  as exact identities, so retry-safe operation keys that only become valid after trimming
+  whitespace cannot authorize an admitted tool call.
 - Rust `ApplicationEventVisibility` now exposes stable spec literals and parsing for
   client/operator/internal/audit-only event-stream projections.
 - `graphblocks-client` now preserves authoritative event metadata from server replay/attach

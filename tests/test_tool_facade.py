@@ -1939,6 +1939,44 @@ def test_tool_admission_rejects_non_string_admission_inputs() -> None:
     assert str(idempotency_error.value) == "tool call call-1 idempotency_key must be a string"
 
 
+def test_tool_admission_rejects_whitespace_wrapped_identity_inputs() -> None:
+    base_resolved = _resolved_process_tool()
+    binding = replace(base_resolved.binding, approval="never", idempotency="optional")
+    resolved = replace(
+        base_resolved,
+        binding=binding,
+        binding_digest=binding.digest(),
+    )
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as principal_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id=" user-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+    assert str(principal_error.value) == "tool admission principal_id must not contain surrounding whitespace"
+
+    with pytest.raises(ToolAdmissionError) as idempotency_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            idempotency_key="idem-1 ",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+    assert str(idempotency_error.value) == "tool call call-1 idempotency_key must not contain surrounding whitespace"
+
+
 def test_tool_admission_defers_before_approval_when_policy_defers_tool_effect() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved)
@@ -2259,6 +2297,8 @@ def test_admitted_tool_call_requires_admitted_call_with_timestamp() -> None:
         AdmittedToolCall(call=admitted, idempotency_key=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool call call-1 requires a non-empty idempotency key"):
         AdmittedToolCall(call=admitted, idempotency_key=" ")
+    with pytest.raises(ValueError, match="tool call call-1 idempotency_key must not contain surrounding whitespace"):
+        AdmittedToolCall(call=admitted, idempotency_key=" idem-1")
 
 
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:
