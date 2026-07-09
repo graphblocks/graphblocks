@@ -4326,6 +4326,111 @@ def test_testing_package_rejects_async_callback_resume_missing_ownership_lease_r
     )
 
 
+def test_testing_package_rejects_async_callback_resume_whitespace_operation_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
+    base_fixture = json.loads(
+        json.dumps(
+            next(
+                raw_case
+                for raw_case in raw_cases
+                if raw_case["name"] == "async_callback_resume_auth_schema_stale_and_budget_guards"
+            )
+        )
+    )
+    base_fixture.pop("expected", None)
+    cases = (
+        (
+            "operationId",
+            "async callback resume operation operationId must not contain surrounding whitespace",
+            "$.operation.operationId",
+        ),
+        (
+            "providerOperationId",
+            "async callback resume operation providerOperationId must not contain surrounding whitespace",
+            "$.operation.providerOperationId",
+        ),
+        (
+            "idempotencyKey",
+            "async callback resume operation idempotencyKey must not contain surrounding whitespace",
+            "$.operation.idempotencyKey",
+        ),
+        (
+            "runId",
+            "async callback resume operation runId must not contain surrounding whitespace",
+            "$.operation.runId",
+        ),
+        (
+            "nodeId",
+            "async callback resume operation nodeId must not contain surrounding whitespace",
+            "$.operation.nodeId",
+        ),
+        (
+            "attemptId",
+            "async callback resume operation attemptId must not contain surrounding whitespace",
+            "$.operation.attemptId",
+        ),
+        (
+            "releaseId",
+            "async callback resume operation releaseId must not contain surrounding whitespace",
+            "$.operation.releaseId",
+        ),
+        (
+            "tenantId",
+            "async callback resume operation tenantId must not contain surrounding whitespace",
+            "$.operation.tenantId",
+        ),
+        (
+            "policySnapshotId",
+            "async callback resume operation policySnapshotId must not contain surrounding whitespace",
+            "$.operation.policySnapshotId",
+        ),
+        (
+            "resumeTokenHash",
+            "async callback resume operation resumeTokenHash must not contain surrounding whitespace",
+            "$.operation.resumeTokenHash",
+        ),
+        (
+            "expectedSchema",
+            "async callback resume operation expectedSchema must not contain surrounding whitespace",
+            "$.operation.expectedSchema",
+        ),
+        (
+            "deadline",
+            "async callback resume operation deadline must not contain surrounding whitespace",
+            "$.operation.deadline",
+        ),
+        (
+            "budgetState",
+            "async callback resume operation budgetState must not contain surrounding whitespace",
+            "$.operation.budgetState",
+        ),
+    )
+
+    for field_name, message, path in cases:
+        fixture = json.loads(json.dumps(base_fixture))
+        fixture["operation"][field_name] = f" {fixture['operation'][field_name]}"
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/async-callback-resume-operation-whitespace-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableAsyncCallbackResumeInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

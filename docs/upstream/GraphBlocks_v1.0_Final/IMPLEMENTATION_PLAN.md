@@ -836,6 +836,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   when operation state evidence is supplied, so journal-before-resume conformance cannot be proven
   from a malformed, anonymous, unpinned, unfenced, terminal, or unbounded `AsyncOperation`
   reference.
+- Python TCK validation now treats waiting-operation callback-resume evidence as exact durable
+  strings, rejecting surrounding whitespace on operation, provider-operation, idempotency, run,
+  node, attempt, release, tenant, policy snapshot, resume-token, expected-schema, deadline, and
+  budget-state fields before they can prove the resumable operation envelope.
 - Shared durable async callback resume TCK fixtures now validate supplied callback receipt
   envelopes, requiring nonblank `callbackId`, canonical `payloadDigest`, and nonblank
   `verifiedBy` evidence before journal-before-resume conformance can be proven from callback

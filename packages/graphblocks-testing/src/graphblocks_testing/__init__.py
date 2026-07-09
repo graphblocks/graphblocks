@@ -8684,6 +8684,14 @@ class TckRunner:
                                     "path": f"$.operation.{path_key}",
                                 }
                             )
+                        elif value != value.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": f"async callback resume operation {key} must not contain surrounding whitespace",
+                                    "path": f"$.operation.{path_key}",
+                                }
+                            )
                     if "providerOperationId" in raw_operation or "provider_operation_id" in raw_operation:
                         provider_operation_id_path = (
                             "providerOperationId"
@@ -8698,6 +8706,14 @@ class TckRunner:
                                 {
                                     "code": "DurableAsyncCallbackResumeInvalid",
                                     "message": "async callback resume operation requires nonblank providerOperationId",
+                                    "path": f"$.operation.{provider_operation_id_path}",
+                                }
+                            )
+                        elif provider_operation_id != provider_operation_id.strip():
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume operation providerOperationId must not contain surrounding whitespace",
                                     "path": f"$.operation.{provider_operation_id_path}",
                                 }
                             )
@@ -8737,9 +8753,24 @@ class TckRunner:
                     resume_token_hash = raw_operation.get(
                         "resumeTokenHash", raw_operation.get("resume_token_hash")
                     )
-                    if (
-                        not isinstance(resume_token_hash, str)
-                        or not resume_token_hash.startswith("sha256:")
+                    if not isinstance(resume_token_hash, str) or not resume_token_hash.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation requires resumeTokenHash sha256 digest",
+                                "path": f"$.operation.{resume_token_hash_path}",
+                            }
+                        )
+                    elif resume_token_hash != resume_token_hash.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation resumeTokenHash must not contain surrounding whitespace",
+                                "path": f"$.operation.{resume_token_hash_path}",
+                            }
+                        )
+                    elif (
+                        not resume_token_hash.startswith("sha256:")
                         or len(resume_token_hash.removeprefix("sha256:")) != 64
                         or any(
                             character not in "0123456789abcdef"
@@ -8766,6 +8797,14 @@ class TckRunner:
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
                                 "message": "async callback resume operation requires nonblank expectedSchema",
+                                "path": f"$.operation.{expected_schema_path}",
+                            }
+                        )
+                    elif expected_schema != expected_schema.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation expectedSchema must not contain surrounding whitespace",
                                 "path": f"$.operation.{expected_schema_path}",
                             }
                         )
@@ -8798,8 +8837,16 @@ class TckRunner:
                                 "path": "$.operation.deadline",
                             }
                         )
+                    elif deadline != deadline.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation deadline must not contain surrounding whitespace",
+                                "path": "$.operation.deadline",
+                            }
+                        )
                     else:
-                        deadline_text = deadline.strip()
+                        deadline_text = deadline
                         if len(deadline_text) <= 10 or deadline_text[10] != "T":
                             diagnostics.append(
                                 {
@@ -8875,6 +8922,14 @@ class TckRunner:
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
                                 "message": "async callback resume operation requires nonblank budgetState",
+                                "path": f"$.operation.{budget_state_path}",
+                            }
+                        )
+                    elif budget_state != budget_state.strip():
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume operation budgetState must not contain surrounding whitespace",
                                 "path": f"$.operation.{budget_state_path}",
                             }
                         )
