@@ -381,6 +381,49 @@ def test_review_record_validates_identity_decision_timestamps_and_lists() -> Non
     assert review.credential_refs == ["cred-1"]
 
 
+def test_evaluation_timestamps_reject_non_rfc3339_forms() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:old")
+    review_base = {
+        "review_id": "review-1",
+        "subject": subject,
+        "subject_digest": "sha256:old",
+        "scope": "quality",
+        "reviewer": PrincipalRef("reviewer-1"),
+        "decision": "accept",
+        "created_at": "2026-06-22T00:00:00Z",
+    }
+    tool_ref_base = {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-search",
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "allowed_for_principal": True,
+    }
+
+    invalid_review_cases = [
+        ({"created_at": "2026-06-22 00:00:00Z"}, "review record created_at must be an ISO datetime"),
+        ({"created_at": "2026-06-22T00:00:00"}, "review record created_at must be an ISO datetime"),
+        ({"created_at": "2026-06-22T00:00:00+0000"}, "review record created_at must be an ISO datetime"),
+        ({"created_at": "2026-06-22T00:00:00z"}, "review record created_at must be an ISO datetime"),
+        ({"created_at": " 2026-06-22T00:00:00Z"}, "review record created_at must be an ISO datetime"),
+        ({"invalidated_at": "2026-06-22T00:05:00+0000"}, "review record invalidated_at must be an ISO datetime"),
+    ]
+    for overrides, message in invalid_review_cases:
+        with pytest.raises(ValueError, match=message):
+            ReviewRecord(**(review_base | overrides))  # type: ignore[arg-type]
+
+    for valid_until in (
+        "2026-06-22 00:00:00Z",
+        "2026-06-22T00:00:00",
+        "2026-06-22T00:00:00+0000",
+        "2026-06-22T00:00:00z",
+        "2026-06-22T00:00:00Z ",
+    ):
+        with pytest.raises(ValueError, match="model visible tool ref valid_until must be an ISO datetime"):
+            ModelVisibleToolRef(**(tool_ref_base | {"valid_until": valid_until}))  # type: ignore[arg-type]
+
+
 def test_resource_snapshot_ref_validates_identity_fields_and_copies_metadata() -> None:
     metadata = {"path": "candidate/out.sv"}
     snapshot = ResourceSnapshotRef(

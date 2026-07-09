@@ -2668,6 +2668,10 @@ sandbox
 - Python review requests and reviewer credentials now deep-freeze nested metadata while thawing
   those snapshots for canonical review-request digests, so retained caller references cannot alter
   review evidence or digest inputs after construction.
+- The Python evaluation facade now validates review and model-visible-tool timestamps as strict
+  RFC 3339-style datetimes, rejecting space-separated forms, timezone-less values, lowercase `z`,
+  compact offsets such as `+0000`, and surrounding whitespace before review invalidation or
+  model-tool visibility windows can be projected.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.
