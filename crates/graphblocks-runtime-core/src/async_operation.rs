@@ -685,6 +685,77 @@ impl CallbackEndpointRef {
                 reason: "callback endpoint url must use http or https".to_owned(),
             });
         }
+        let authority = self
+            .url
+            .split_once("://")
+            .map(|(_, rest)| rest.split(&['/', '?', '#'][..]).next().unwrap_or_default())
+            .unwrap_or_default();
+        if authority.is_empty()
+            || authority
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte < 0x20 || byte == 0x7f)
+            || authority.contains('@')
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.endpoint_id.clone(),
+                reason: "callback endpoint url host is malformed".to_owned(),
+            });
+        }
+        if let Some(bracketed_host) = authority.strip_prefix('[') {
+            let Some((host, suffix)) = bracketed_host.split_once(']') else {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.endpoint_id.clone(),
+                    reason: "callback endpoint url host is malformed".to_owned(),
+                });
+            };
+            if host.contains('%') || host.parse::<std::net::Ipv6Addr>().is_err() {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.endpoint_id.clone(),
+                    reason: "callback endpoint url host is malformed".to_owned(),
+                });
+            }
+            if !suffix.is_empty() {
+                let Some(port) = suffix.strip_prefix(':') else {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: self.endpoint_id.clone(),
+                        reason: "callback endpoint url host is malformed".to_owned(),
+                    });
+                };
+                if port.is_empty() || port.parse::<u16>().is_err() {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: self.endpoint_id.clone(),
+                        reason: "callback endpoint url host is malformed".to_owned(),
+                    });
+                }
+            }
+        } else {
+            let host = if let Some((host, port)) = authority.split_once(':') {
+                if port.is_empty() || port.parse::<u16>().is_err() {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: self.endpoint_id.clone(),
+                        reason: "callback endpoint url host is malformed".to_owned(),
+                    });
+                }
+                host
+            } else {
+                authority
+            };
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            if host.is_empty()
+                || host.contains(':')
+                || !host
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+                || host
+                    .split('.')
+                    .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+            {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.endpoint_id.clone(),
+                    reason: "callback endpoint url host is malformed".to_owned(),
+                });
+            }
+        }
         for (field, value) in [
             ("operation_id", &self.operation_id),
             ("run_id", &self.run_id),

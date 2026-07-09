@@ -688,6 +688,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   delivery projections cannot silently canonicalize malformed client input.
 - `CallbackEndpointRef` now rejects endpoint URLs with surrounding whitespace before scheme
   validation, preserving exact ingress route identity for signed callback submissions.
+  Runtime endpoint validation also rejects malformed authority and host syntax, including userinfo,
+  whitespace/control characters, percent-encoded hosts, invalid bracketed IPv6 literals, scoped
+  IPv6 zone identifiers, and invalid ports before callback endpoint registration.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, unknown operations, run/node identity mismatches, schema mismatches, payload-limit
   failures, callbacks that arrive after an operation's callback deadline, and callbacks that target

@@ -189,6 +189,31 @@ fn callback_endpoint_rejects_url_with_surrounding_whitespace() {
 }
 
 #[test]
+fn callback_endpoint_rejects_malformed_url_host_syntax() {
+    for url in [
+        "https://hooks example.com/v1/callbacks/op-1",
+        "https://graphblocks.example.com\t/v1/callbacks/op-1",
+        "https://graphblocks.example.com%2fevil/v1/callbacks/op-1",
+        "https://[not-ipv6]/v1/callbacks/op-1",
+        "https://[fe80::1%25eth0]/v1/callbacks/op-1",
+    ] {
+        assert_eq!(
+            CallbackEndpointRef::new(
+                "callback-endpoint-1",
+                url,
+                "schemas/CICallback@1",
+                CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+            ),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "callback-endpoint-1".to_owned(),
+                reason: "callback endpoint url host is malformed".to_owned(),
+            }),
+            "{url} should fail before callback endpoint registration",
+        );
+    }
+}
+
+#[test]
 fn callback_endpoint_binds_submission_to_current_operation_identity() {
     let endpoint = CallbackEndpointRef::new_bound(
         "callback-endpoint-1",
@@ -2277,19 +2302,17 @@ fn unauthenticated_artifact_backed_callback_submission_does_not_resume_run() {
         store.operation_state("op-1"),
         Some(AsyncOperationState::WaitingCallback)
     );
-    assert!(
-        store
-            .events_for_operation("op-1")
-            .iter()
-            .any(|event| matches!(
-                event,
-                AsyncOperationEvent::ExternalCallbackRejected {
-                    callback_id,
-                    reason,
-                    ..
-                } if callback_id == "cb-unauthenticated-artifact" && reason == "authentication_failed"
-            ))
-    );
+    assert!(store
+        .events_for_operation("op-1")
+        .iter()
+        .any(|event| matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-unauthenticated-artifact" && reason == "authentication_failed"
+        )));
 }
 
 #[test]
