@@ -8381,14 +8381,10 @@ class TckRunner:
                                     "message": "acknowledged callback delivery requires acknowledgedAt",
                                     "path": f"$.deliveries[{index}].acknowledgedAt",
                                 }
-                            )
+                        )
                         else:
                             acknowledged_at_text = raw_acknowledged_at.strip()
-                            if acknowledged_at_text.endswith("Z"):
-                                acknowledged_at_text = f"{acknowledged_at_text[:-1]}+00:00"
-                            try:
-                                acknowledged_at = datetime.fromisoformat(acknowledged_at_text)
-                            except ValueError:
+                            if len(acknowledged_at_text) <= 10 or acknowledged_at_text[10] != "T":
                                 diagnostics.append(
                                     {
                                         "code": "DurableCallbackDeliveryInvalid",
@@ -8396,6 +8392,19 @@ class TckRunner:
                                         "path": f"$.deliveries[{index}].acknowledgedAt",
                                     }
                                 )
+                            else:
+                                if acknowledged_at_text.endswith("Z"):
+                                    acknowledged_at_text = f"{acknowledged_at_text[:-1]}+00:00"
+                                try:
+                                    acknowledged_at = datetime.fromisoformat(acknowledged_at_text)
+                                except ValueError:
+                                    diagnostics.append(
+                                        {
+                                            "code": "DurableCallbackDeliveryInvalid",
+                                            "message": "acknowledged callback delivery requires acknowledgedAt",
+                                            "path": f"$.deliveries[{index}].acknowledgedAt",
+                                        }
+                                    )
                         if (
                             delivered_at is not None
                             and acknowledged_at is not None

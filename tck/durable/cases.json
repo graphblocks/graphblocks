@@ -4070,6 +4070,37 @@
     }
   },
   {
+    "name": "webhook_delivery_space_separator_acknowledged_at_rejected",
+    "kind": "callback_delivery_projection",
+    "deliveries": [
+      {
+        "deliveryId": "del-duplicate-space-invalid-001",
+        "subscriptionId": "sub-ide-001",
+        "eventId": "evt-0105-space",
+        "runId": "run-coding-001",
+        "sequence": 105,
+        "cursor": "evt-0105-space",
+        "attempt": 1,
+        "idempotencyKey": "sub-ide-001:evt-0105-space",
+        "receiverStatus": 409,
+        "status": "acknowledged",
+        "deliveredAt": "2026-07-02T00:00:05Z",
+        "acknowledgedAt": "2026-07-03 00:00:06Z"
+      }
+    ],
+    "nonMandatoryOutageBlocksRun": false,
+    "expectedDiagnostics": [
+      {
+        "code": "DurableCallbackDeliveryInvalid",
+        "message": "acknowledged callback delivery requires acknowledgedAt",
+        "path": "$.deliveries[0].acknowledgedAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "webhook_delivery_acknowledged_before_delivered_rejected",
     "kind": "callback_delivery_projection",
     "deliveries": [
