@@ -656,7 +656,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback wait boundary.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
   the configured ingestion limit and report oversized inline callback payloads as `GB6010`, with
-  shared compiler TCK coverage.
+  shared compiler TCK coverage. Non-positive `expectedPayloadBytes` and `maxPayloadBytes`
+  declarations now produce `InvalidAsyncOperation` instead of silently falling back to the default
+  callback payload limit.
 - Async operation configuration diagnostics now report callback waits that can resume without
   policy, budget, and release-compatibility re-evaluation as `GB6008`, with shared compiler TCK
   coverage.

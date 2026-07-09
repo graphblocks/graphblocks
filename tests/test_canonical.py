@@ -1801,6 +1801,42 @@ def test_compile_reports_oversized_async_callback_payload_contract() -> None:
     assert _error_codes(graph) == ["GB6010"]
 
 
+def test_compile_reports_non_positive_async_callback_payload_limit() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-async-callback-payload-limit"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "attemptFencing": True,
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/CICallback@1",
+                        "expectedPayloadBytes": 1,
+                        "maxPayloadBytes": 0,
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                }
+            },
+        },
+    }
+
+    errors = [diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"]
+
+    assert [diagnostic.code for diagnostic in errors] == ["InvalidAsyncOperation"]
+    assert errors[0].message == "async callback maxPayloadBytes must be a positive integer"
+
+
 def test_compile_allows_background_run_with_replay_and_safe_payload_contracts() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

@@ -349,6 +349,28 @@ def _diagnose_async_operation_config(
                 f"{path}.callback",
             )
         )
+    for payload_field, field_names in (
+        (
+            "expectedPayloadBytes",
+            (
+                "expectedPayloadBytes",
+                "expected_payload_bytes",
+                "expectedMaxPayloadBytes",
+                "expected_max_payload_bytes",
+            ),
+        ),
+        ("maxPayloadBytes", ("maxPayloadBytes", "max_payload_bytes")),
+    ):
+        for payload_config, payload_path in ((callback_config, f"{path}.callback"), (config, path)):
+            for field_name in field_names:
+                if field_name in payload_config and not _is_positive_integer(payload_config.get(field_name)):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidAsyncOperation",
+                            f"async callback {payload_field} must be a positive integer",
+                            f"{payload_path}.{field_name}",
+                        )
+                    )
     expected_payload_bytes = _configured_positive_integer(
         callback_config,
         "expectedPayloadBytes",
