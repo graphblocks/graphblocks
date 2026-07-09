@@ -435,6 +435,51 @@ def test_lease_pool_reap_expired_compares_expiration_as_datetime() -> None:
     assert reaped.available_units == 1
 
 
+def test_lease_pool_rejects_non_rfc3339_timestamps() -> None:
+    pool = LeasePool("formal-license", "eda.formal", capacity_units=1)
+    request = LeaseRequest("formal-check", ResourceRef("trial:formal"), "eda.formal")
+
+    for acquired_at in (
+        "2026-06-24 00:00:00Z",
+        "2026-06-24T00:00:00",
+        "2026-06-24T00:00:00+0000",
+        "2026-06-24T00:00:00z",
+        " 2026-06-24T00:00:00Z",
+    ):
+        with pytest.raises(ValueError, match="lease acquired_at must be an ISO datetime"):
+            pool.acquire(
+                request,
+                lease_id="lease-invalid-acquired",
+                acquired_at=acquired_at,
+                expires_at="2026-06-24T00:05:00Z",
+            )
+
+    for expires_at in (
+        "2026-06-24 00:05:00Z",
+        "2026-06-24T00:05:00",
+        "2026-06-24T00:05:00+0000",
+        "2026-06-24T00:05:00z",
+    ):
+        with pytest.raises(ValueError, match="lease expires_at must be an ISO datetime"):
+            pool.acquire(
+                request,
+                lease_id="lease-invalid-expires",
+                acquired_at="2026-06-24T00:00:00Z",
+                expires_at=expires_at,
+            )
+
+    leased, grant = pool.acquire(
+        request,
+        lease_id="lease-1",
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+    with pytest.raises(ValueError, match="lease now must be an ISO datetime"):
+        leased.reap_expired("2026-06-24 00:04:00Z")
+
+    assert grant.is_active_at("2026-06-24 00:04:00Z") is False
+
+
 def test_lease_pool_release_requires_matching_fencing_epoch() -> None:
     pool, grant = LeasePool("synthesis-license", "eda.synthesis", capacity_units=1).acquire(
         LeaseRequest("synthesis-check", ResourceRef("trial:synthesis"), "eda.synthesis"),

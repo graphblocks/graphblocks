@@ -2661,6 +2661,9 @@ sandbox
 - Python lease pools now deep-freeze and JSON-validate lease attributes, rejecting nested mutable
   aliases, non-string mapping keys, non-JSON values, and non-finite floats before ownership/fencing
   metadata can be persisted on an active lease.
+- Python `LeasePool` now validates acquisition, expiration, and reap timestamps as strict RFC
+  3339-style datetimes, so malformed lease times cannot silently admit or reap scarce-resource
+  grants.
 - `TaskPlanPatch` validation now rejects duplicate upsert step ids before patch application, so
   model-authored plan edits cannot rely on ambiguous last-write-wins behavior.
 - `TaskPlan::context_access_graph` now derives deterministic resource-conflict edges from declared
