@@ -3078,6 +3078,25 @@ fn webhook_target_rejects_forbidden_internal_endpoints_by_default() {
 }
 
 #[test]
+fn webhook_target_rejects_reserved_ipv4_destinations_by_default() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "https://224.0.0.1/callback",
+        "https://239.255.255.250/callback",
+        "https://255.255.255.255/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+            ),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_rejects_alternate_numeric_loopback_literals() {
     let policy = WebhookEgressPolicy::default_deny_internal();
 
@@ -3180,6 +3199,27 @@ fn webhook_egress_policy_rejects_public_hostname_resolving_to_internal_addresses
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
         })
     );
+}
+
+#[test]
+fn webhook_egress_policy_rejects_public_hostname_resolving_to_reserved_ipv4_addresses() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+
+    for address in [
+        IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)),
+        IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+    ] {
+        assert_eq!(
+            policy.validate_resolved_addresses(&target, [address]),
+            Err(WebhookEndpointError::UnsafeResolvedAddress {
+                host: "hooks.example.com".to_owned(),
+                address,
+            })
+        );
+    }
 }
 
 #[test]

@@ -2260,6 +2260,7 @@ fn is_forbidden_ipv4(address: Ipv4Addr) -> bool {
         || address.is_link_local()
         || address.is_unspecified()
         || address.octets()[0] == 0
+        || address.octets()[0] >= 224
 }
 
 fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
