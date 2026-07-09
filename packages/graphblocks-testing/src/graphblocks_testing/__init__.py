@@ -9409,6 +9409,21 @@ class TckRunner:
                             "path": "$.operation.state",
                         }
                     )
+                elif operation_state in {
+                    "created",
+                    "submitted",
+                    "waiting_callback",
+                    "callback_received",
+                    "polling",
+                    "resuming",
+                }:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires terminal operation state",
+                            "path": "$.operation.state",
+                        }
+                    )
                 run_id_path = (
                     "runId"
                     if "runId" in raw_operation or "run_id" not in raw_operation

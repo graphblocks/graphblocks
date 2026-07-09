@@ -1989,7 +1989,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   AsyncOperation `operation.kind` literal, an ISO `operation.submittedAt` timestamp, a bounded-wait
   ISO `operation.expiresAt` timestamp, and a valid AsyncOperation `operation.state` literal in both
   Rust and Python runners before accepting late side-effect, callback, or usage reconciliation
-  evidence. The same TCK path rejects `operation.submittedAt` values that precede
+  evidence. The same TCK path rejects non-terminal operation states before late reconciliation,
+  because late callback, effect, and usage reconciliation must not be confused with active
+  resumable operations. It also rejects `operation.submittedAt` values that precede
   `operation.createdAt` and `operation.expiresAt` values that do not follow `operation.submittedAt`,
   preserving the async operation lifecycle ordering and positive bounded-wait window.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
