@@ -964,10 +964,22 @@ class ToolCatalog:
     _bindings_by_tool: dict[str, ToolBinding] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "definitions", tuple(self.definitions))
-        object.__setattr__(self, "bindings", tuple(self.bindings))
+        try:
+            definitions = tuple(self.definitions)
+        except TypeError as error:
+            raise ToolResolutionError("tool catalog definitions must be a collection of ToolDefinition") from error
+        if any(not isinstance(definition, ToolDefinition) for definition in definitions):
+            raise ToolResolutionError("tool catalog definitions items must be ToolDefinition")
+        try:
+            bindings = tuple(self.bindings)
+        except TypeError as error:
+            raise ToolResolutionError("tool catalog bindings must be a collection of ToolBinding") from error
+        if any(not isinstance(binding, ToolBinding) for binding in bindings):
+            raise ToolResolutionError("tool catalog bindings items must be ToolBinding")
+        object.__setattr__(self, "definitions", definitions)
+        object.__setattr__(self, "bindings", bindings)
         definitions_by_name: dict[str, ToolDefinition] = {}
-        for definition in self.definitions:
+        for definition in definitions:
             try:
                 SchemaId.parse(definition.input_schema)
             except SchemaIdError as error:
@@ -987,7 +999,7 @@ class ToolCatalog:
 
         binding_ids: set[str] = set()
         bindings_by_tool: dict[str, ToolBinding] = {}
-        for binding in self.bindings:
+        for binding in bindings:
             if binding.binding_id in binding_ids:
                 raise ToolResolutionError(f"duplicate tool binding {binding.binding_id}")
             binding_ids.add(binding.binding_id)
@@ -1008,6 +1020,13 @@ class ToolCatalog:
         *,
         effective_policy_snapshot_id: str,
     ) -> list[ResolvedTool]:
+        if not isinstance(scope, ToolResolutionScope):
+            raise ToolResolutionError("tool catalog scope must be a ToolResolutionScope")
+        _validate_exact_non_empty_string(
+            "tool catalog resolution",
+            "effective_policy_snapshot_id",
+            effective_policy_snapshot_id,
+        )
         resolved: list[ResolvedTool] = []
         for tool_name in sorted(self._definitions_by_name):
             if not scope.allows(tool_name):

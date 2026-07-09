@@ -921,6 +921,48 @@ def test_tool_resolution_scope_rejects_whitespace_wrapped_capability_names() -> 
             ToolResolutionScope(**{field_name: frozenset({"knowledge.search "})})
 
 
+def test_tool_catalog_validates_definition_binding_and_resolution_boundaries() -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-knowledge",
+        tool_name="knowledge.search",
+        implementation=BlockToolImplementation(block="knowledge.search@1"),
+    )
+
+    cases = (
+        (
+            lambda: ToolCatalog(definitions=object(), bindings=()),  # type: ignore[arg-type]
+            "tool catalog definitions must be a collection of ToolDefinition",
+        ),
+        (
+            lambda: ToolCatalog(definitions=(object(),), bindings=()),  # type: ignore[arg-type]
+            "tool catalog definitions items must be ToolDefinition",
+        ),
+        (
+            lambda: ToolCatalog(definitions=(definition,), bindings=object()),  # type: ignore[arg-type]
+            "tool catalog bindings must be a collection of ToolBinding",
+        ),
+        (
+            lambda: ToolCatalog(definitions=(definition,), bindings=(object(),)),  # type: ignore[arg-type]
+            "tool catalog bindings items must be ToolBinding",
+        ),
+    )
+
+    for construct, message in cases:
+        with pytest.raises(ToolResolutionError, match=message):
+            construct()
+
+    catalog = ToolCatalog(definitions=(definition,), bindings=(binding,))
+    with pytest.raises(ToolResolutionError, match="tool catalog scope must be a ToolResolutionScope"):
+        catalog.resolve(object(), effective_policy_snapshot_id="policy-snapshot-1")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="tool catalog resolution effective_policy_snapshot_id must not be empty"):
+        catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id=" ")
+
+
 def test_tool_catalog_reports_visible_tool_without_binding() -> None:
     catalog = ToolCatalog(
         definitions=(

@@ -233,6 +233,9 @@ Message
   resolution, rejecting space-separated, timezone-less, lowercase-`z`, malformed fractional, and
   compact-offset forms before an expired or malformed capability can reach admission.
 - model invocation 전에 application/graph/principal/tenant/conversation/data-classification/deployment/budget intersection으로 `ResolvedTool` set을 생성하고 run provenance에 기록한다.
+- Python `ToolCatalog` now validates definition and binding collections, binding item types,
+  resolution scope objects, and effective policy snapshot ids before capability intersection can
+  produce model-visible `ResolvedTool` records.
 - `ToolCallDraft`는 streaming argument fragment만 표현하며 side effect를 실행할 수 없다.
 - final `ToolCall`은 schema-valid immutable arguments와 `arguments_digest`를 가진다. argument mutation은 revision과 approval을 invalidation한다.
 - Python tool-call drafts and final tool calls now validate response ids, tool-call ids,
