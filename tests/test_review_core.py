@@ -92,6 +92,43 @@ def test_review_request_rejects_invalid_identity_and_metadata_fields() -> None:
         request.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"request_id": " request-1"},
+            "review request request_id must not contain surrounding whitespace",
+        ),
+        (
+            {"required_scopes": (" quality",)},
+            "review request required_scopes item must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {" purpose": "release"}},
+            "review request metadata key must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {"scope": {" label": "quality"}}},
+            "review request metadata key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_review_request_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "request_id": "request-1",
+        "subject": ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        "requested_by": PrincipalRef("author-1"),
+        "required_scopes": ("quality",),
+        "created_at": "2026-06-24T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ReviewRequest(**(base | overrides))  # type: ignore[arg-type]
+
+
 def test_review_workflow_records_review_with_credential_reference() -> None:
     request = ReviewRequest(
         request_id="request-1",
@@ -245,6 +282,42 @@ def test_reviewer_credential_rejects_invalid_identity_and_metadata_fields() -> N
     with pytest.raises(AttributeError):
         credential.metadata["scope"]["labels"].append("mutated")  # type: ignore[index, union-attr]
     assert credential.scopes == ("quality",)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"credential_ref": " cred-quality"},
+            "reviewer credential credential_ref must not contain surrounding whitespace",
+        ),
+        (
+            {"scopes": (" quality",)},
+            "reviewer credential scopes item must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {" source": "policy"}},
+            "reviewer credential metadata key must not contain surrounding whitespace",
+        ),
+        (
+            {"metadata": {"scope": {" label": "quality"}}},
+            "reviewer credential metadata key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_reviewer_credential_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "credential_ref": "cred-quality",
+        "reviewer": PrincipalRef("reviewer-1"),
+        "scopes": ("quality",),
+        "issued_at": "2026-06-24T00:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ReviewerCredential(**(base | overrides))  # type: ignore[arg-type]
 
 
 def test_review_workflow_rejects_invalid_review_created_at() -> None:

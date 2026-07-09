@@ -2826,8 +2826,9 @@ sandbox
   policy selector values before CAS commits or protected-resource checks can depend on normalized
   identities.
 - Python review requests and reviewer credentials now deep-freeze nested metadata while thawing
-  those snapshots for canonical review-request digests, so retained caller references cannot alter
-  review evidence or digest inputs after construction.
+  those snapshots for canonical review-request digests. Request ids, credential refs, review scopes,
+  and nested metadata keys are exact values, so retained caller references or whitespace-normalized
+  review identities cannot alter review evidence or digest inputs after construction.
 - The Python review facade now validates review request, reviewer credential, and recorded review
   timestamps as strict RFC 3339-style datetimes before credential expiry, active-review checks, or
   review workflow state can observe them.

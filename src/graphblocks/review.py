@@ -16,6 +16,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -31,6 +33,8 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
             raise ValueError(f"{owner} {field_name} items must be strings")
         if not item.strip():
             raise ValueError(f"{owner} {field_name} item must not be empty")
+        if item != item.strip():
+            raise ValueError(f"{owner} {field_name} item must not contain surrounding whitespace")
     return tuple(sorted(set(normalized)))
 
 
@@ -43,6 +47,8 @@ def _freeze_metadata(owner: str, value: object) -> Mapping[str, object]:
             raise ValueError(f"{owner} metadata keys must be strings")
         if not key.strip():
             raise ValueError(f"{owner} metadata key must not be empty")
+        if key != key.strip():
+            raise ValueError(f"{owner} metadata key must not contain surrounding whitespace")
     return MappingProxyType({key: _freeze_metadata_value(owner, item) for key, item in metadata.items()})
 
 
@@ -63,7 +69,11 @@ def _thaw_metadata_value(value: object) -> object:
 
 
 def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
-    normalized = _validate_non_empty_string(owner, field_name, value)
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    normalized = value
     if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
         raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     timezone_start = 19
