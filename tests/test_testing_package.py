@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 268
+    assert [case.kind for case in cases] == ["durable"] * 269
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1350,6 +1350,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_blank_budget_state_rejected",
         "async_callback_resume_blank_callback_id_rejected",
         "async_callback_resume_invalid_callback_payload_digest_rejected",
+        "async_callback_resume_invalid_callback_payload_schema_rejected",
         "async_callback_resume_blank_callback_verifier_rejected",
         "async_callback_resume_unauthenticated_callback_verifier_rejected",
         "async_callback_resume_non_external_callback_event_rejected",
@@ -2129,6 +2130,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_invalid_callback_payload_digest_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_invalid_callback_payload_schema_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6320,6 +6326,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_blank_budget_state_rejected",
         "async_callback_resume_blank_callback_id_rejected",
         "async_callback_resume_invalid_callback_payload_digest_rejected",
+        "async_callback_resume_invalid_callback_payload_schema_rejected",
         "async_callback_resume_blank_callback_verifier_rejected",
         "async_callback_resume_unauthenticated_callback_verifier_rejected",
         "async_callback_resume_non_external_callback_event_rejected",

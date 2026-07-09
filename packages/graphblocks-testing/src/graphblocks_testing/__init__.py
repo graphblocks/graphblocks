@@ -8608,6 +8608,8 @@ class TckRunner:
                         "provider_operation_id",
                         "eventType",
                         "event_type",
+                        "payloadSchemaValid",
+                        "payload_schema_valid",
                     )
                 )
                 if callback_receipt_supplied:
@@ -8626,6 +8628,24 @@ class TckRunner:
                                     "code": "DurableAsyncCallbackResumeInvalid",
                                     "message": "async callback resume callback eventType must be ExternalCallbackReceived",
                                     "path": f"$.callback.{event_type_path}",
+                                }
+                            )
+                    if "payloadSchemaValid" in raw_callback or "payload_schema_valid" in raw_callback:
+                        payload_schema_valid_path = (
+                            "payloadSchemaValid"
+                            if "payloadSchemaValid" in raw_callback
+                            or "payload_schema_valid" not in raw_callback
+                            else "payload_schema_valid"
+                        )
+                        payload_schema_valid = raw_callback.get(
+                            "payloadSchemaValid", raw_callback.get("payload_schema_valid")
+                        )
+                        if payload_schema_valid is not True:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume callback payload must validate against expectedSchema",
+                                    "path": f"$.callback.{payload_schema_valid_path}",
                                 }
                             )
                     callback_id_path = (

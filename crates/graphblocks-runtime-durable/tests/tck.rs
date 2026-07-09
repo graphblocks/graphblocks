@@ -2503,6 +2503,8 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "provider_operation_id",
                 "eventType",
                 "event_type",
+                "payloadSchemaValid",
+                "payload_schema_valid",
             ]
             .into_iter()
             .any(|key| raw_callback.contains_key(key));
@@ -2528,6 +2530,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                             "code": "DurableAsyncCallbackResumeInvalid",
                             "message": "async callback resume callback eventType must be ExternalCallbackReceived",
                             "path": format!("$.callback.{event_type_path}"),
+                        }));
+                    }
+                }
+                if raw_callback.contains_key("payloadSchemaValid")
+                    || raw_callback.contains_key("payload_schema_valid")
+                {
+                    let payload_schema_valid_path = if raw_callback
+                        .contains_key("payloadSchemaValid")
+                        || !raw_callback.contains_key("payload_schema_valid")
+                    {
+                        "payloadSchemaValid"
+                    } else {
+                        "payload_schema_valid"
+                    };
+                    if !raw_callback
+                        .get("payloadSchemaValid")
+                        .or_else(|| raw_callback.get("payload_schema_valid"))
+                        .is_some_and(|payload_schema_valid| {
+                            payload_schema_valid.as_bool() == Some(true)
+                        })
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume callback payload must validate against expectedSchema",
+                            "path": format!("$.callback.{payload_schema_valid_path}"),
                         }));
                     }
                 }

@@ -762,6 +762,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   envelopes, requiring nonblank `callbackId`, canonical `payloadDigest`, and nonblank
   `verifiedBy` evidence before journal-before-resume conformance can be proven from callback
   receipt metadata.
+- Shared durable async callback resume TCK fixtures now reject callback receipt envelopes whose
+  payload schema validation evidence is false, so schema-invalid callback payloads cannot satisfy
+  resume conformance.
 - Shared durable async callback resume TCK fixtures now reject callback receipts whose
   `verifiedBy` evidence is explicitly `unauthenticated`, so a nonblank placeholder cannot satisfy
   callback authentication conformance.
