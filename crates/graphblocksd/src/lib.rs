@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Ipv6Addr, TcpStream};
 use std::time::Duration;
 
 use graphblocks_protocol::{
@@ -410,6 +410,9 @@ fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientEr
         let (host, suffix) = rest
             .split_once(']')
             .ok_or(WebhookHttpClientError::MalformedUrl)?;
+        if host.contains('%') || host.parse::<Ipv6Addr>().is_err() {
+            return Err(WebhookHttpClientError::MalformedUrl);
+        }
         let port = if let Some(port) = suffix.strip_prefix(':') {
             parse_port(port)?
         } else if suffix.is_empty() {
@@ -427,7 +430,20 @@ fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientEr
     if host.is_empty() || host.contains(':') {
         return Err(WebhookHttpClientError::MalformedUrl);
     }
-    Ok((host.to_owned(), port))
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if !host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+    {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    }
+    if host
+        .split('.')
+        .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+    {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    }
+    Ok((host, port))
 }
 
 fn parse_port(port: &str) -> Result<u16, WebhookHttpClientError> {

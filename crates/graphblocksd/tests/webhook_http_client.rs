@@ -111,3 +111,29 @@ fn std_webhook_http_client_rejects_header_injection_before_network_io() {
         Err(WebhookHttpClientError::InvalidHeader)
     );
 }
+
+#[test]
+fn std_webhook_http_client_rejects_malformed_authority_before_network_io() {
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+
+    for url in [
+        "http://hooks example.com/callbacks",
+        "http://hooks.example.com\t/callbacks",
+        "http://hooks.example.com%2fevil.test/callbacks",
+        "http://[not-ipv6]/callbacks",
+        "http://[fe80::1%25eth0]/callbacks",
+    ] {
+        let request = WebhookHttpRequest {
+            url: url.to_owned(),
+            method: "POST".to_owned(),
+            headers: BTreeMap::new(),
+            body: json!({}),
+        };
+
+        assert_eq!(
+            client.send(request),
+            Err(WebhookHttpClientError::MalformedUrl),
+            "{url} should be rejected before connect"
+        );
+    }
+}

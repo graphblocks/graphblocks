@@ -1068,6 +1068,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   with shared compiler TCK coverage for runtime/compiler parity.
   The Python `graphblocks-callbacks` helper now rejects the same malformed authority syntax before
   reporting a target as allowed, so local callback tooling fails closed during development.
+  The `graphblocksd` standard webhook HTTP client now applies the same malformed-authority rejection
+  before opening a TCP connection, protecting direct adapter use from bypassing target validation.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
   destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
   addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.
