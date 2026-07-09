@@ -44,6 +44,14 @@ FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
     }
 )
 MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
+VALID_CALLBACK_DELIVERY_KINDS = frozenset({
+    "webhook",
+    "websocket",
+    "sse",
+    "push_notification",
+    "email",
+    "local_callback",
+})
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 UNSAFE_CALLBACK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
@@ -611,6 +619,14 @@ def _diagnose_callback_subscription_config(
     if not isinstance(delivery, dict):
         return
     delivery_kind = delivery.get("kind")
+    if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
+        diagnostics.append(
+            Diagnostic(
+                "InvalidCallbackSubscription",
+                "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback",
+                f"{path}.delivery.kind",
+            )
+        )
     if delivery_kind == "webhook":
         method = delivery.get("method", "POST")
         if method != "POST":

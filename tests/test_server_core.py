@@ -8172,6 +8172,64 @@ def test_server_app_rejects_non_post_webhook_callback_registration_method() -> N
         assert app.callback_registrations() == ()
 
 
+def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_literals() -> None:
+    cases = (
+        (
+            "kind",
+            "webhook ",
+            "server callback registration delivery.kind must be one of webhook, websocket, sse, push_notification, email, or local_callback",
+        ),
+        (
+            "method",
+            "POST ",
+            "server callback registration delivery.method must be POST for webhook delivery",
+        ),
+        (
+            "algorithm",
+            "hmac-sha256 ",
+            "server callback registration delivery.signing.algorithm must be one of hmac-sha256 or ed25519",
+        ),
+    )
+    for field_name, value, expected_error in cases:
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        delivery = {
+            "kind": "webhook",
+            "url": "https://relay.example/events",
+            "method": "POST",
+            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+        }
+        if field_name == "algorithm":
+            delivery["signing"] = {"algorithm": value, "secret_ref": "secret://relay"}
+        else:
+            delivery[field_name] = value
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"callback-sub-webhook-whitespace-{field_name}",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": {"types": ["RunSucceeded"]},
+                        "delivery": delivery,
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.callback_registrations() == ()
+
+
 def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 

@@ -257,8 +257,9 @@ def _webhook_url_is_unsafe(url: str) -> bool:
 
 
 def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object]) -> None:
-    delivery_kind = _validate_non_empty_string(owner, "delivery.kind", delivery.get("kind", ""))
-    if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
+    raw_delivery_kind = delivery.get("kind", "")
+    delivery_kind = _validate_non_empty_string(owner, "delivery.kind", raw_delivery_kind)
+    if raw_delivery_kind != delivery_kind or delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
         raise ValueError(
             f"{owner} delivery.kind must be one of webhook, websocket, sse, push_notification, email, or local_callback"
         )
@@ -271,8 +272,9 @@ def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object
         raise ValueError(f"{owner} delivery.ordering requests ordered delivery on an unsupported target")
     if delivery_kind != "webhook":
         return
-    method = _validate_non_empty_string(owner, "delivery.method", delivery.get("method", "POST"))
-    if method != "POST":
+    raw_method = delivery.get("method", "POST")
+    method = _validate_non_empty_string(owner, "delivery.method", raw_method)
+    if raw_method != method or method != "POST":
         raise ValueError(f"{owner} delivery.method must be POST for webhook delivery")
     raw_url = delivery.get("url", "")
     url = _validate_non_empty_string(owner, "delivery.url", raw_url)
@@ -281,8 +283,9 @@ def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object
     signing = delivery.get("signing")
     if not isinstance(signing, Mapping):
         raise ValueError(f"{owner} delivery.signing must be a mapping for webhook delivery")
-    algorithm = _validate_non_empty_string(owner, "delivery.signing.algorithm", signing.get("algorithm", ""))
-    if algorithm not in VALID_WEBHOOK_SIGNING_ALGORITHMS:
+    raw_algorithm = signing.get("algorithm", "")
+    algorithm = _validate_non_empty_string(owner, "delivery.signing.algorithm", raw_algorithm)
+    if raw_algorithm != algorithm or algorithm not in VALID_WEBHOOK_SIGNING_ALGORITHMS:
         raise ValueError(f"{owner} delivery.signing.algorithm must be one of hmac-sha256 or ed25519")
     _validate_non_empty_string(
         owner,

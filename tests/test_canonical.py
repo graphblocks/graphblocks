@@ -1594,6 +1594,43 @@ def test_compile_reports_whitespace_wrapped_callback_webhook_url_as_unsafe() -> 
     assert _error_codes(graph) == ["GB6011"]
 
 
+def test_compile_reports_invalid_callback_delivery_kind() -> None:
+    for delivery_kind in ("webhook ", "http_callback"):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"invalid-callback-delivery-kind-{delivery_kind.strip()}"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [
+                    {
+                        "subscriptionId": "sub-invalid-kind",
+                        "scope": "run",
+                        "scopeId": "run-1",
+                        "delivery": {
+                            "kind": delivery_kind,
+                            "url": "https://relay.example.com/events",
+                            "signing": {
+                                "algorithm": "hmac-sha256",
+                                "secretRef": "secret://relay",
+                            },
+                        },
+                    },
+                ],
+            },
+        }
+
+        errors = [
+            diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"
+        ]
+
+        assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+        assert (
+            errors[0].message
+            == "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback"
+        )
+
+
 def test_compile_reports_non_post_callback_webhook_method() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
