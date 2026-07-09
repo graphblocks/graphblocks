@@ -365,7 +365,9 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
     visibility = event_filter.get("visibility")
     if visibility is not None:
         visibility_values = _validate_string_sequence(owner, "event_filter.visibility", visibility)
-        if any(value not in VALID_EVENT_VISIBILITIES for value in visibility_values):
+        if any(value != value.strip() for value in visibility) or any(
+            value not in VALID_EVENT_VISIBILITIES for value in visibility_values
+        ):
             raise ValueError(
                 f"{owner} event_filter.visibility must contain only client, operator, internal, or audit_only"
             )
@@ -377,7 +379,7 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
             "event_filter.severity_min",
             severity_min,
         )
-        if severity_min_text not in SERVER_EVENT_SEVERITY_RANKS:
+        if severity_min != severity_min_text or severity_min_text not in SERVER_EVENT_SEVERITY_RANKS:
             raise ValueError(f"{owner} event_filter.severity_min is invalid")
 
     include_terminal_events = event_filter.get(

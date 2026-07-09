@@ -5988,61 +5988,63 @@ def test_server_app_rejects_authoritative_event_subscription_projection() -> Non
 
 
 def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
-    app._events_by_run_id["run-subscribe-filter-invalid-1"] = ()
+    for severity_min in ("panic", "error "):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id["run-subscribe-filter-invalid-1"] = ()
 
-    response = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/runs/run-subscribe-filter-invalid-1/subscriptions",
-            headers={"Authorization": "Bearer token-1"},
-            query={},
-            cookies={},
-            body=json.dumps(
-                {
-                    "subscriptionId": "sub-filter-invalid",
-                    "eventFilter": {"types": ["RunSucceeded"], "severityMin": "panic"},
-                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
-                }
-            ).encode("utf-8"),
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-subscribe-filter-invalid-1/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"sub-filter-invalid-{severity_min.strip()}",
+                        "eventFilter": {"types": ["RunSucceeded"], "severityMin": severity_min},
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
         )
-    )
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription event_filter.severity_min is invalid",
-    }
-    assert app.subscriptions("run-subscribe-filter-invalid-1") == ()
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server event subscription event_filter.severity_min is invalid",
+        }
+        assert app.subscriptions("run-subscribe-filter-invalid-1") == ()
 
 
 def test_server_app_rejects_subscription_with_invalid_visibility_filter() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
-    app._events_by_run_id["run-subscribe-visibility-invalid-1"] = ()
+    for visibility in ("public", "client "):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id["run-subscribe-visibility-invalid-1"] = ()
 
-    response = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/runs/run-subscribe-visibility-invalid-1/subscriptions",
-            headers={"Authorization": "Bearer token-1"},
-            query={},
-            cookies={},
-            body=json.dumps(
-                {
-                    "subscriptionId": "sub-visibility-invalid",
-                    "eventFilter": {"types": ["RunSucceeded"], "visibility": ["public"]},
-                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
-                }
-            ).encode("utf-8"),
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-subscribe-visibility-invalid-1/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"sub-visibility-invalid-{visibility.strip()}",
+                        "eventFilter": {"types": ["RunSucceeded"], "visibility": [visibility]},
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
         )
-    )
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
-    }
-    assert app.subscriptions("run-subscribe-visibility-invalid-1") == ()
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
+        }
+        assert app.subscriptions("run-subscribe-visibility-invalid-1") == ()
 
 
 def test_server_app_unsubscribes_without_dropping_events() -> None:
@@ -8373,63 +8375,66 @@ def test_server_app_rejects_impossible_ordered_callback_registration_delivery() 
 
 
 def test_server_app_rejects_callback_registration_with_invalid_event_filter_before_replay() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
-
-    response = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/callbacks/register",
-            headers={"Authorization": "Bearer token-1"},
-            query={},
-            cookies={},
-            body=json.dumps(
-                {
-                    "subscriptionId": "callback-sub-invalid-filter",
-                    "scope": "tenant",
-                    "scopeId": "tenant-1",
-                    "eventFilter": {"types": ["RunSucceeded"], "includeTerminalEvents": "yes"},
-                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
-                }
-            ).encode("utf-8"),
-        )
+    invalid_filters = (
+        ({"types": ["RunSucceeded"], "includeTerminalEvents": "yes"}, "include_terminal_events must be a boolean"),
+        ({"types": ["RunSucceeded"], "severityMin": "error "}, "severity_min is invalid"),
     )
+    for event_filter, error_fragment in invalid_filters:
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription event_filter.include_terminal_events must be a boolean",
-    }
-    assert app.callback_registrations() == ()
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"callback-sub-invalid-filter-{len(error_fragment)}",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": event_filter,
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert error_fragment in json.loads(response.body.decode("utf-8"))["error"]
+        assert app.callback_registrations() == ()
 
 
 def test_server_app_rejects_callback_registration_with_invalid_visibility_filter() -> None:
-    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    for visibility in ("public", "operator "):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
-    response = app.handle(
-        ServerRequest(
-            method="POST",
-            path="/callbacks/register",
-            headers={"Authorization": "Bearer token-1"},
-            query={},
-            cookies={},
-            body=json.dumps(
-                {
-                    "subscriptionId": "callback-sub-invalid-visibility",
-                    "scope": "tenant",
-                    "scopeId": "tenant-1",
-                    "eventFilter": {"types": ["RunSucceeded"], "visibility": ["public"]},
-                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
-                }
-            ).encode("utf-8"),
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"callback-sub-invalid-visibility-{visibility.strip()}",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": {"types": ["RunSucceeded"], "visibility": [visibility]},
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
         )
-    )
 
-    assert response.status_code == 400
-    assert json.loads(response.body.decode("utf-8")) == {
-        "ok": False,
-        "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
-    }
-    assert app.callback_registrations() == ()
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
+        }
+        assert app.callback_registrations() == ()
 
 
 def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection() -> None:
