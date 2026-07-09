@@ -614,6 +614,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timezone offsets such as `+0000` on webhook envelopes, signing headers, endpoint expirations,
   retry projections, dead-letter/redrive timestamps, and external callback receipts, keeping the
   optional callback projection package aligned with the shared RFC 3339-style durable TCK parser.
+- The Python core callback facade now applies the same timestamp parsing rule to
+  `CallbackSubscription` and `CallbackDelivery` timestamps, so subscription lifetimes, retry
+  schedules, delivery acknowledgements, and terminal timestamps reject compact offsets and
+  space-separated datetime forms before durable projection.
 - `CallbackEndpointRef` now rejects endpoint URLs with surrounding whitespace before scheme
   validation, preserving exact ingress route identity for signed callback submissions.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale

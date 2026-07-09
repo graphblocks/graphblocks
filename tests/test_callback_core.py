@@ -94,6 +94,33 @@ def test_callback_subscription_rejects_invalid_scope_status_and_expiration() -> 
         graphblocks.EventFilter(visibility=["private"])
 
 
+def test_callback_subscription_rejects_non_rfc3339_timestamps() -> None:
+    with raises_value_error("callback subscription created_at must be an ISO datetime"):
+        graphblocks.CallbackSubscription(
+            subscription_id="sub-compact-offset",
+            owner="principal:ide",
+            scope="run",
+            scope_id="run-1",
+            event_filter=graphblocks.EventFilter(),
+            delivery_target="webhook:ide-relay",
+            status="active",
+            created_at="2026-07-02T00:00:00+0000",
+        )
+
+    with raises_value_error("callback subscription expires_at must be an ISO datetime"):
+        graphblocks.CallbackSubscription(
+            subscription_id="sub-space-separator",
+            owner="principal:ide",
+            scope="run",
+            scope_id="run-1",
+            event_filter=graphblocks.EventFilter(),
+            delivery_target="webhook:ide-relay",
+            status="active",
+            created_at="2026-07-02T00:00:00Z",
+            expires_at="2026-07-03 00:00:00Z",
+        )
+
+
 def test_event_filter_matches_authoritative_application_event_metadata() -> None:
     event = graphblocks.ApplicationEvent.new(
         "RunStarted",
@@ -376,6 +403,38 @@ def test_callback_delivery_schema_validates_terminal_timestamps() -> None:
                 next_retry_at="2026-07-02T00:00:30Z",
                 last_error="terminal delivery cannot retry" if status not in {"delivered", "acknowledged"} else None,
             )
+
+
+def test_callback_delivery_rejects_non_rfc3339_timestamps() -> None:
+    with raises_value_error("callback delivery next_retry_at must be an ISO datetime"):
+        graphblocks.CallbackDelivery(
+            delivery_id="del-retry-compact-offset",
+            subscription_id="sub-1",
+            event_id="evt-retry-compact-offset",
+            run_id="run-1",
+            sequence=14,
+            cursor="run-1:14",
+            attempt=2,
+            idempotency_key="sub-1:evt-retry-compact-offset",
+            status="failed",
+            next_retry_at="2026-07-02T00:00:30+0000",
+            last_error="receiver returned 503",
+        )
+
+    with raises_value_error("callback delivery acknowledged_at must be an ISO datetime"):
+        graphblocks.CallbackDelivery(
+            delivery_id="del-ack-space-separator",
+            subscription_id="sub-1",
+            event_id="evt-ack-space-separator",
+            run_id="run-1",
+            sequence=15,
+            cursor="run-1:15",
+            attempt=1,
+            idempotency_key="sub-1:evt-ack-space-separator",
+            status="acknowledged",
+            delivered_at="2026-07-02T00:00:01Z",
+            acknowledged_at="2026-07-02 00:00:02Z",
+        )
 
 
 def test_callback_schema_exports_are_available() -> None:
