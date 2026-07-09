@@ -3456,17 +3456,22 @@ class GraphBlocksServerApp:
         detached_at: str,
     ) -> ServerResponse:
         detached_at = _validate_iso_datetime("detach request", "detached_at", detached_at)
+        raw_client_id = payload.get("client_id", payload.get("clientId", ""))
         client_id = _validate_non_empty_string(
             "detach request",
             "client_id",
-            payload.get("client_id", payload.get("clientId", "")),
+            raw_client_id,
         )
+        if raw_client_id != client_id:
+            raise ValueError("detach request client_id must not contain surrounding whitespace")
         reason_value = payload.get("reason")
         reason = (
             _validate_non_empty_string("detach request", "reason", reason_value)
             if reason_value is not None
             else None
         )
+        if reason_value is not None and reason_value != reason:
+            raise ValueError("detach request reason must not contain surrounding whitespace")
         last_sequence = self._last_event_sequence(events, owner="detach request")
         last_cursor = f"{run_id}:{last_sequence}"
         record = _freeze_json_value("detach record", "record", {

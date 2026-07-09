@@ -4904,6 +4904,53 @@ def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
     }
 
 
+def test_server_app_rejects_detach_with_whitespace_wrapped_client_id_or_reason() -> None:
+    cases = (
+        (
+            {"clientId": "client-1 "},
+            "detach request client_id must not contain surrounding whitespace",
+        ),
+        (
+            {"clientId": "client-1", "reason": " tab_closed"},
+            "detach request reason must not contain surrounding whitespace",
+        ),
+    )
+    for index, (body, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id[f"run-detach-whitespace-{index}"] = (
+            {
+                "kind": "RunStarted",
+                "payload": {"runId": f"run-detach-whitespace-{index}"},
+                "metadata": {
+                    "runId": f"run-detach-whitespace-{index}",
+                    "sequence": 1,
+                    "cursor": f"run-detach-whitespace-{index}:1",
+                    "eventId": f"evt-detach-whitespace-{index}",
+                    "releaseId": f"release-detach-whitespace-{index}",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                },
+            },
+        )
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/run-detach-whitespace-{index}/detach",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(body).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.detachments(f"run-detach-whitespace-{index}") == ()
+
+
 def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-detach-invalid-time-1"] = (
