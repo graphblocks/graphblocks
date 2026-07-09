@@ -3549,6 +3549,57 @@ def test_server_async_callback_rejection_rejects_whitespace_wrapped_audit_fields
             ServerAsyncCallbackRejection(**kwargs)
 
 
+def test_server_timestamp_fields_reject_surrounding_whitespace() -> None:
+    timestamp = " 2026-07-02T00:00:00Z"
+    cases = (
+        (
+            lambda: ServerAsyncCallbackSubmission(
+                operation_id="op-ci-1",
+                callback_id="cb-1",
+                idempotency_key="idem-callback-1",
+                payload={"status": "completed"},
+                received_at=timestamp,
+            ),
+            "server async callback received_at must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ServerAsyncCallbackRejection(
+                operation_id="op-ci-1",
+                callback_id="cb-1",
+                idempotency_key="idem-callback-1",
+                reason="terminal_run",
+                received_at=timestamp,
+                payload_digest=graphblocks.canonical_hash({"status": "failed"}),
+            ),
+            "server async callback rejection received_at must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ServerEventSubscription(
+                subscription_id="sub-timestamp-1",
+                run_id="run-timestamp-1",
+                event_filter={},
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+                created_at=timestamp,
+            ),
+            "server event subscription created_at must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ServerCallbackRegistration(
+                subscription_id="callback-sub-timestamp-1",
+                scope="tenant",
+                scope_id="tenant-1",
+                event_filter={},
+                delivery={"kind": "local_callback", "callback_name": "ide"},
+                created_at=timestamp,
+            ),
+            "server callback registration created_at must not contain surrounding whitespace",
+        ),
+    )
+    for constructor, expected_error in cases:
+        with pytest.raises(ValueError, match=expected_error):
+            constructor()
+
+
 def test_server_async_callback_from_request_preserves_artifacts() -> None:
     request = ServerRequest(
         method="POST",

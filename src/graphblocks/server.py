@@ -112,7 +112,7 @@ def _validate_transport(value: object) -> ServerTransport:
 
 
 def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
-    timestamp = _validate_non_empty_string(owner, field_name, value)
+    timestamp = _validate_exact_non_empty_string(owner, field_name, value)
     if len(timestamp) <= 19 or timestamp[10] != "T":
         raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     suffix_start = 19
