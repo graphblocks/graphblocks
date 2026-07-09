@@ -44,6 +44,17 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
 })
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 VALID_EVENT_VISIBILITIES = frozenset({"client", "operator", "internal", "audit_only"})
+VALID_ATTACH_CAPABILITIES = frozenset({
+    "assistant_drafts",
+    "retractions",
+    "artifact_preview",
+    "patch_preview",
+    "approval",
+    "review",
+    "budget_extension",
+    "background_notifications",
+    "interrupt_resume",
+})
 VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 SERVER_EVENT_SEVERITY_RANKS = {
@@ -3367,6 +3378,10 @@ class GraphBlocksServerApp:
         if capabilities is None:
             capabilities = ()
         capabilities_tuple = _validate_string_sequence("attach request", "capabilities", capabilities)
+        if any(value != value.strip() for value in capabilities) or any(
+            value not in VALID_ATTACH_CAPABILITIES for value in capabilities_tuple
+        ):
+            raise ValueError("attach request capabilities must contain only supported attach capability literals")
 
         sequence_by_cursor: dict[str, int] = {}
         last_sequence = 0

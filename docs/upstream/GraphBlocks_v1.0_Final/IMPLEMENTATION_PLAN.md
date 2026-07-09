@@ -1384,7 +1384,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   longer retained. Attach cursors must belong to the target run and use a non-negative integer
   sequence; retained event `sequence` metadata must also be a non-boolean non-negative integer
   before attach replay projection, and malformed or wrong-run cursors are rejected before retention
-  lookup.
+  lookup. Attach capability declarations are validated against the specification's literal set and
+  rejected if they only become valid after trimming whitespace.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
   event stream and current run status. Stored detach projection records are immutable snapshots,

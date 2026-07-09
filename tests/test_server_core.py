@@ -4483,6 +4483,33 @@ def test_server_app_attaches_to_run_after_cursor() -> None:
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
 
 
+def test_server_app_rejects_attach_with_invalid_capabilities() -> None:
+    cases = (
+        (["assistant_drafts "], "attach request capabilities must contain only supported attach capability literals"),
+        (["screen_share"], "attach request capabilities must contain only supported attach capability literals"),
+    )
+    for index, (capabilities, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id[f"run-attach-invalid-capability-{index}"] = ()
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/runs/run-attach-invalid-capability-{index}/attach",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps({"capabilities": capabilities}).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+
+
 def test_server_app_rejects_attach_replay_with_malformed_sequence() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-attach-bool-sequence-1"] = (
