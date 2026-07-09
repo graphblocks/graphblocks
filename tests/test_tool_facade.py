@@ -2785,6 +2785,40 @@ def test_tool_result_artifacts_accept_artifact_refs_and_camel_case_payloads() ->
     }
 
 
+def test_tool_result_artifacts_reject_whitespace_wrapped_metadata() -> None:
+    artifact_cases = (
+        ("artifact_id", "artifact-1", "artifact_id", " artifact-1"),
+        ("uri", "blob://artifact-1", "uri", "blob://artifact-1 "),
+        ("media_type", "application/json", "media_type", "\tapplication/json"),
+        ("checksum", "sha256:artifact", "checksum", "sha256:artifact\n"),
+        ("etag", "etag-1", "etag", " etag-1"),
+        ("version", "v1", "version", "v1 "),
+        ("filename", "result.json", "filename", "\tresult.json"),
+        ("artifactId", "artifact-2", "artifact_id", " artifact-2"),
+        ("mediaType", "application/json", "media_type", "application/json "),
+    )
+
+    for index, (field_name, _valid_value, canonical_field_name, wrapped_value) in enumerate(artifact_cases):
+        artifact = {
+            "artifact_id": f"artifact-{index}",
+            "uri": f"blob://artifact-{index}",
+            "media_type": "application/json",
+            "checksum": "sha256:artifact",
+            "etag": "etag-valid",
+            "version": "v1",
+            "filename": "result.json",
+        }
+        if field_name in {"artifactId", "mediaType"}:
+            artifact.pop(canonical_field_name)
+        artifact[field_name] = wrapped_value
+
+        with pytest.raises(
+            ValueError,
+            match=f"tool result artifact {canonical_field_name} must not contain surrounding whitespace",
+        ):
+            ToolResult(tool_call_id="call-1", status="completed", artifacts=(artifact,))
+
+
 def test_tool_result_rejects_invalid_artifact_references() -> None:
     invalid_artifacts = (
         (object(), "tool result artifact entries must be artifact references"),

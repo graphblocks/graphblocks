@@ -2116,22 +2116,13 @@ def _tool_result_artifact_mapping(artifact: object) -> MappingProxyType[str, obj
         raise ValueError("tool result artifact entries must be artifact references")
 
     artifact_id = artifact_copy.get("artifact_id")
-    if not isinstance(artifact_id, str):
-        raise ValueError("tool result artifact artifact_id must be a string")
-    if not artifact_id.strip():
-        raise ValueError("tool result artifact artifact_id must not be empty")
+    _validate_exact_non_empty_string("tool result artifact", "artifact_id", artifact_id)
     uri = artifact_copy.get("uri")
-    if not isinstance(uri, str):
-        raise ValueError("tool result artifact uri must be a string")
-    if not uri.strip():
-        raise ValueError("tool result artifact uri must not be empty")
+    _validate_exact_non_empty_string("tool result artifact", "uri", uri)
     for field_name in ("media_type", "checksum", "etag", "version", "filename"):
         value = artifact_copy.get(field_name)
         if value is not None:
-            if not isinstance(value, str):
-                raise ValueError(f"tool result artifact {field_name} must be a string")
-            if not value.strip():
-                raise ValueError(f"tool result artifact {field_name} must not be empty")
+            _validate_exact_non_empty_string("tool result artifact", field_name, value)
     size_bytes = artifact_copy.get("size_bytes")
     if size_bytes is not None:
         if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):

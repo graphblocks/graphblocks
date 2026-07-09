@@ -237,6 +237,9 @@ Message
   identities before argument assembly, admission, or dependency planning can depend on them.
 - tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
 - `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
+- Python `ToolResult` artifact references now validate artifact ids, URIs, media types, checksums,
+  etags, versions, and filenames as exact metadata values, rejecting strings that only become valid
+  after trimming whitespace before untrusted tool output can publish durable artifact references.
 - `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
 - Rust `ToolExecutionPlan` validation rejects duplicate dependency references per call before
   dependency graph normalization, so dependent tool execution remains deterministic and auditable.
