@@ -360,7 +360,12 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
         ("operationIds", "operation_ids"),
     ):
         if source_key in event_filter:
-            _validate_string_sequence(owner, f"event_filter.{field_name}", event_filter[source_key])
+            raw_values = event_filter[source_key]
+            _validate_string_sequence(owner, f"event_filter.{field_name}", raw_values)
+            if any(value != value.strip() for value in raw_values):  # type: ignore[union-attr]
+                raise ValueError(
+                    f"{owner} event_filter.{field_name} values must not contain surrounding whitespace"
+                )
 
     visibility = event_filter.get("visibility")
     if visibility is not None:

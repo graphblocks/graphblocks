@@ -1189,8 +1189,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   sends may finish but no queued work should be newly delivered.
 - Runtime callback subscription construction now validates visibility filter literals against the
   specification's `client`, `operator`, `internal`, and `audit_only` set before storing a
-  subscription projection. Run-subscription and callback-registration server paths reject visibility
-  and minimum-severity filter literals that only become valid after trimming whitespace.
+  subscription projection. Run-subscription and callback-registration server paths reject event type,
+  node id, operation id, visibility, and minimum-severity filter literals that only become valid
+  after trimming whitespace.
 - Python and Rust callback event filters now expose an authorization projection that intersects
   requested visibility with the subscriber's allowed visibility, so a callback subscription filter
   cannot widen access to operator/internal/audit-only events. Protocol-event filtering treats

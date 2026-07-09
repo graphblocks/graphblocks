@@ -6047,6 +6047,50 @@ def test_server_app_rejects_subscription_with_invalid_visibility_filter() -> Non
         assert app.subscriptions("run-subscribe-visibility-invalid-1") == ()
 
 
+def test_server_app_rejects_subscription_with_whitespace_wrapped_identity_filters() -> None:
+    cases = (
+        (
+            {"types": ["RunSucceeded "]},
+            "server event subscription event_filter.types values must not contain surrounding whitespace",
+        ),
+        (
+            {"types": ["RunSucceeded"], "nodeIds": ["runChecks "]},
+            "server event subscription event_filter.node_ids values must not contain surrounding whitespace",
+        ),
+        (
+            {"types": ["RunSucceeded"], "operationIds": ["op-ci-1 "]},
+            "server event subscription event_filter.operation_ids values must not contain surrounding whitespace",
+        ),
+    )
+    for index, (event_filter, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+        app._events_by_run_id["run-subscribe-identity-invalid-1"] = ()
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-subscribe-identity-invalid-1/subscriptions",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"sub-identity-invalid-{index}",
+                        "eventFilter": event_filter,
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
+        }
+        assert app.subscriptions("run-subscribe-identity-invalid-1") == ()
+
+
 def test_server_app_unsubscribes_without_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -8433,6 +8477,51 @@ def test_server_app_rejects_callback_registration_with_invalid_visibility_filter
         assert json.loads(response.body.decode("utf-8")) == {
             "ok": False,
             "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
+        }
+        assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_whitespace_wrapped_identity_filters() -> None:
+    cases = (
+        (
+            {"types": ["RunSucceeded "]},
+            "server event subscription event_filter.types values must not contain surrounding whitespace",
+        ),
+        (
+            {"types": ["RunSucceeded"], "nodeIds": ["waitCI "]},
+            "server event subscription event_filter.node_ids values must not contain surrounding whitespace",
+        ),
+        (
+            {"types": ["RunSucceeded"], "operationIds": ["op-ci-filter-metadata-1 "]},
+            "server event subscription event_filter.operation_ids values must not contain surrounding whitespace",
+        ),
+    )
+    for index, (event_filter, expected_error) in enumerate(cases, start=1):
+        app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": f"callback-sub-identity-invalid-{index}",
+                        "scope": "tenant",
+                        "scopeId": "tenant-1",
+                        "eventFilter": event_filter,
+                        "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "error": expected_error,
         }
         assert app.callback_registrations() == ()
 
