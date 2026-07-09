@@ -624,6 +624,50 @@
     }
   },
   {
+    "name": "background_run_zero_year_event_occurred_at_rejected",
+    "kind": "background_run_event_stream",
+    "responseMode": "accepted",
+    "lifetime": "job",
+    "sourceOfTruth": "ApplicationEventStream",
+    "initialResponse": {
+      "runId": "run-zero-year-event",
+      "status": "accepted",
+      "eventStream": "/v1/runs/run-zero-year-event/events",
+      "websocket": "/v1/runs/run-zero-year-event/ws",
+      "cancel": "/v1/runs/run-zero-year-event/cancel",
+      "initialCursor": "evt_0"
+    },
+    "detach": {
+      "clientId": "client-ide-1",
+      "cancelRun": false
+    },
+    "events": [
+      {
+        "eventId": "evt-zero-year-1",
+        "runId": "run-zero-year-event",
+        "releaseId": "release-background-001",
+        "sequence": 1,
+        "occurredAt": "0000-06-23T00:00:01Z",
+        "cursor": "evt_1",
+        "type": "RunStarted",
+        "payload": {}
+      }
+    ],
+    "attach": {
+      "lastCursor": "evt_0"
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableBackgroundRunInvalid",
+        "message": "background run event requires ISO occurredAt",
+        "path": "$.events[0].occurredAt"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "background_run_replay_from_initial_cursor_returns_retained_events",
     "kind": "background_run_event_stream",
     "responseMode": "accepted",
