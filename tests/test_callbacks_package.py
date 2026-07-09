@@ -1056,6 +1056,21 @@ def test_callback_delivery_projection_rejects_status_timestamp_conflicts() -> No
         ),
     )
     _assert_raises_value_error(
+        "delivering callback delivery must not already have delivered_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_delivering_delivered",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=2,
+            idempotency_key="sub_001:evt_1042:delivering-delivered",
+            status="delivering",
+            delivered_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
         "terminal callback delivery must not have next_retry_at",
         lambda: CallbackDeliveryProjection(
             delivery_id="del_delivered_retry",

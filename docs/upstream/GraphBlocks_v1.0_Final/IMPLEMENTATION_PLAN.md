@@ -1708,9 +1708,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Late webhook responses cannot mutate either case because response transitions require an
   in-flight `delivering` record.
 - `graphblocks-callbacks` callback delivery projections now reject status/timestamp conflicts
-  such as pending deliveries that already have a delivered timestamp or non-retryable terminal
-  deliveries that still carry a future retry timestamp, keeping retry metadata scoped to live retry
-  attempts.
+  such as pending or delivering records that already have a delivered timestamp or non-retryable
+  terminal deliveries that still carry a future retry timestamp, keeping retry metadata scoped to
+  live retry attempts.
 - Callback delivery success projections now require delivered/acknowledged timestamps at direct
   construction time, preserving an inspectable audit trail for accepted and duplicate webhook
   deliveries.
