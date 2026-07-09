@@ -8463,6 +8463,7 @@ class TckRunner:
                         ("runId", "run_id"),
                         ("nodeId", "node_id"),
                         ("attemptId", "attempt_id"),
+                        ("idempotencyKey", "idempotency_key"),
                         ("releaseId", "release_id"),
                         ("tenantId", "tenant_id"),
                         ("policySnapshotId", "policy_snapshot_id"),
