@@ -246,7 +246,8 @@ Message
 - Python `ToolExecutionPlan` and `ToolPlanCall` validation now treats plan ids, response ids,
   effect serialization keys, failure/cancellation policy literals, and per-call cancellation
   literals as exact scheduling values, so whitespace-normalized keys cannot alter dependency or
-  state-changing effect serialization.
+  state-changing effect serialization. Effect-key templates now reject non-string inputs through
+  the same typed plan error surface before placeholder expansion begins.
 - Rust `ToolExecutionPlan` validation rejects duplicate dependency references per call before
   dependency graph normalization, so dependent tool execution remains deterministic and auditable.
 - Rust `ToolExecutionPlan` validation now reports `UnsafeParallelEffects` when independent

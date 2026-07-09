@@ -4344,6 +4344,11 @@ def test_tool_execution_plan_derives_effect_keys_from_template() -> None:
     assert plan.ready_call_ids() == ["call-b", "call-c"]
 
 
+def test_tool_execution_plan_effect_key_template_rejects_non_string_template() -> None:
+    with pytest.raises(ToolExecutionPlanError, match="effect key template must be a string"):
+        ToolPlanCall(_tool_call("call-a")).with_effect_key_template(1)  # type: ignore[arg-type]
+
+
 def test_tool_execution_plan_effect_key_template_reports_missing_arguments() -> None:
     with pytest.raises(ToolExecutionPlanError) as error:
         ToolPlanCall(_tool_call("call-a", "{}")).with_effect_key_template(

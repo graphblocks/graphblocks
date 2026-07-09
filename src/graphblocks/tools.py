@@ -1515,6 +1515,8 @@ class ToolPlanCall:
         object.__setattr__(self, "effects", effects)
 
     def with_effect_key_template(self, template: str) -> ToolPlanCall:
+        if not isinstance(template, str):
+            raise ToolExecutionPlanError("effect key template must be a string")
         output: list[str] = []
         rest = template
         while "{" in rest:
