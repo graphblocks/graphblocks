@@ -3040,11 +3040,19 @@ class GraphBlocksServerApp:
         return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
 
     def callback_delivery_redrives(self, delivery_id: str) -> tuple[dict[str, object], ...]:
-        delivery_id = _validate_non_empty_string("server callback delivery control", "delivery_id", delivery_id)
+        delivery_id = _validate_exact_non_empty_string(
+            "server callback delivery control",
+            "delivery_id",
+            delivery_id,
+        )
         return self._callback_delivery_redrives.get(delivery_id, ())
 
     def callback_delivery_dead_letter_moves(self, delivery_id: str) -> tuple[dict[str, object], ...]:
-        delivery_id = _validate_non_empty_string("server callback delivery control", "delivery_id", delivery_id)
+        delivery_id = _validate_exact_non_empty_string(
+            "server callback delivery control",
+            "delivery_id",
+            delivery_id,
+        )
         return self._callback_delivery_dead_letter_moves.get(delivery_id, ())
 
     def _run_status_payload(
@@ -3335,7 +3343,11 @@ class GraphBlocksServerApp:
         principal: PrincipalRef | None,
     ) -> ServerResponse:
         requested_at = _validate_iso_datetime("callback delivery control request", "requested_at", requested_at)
-        delivery_id = _validate_non_empty_string("callback delivery control request", "delivery_id", delivery_id)
+        delivery_id = _validate_exact_non_empty_string(
+            "callback delivery control request",
+            "delivery_id",
+            delivery_id,
+        )
         operator_value = payload.get("operator", payload.get("operatorPrincipal"))
         if operator_value is None and principal is not None:
             operator = principal.principal_id

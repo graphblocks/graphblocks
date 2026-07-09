@@ -1655,7 +1655,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   redrive requests remain repeatable operator actions. Authenticated control requests derive the
   audit operator from the authorized principal when the body omits it and reject body-supplied
   operators that do not match the authenticated principal. Body-supplied operator and reason values
-  are rejected if they only become valid after trimming whitespace, preserving audit identity and
+  are rejected if they only become valid after trimming whitespace, and delivery route ids are
+  validated as exact decoded identities before storage, preserving audit identity and
   redrive/dead-letter reason text.
 - `graphblocks-client` now exposes HTTP helpers for callback delivery redrive and dead-letter
   moves. The helpers validate delivery id and reason locally, optionally accept an explicit

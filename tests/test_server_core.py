@@ -9345,6 +9345,29 @@ def test_server_app_rejects_callback_delivery_control_with_whitespace_wrapped_op
         assert app.callback_delivery_redrives(f"del-whitespace-{index}") == ()
 
 
+def test_server_app_rejects_callback_delivery_control_with_whitespace_wrapped_delivery_id() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/%20del-whitespace-id%20/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "receiver recovered"}).encode("utf-8"),
+            requested_at="2026-07-02T00:04:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery control request delivery_id must not contain surrounding whitespace",
+    }
+    assert app.callback_delivery_redrives("del-whitespace-id") == ()
+
+
 def test_server_app_rejects_callback_delivery_control_with_invalid_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
 
