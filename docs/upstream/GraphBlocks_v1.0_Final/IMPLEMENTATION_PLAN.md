@@ -1009,6 +1009,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   identities, replay cursors, lifecycle/failure-policy literals, delivery identities,
   idempotency keys, statuses, and terminal error text before callback projections can be stored or
   redriven.
+- `graphblocks-callbacks` now applies the same exact-value rule to durable webhook delivery,
+  envelope, replay, endpoint, authentication-ref, and external callback receipt identities,
+  rejecting surrounding whitespace before those values can become replay keys, resume fences,
+  idempotency keys, or verifier/principal references.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

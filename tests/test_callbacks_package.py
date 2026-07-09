@@ -2063,6 +2063,91 @@ def test_callback_replay_guard_requires_restored_record_key_to_match_idempotency
     )
 
 
+def test_callback_durable_identities_reject_surrounding_whitespace() -> None:
+    _assert_raises_value_error(
+        "delivery_id must not contain surrounding whitespace",
+        lambda: CallbackEnvelope(
+            delivery_id=" cb_001",
+            subscription_id="sub_001",
+            event_id="evt_callback_001",
+            run_id="run_coding_001",
+            sequence=77,
+            cursor="evt_callback_001",
+            type="ExternalCallbackReceived",
+            payload={"status": "completed"},
+            idempotency_key="op_ci_001:attempt_001:provider_001",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "idempotency_key must not contain surrounding whitespace",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key=" sub_001:evt_1042",
+        ),
+    )
+    _assert_raises_value_error(
+        "cursor must not contain surrounding whitespace",
+        lambda: CallbackReplayRecord(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            cursor="evt_1042 ",
+            idempotency_key="sub_001:evt_1042",
+            envelope_digest=canonical_hash({"delivery": "accepted"}),
+        ),
+    )
+    _assert_raises_value_error(
+        "secret_ref must not contain surrounding whitespace",
+        lambda: CallbackEndpointAuth(kind="hmac", secret_ref=" secret://callbacks/ci"),
+    )
+    _assert_raises_value_error(
+        "accepted_schema must not contain surrounding whitespace",
+        lambda: CallbackEndpointRef(
+            endpoint_id="cbep_ci_001",
+            url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+            accepted_schema=" schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            release_id="rel_001",
+            tenant_id="tenant_001",
+        ),
+    )
+    _assert_raises_value_error(
+        "verified_by must not contain surrounding whitespace",
+        lambda: ExternalCallbackReceipt(
+            callback_id="cb_001",
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            provider_operation_id=None,
+            idempotency_key="op_ci_001:attempt_001:provider_001",
+            payload_projection=CallbackPayloadProjection(
+                mode="inline",
+                payload={"status": "completed"},
+                payload_digest=canonical_hash({"status": "completed"}),
+                payload_size_bytes=len(canonical_dumps({"status": "completed"}).encode("utf-8")),
+            ),
+            payload_digest=canonical_hash({"status": "completed"}),
+            received_at="2026-07-02T00:00:02Z",
+            verified_by=" hmac-sha256:key-current",
+            policy_snapshot_id="policy_001",
+        ),
+    )
+
+
 def test_external_callback_receipt_projects_verified_callback_metadata() -> None:
     envelope = CallbackEnvelope(
         delivery_id="cb_001",

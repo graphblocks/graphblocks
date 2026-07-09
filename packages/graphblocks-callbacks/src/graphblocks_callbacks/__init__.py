@@ -147,6 +147,12 @@ def _require_non_empty_string(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a non-empty string")
 
 
+def _require_stable_string(field_name: str, value: str) -> None:
+    _require_non_empty_string(field_name, value)
+    if value != value.strip():
+        raise ValueError(f"{field_name} must not contain surrounding whitespace")
+
+
 def _require_sha256_digest(field_name: str, value: str) -> None:
     _require_non_empty_string(field_name, value)
     if not value.startswith("sha256:"):
@@ -181,8 +187,7 @@ def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
         raise ValueError("headers must be a mapping")
     normalized: dict[str, str] = {}
     for key, value in headers.items():
-        if not isinstance(key, str) or not key.strip():
-            raise ValueError("headers keys must be non-empty strings")
+        _require_stable_string("headers keys", key)
         if not isinstance(value, str):
             raise ValueError("headers values must be strings")
         normalized_key = key.lower()
@@ -500,7 +505,7 @@ class CallbackRetryPolicy:
             object.__setattr__(self, "max_delay_ms", self.initial_delay_ms)
 
     def delay_ms(self, *, delivery_id: str, attempt: int) -> int:
-        _require_non_empty_string("delivery_id", delivery_id)
+        _require_stable_string("delivery_id", delivery_id)
         attempt = _positive_int("attempt", attempt)
         base = min(self.max_delay_ms, self.initial_delay_ms * (2 ** max(0, attempt - 1)))
         jitter = _deterministic_jitter_ms(f"{delivery_id}:{attempt}", self.jitter_ms)
@@ -525,7 +530,7 @@ class CallbackDeliveryProjection:
 
     def __post_init__(self) -> None:
         for field_name in ("delivery_id", "subscription_id", "event_id", "run_id", "cursor", "idempotency_key"):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            _require_stable_string(field_name, getattr(self, field_name))
         object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
         object.__setattr__(self, "attempt", _positive_int("attempt", self.attempt))
         _require_non_empty_string("status", self.status)
@@ -773,8 +778,8 @@ class CallbackDeliveryFailureAction:
         _require_non_empty_string("action", self.action)
         if self.action not in {"none", "pause_run", "fail_run"}:
             raise ValueError("action must be none, pause_run, or fail_run")
-        _require_non_empty_string("run_id", self.run_id)
-        _require_non_empty_string("delivery_id", self.delivery_id)
+        _require_stable_string("run_id", self.run_id)
+        _require_stable_string("delivery_id", self.delivery_id)
         _require_non_empty_string("reason", self.reason)
         if not isinstance(self.terminal_delivery, bool):
             raise ValueError("terminal_delivery must be a boolean")
@@ -844,7 +849,12 @@ class CallbackRedriveRecord:
             "reason",
             "redriven_at",
         ):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            if field_name == "reason":
+                _require_non_empty_string(field_name, getattr(self, field_name))
+            elif field_name == "redriven_at":
+                _require_non_empty_string(field_name, getattr(self, field_name))
+            else:
+                _require_stable_string(field_name, getattr(self, field_name))
         object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
         object.__setattr__(
             self,
@@ -957,7 +967,7 @@ class CallbackReplayRecord:
             "cursor",
             "idempotency_key",
         ):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            _require_stable_string(field_name, getattr(self, field_name))
         _require_sha256_digest("envelope_digest", self.envelope_digest)
 
 
@@ -1001,7 +1011,7 @@ class CallbackReplayGuard:
             raise ValueError("records must be a mapping")
         self._records = {}
         for key, record in records.items():
-            _require_non_empty_string("record key", key)
+            _require_stable_string("record key", key)
             if not isinstance(record, CallbackReplayRecord):
                 raise ValueError("records values must be CallbackReplayRecord")
             if key != record.idempotency_key:
@@ -1077,13 +1087,13 @@ class CallbackEndpointAuth:
     audience: str | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty_string("kind", self.kind)
+        _require_stable_string("kind", self.kind)
         if self.kind not in VALID_CALLBACK_AUTH_KINDS:
             raise ValueError("kind must be bearer, hmac, mtls, or oidc")
         for field_name in ("token_ref", "secret_ref", "client_identity_ref", "issuer", "audience"):
             value = getattr(self, field_name)
             if value is not None:
-                _require_non_empty_string(field_name, value)
+                _require_stable_string(field_name, value)
         if self.kind == "bearer" and self.token_ref is None:
             raise ValueError("bearer callback auth requires token_ref")
         if self.kind == "hmac" and self.secret_ref is None:
@@ -1130,7 +1140,7 @@ class CallbackEndpointRef:
             "release_id",
             "tenant_id",
         ):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            _require_stable_string(field_name, getattr(self, field_name))
         parsed_url = urlparse(self.url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             raise ValueError("url must be an absolute http(s) URL")
@@ -1141,7 +1151,7 @@ class CallbackEndpointRef:
         if self.expires_at is not None:
             _parse_field_timestamp("expires_at", self.expires_at)
         if self.provider_operation_id is not None:
-            _require_non_empty_string("provider_operation_id", self.provider_operation_id)
+            _require_stable_string("provider_operation_id", self.provider_operation_id)
 
     def binding_key(self) -> str:
         return _callback_resume_binding_key(
@@ -1184,11 +1194,14 @@ class CallbackEnvelope:
             "delivered_at",
             "release_id",
         ):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            if field_name in {"occurred_at", "delivered_at"}:
+                _require_non_empty_string(field_name, getattr(self, field_name))
+            else:
+                _require_stable_string(field_name, getattr(self, field_name))
         if self.tenant_id is not None:
-            _require_non_empty_string("tenant_id", self.tenant_id)
+            _require_stable_string("tenant_id", self.tenant_id)
         if self.operation_id is not None:
-            _require_non_empty_string("operation_id", self.operation_id)
+            _require_stable_string("operation_id", self.operation_id)
         if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
         occurred_at = _parse_field_timestamp("occurred_at", self.occurred_at)
@@ -1270,14 +1283,17 @@ class ExternalCallbackReceipt:
             "policy_snapshot_id",
             "release_id",
         ):
-            _require_non_empty_string(field_name, getattr(self, field_name))
+            if field_name == "received_at":
+                _require_non_empty_string(field_name, getattr(self, field_name))
+            else:
+                _require_stable_string(field_name, getattr(self, field_name))
         if self.verified_by.strip().lower() == "unauthenticated":
             raise ValueError("verified_by must identify an authenticated verifier")
         _require_sha256_digest("external callback receipt payload_digest", self.payload_digest)
         if self.tenant_id is not None:
-            _require_non_empty_string("tenant_id", self.tenant_id)
+            _require_stable_string("tenant_id", self.tenant_id)
         if self.provider_operation_id is not None:
-            _require_non_empty_string("provider_operation_id", self.provider_operation_id)
+            _require_stable_string("provider_operation_id", self.provider_operation_id)
         _parse_field_timestamp("received_at", self.received_at)
         if not isinstance(self.payload_projection, CallbackPayloadProjection):
             raise ValueError("payload_projection must be a CallbackPayloadProjection")
@@ -1326,19 +1342,19 @@ def record_external_callback_receipt(
         envelope.delivered_at,
     ):
         raise ValueError("received_at must not be before envelope delivered_at")
-    _require_non_empty_string("operation_id", operation_id)
+    _require_stable_string("operation_id", operation_id)
     if envelope.operation_id is not None and operation_id != envelope.operation_id:
         raise ValueError("operation_id must match the envelope")
     if run_id is not None:
-        _require_non_empty_string("run_id", run_id)
+        _require_stable_string("run_id", run_id)
         if run_id != envelope.run_id:
             raise ValueError("run_id must match the envelope")
     if release_id is not None:
-        _require_non_empty_string("release_id", release_id)
+        _require_stable_string("release_id", release_id)
         if release_id != envelope.release_id:
             raise ValueError("release_id must match the envelope")
     if tenant_id is not None:
-        _require_non_empty_string("tenant_id", tenant_id)
+        _require_stable_string("tenant_id", tenant_id)
         if tenant_id != envelope.tenant_id:
             raise ValueError("tenant_id must match the envelope")
     callback_id = envelope.delivery_id if callback_id is None else callback_id
