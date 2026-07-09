@@ -2189,6 +2189,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable background-run shared TCK cases now require `sourceOfTruth`/`source_of_truth` to be
   exactly `ApplicationEventStream` in both Rust and Python runners, preventing callback
   subscriptions or truthy placeholders from satisfying the authoritative-event-stream invariant.
+- Python durable tool-terminal TCK validation now requires real boolean values for
+  `effectCommitted` and `durableResultCommitted` evidence on terminal records, late durable results,
+  and audited late effects, so truthy strings cannot prove side-effect preservation or durable-result
+  commitment across policy stops.
 - Durable async callback resume-guard shared TCK cases now require real boolean values for the
   authentication, schema, timeout, cancellation, stale-attempt, source-event, and provider-mismatch
   safety checks in both Rust and Python runners, rejecting missing guard fields as well as truthy

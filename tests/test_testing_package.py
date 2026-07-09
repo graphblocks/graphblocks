@@ -4496,6 +4496,59 @@ def test_testing_package_rejects_async_callback_resume_whitespace_receipt_metada
         )
 
 
+def test_testing_package_durable_tool_terminal_rejects_non_boolean_commit_evidence(
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
+    cases = (
+        (
+            "tool_terminal_record_projects_tool_result",
+            ("record", "durableResultCommitted"),
+            "durable tool terminal record durableResultCommitted must be a boolean",
+            "$.record.durableResultCommitted",
+        ),
+        (
+            "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+            ("lateDurableResult", "durableResultCommitted"),
+            "durable tool terminal lateDurableResult durableResultCommitted must be a boolean",
+            "$.lateDurableResult.durableResultCommitted",
+        ),
+        (
+            "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+            ("auditedLateEffect", "effectCommitted"),
+            "durable tool terminal auditedLateEffect effectCommitted must be a boolean",
+            "$.auditedLateEffect.effectCommitted",
+        ),
+    )
+
+    for source_case_name, (section_name, field_name), message, path in cases:
+        fixture = json.loads(
+            json.dumps(
+                next(raw_case for raw_case in raw_cases if raw_case["name"] == source_case_name)
+            )
+        )
+        fixture.pop("expected", None)
+        fixture[section_name][field_name] = "false"
+        case = graphblocks_testing.TckCase.durable(
+            case_id=f"durable/tool-terminal-non-boolean-{section_name}-{field_name}",
+            fixture=fixture,
+        )
+
+        report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+        assert not report.ok
+        assert report.results[0].diagnostics == (
+            {
+                "code": "DurableToolTerminalInvalid",
+                "message": message,
+                "path": path,
+            },
+        )
+
+
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))

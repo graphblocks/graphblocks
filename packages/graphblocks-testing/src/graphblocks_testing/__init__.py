@@ -6918,6 +6918,24 @@ class TckRunner:
                 if effect_outcome is not None:
                     tool_result = tool_result.with_effect_outcome(str(effect_outcome))
                 idempotency_key = raw_record.get("idempotencyKey", raw_record.get("idempotency_key"))
+                record_durable_result_path = (
+                    "durableResultCommitted"
+                    if "durableResultCommitted" in raw_record
+                    or "durable_result_committed" not in raw_record
+                    else "durable_result_committed"
+                )
+                raw_record_durable_result_committed = raw_record.get(
+                    "durableResultCommitted",
+                    raw_record.get("durable_result_committed", False),
+                )
+                if not isinstance(raw_record_durable_result_committed, bool):
+                    diagnostics.append(
+                        {
+                            "code": "DurableToolTerminalInvalid",
+                            "message": "durable tool terminal record durableResultCommitted must be a boolean",
+                            "path": f"$.record.{record_durable_result_path}",
+                        }
+                    )
                 record = durable.DurableToolTerminalRecord.from_tool_result(
                     tool_result,
                     run_id=str(raw_record.get("runId", raw_record.get("run_id", ""))),
@@ -6926,7 +6944,11 @@ class TckRunner:
                     arguments_digest=str(raw_record.get("argumentsDigest", raw_record.get("arguments_digest", ""))),
                     completed_at_unix_ms=int(raw_record.get("completedAtUnixMs", raw_record.get("completed_at_unix_ms", 0))),
                     idempotency_key=str(idempotency_key) if idempotency_key is not None else None,
-                    durable_result_committed=bool(raw_record.get("durableResultCommitted", raw_record.get("durable_result_committed", False))),
+                    durable_result_committed=(
+                        raw_record_durable_result_committed
+                        if isinstance(raw_record_durable_result_committed, bool)
+                        else False
+                    ),
                 )
                 committed = store.record_tool_terminal(record)
                 observed = {
@@ -6965,6 +6987,42 @@ class TckRunner:
                 )
                 late_error = None
                 try:
+                    late_effect_committed_path = (
+                        "effectCommitted"
+                        if "effectCommitted" in raw_late_result
+                        or "effect_committed" not in raw_late_result
+                        else "effect_committed"
+                    )
+                    raw_late_effect_committed = raw_late_result.get(
+                        "effectCommitted",
+                        raw_late_result.get("effect_committed", False),
+                    )
+                    if not isinstance(raw_late_effect_committed, bool):
+                        diagnostics.append(
+                            {
+                                "code": "DurableToolTerminalInvalid",
+                                "message": "durable tool terminal lateDurableResult effectCommitted must be a boolean",
+                                "path": f"$.lateDurableResult.{late_effect_committed_path}",
+                            }
+                        )
+                    late_durable_result_path = (
+                        "durableResultCommitted"
+                        if "durableResultCommitted" in raw_late_result
+                        or "durable_result_committed" not in raw_late_result
+                        else "durable_result_committed"
+                    )
+                    raw_late_durable_result_committed = raw_late_result.get(
+                        "durableResultCommitted",
+                        raw_late_result.get("durable_result_committed", False),
+                    )
+                    if not isinstance(raw_late_durable_result_committed, bool):
+                        diagnostics.append(
+                            {
+                                "code": "DurableToolTerminalInvalid",
+                                "message": "durable tool terminal lateDurableResult durableResultCommitted must be a boolean",
+                                "path": f"$.lateDurableResult.{late_durable_result_path}",
+                            }
+                        )
                     store.record_tool_terminal(
                         durable.DurableToolTerminalRecord(
                             run_id=str(raw_late_result.get("runId", raw_late_result.get("run_id", ""))),
@@ -6979,12 +7037,56 @@ class TckRunner:
                                 if raw_late_result.get("outputDigest", raw_late_result.get("output_digest")) is not None
                                 else None
                             ),
-                            effect_committed=bool(raw_late_result.get("effectCommitted", raw_late_result.get("effect_committed", False))),
-                            durable_result_committed=bool(raw_late_result.get("durableResultCommitted", raw_late_result.get("durable_result_committed", False))),
+                            effect_committed=(
+                                raw_late_effect_committed
+                                if isinstance(raw_late_effect_committed, bool)
+                                else False
+                            ),
+                            durable_result_committed=(
+                                raw_late_durable_result_committed
+                                if isinstance(raw_late_durable_result_committed, bool)
+                                else False
+                            ),
                         )
                     )
                 except durable.ResponsePolicyStoppedError:
                     late_error = "response_policy_stopped"
+                audited_effect_committed_path = (
+                    "effectCommitted"
+                    if "effectCommitted" in raw_audited
+                    or "effect_committed" not in raw_audited
+                    else "effect_committed"
+                )
+                raw_audited_effect_committed = raw_audited.get(
+                    "effectCommitted",
+                    raw_audited.get("effect_committed", False),
+                )
+                if not isinstance(raw_audited_effect_committed, bool):
+                    diagnostics.append(
+                        {
+                            "code": "DurableToolTerminalInvalid",
+                            "message": "durable tool terminal auditedLateEffect effectCommitted must be a boolean",
+                            "path": f"$.auditedLateEffect.{audited_effect_committed_path}",
+                        }
+                    )
+                audited_durable_result_path = (
+                    "durableResultCommitted"
+                    if "durableResultCommitted" in raw_audited
+                    or "durable_result_committed" not in raw_audited
+                    else "durable_result_committed"
+                )
+                raw_audited_durable_result_committed = raw_audited.get(
+                    "durableResultCommitted",
+                    raw_audited.get("durable_result_committed", False),
+                )
+                if not isinstance(raw_audited_durable_result_committed, bool):
+                    diagnostics.append(
+                        {
+                            "code": "DurableToolTerminalInvalid",
+                            "message": "durable tool terminal auditedLateEffect durableResultCommitted must be a boolean",
+                            "path": f"$.auditedLateEffect.{audited_durable_result_path}",
+                        }
+                    )
                 audited = store.record_tool_terminal(
                     durable.DurableToolTerminalRecord(
                         run_id=str(raw_audited.get("runId", raw_audited.get("run_id", ""))),
@@ -6999,8 +7101,16 @@ class TckRunner:
                             if raw_audited.get("outputDigest", raw_audited.get("output_digest")) is not None
                             else None
                         ),
-                        effect_committed=bool(raw_audited.get("effectCommitted", raw_audited.get("effect_committed", False))),
-                        durable_result_committed=bool(raw_audited.get("durableResultCommitted", raw_audited.get("durable_result_committed", False))),
+                        effect_committed=(
+                            raw_audited_effect_committed
+                            if isinstance(raw_audited_effect_committed, bool)
+                            else False
+                        ),
+                        durable_result_committed=(
+                            raw_audited_durable_result_committed
+                            if isinstance(raw_audited_durable_result_committed, bool)
+                            else False
+                        ),
                     )
                 )
                 observed = {
@@ -7020,6 +7130,42 @@ class TckRunner:
                     raise ValueError("durable tool_terminal_effect_invariant case requires record")
                 record_error = None
                 try:
+                    record_effect_committed_path = (
+                        "effectCommitted"
+                        if "effectCommitted" in raw_record
+                        or "effect_committed" not in raw_record
+                        else "effect_committed"
+                    )
+                    raw_record_effect_committed = raw_record.get(
+                        "effectCommitted",
+                        raw_record.get("effect_committed", False),
+                    )
+                    if not isinstance(raw_record_effect_committed, bool):
+                        diagnostics.append(
+                            {
+                                "code": "DurableToolTerminalInvalid",
+                                "message": "durable tool terminal record effectCommitted must be a boolean",
+                                "path": f"$.record.{record_effect_committed_path}",
+                            }
+                        )
+                    record_durable_result_path = (
+                        "durableResultCommitted"
+                        if "durableResultCommitted" in raw_record
+                        or "durable_result_committed" not in raw_record
+                        else "durable_result_committed"
+                    )
+                    raw_record_durable_result_committed = raw_record.get(
+                        "durableResultCommitted",
+                        raw_record.get("durable_result_committed", False),
+                    )
+                    if not isinstance(raw_record_durable_result_committed, bool):
+                        diagnostics.append(
+                            {
+                                "code": "DurableToolTerminalInvalid",
+                                "message": "durable tool terminal record durableResultCommitted must be a boolean",
+                                "path": f"$.record.{record_durable_result_path}",
+                            }
+                        )
                     record = durable.DurableToolTerminalRecord(
                         run_id=str(raw_record.get("runId", raw_record.get("run_id", ""))),
                         response_id=str(raw_record.get("responseId", raw_record.get("response_id", ""))),
@@ -7033,8 +7179,16 @@ class TckRunner:
                             if raw_record.get("outputDigest", raw_record.get("output_digest")) is not None
                             else None
                         ),
-                        effect_committed=bool(raw_record.get("effectCommitted", raw_record.get("effect_committed", False))),
-                        durable_result_committed=bool(raw_record.get("durableResultCommitted", raw_record.get("durable_result_committed", False))),
+                        effect_committed=(
+                            raw_record_effect_committed
+                            if isinstance(raw_record_effect_committed, bool)
+                            else False
+                        ),
+                        durable_result_committed=(
+                            raw_record_durable_result_committed
+                            if isinstance(raw_record_durable_result_committed, bool)
+                            else False
+                        ),
                     )
                     store.record_tool_terminal(record)
                 except durable.ToolTerminalStoreError as error:
