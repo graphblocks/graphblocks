@@ -824,7 +824,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and callback-backed terminal completions or failures also reject `completed_at` values after
   `expires_at`, and `expired` records reject `completed_at` values before `expires_at`, preventing
   late provider results or early timeout projections from being recorded as current operation
-  outcomes.
+  outcomes. The same parser now rejects compact timezone offsets such as `+0000` and
+  space-separated datetime forms across async operation lifecycle fields before ordering checks.
 - Rust `AsyncOperation` validation now rejects zero `created_at_unix_ms` values so durable
   operation records cannot start from a sentinel timestamp.
 - Rust `AsyncOperation` validation now rejects `created` records that already carry submitted,
