@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 274
+    assert [case.kind for case in cases] == ["durable"] * 275
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1392,6 +1392,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
         "async_callback_resume_missing_idempotency_reevaluation_rejected",
+        "async_callback_resume_missing_budget_reevaluation_rejected",
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "async_callback_resume_non_paused_budget_state_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",
@@ -2345,6 +2346,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "async_callback_resume_missing_idempotency_reevaluation_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "async_callback_resume_missing_budget_reevaluation_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6398,6 +6404,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_non_sequence_reevaluates_rejected",
         "async_callback_resume_missing_reevaluates_rejected",
         "async_callback_resume_missing_idempotency_reevaluation_rejected",
+        "async_callback_resume_missing_budget_reevaluation_rejected",
         "async_callback_resume_non_string_reevaluates_entry_rejected",
         "async_callback_resume_non_paused_budget_state_rejected",
         "callback_cancel_race_cancel_wins_and_blocks_resume",

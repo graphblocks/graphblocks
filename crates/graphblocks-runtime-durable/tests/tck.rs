@@ -2999,6 +2999,27 @@ fn run_case(case: &Value) -> Result<(), String> {
                             .is_some_and(|entry| !entry.is_empty())
                     })
                 })
+                && !(reevaluates.contains("policy")
+                    && reevaluates.contains("budget")
+                    && reevaluates.contains("release"))
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCallbackResumeInvalid",
+                    "message": "async callback resume requires policy, budget, and release reevaluation",
+                    "path": "$.resume.reevaluates",
+                }));
+            }
+            if raw_resume
+                .get("reevaluates")
+                .and_then(Value::as_array)
+                .is_some_and(|entries| {
+                    entries.iter().all(|entry| {
+                        entry
+                            .as_str()
+                            .map(str::trim)
+                            .is_some_and(|entry| !entry.is_empty())
+                    })
+                })
                 && !reevaluates.contains("idempotency")
             {
                 diagnostics.push(json!({
