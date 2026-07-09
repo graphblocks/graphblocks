@@ -78,10 +78,16 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
         RunDeploymentProvenance(release_digest=" ")
     with pytest.raises(ValueError, match="run record run_id must not be empty"):
         RunRecord(" ", "sha256:test", {})
+    with pytest.raises(ValueError, match="run record run_id must not contain surrounding whitespace"):
+        RunRecord(" run-1", "sha256:test", {})
     with pytest.raises(ValueError, match="run record graph_hash must not be empty"):
         RunRecord("run-1", " ", {})
+    with pytest.raises(ValueError, match="run record graph_hash must not contain surrounding whitespace"):
+        RunRecord("run-1", "sha256:test ", {})
     with pytest.raises(ValueError, match="run record inputs must be an object"):
         RunRecord("run-1", "sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run record inputs key must not contain surrounding whitespace"):
+        RunRecord("run-1", "sha256:test", {" payload": True})
     with pytest.raises(ValueError, match="invalid run record status"):
         RunRecord("run-1", "sha256:test", {}, status="paused")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="invalid run record invocation_mode"):
@@ -99,23 +105,31 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
 def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
     store = InMemoryRunStore()
     inputs = {"message": {"text": "hello"}}
-    record = store.create_run(" sha256:test ", inputs)
+    record = store.create_run("sha256:test", inputs)
     inputs["message"]["text"] = "mutated"
 
     assert record.graph_hash == "sha256:test"
     assert store.get_run(record.run_id).inputs == {"message": {"text": "hello"}}
     with pytest.raises(ValueError, match="run store graph_hash must not be empty"):
         store.create_run(" ", {})
+    with pytest.raises(ValueError, match="run store graph_hash must not contain surrounding whitespace"):
+        store.create_run(" sha256:test", {})
     with pytest.raises(ValueError, match="run store inputs must be an object"):
         store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store inputs key must not contain surrounding whitespace"):
+        store.create_run("sha256:test", {" payload": True})
     with pytest.raises(ValueError, match="run store inputs.payload must contain only JSON values"):
         store.create_run("sha256:test", {"payload": object()})
     with pytest.raises(ValueError, match="run store run_id must not be empty"):
         store.create_run("sha256:test", {}, run_id=" ")
+    with pytest.raises(ValueError, match="run store run_id must not contain surrounding whitespace"):
+        store.create_run("sha256:test", {}, run_id=" run-1")
     with pytest.raises(ValueError, match="invalid run invocation mode"):
         store.create_run("sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store patch must be an object"):
         store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store patch key must not contain surrounding whitespace"):
+        store.patch_state(record.run_id, {" key": "value"}, expected_revision=0)
     with pytest.raises(ValueError, match="run store patch.value must not contain non-finite numbers"):
         store.patch_state(record.run_id, {"value": math.inf}, expected_revision=0)
     with pytest.raises(ValueError, match="run store expected_revision must be non-negative"):
@@ -441,12 +455,20 @@ def test_sqlite_run_store_validates_create_patch_and_status_arguments(tmp_path) 
 
     with pytest.raises(ValueError, match="run store graph_hash must not be empty"):
         store.create_run(" ", {})
+    with pytest.raises(ValueError, match="run store graph_hash must not contain surrounding whitespace"):
+        store.create_run("sha256:test ", {})
     with pytest.raises(ValueError, match="run store inputs must be an object"):
         store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store inputs key must not contain surrounding whitespace"):
+        store.create_run("sha256:test", {" payload": True})
     with pytest.raises(ValueError, match="run store run_id must not be empty"):
         store.get_run(" ")
+    with pytest.raises(ValueError, match="run store run_id must not contain surrounding whitespace"):
+        store.get_run(" run-000001")
     with pytest.raises(ValueError, match="run store patch must be an object"):
         store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store patch key must not contain surrounding whitespace"):
+        store.patch_state(record.run_id, {" key": "value"}, expected_revision=0)
     with pytest.raises(ValueError, match="run store expected_revision must be an integer"):
         store.patch_state(record.run_id, {}, expected_revision=True)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="invalid mutable run status"):

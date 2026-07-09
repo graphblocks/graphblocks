@@ -515,7 +515,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   protocol term `invocation mode`, while lower-level record validation still identifies the stored
   `invocation_mode` field.
 - Python run-store records now recursively validate inputs, state, and patches as JSON values,
-  rejecting arbitrary objects and non-finite numbers before durable replay or SQLite persistence.
+  rejecting arbitrary objects, non-finite numbers, empty or whitespace-wrapped JSON keys, and
+  run/graph identities that only become valid after trimming before durable replay or SQLite
+  persistence.
 - Python SQLite run-store replay now parses stored `inputs_json`, `state_json`, deployment
   provenance, and model-visible tool provenance with strict JSON semantics, rejecting non-standard
   constants such as `NaN` before a corrupted snapshot can be treated as durable run state.

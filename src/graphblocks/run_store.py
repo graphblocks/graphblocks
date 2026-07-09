@@ -81,6 +81,8 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
         raise ValueError(f"{owner} {field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    if value != value.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
     return value
 
 
@@ -226,8 +228,8 @@ class RunRecord:
     model_visible_tools: tuple[ModelVisibleToolRef, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "run_id", _validate_non_empty_string("run record", "run_id", self.run_id).strip())
-        object.__setattr__(self, "graph_hash", _validate_non_empty_string("run record", "graph_hash", self.graph_hash).strip())
+        object.__setattr__(self, "run_id", _validate_non_empty_string("run record", "run_id", self.run_id))
+        object.__setattr__(self, "graph_hash", _validate_non_empty_string("run record", "graph_hash", self.graph_hash))
         object.__setattr__(self, "inputs", _validate_json_object("run record", "inputs", self.inputs))
         if not isinstance(self.deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run record deployment_provenance must be RunDeploymentProvenance")
@@ -271,7 +273,7 @@ class InMemoryRunStore:
                 self.next_id += 1
             run_id = f"run-{self.next_id:06d}"
         else:
-            run_id = requested_run_id.strip()
+            run_id = requested_run_id
             if run_id in self.runs:
                 raise ValueError(f"run store run_id {run_id!r} already exists")
         self.next_id += 1
@@ -290,7 +292,7 @@ class InMemoryRunStore:
         return deepcopy(self.runs[run_id])
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         patch = _validate_json_object("run store", "patch", patch)
         if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
             raise ValueError("run store expected_revision must be an integer")
@@ -333,7 +335,7 @@ class InMemoryRunStore:
         run_id: str,
         tools: Iterable[ModelVisibleToolRef],
     ) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -352,7 +354,7 @@ class InMemoryRunStore:
         return deepcopy(updated)
 
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         if status not in VALID_RUN_STATUSES or status == "created":
             raise ValueError(f"invalid mutable run status {status}")
         current = self.runs[run_id]
@@ -458,7 +460,7 @@ class SQLiteRunStore:
                     break
                 sequence += 1
         else:
-            run_id = requested_run_id.strip()
+            run_id = requested_run_id
             existing = self.connection.execute(
                 "SELECT 1 FROM runs WHERE run_id = ?",
                 (run_id,),
@@ -506,7 +508,7 @@ class SQLiteRunStore:
         return deepcopy(record)
 
     def get_run(self, run_id: str) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         row = self.connection.execute(
             """
             SELECT
@@ -543,7 +545,7 @@ class SQLiteRunStore:
         )
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         patch = _validate_json_object("run store", "patch", patch)
         if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
             raise ValueError("run store expected_revision must be an integer")
@@ -592,7 +594,7 @@ class SQLiteRunStore:
         run_id: str,
         tools: Iterable[ModelVisibleToolRef],
     ) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -610,7 +612,7 @@ class SQLiteRunStore:
         return self.get_run(run_id)
 
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
-        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        run_id = _validate_non_empty_string("run store", "run_id", run_id)
         if status not in VALID_RUN_STATUSES or status == "created":
             raise ValueError(f"invalid mutable run status {status}")
         current = self.get_run(run_id)
