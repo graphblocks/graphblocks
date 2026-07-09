@@ -2460,6 +2460,10 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - Python and Rust usage reconciliation now reject `occurred_at` timestamps that precede the source
   usage record, preserving the amendment's late-final-usage ordering for in-memory and SQLite
   ledgers in both implementations.
+- The Python usage ledger now validates usage and reconciliation `occurred_at` fields as strict
+  RFC 3339-style datetimes, rejecting whitespace-normalized, timezone-less, lowercase-`z`, and
+  compact-offset forms before ledger append, replay, or late reconciliation ordering can observe
+  them.
 - Python `UsageAmount` now rejects blank dimension values, matching the Rust runtime's usage record
   validation for non-empty dimension keys and values before budget or usage ledger admission.
 - The budget-race TCK runner now validates expected reserved and available `UsageAmount` values

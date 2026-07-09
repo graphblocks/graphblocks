@@ -183,6 +183,44 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
             )
 
 
+def test_usage_timestamps_reject_non_rfc3339_forms() -> None:
+    for occurred_at in (
+        "2026-06-22 00:00:00Z",
+        "2026-06-22T00:00:00",
+        "2026-06-22T00:00:00+0000",
+        "2026-06-22T00:00:00z",
+        " 2026-06-22T00:00:00Z",
+    ):
+        with pytest.raises(ValueError, match="usage occurred_at must be an ISO datetime"):
+            UsageRecord(
+                record_id="usage-1",
+                source="runtime_measured",
+                confidence="estimated",
+                amounts=[_tokens("12")],
+                occurred_at=occurred_at,
+            )
+
+    ledger = InMemoryUsageLedger()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+        )
+    )
+
+    with pytest.raises(ValueError, match="usage occurred_at must be an ISO datetime"):
+        ledger.reconcile(
+            provisional.record_id,
+            amounts=[_tokens("21")],
+            occurred_at="2026-06-22T00:05:00+0000",
+            record_id="usage-reconciled",
+        )
+
+
 def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
     ledger = InMemoryUsageLedger()
     record = UsageRecord(
