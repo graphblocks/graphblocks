@@ -245,6 +245,16 @@ def _external_callback_artifact_sequence(value: object) -> tuple[object, ...]:
         raise ValueError("external callback received artifacts must be a sequence") from None
 
 
+def _validate_external_callback_artifact_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"external callback received artifacts {field_name} must be a non-empty string")
+    if value != value.strip():
+        raise ValueError(
+            f"external callback received artifacts {field_name} must not contain surrounding whitespace"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class AsyncOperation:
     operation_id: str
@@ -675,18 +685,12 @@ class ExternalCallbackReceived:
         for artifact in artifact_refs:
             if not isinstance(artifact, Mapping):
                 raise ValueError("external callback received artifacts entries must be JSON objects")
-            artifact_id = artifact.get("artifact_id")
-            if not isinstance(artifact_id, str) or not artifact_id.strip():
-                raise ValueError("external callback received artifacts artifact_id must be a non-empty string")
-            uri = artifact.get("uri")
-            if not isinstance(uri, str) or not uri.strip():
-                raise ValueError("external callback received artifacts uri must be a non-empty string")
+            artifact_id = _validate_external_callback_artifact_string("artifact_id", artifact.get("artifact_id"))
+            _validate_external_callback_artifact_string("uri", artifact.get("uri"))
             for field_name in ("media_type", "checksum"):
                 value = artifact.get(field_name)
-                if value is not None and (not isinstance(value, str) or not value.strip()):
-                    raise ValueError(
-                        f"external callback received artifacts {field_name} must be a non-empty string"
-                    )
+                if value is not None:
+                    _validate_external_callback_artifact_string(field_name, value)
             size_bytes = artifact.get("size_bytes")
             if size_bytes is not None and (
                 isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0

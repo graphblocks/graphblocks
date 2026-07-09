@@ -463,6 +463,55 @@ def test_external_callback_received_accepts_camel_case_artifacts() -> None:
     ]
 
 
+def test_external_callback_received_rejects_whitespace_wrapped_artifact_metadata() -> None:
+    artifact_cases = (
+        ("artifact_id", "artifact-ci-log", "artifact_id"),
+        ("uri", "blob://ci/log", "uri"),
+        ("media_type", "application/json", "media_type"),
+        ("checksum", "sha256:" + "c" * 64, "checksum"),
+        ("artifactId", "artifact-ci-log", "artifact_id"),
+        ("mediaType", "application/json", "media_type"),
+    )
+    wrappers: tuple[Callable[[str], str], ...] = (
+        lambda value: f" {value}",
+        lambda value: f"{value} ",
+        lambda value: f"\t{value}",
+        lambda value: f"{value}\n",
+    )
+
+    for index, (field_name, value, canonical_field_name) in enumerate(artifact_cases):
+        artifact = {
+            "artifact_id": f"artifact-ci-log-{index}",
+            "uri": f"blob://ci/log-{index}",
+            "media_type": "application/json",
+            "checksum": "sha256:" + "d" * 64,
+        }
+        if field_name in {"artifactId", "mediaType"}:
+            artifact.pop(canonical_field_name)
+        artifact[field_name] = wrappers[index % len(wrappers)](value)
+
+        with raises_value_error(
+            re.escape(
+                "external callback received artifacts "
+                f"{canonical_field_name} must not contain surrounding whitespace"
+            )
+        ):
+            graphblocks.ExternalCallbackReceived(
+                callback_id=f"cb-artifact-{index}",
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                idempotency_key=f"idem-callback-artifact-{index}",
+                payload={"status": "completed"},
+                payload_digest=graphblocks.canonical_hash({"status": "completed"}),
+                received_at="2026-07-02T00:10:00Z",
+                verified_by="hmac-sha256:callback-endpoint-1",
+                policy_snapshot_id="policy-1",
+                artifacts=[artifact],
+            )
+
+
 def test_external_callback_received_rejects_invalid_identity_digest_and_json() -> None:
     with raises_value_error("external callback received callback_id must not be empty"):
         graphblocks.ExternalCallbackReceived(

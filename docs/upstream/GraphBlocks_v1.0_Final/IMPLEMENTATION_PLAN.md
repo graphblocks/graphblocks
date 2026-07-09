@@ -772,10 +772,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `payload_digest` values before a receipt can represent durable journal input. Callback artifact
   references must be JSON objects with non-empty `artifact_id` and `uri` fields, optional
   `media_type` and `checksum` values must also be non-empty when present, and duplicate
-  `artifact_id` values are rejected at receipt construction. Optional `size_bytes` values must be
-  non-negative integers. Artifact refs accept `artifactId`, `mediaType`, and `sizeBytes` aliases at
-  ingress and project canonical snake_case fields. Receipt payloads and artifact objects are stored
-  as immutable JSON snapshots and thawed into fresh plain JSON values for `to_json()` callers.
+  `artifact_id` values are rejected at receipt construction. These artifact string fields are
+  exact metadata values and reject surrounding whitespace instead of silently normalizing artifact
+  identities or URIs. Optional `size_bytes` values must be non-negative integers. Artifact refs
+  accept `artifactId`, `mediaType`, and `sizeBytes` aliases at ingress and project canonical
+  snake_case fields. Receipt payloads and artifact objects are stored as immutable JSON snapshots
+  and thawed into fresh plain JSON values for `to_json()` callers.
 - Python `AsyncOperation` records now validate `resume_token_hash` as a canonical `sha256:`
   digest, so callback resume fencing cannot be represented by an arbitrary label.
 - Python async operation, callback receipt, result, and external-effect facades now validate
