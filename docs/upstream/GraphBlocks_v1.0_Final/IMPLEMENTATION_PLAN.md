@@ -2486,6 +2486,9 @@ E. parallel task가 동시에 마지막 budget을 reserve
   hide boolean fencing values.
 - Python `BudgetPermit` validation now requires positive fencing token values, aligning the
   authoring/schema facade with the Rust runtime admission guard for fenced budget continuation.
+- Python `BudgetPermit` expiry now validates as a strict RFC 3339-style datetime at construction
+  and permit-time checks, so malformed or timezone-less continuation permits cannot authorize
+  budgeted commit/release paths.
 - Python SQLite budget ledger snapshots now save and replay `state_json` with strict JSON
   semantics, rejecting non-standard constants such as `NaN` before corrupted budget state can
   authorize pause/resume or permit accounting after restart.

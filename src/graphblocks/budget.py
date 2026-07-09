@@ -117,6 +117,44 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _parse_budget_permit_datetime(field_name: str, value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"budget permit {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"budget permit {field_name} must not be empty")
+    normalized = value
+    if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
+        raise ValueError(f"budget permit {field_name} must be an ISO datetime")
+    timezone_start = 19
+    if normalized[timezone_start] == ".":
+        timezone_start += 1
+        while timezone_start < len(normalized) and normalized[timezone_start].isdigit():
+            timezone_start += 1
+        if timezone_start == 20:
+            raise ValueError(f"budget permit {field_name} must be an ISO datetime")
+    suffix = normalized[timezone_start:]
+    if suffix == "Z":
+        normalized = f"{normalized[:timezone_start]}+00:00"
+    elif (
+        len(suffix) == 6
+        and suffix[0] in {"+", "-"}
+        and suffix[1:3].isdigit()
+        and suffix[3] == ":"
+        and suffix[4:6].isdigit()
+    ):
+        offset_hours = int(suffix[1:3])
+        offset_minutes = int(suffix[4:6])
+        if offset_hours > 23 or offset_minutes > 59:
+            raise ValueError(f"budget permit {field_name} must be an ISO datetime")
+    else:
+        raise ValueError(f"budget permit {field_name} must be an ISO datetime")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"budget permit {field_name} must be an ISO datetime") from error
+    return parsed.astimezone(timezone.utc)
+
+
 def _validate_non_negative_integer(owner: str, field_name: str, value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{owner} {field_name} must be an integer")
@@ -354,7 +392,7 @@ class BudgetPermit:
         if self.continuation_profile is not None:
             _validate_non_empty_string("budget permit", "continuation_profile", self.continuation_profile)
         _validate_non_empty_string("budget permit", "policy_snapshot_digest", self.policy_snapshot_digest)
-        _validate_non_empty_string("budget permit", "expires_at", self.expires_at)
+        _parse_budget_permit_datetime("expires_at", self.expires_at)
         object.__setattr__(
             self,
             "low_watermark",
@@ -378,19 +416,11 @@ class BudgetPermit:
         return all(amount <= authorized.get(key, Decimal("0")) for key, amount in requested.items())
 
     def is_active_at(self, now: str) -> bool:
-        def parse_datetime(value: str) -> datetime:
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError("datetime must be a non-empty string")
-            normalized = value.strip()
-            if normalized.endswith(("Z", "z")):
-                normalized = f"{normalized[:-1]}+00:00"
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-
         try:
-            return parse_datetime(self.expires_at) > parse_datetime(now)
+            return _parse_budget_permit_datetime("expires_at", self.expires_at) > _parse_budget_permit_datetime(
+                "now",
+                now,
+            )
         except ValueError:
             return False
 

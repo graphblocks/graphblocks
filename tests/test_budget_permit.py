@@ -20,6 +20,9 @@ def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_total_tokens", amount=Decimal(value), unit="tokens")
 
 
+PERMIT_EXPIRES_AT = "2026-06-22T01:00:00Z"
+
+
 def test_budget_ledger_issues_bounded_permit_from_reservations() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
@@ -117,6 +120,30 @@ def test_budget_permit_validates_identity_scope_and_authorization_records() -> N
         BudgetPermit(**base, low_watermark=[object()])  # type: ignore[list-item]
 
 
+def test_budget_permit_rejects_non_rfc3339_expiration() -> None:
+    base = {
+        "permit_id": "permit-1",
+        "reservation_refs": ("reservation-1",),
+        "owner": ResourceRef("worker:1", resource_kind="worker"),
+        "atomic_unit": ResourceRef("turn:1", resource_kind="turn"),
+        "admission_epoch": 3,
+        "authorized_amounts": [_tokens("40")],
+        "continuation_profile": "finish_current_turn",
+        "policy_snapshot_digest": "sha256:policy",
+        "fencing_tokens": {"budget-1": 1},
+    }
+
+    for expires_at in (
+        "2026-06-22 01:00:00Z",
+        "2026-06-22T01:00:00",
+        "2026-06-22T01:00:00+0000",
+        "2026-06-22T01:00:00z",
+        "2026-06-22T01:00:00Z ",
+    ):
+        with pytest.raises(ValueError, match="budget permit expires_at must be an ISO datetime"):
+            BudgetPermit(**{**base, "expires_at": expires_at})
+
+
 def test_budget_permit_requires_matching_usage_dimensions() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate(
@@ -154,7 +181,7 @@ def test_budget_permit_requires_matching_usage_dimensions() -> None:
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     assert issued.allows(
@@ -193,7 +220,7 @@ def test_budget_ledger_permit_combines_multiple_reservations() -> None:
         admission_epoch=1,
         continuation_profile="hard_stop",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     assert permit.authorized_amounts == [_tokens("40")]
@@ -215,7 +242,7 @@ def test_budget_ledger_rejects_permit_for_released_reservation() -> None:
             admission_epoch=1,
             continuation_profile="hard_stop",
             policy_snapshot_digest="sha256:policy",
-            expires_at="later",
+            expires_at=PERMIT_EXPIRES_AT,
         )
 
 
@@ -237,7 +264,7 @@ def test_budget_ledger_commit_with_permit_settles_authorized_reservation() -> No
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     settlement = ledger.commit_with_permit(permit.permit_id, reservation.reservation_id, [_tokens("25")])
@@ -265,7 +292,7 @@ def test_budget_ledger_release_with_permit_restores_authorized_reservation() -> 
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     settlement = ledger.release_with_permit(permit.permit_id, reservation.reservation_id)
@@ -292,7 +319,7 @@ def test_budget_ledger_commit_with_permit_rejects_usage_above_authorized_without
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     with pytest.raises(BudgetExceededError):
@@ -322,7 +349,7 @@ def test_budget_ledger_returned_permit_mutation_does_not_expand_authorization() 
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     permit.authorized_amounts.append(_tokens("1000"))
@@ -500,7 +527,7 @@ def test_budget_ledger_permit_cannot_settle_unreferenced_reservation() -> None:
         admission_epoch=1,
         continuation_profile="finish_current_turn",
         policy_snapshot_digest="sha256:policy",
-        expires_at="later",
+        expires_at=PERMIT_EXPIRES_AT,
     )
 
     with pytest.raises(BudgetPermitScopeError) as error:
