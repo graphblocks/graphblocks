@@ -72,8 +72,8 @@ def test_parser_registry_normalizes_registered_fields_and_selection_case() -> No
     registry = DocumentParserRegistry()
     registry.register(
         ParserDescriptor(
-            " plain-text ",
-            " 1 ",
+            "plain-text",
+            "1",
             media_types=(" Text/Plain ",),
             extensions=(" TXT ",),
         )
@@ -100,6 +100,59 @@ def test_parser_registry_normalizes_registered_fields_and_selection_case() -> No
     assert extension_lock.reason == "extension"
     assert extension_lock.filename == "POLICY.TXT"
     assert registry.resolve_locked(media_lock).processor_id == "plain-text"
+
+
+@pytest.mark.parametrize(
+    ("constructor", "expected_error"),
+    (
+        (
+            lambda: ParserDescriptor(" plain-text", "1"),
+            "parser descriptor processor_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserDescriptor("plain-text", "1 "),
+            "parser descriptor version must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserDescriptor("plain-text", "1", metadata={" profile": "plain-text"}),
+            "parser descriptor metadata key must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock(" plain-text", "1", "media_type"),
+            "parser selection lock processor_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1 ", "media_type"),
+            "parser selection lock processor_version must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1", " media_type"),
+            "parser selection lock reason must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1", "media_type", media_type=" text/plain"),
+            "parser selection lock media_type must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1", "media_type", filename="policy.txt "),
+            "parser selection lock filename must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1", "media_type", artifact_checksum=" sha256:content"),
+            "parser selection lock artifact_checksum must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ParserSelectionLock("plain-text", "1", "media_type", metadata={" profile": "plain-text"}),
+            "parser selection lock metadata key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_parser_descriptor_and_lock_reject_whitespace_wrapped_identities(
+    constructor: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        constructor()
 
 
 @pytest.mark.parametrize(

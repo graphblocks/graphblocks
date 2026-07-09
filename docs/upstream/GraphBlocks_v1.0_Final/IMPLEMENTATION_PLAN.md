@@ -2482,6 +2482,9 @@ truth.
   element-id collections instead of trimming them before parser selection, chunking, or citation
   lineage can depend on those identifiers. The shared documents TCK now keeps artifact inputs exact
   while preserving parser descriptor normalization coverage.
+- Python parser descriptors and deterministic selection locks now reject whitespace-wrapped
+  processor ids, versions, lock reasons, artifact checksum evidence, and metadata keys. MIME type
+  and extension entries remain normalized only for parser matching.
 - MIME routing과 parser plugin SPI
 - deterministic parser selection lock
 - OCR fallback interface

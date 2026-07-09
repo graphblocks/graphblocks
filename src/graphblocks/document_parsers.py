@@ -28,10 +28,17 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return value
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    text = _validate_non_empty_string(owner, field_name, value)
+    if text != text.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return text
+
+
 def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
     if value is None:
         return None
-    return _validate_non_empty_string(owner, field_name, value)
+    return _validate_exact_non_empty_string(owner, field_name, value)
 
 
 def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
@@ -39,7 +46,7 @@ def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
         raise ValueError(f"{owner} metadata must be a mapping")
     snapshot: dict[str, object] = {}
     for key, value in metadata.items():
-        key_text = _validate_non_empty_string(owner, "metadata key", key)
+        key_text = _validate_exact_non_empty_string(owner, "metadata key", key)
         snapshot[key_text] = _freeze_metadata_value(owner, value)
     return MappingProxyType(snapshot)
 
@@ -105,12 +112,12 @@ class ParserDescriptor:
         object.__setattr__(
             self,
             "processor_id",
-            _validate_non_empty_string("parser descriptor", "processor_id", self.processor_id).strip(),
+            _validate_exact_non_empty_string("parser descriptor", "processor_id", self.processor_id),
         )
         object.__setattr__(
             self,
             "version",
-            _validate_non_empty_string("parser descriptor", "version", self.version).strip(),
+            _validate_exact_non_empty_string("parser descriptor", "version", self.version),
         )
         object.__setattr__(
             self,
@@ -145,17 +152,17 @@ class ParserSelectionLock:
         object.__setattr__(
             self,
             "processor_id",
-            _validate_non_empty_string("parser selection lock", "processor_id", self.processor_id).strip(),
+            _validate_exact_non_empty_string("parser selection lock", "processor_id", self.processor_id),
         )
         object.__setattr__(
             self,
             "processor_version",
-            _validate_non_empty_string("parser selection lock", "processor_version", self.processor_version).strip(),
+            _validate_exact_non_empty_string("parser selection lock", "processor_version", self.processor_version),
         )
         object.__setattr__(
             self,
             "reason",
-            _validate_non_empty_string("parser selection lock", "reason", self.reason).strip(),
+            _validate_exact_non_empty_string("parser selection lock", "reason", self.reason),
         )
         for field_name in ("media_type", "filename", "artifact_checksum"):
             object.__setattr__(
