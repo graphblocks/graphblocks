@@ -980,6 +980,14 @@ class CallbackReplayDecision:
             raise ValueError("duplicate must be a boolean")
         if not isinstance(self.conflict, bool):
             raise ValueError("conflict must be a boolean")
+        if self.duplicate and self.conflict:
+            raise ValueError("callback replay decision cannot be both duplicate and conflict")
+        if self.status == "accepted" and (self.duplicate or self.conflict):
+            raise ValueError("accepted replay decision must not be duplicate or conflict")
+        if self.status == "duplicate" and not self.duplicate:
+            raise ValueError("duplicate replay decision must set only duplicate")
+        if self.status == "conflict" and not self.conflict:
+            raise ValueError("conflict replay decision must set only conflict")
 
 
 class CallbackReplayGuard:

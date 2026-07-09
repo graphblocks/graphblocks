@@ -27,6 +27,7 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackDeliveryProjection,
     CallbackPayloadProjection,
     CallbackResumeDecision,
+    CallbackReplayDecision,
     CallbackReplayGuard,
     CallbackReplayRecord,
     CallbackRetryPolicy,
@@ -1791,6 +1792,59 @@ def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_dup
     assert duplicate.status == "duplicate"
     assert duplicate.duplicate is True
     assert duplicate.replay_record == first.replay_record
+
+
+def test_callback_replay_decision_rejects_contradictory_status_flags() -> None:
+    replay_record = CallbackReplayRecord(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        cursor="evt_1042",
+        idempotency_key="sub_001:evt_1042",
+        envelope_digest=canonical_hash({"delivery": "accepted"}),
+    )
+
+    _assert_raises_value_error(
+        "accepted replay decision must not be duplicate or conflict",
+        lambda: CallbackReplayDecision(
+            status="accepted",
+            replay_record=replay_record,
+            incoming_digest=replay_record.envelope_digest,
+            duplicate=True,
+            conflict=False,
+        ),
+    )
+    _assert_raises_value_error(
+        "duplicate replay decision must set only duplicate",
+        lambda: CallbackReplayDecision(
+            status="duplicate",
+            replay_record=replay_record,
+            incoming_digest=replay_record.envelope_digest,
+            duplicate=False,
+            conflict=False,
+        ),
+    )
+    _assert_raises_value_error(
+        "conflict replay decision must set only conflict",
+        lambda: CallbackReplayDecision(
+            status="conflict",
+            replay_record=replay_record,
+            incoming_digest=replay_record.envelope_digest,
+            duplicate=False,
+            conflict=False,
+        ),
+    )
+    _assert_raises_value_error(
+        "callback replay decision cannot be both duplicate and conflict",
+        lambda: CallbackReplayDecision(
+            status="duplicate",
+            replay_record=replay_record,
+            incoming_digest=replay_record.envelope_digest,
+            duplicate=True,
+            conflict=True,
+        ),
+    )
 
 
 def test_callback_replay_guard_rejects_mutated_idempotency_replay() -> None:

@@ -1632,7 +1632,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
   delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
   flags mutated idempotency-key, delivery-id, or subscription-event replays as conflicts. Restored
-  replay records are validated for the same identity conflicts before the guard is used.
+  replay records are validated for the same identity conflicts before the guard is used. Replay
+  decisions also enforce status/flag consistency, so accepted, duplicate, and conflict outcomes
+  cannot carry contradictory duplicate/conflict booleans.
 - `graphblocks-callbacks` now projects durable `ExternalCallbackReceived` receipt metadata from a
   verified callback envelope and bounded/artifact-backed payload projection, preserving callback,
   run, operation, node, attempt, idempotency, payload digest, verifier, and policy snapshot identity
