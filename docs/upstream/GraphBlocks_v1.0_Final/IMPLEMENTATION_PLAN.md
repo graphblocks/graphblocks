@@ -1763,6 +1763,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   application-event payload snapshots are now deep-frozen after construction, including nested
   object and array values, so authoritative replay records cannot be mutated by retained caller
   references.
+- Python `ApplicationEventMetadata` and `ApplicationProtocolEventMetadata` now validate replay
+  cursors, run/event/release identities, graph/node/operation routing fields, and event visibility
+  as exact values, rejecting whitespace-wrapped identifiers before authoritative replay or callback
+  filtering can store them.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records and protocol events by
   event type, visibility, node id, operation id, severity floor, and terminal-event inclusion,
   treating absent protocol visibility as default client visibility while keeping malformed

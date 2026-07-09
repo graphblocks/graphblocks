@@ -190,6 +190,39 @@ def test_application_event_metadata_carries_authoritative_stream_fields() -> Non
         )
 
 
+def test_application_event_metadata_rejects_whitespace_wrapped_authoritative_fields() -> None:
+    base = {
+        "event_id": "event-1",
+        "run_id": "run-1",
+        "response_id": "response-1",
+        "sequence": 1,
+        "release_id": "release-1",
+        "policy_snapshot_id": "policy-1",
+        "occurred_at": "2026-06-23T00:00:00Z",
+    }
+    cases = (
+        ({"event_id": " event-1"}, "application event event_id must not contain surrounding whitespace"),
+        ({"run_id": "run-1 "}, "application event run_id must not contain surrounding whitespace"),
+        ({"response_id": " response-1"}, "application event response_id must not contain surrounding whitespace"),
+        ({"release_id": "release-1 "}, "application event release_id must not contain surrounding whitespace"),
+        (
+            {"policy_snapshot_id": " policy-1"},
+            "application event policy_snapshot_id must not contain surrounding whitespace",
+        ),
+        ({"occurred_at": "2026-06-23T00:00:00Z "}, "application event occurred_at must not contain surrounding whitespace"),
+        ({"turn_id": " turn-1"}, "application event turn_id must not contain surrounding whitespace"),
+        ({"cursor": "cursor-1 "}, "application event cursor must not contain surrounding whitespace"),
+        ({"graph_id": " graph-1"}, "application event graph_id must not contain surrounding whitespace"),
+        ({"node_id": "node-1 "}, "application event node_id must not contain surrounding whitespace"),
+        ({"operation_id": " operation-1"}, "application event operation_id must not contain surrounding whitespace"),
+        ({"visibility": " operator"}, "application event visibility must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ApplicationEventError, match=message):
+            ApplicationEventMetadata(**{**base, **overrides})  # type: ignore[arg-type]
+
+
 def test_standard_application_event_names_match_tool_and_output_policy_contract() -> None:
     assert STANDARD_APPLICATION_EVENT_KINDS == (
         "RunStarted",
@@ -667,6 +700,33 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )
+
+
+def test_application_protocol_event_metadata_rejects_whitespace_wrapped_authoritative_fields() -> None:
+    base = {
+        "event_id": "event-1",
+        "protocol_version": "graphblocks.app.v1",
+        "run_id": "run-1",
+        "release_id": "release-1",
+        "sequence": 1,
+        "occurred_at_unix_ms": 1_765_843_201_000,
+    }
+    cases = (
+        ({"event_id": " event-1"}, "application event id must not contain surrounding whitespace"),
+        (
+            {"protocol_version": "graphblocks.app.v1 "},
+            "application event protocol_version must not contain surrounding whitespace",
+        ),
+        ({"run_id": " run-1"}, "application event run_id must not contain surrounding whitespace"),
+        ({"release_id": "release-1 "}, "application event release_id must not contain surrounding whitespace"),
+        ({"turn_id": " turn-1"}, "application event turn_id must not contain surrounding whitespace"),
+        ({"operation_id": "operation-1 "}, "application event operation_id must not contain surrounding whitespace"),
+        ({"cursor": " cursor-1"}, "application event cursor must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ApplicationProtocolError, match=message):
+            ApplicationProtocolEventMetadata(**{**base, **overrides})  # type: ignore[arg-type]
 
 
 def test_application_protocol_envelopes_reject_invalid_metadata_payloads_and_log_args() -> None:

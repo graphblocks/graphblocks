@@ -424,6 +424,12 @@ def _validate_non_empty_string(error_type: type[RuntimeError], label: str, value
         raise error_type(f"{label} must not be empty")
 
 
+def _validate_exact_non_empty_string(error_type: type[RuntimeError], label: str, value: object) -> None:
+    _validate_non_empty_string(error_type, label, value)
+    if value != value.strip():
+        raise error_type(f"{label} must not contain surrounding whitespace")
+
+
 def _validate_optional_non_empty_string(
     error_type: type[RuntimeError],
     label: str,
@@ -431,6 +437,15 @@ def _validate_optional_non_empty_string(
 ) -> None:
     if value is not None:
         _validate_non_empty_string(error_type, label, value)
+
+
+def _validate_optional_exact_non_empty_string(
+    error_type: type[RuntimeError],
+    label: str,
+    value: object,
+) -> None:
+    if value is not None:
+        _validate_exact_non_empty_string(error_type, label, value)
 
 
 def _validate_non_negative_integer(error_type: type[RuntimeError], label: str, value: object) -> None:
@@ -548,13 +563,13 @@ class ApplicationProtocolEventMetadata:
     def __post_init__(self) -> None:
         for field_name in ("event_id", "protocol_version", "run_id", "release_id"):
             label = "id" if field_name == "event_id" else field_name
-            _validate_non_empty_string(
+            _validate_exact_non_empty_string(
                 ApplicationProtocolError,
                 f"application event {label}",
                 getattr(self, field_name),
             )
         for field_name in ("turn_id", "operation_id", "cursor"):
-            _validate_optional_non_empty_string(
+            _validate_optional_exact_non_empty_string(
                 ApplicationProtocolError,
                 f"application event {field_name}",
                 getattr(self, field_name),
@@ -815,22 +830,28 @@ class ApplicationEventMetadata:
             ("policy_snapshot_id", self.policy_snapshot_id),
             ("occurred_at", self.occurred_at),
         ):
-            _validate_non_empty_string(
+            _validate_exact_non_empty_string(
                 ApplicationEventError,
                 f"application event {field_name}",
                 value,
             )
-        _validate_optional_non_empty_string(
+        _validate_optional_exact_non_empty_string(
             ApplicationEventError,
             "application event turn_id",
             self.turn_id,
         )
         for field_name in ("cursor", "graph_id", "node_id", "operation_id"):
-            _validate_optional_non_empty_string(
+            _validate_optional_exact_non_empty_string(
                 ApplicationEventError,
                 f"application event {field_name}",
                 getattr(self, field_name),
             )
+        if not isinstance(self.visibility, str):
+            raise ApplicationEventError("application event visibility must be a string")
+        if not self.visibility.strip():
+            raise ApplicationEventError("application event visibility must not be empty")
+        if self.visibility != self.visibility.strip():
+            raise ApplicationEventError("application event visibility must not contain surrounding whitespace")
         if self.visibility not in APPLICATION_EVENT_VISIBILITIES:
             raise ApplicationEventError(
                 "application event visibility must be one of "
