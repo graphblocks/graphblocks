@@ -711,6 +711,48 @@ def test_model_visible_tool_ref_validates_identity_boolean_and_expiration() -> N
             ModelVisibleToolRef(**(base | overrides))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        (
+            {"tool_name": " knowledge.search"},
+            "model visible tool ref tool_name must not contain surrounding whitespace",
+        ),
+        (
+            {"resolved_tool_id": " resolved-search"},
+            "model visible tool ref resolved_tool_id must not contain surrounding whitespace",
+        ),
+        (
+            {"definition_digest": " sha256:def"},
+            "model visible tool ref definition_digest must not contain surrounding whitespace",
+        ),
+        (
+            {"binding_digest": " sha256:binding"},
+            "model visible tool ref binding_digest must not contain surrounding whitespace",
+        ),
+        (
+            {"effective_policy_snapshot_id": " policy-snapshot-1"},
+            "model visible tool ref effective_policy_snapshot_id must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_model_visible_tool_ref_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-search",
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "allowed_for_principal": True,
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ModelVisibleToolRef(**(base | overrides))  # type: ignore[arg-type]
+
+
 def test_run_provenance_validates_model_visible_tools_and_copies_metadata() -> None:
     tool_ref = ModelVisibleToolRef(
         "knowledge.search",

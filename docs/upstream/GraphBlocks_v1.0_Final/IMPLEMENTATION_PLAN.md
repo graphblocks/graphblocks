@@ -2840,6 +2840,9 @@ sandbox
 - Python evaluation review records now reject whitespace-wrapped review ids, subject digests,
   scopes, and credential refs before review evidence can satisfy workspace trial gates or result
   bundle provenance.
+- Python model-visible tool provenance refs now reject whitespace-wrapped tool names, resolved-tool
+  ids, definition/binding digests, and policy snapshot ids before run provenance can record the tool
+  set exposed to a model invocation.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

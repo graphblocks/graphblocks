@@ -207,11 +207,11 @@ class ModelVisibleToolRef:
     valid_until: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("model visible tool ref", "tool_name", self.tool_name)
-        _validate_non_empty_string("model visible tool ref", "resolved_tool_id", self.resolved_tool_id)
-        _validate_non_empty_string("model visible tool ref", "definition_digest", self.definition_digest)
-        _validate_non_empty_string("model visible tool ref", "binding_digest", self.binding_digest)
-        _validate_non_empty_string(
+        _validate_exact_non_empty_string("model visible tool ref", "tool_name", self.tool_name)
+        _validate_exact_non_empty_string("model visible tool ref", "resolved_tool_id", self.resolved_tool_id)
+        _validate_exact_non_empty_string("model visible tool ref", "definition_digest", self.definition_digest)
+        _validate_exact_non_empty_string("model visible tool ref", "binding_digest", self.binding_digest)
+        _validate_exact_non_empty_string(
             "model visible tool ref",
             "effective_policy_snapshot_id",
             self.effective_policy_snapshot_id,
