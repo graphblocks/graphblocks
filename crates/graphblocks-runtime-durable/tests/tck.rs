@@ -494,6 +494,78 @@ fn run_case(case: &Value) -> Result<(), String> {
             let mut previous_event_sequence = None;
             let mut event_ids = BTreeSet::new();
             let mut event_cursors = BTreeSet::new();
+            let is_iso_timestamp = |value: &str| -> bool {
+                let value = value.trim();
+                let bytes = value.as_bytes();
+                let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+                if bytes.len() < 20
+                    || !digit_positions
+                        .into_iter()
+                        .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
+                    || bytes.get(4) != Some(&b'-')
+                    || bytes.get(7) != Some(&b'-')
+                    || bytes.get(10) != Some(&b'T')
+                    || bytes.get(13) != Some(&b':')
+                    || bytes.get(16) != Some(&b':')
+                {
+                    return false;
+                }
+                let Ok(year) = value.get(0..4).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(month) = value.get(5..7).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(day) = value.get(8..10).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(hour) = value.get(11..13).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(minute) = value.get(14..16).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let Ok(second) = value.get(17..19).unwrap_or_default().parse::<i64>() else {
+                    return false;
+                };
+                let leap_year = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+                let max_day = match month {
+                    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+                    4 | 6 | 9 | 11 => 30,
+                    2 if leap_year => 29,
+                    2 => 28,
+                    _ => return false,
+                };
+                if day < 1
+                    || day > max_day
+                    || !(0..=23).contains(&hour)
+                    || !(0..=59).contains(&minute)
+                    || !(0..=59).contains(&second)
+                {
+                    return false;
+                }
+                match value.get(19..) {
+                    Some("Z") => true,
+                    Some(offset) if offset.len() == 6 => {
+                        let Some(sign) = offset.as_bytes().first() else {
+                            return false;
+                        };
+                        if !matches!(sign, b'+' | b'-') || offset.as_bytes().get(3) != Some(&b':') {
+                            return false;
+                        }
+                        let Ok(offset_hour) = offset.get(1..3).unwrap_or_default().parse::<i64>()
+                        else {
+                            return false;
+                        };
+                        let Ok(offset_minute) = offset.get(4..6).unwrap_or_default().parse::<i64>()
+                        else {
+                            return false;
+                        };
+                        (0..=23).contains(&offset_hour) && (0..=59).contains(&offset_minute)
+                    }
+                    _ => false,
+                }
+            };
             for (index, raw_event) in raw_events.iter().enumerate() {
                 let Some(event) = raw_event.as_object() else {
                     diagnostics.push(json!({
@@ -694,24 +766,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .get("occurredAt")
                     .or_else(|| event.get("occurred_at"))
                     .and_then(Value::as_str)
-                    .is_some_and(|occurred_at| {
-                        let occurred_at = occurred_at.trim();
-                        let bytes = occurred_at.as_bytes();
-                        let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                        bytes.len() >= 20
-                            && digit_positions
-                                .into_iter()
-                                .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                            && bytes.get(4) == Some(&b'-')
-                            && bytes.get(7) == Some(&b'-')
-                            && bytes.get(10) == Some(&b'T')
-                            && bytes.get(13) == Some(&b':')
-                            && bytes.get(16) == Some(&b':')
-                            && (occurred_at.ends_with('Z')
-                                || occurred_at.get(19..).is_some_and(|suffix| {
-                                    suffix.contains('+') || suffix.contains('-')
-                                }))
-                    });
+                    .is_some_and(is_iso_timestamp);
                 if !occurred_at_is_iso {
                     event_valid = false;
                     diagnostics.push(json!({

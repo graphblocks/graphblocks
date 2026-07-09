@@ -1941,6 +1941,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reusing the initial run cursor before proving cursor replay, preventing anonymous, cross-run,
   payload-less, duplicate, ambiguous, unauthorized-visibility, malformed-metadata, untyped,
   cursorless, untimestamped, or unordered events from satisfying replay assertions.
+- Durable background-run shared TCK cases now reject calendar-invalid event `occurredAt` values in
+  the Rust runner, aligning background event replay timestamp validation with the Python runner
+  before accepting cursor replay evidence.
 - Durable background-run shared TCK cases now prove attach replay from the initial run-handle
   cursor or the matched event cursor position, and cursor expiry from the retained-boundary
   cursor's position, in the authoritative event stream rather than from lexicographic cursor
