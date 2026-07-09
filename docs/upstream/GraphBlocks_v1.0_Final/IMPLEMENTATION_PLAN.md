@@ -2396,6 +2396,9 @@ truth.
 - RAG primitives cover local chunk indexing, tombstone/hard delete propagation, context packs,
   citation/source-trace resolution with retrieval rank/score/metadata provenance, answer grounding,
   abstention, fusion, and rerank projections.
+- RAG freshness filtering now validates `minimum_source_modified_at` and source-modified metadata as
+  strict RFC 3339-style datetimes, rejecting permissive space-separated or timezone-less forms before
+  context packing and freshness metrics can treat stale evidence as current.
 - Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
   turn lifecycle, draft/retract semantics, and deterministic conflict handling.
 - `ContentPart` JSON data and metadata now recursively validate strict JSON values at construction

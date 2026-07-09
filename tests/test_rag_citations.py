@@ -22,6 +22,7 @@ from graphblocks.rag import (
     RagResultPayload,
     RetrievalResult,
     SearchRequest,
+    build_context_pack,
     resolve_citation_source_trace,
     validate_answer_citation_authorization,
     validate_answer_citations,
@@ -197,6 +198,36 @@ def test_resolve_citation_source_trace_rejects_wrong_locator_on_matching_source(
         assert str(error) == "citation 'cite-1' does not point to the current context"
     else:
         raise AssertionError("wrong citation locator should not resolve to the context hit")
+
+
+def test_context_pack_freshness_rejects_non_rfc3339_timestamps() -> None:
+    context = _single_hit_context()
+    valid_hit = replace(
+        context.hits[0],
+        metadata={**context.hits[0].metadata, "source_modified_at": "2026-06-22T00:01:00Z"},
+    )
+    hit = replace(
+        context.hits[0],
+        metadata={**context.hits[0].metadata, "source_modified_at": "2026-06-22 00:01:00Z"},
+    )
+
+    with pytest.raises(ValueError, match="minimum_source_modified_at must be an ISO datetime"):
+        build_context_pack(
+            "ctx-fresh",
+            [valid_hit],
+            token_budget=32,
+            minimum_source_modified_at="2026-06-22 00:00:00Z",
+        )
+
+    filtered = build_context_pack(
+        "ctx-fresh",
+        [hit],
+        token_budget=32,
+        minimum_source_modified_at="2026-06-22T00:00:00Z",
+    )
+
+    assert filtered.hits == []
+    assert filtered.metadata["drop_reasons"] == {hit.hit_id: "freshness"}
 
 
 def test_validate_answer_citations_rejects_uncited_claim_when_required() -> None:
