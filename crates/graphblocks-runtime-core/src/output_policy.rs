@@ -1636,6 +1636,13 @@ impl OutputDeliveryGate {
                                 actual_response_id: chunk.response_id.clone(),
                             });
                         }
+                        if chunk.sequence <= self.last_client_delivered_sequence {
+                            return Err(OutputGateError::PendingChunkAlreadyDelivered {
+                                sequence: chunk.sequence,
+                                last_client_delivered_sequence: self
+                                    .last_client_delivered_sequence,
+                            });
+                        }
                         if chunk.sequence != expected_sequence {
                             return Err(OutputGateError::NonContiguousSequence {
                                 last_generated_sequence: previous_sequence,

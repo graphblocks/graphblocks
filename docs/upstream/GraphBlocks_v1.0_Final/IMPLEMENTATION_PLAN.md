@@ -311,6 +311,9 @@ Message
 - Terminal output-gate decisions validate the constructed canonical `OutputCutoff` before clearing
   pending output or marking the gate stopped, so invalid draft/disposition semantics cannot become
   durable cutoff state.
+- Replacement output-policy decisions now reject replacement chunks whose sequence has already
+  crossed the client-delivery boundary, matching typed redaction behavior and forcing already
+  visible draft corrections through explicit incomplete/retraction semantics.
 - Python policy TCK validation now compares terminal `OutputGateUpdate` projections for
   `pendingToolCalls` and `providerCancellation` when fixtures provide `expectedUpdate`, so policy
   stop conformance proves the values that tool admission and provider cancellation consume after

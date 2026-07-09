@@ -1973,6 +1973,43 @@ fn redact_decision_rejects_already_delivered_redaction_target() -> Result<(), Ou
 }
 
 #[test]
+fn replace_decision_rejects_already_delivered_replacement_target() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "unsafe draft",
+    ))?;
+    gate.apply_decision(
+        OutputPolicyDecision::allow("decision-allow", Some(1), "sha256:allow"),
+        1_000,
+    )?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::replace(
+                "decision-replace",
+                Some(1),
+                [GenerationChunk::text(
+                    "stream-1",
+                    "response-1",
+                    1,
+                    "policy-approved replacement",
+                )],
+                "sha256:replace",
+            ),
+            1_010,
+        ),
+        Err(OutputGateError::PendingChunkAlreadyDelivered {
+            sequence: 1,
+            last_client_delivered_sequence: 1,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
 fn redact_decision_rejects_future_redaction_target() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     gate.record_chunk(GenerationChunk::text(
