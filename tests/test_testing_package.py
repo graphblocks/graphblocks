@@ -4595,6 +4595,21 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_op
             "$.operation.resumeTokenHash",
         ),
         (
+            "createdAt",
+            "external operation reconciliation createdAt must not contain surrounding whitespace",
+            "$.operation.createdAt",
+        ),
+        (
+            "submittedAt",
+            "external operation reconciliation submittedAt must not contain surrounding whitespace",
+            "$.operation.submittedAt",
+        ),
+        (
+            "expiresAt",
+            "external operation reconciliation expiresAt must not contain surrounding whitespace",
+            "$.operation.expiresAt",
+        ),
+        (
             "runId",
             "external operation reconciliation runId must not contain surrounding whitespace",
             "$.operation.runId",

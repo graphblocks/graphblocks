@@ -9894,8 +9894,16 @@ class TckRunner:
                             "path": f"$.operation.{created_at_path}",
                         }
                     )
+                elif created_at != created_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation createdAt must not contain surrounding whitespace",
+                            "path": f"$.operation.{created_at_path}",
+                        }
+                    )
                 else:
-                    created_at_text = created_at.strip()
+                    created_at_text = created_at
                     if len(created_at_text) <= 10 or created_at_text[10] != "T":
                         diagnostics.append(
                             {
@@ -9974,8 +9982,16 @@ class TckRunner:
                             "path": f"$.operation.{submitted_at_path}",
                         }
                     )
+                elif submitted_at != submitted_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation submittedAt must not contain surrounding whitespace",
+                            "path": f"$.operation.{submitted_at_path}",
+                        }
+                    )
                 else:
-                    submitted_at_text = submitted_at.strip()
+                    submitted_at_text = submitted_at
                     if len(submitted_at_text) <= 10 or submitted_at_text[10] != "T":
                         diagnostics.append(
                             {
@@ -10064,8 +10080,16 @@ class TckRunner:
                             "path": f"$.operation.{expires_at_path}",
                         }
                     )
+                elif expires_at != expires_at.strip():
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation expiresAt must not contain surrounding whitespace",
+                            "path": f"$.operation.{expires_at_path}",
+                        }
+                    )
                 else:
-                    expires_at_text = expires_at.strip()
+                    expires_at_text = expires_at
                     if len(expires_at_text) <= 10 or expires_at_text[10] != "T":
                         diagnostics.append(
                             {
