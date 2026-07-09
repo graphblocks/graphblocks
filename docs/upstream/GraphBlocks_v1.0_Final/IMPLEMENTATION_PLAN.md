@@ -2065,6 +2065,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable external-operation reconciliation shared TCK cases now reject late callback
   `receivedAt` timestamps with invalid seconds in the Rust runner, aligning callback receipt
   timestamp validation with Python before accepting late usage reconciliation evidence.
+- Durable external-operation reconciliation shared TCK cases now expose `diagnosticCount` on
+  successful projections and include a valid fractional-second late callback `receivedAt` case,
+  keeping Rust and Python aligned on RFC 3339-style callback receipt timestamps before late usage
+  is reconciled.
 - Durable external-operation reconciliation shared TCK cases now require nonblank
   `operation.providerOperationId` evidence in both Rust and Python runners before accepting
   provider-backed late callback reconciliation.

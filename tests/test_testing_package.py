@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 294
+    assert [case.kind for case in cases] == ["durable"] * 295
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1423,6 +1423,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "callback_cancel_race_missing_ownership_fence_rejected",
         "callback_cancel_race_unstable_ownership_fence_rejected",
         "external_operation_late_side_effect_usage_reconciliation",
+        "external_operation_fractional_callback_received_at_allowed",
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_missing_effect_state_rejected",
         "external_operation_non_committed_effect_state_rejected",
@@ -2629,6 +2630,13 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     assert any(
         result.case_id == "external_operation_non_positive_expiry_window_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_fractional_callback_received_at_allowed"
+        and result.observed.get("diagnosticCount") == 0
+        and result.observed.get("lateUsageReconciled") is True
+        and result.observed.get("largePayloadUsesArtifactRef") is True
         for result in report.results
     )
     assert any(
@@ -6551,6 +6559,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "callback_cancel_race_missing_ownership_fence_rejected",
         "callback_cancel_race_unstable_ownership_fence_rejected",
         "external_operation_late_side_effect_usage_reconciliation",
+        "external_operation_fractional_callback_received_at_allowed",
         "external_operation_non_boolean_diagnostic_rejected",
         "external_operation_missing_effect_state_rejected",
         "external_operation_non_committed_effect_state_rejected",

@@ -10366,6 +10366,7 @@ class TckRunner:
                     "lateCallbackRecordedDiagnostic": external_reconciliation_values[("lateCallback", "diagnosticRecorded")],
                     "lateUsageReconciled": external_reconciliation_values[("usage", "reconciled")],
                     "largePayloadUsesArtifactRef": external_reconciliation_values[("lateCallback", "payloadConvertedToArtifactRef")],
+                    "diagnosticCount": len(diagnostics),
                 }
             else:
                 diagnostics.append(
