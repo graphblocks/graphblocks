@@ -2318,6 +2318,16 @@ fn run_case(case: &Value) -> Result<(), String> {
                 )
             };
             let mut operation_deadline_seconds = None;
+            if case
+                .get("operation")
+                .is_some_and(|operation| !operation.is_object())
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCallbackResumeInvalid",
+                    "message": "async callback resume operation must be object",
+                    "path": "$.operation",
+                }));
+            }
             if let Some(operation) = case.get("operation").and_then(Value::as_object) {
                 for (key, alias) in [
                     ("operationId", "operation_id"),

@@ -8457,6 +8457,14 @@ class TckRunner:
                     raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
                 raw_operation = fixture.get("operation")
                 operation_deadline_at = None
+                if raw_operation is not None and not isinstance(raw_operation, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume operation must be object",
+                            "path": "$.operation",
+                        }
+                    )
                 if isinstance(raw_operation, Mapping):
                     for key, alias in (
                         ("operationId", "operation_id"),
