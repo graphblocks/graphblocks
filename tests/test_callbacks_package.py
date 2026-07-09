@@ -2571,6 +2571,27 @@ def test_callback_resume_admission_requires_valid_evaluation_time_without_endpoi
     )
 
 
+def test_callback_resume_decision_rejects_contradictory_resume_flag() -> None:
+    base = {
+        "reason": "current_callback",
+        "endpoint_binding_key": canonical_hash({"endpoint": "current"}),
+        "receipt_binding_key": canonical_hash({"receipt": "current"}),
+    }
+
+    _assert_raises_value_error(
+        "admitted callback resume decision must set can_resume",
+        lambda: CallbackResumeDecision(status="admitted", can_resume=False, **base),
+    )
+    _assert_raises_value_error(
+        "non-admitted callback resume decision must not set can_resume",
+        lambda: CallbackResumeDecision(status="stale", can_resume=True, **base),
+    )
+    _assert_raises_value_error(
+        "non-admitted callback resume decision must not set can_resume",
+        lambda: CallbackResumeDecision(status="expired", can_resume=True, **base),
+    )
+
+
 def test_callback_resume_admission_rejects_expired_endpoint() -> None:
     endpoint = CallbackEndpointRef(
         endpoint_id="cbep_ci_001",

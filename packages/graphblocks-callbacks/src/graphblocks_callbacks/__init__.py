@@ -1367,6 +1367,10 @@ class CallbackResumeDecision:
             raise ValueError("status must be admitted, expired, or stale")
         if not isinstance(self.can_resume, bool):
             raise ValueError("can_resume must be a boolean")
+        if self.status == "admitted" and not self.can_resume:
+            raise ValueError("admitted callback resume decision must set can_resume")
+        if self.status != "admitted" and self.can_resume:
+            raise ValueError("non-admitted callback resume decision must not set can_resume")
         for field_name in ("reason", "endpoint_binding_key", "receipt_binding_key"):
             _require_non_empty_string(field_name, getattr(self, field_name))
 

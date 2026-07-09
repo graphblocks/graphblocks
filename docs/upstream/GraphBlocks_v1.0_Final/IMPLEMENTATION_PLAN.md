@@ -662,6 +662,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback resume admission now validates the evaluation `now` timestamp before any admission
   decision, including endpoints without `expires_at`, so malformed policy-evaluation clocks cannot
   produce a resumable callback decision.
+- `CallbackResumeDecision` now enforces that only `admitted` decisions may set `can_resume`, so
+  stale or expired callback receipts cannot be represented as scheduler-resumable decisions.
 - `graphblocks-callbacks` timestamp validation now rejects space-separated datetimes and compact
   timezone offsets such as `+0000` on webhook envelopes, signing headers, endpoint expirations,
   retry projections, dead-letter/redrive timestamps, and external callback receipts, keeping the
