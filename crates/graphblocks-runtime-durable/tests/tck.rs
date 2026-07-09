@@ -2374,6 +2374,34 @@ fn run_case(case: &Value) -> Result<(), String> {
                         }));
                     }
                 }
+                if operation.contains_key("state")
+                    || operation.contains_key("operationState")
+                    || operation.contains_key("operation_state")
+                {
+                    let operation_state_path = if operation.contains_key("state") {
+                        "state"
+                    } else if operation.contains_key("operationState")
+                        || !operation.contains_key("operation_state")
+                    {
+                        "operationState"
+                    } else {
+                        "operation_state"
+                    };
+                    if operation
+                        .get("state")
+                        .or_else(|| operation.get("operationState"))
+                        .or_else(|| operation.get("operation_state"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        != Some("waiting_callback")
+                    {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume operation state must be waiting_callback",
+                            "path": format!("$.operation.{operation_state_path}"),
+                        }));
+                    }
+                }
                 let resume_token_hash_path = if operation.contains_key("resumeTokenHash")
                     || !operation.contains_key("resume_token_hash")
                 {

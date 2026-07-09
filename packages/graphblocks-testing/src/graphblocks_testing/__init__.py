@@ -8499,6 +8499,34 @@ class TckRunner:
                                     "path": f"$.operation.{provider_operation_id_path}",
                                 }
                             )
+                    if (
+                        "state" in raw_operation
+                        or "operationState" in raw_operation
+                        or "operation_state" in raw_operation
+                    ):
+                        if "state" in raw_operation:
+                            operation_state_path = "state"
+                        elif "operationState" in raw_operation or "operation_state" not in raw_operation:
+                            operation_state_path = "operationState"
+                        else:
+                            operation_state_path = "operation_state"
+                        operation_state = raw_operation.get(
+                            "state",
+                            raw_operation.get(
+                                "operationState", raw_operation.get("operation_state")
+                            ),
+                        )
+                        if (
+                            not isinstance(operation_state, str)
+                            or operation_state.strip() != "waiting_callback"
+                        ):
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume operation state must be waiting_callback",
+                                    "path": f"$.operation.{operation_state_path}",
+                                }
+                            )
                     resume_token_hash_path = (
                         "resumeTokenHash"
                         if "resumeTokenHash" in raw_operation or "resume_token_hash" not in raw_operation
