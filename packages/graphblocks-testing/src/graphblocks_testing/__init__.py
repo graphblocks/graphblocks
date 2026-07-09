@@ -9350,6 +9350,18 @@ class TckRunner:
                                 "path": f"$.race.{path_key}",
                             }
                         )
+                if (
+                    str(raw_race.get("winner", "")) == "cancel"
+                    and raw_race.get("resultCommitted", raw_race.get("result_committed"))
+                    is True
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCancelRaceInvalid",
+                            "message": "async cancel race forbids result commit after cancel winner",
+                            "path": "$.race.resultCommitted",
+                        }
+                    )
                 observed = {
                     "journalOrderingDecidesRace": (
                         str(raw_race.get("winner", "")) == "cancel"

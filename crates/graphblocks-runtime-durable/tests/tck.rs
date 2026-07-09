@@ -3384,6 +3384,22 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }));
                 }
             }
+            if raw_race
+                .get("winner")
+                .and_then(Value::as_str)
+                .is_some_and(|winner| winner == "cancel")
+                && raw_race
+                    .get("resultCommitted")
+                    .or_else(|| raw_race.get("result_committed"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCancelRaceInvalid",
+                    "message": "async cancel race forbids result commit after cancel winner",
+                    "path": "$.race.resultCommitted",
+                }));
+            }
             json!({
                 "journalOrderingDecidesRace": raw_race
                     .get("winner")
