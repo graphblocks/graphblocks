@@ -486,6 +486,18 @@ def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeyp
             offset_valid,
             validation_time="2026-06-24T05:00:01Z",
         )
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="valid_until must be an ISO datetime"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-24T00:00:00+0000"),
+            validation_time="2026-06-24T00:00:00Z",
+        )
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="validation_time must be an ISO datetime"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-24T00:00:01Z"),
+            validation_time="2026-06-24 00:00:00Z",
+        )
 
 
 def test_client_package_remote_adapter_requires_required_idempotency_key(monkeypatch) -> None:

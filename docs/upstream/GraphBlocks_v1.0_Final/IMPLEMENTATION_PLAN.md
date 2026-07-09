@@ -1740,6 +1740,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   MCP and OpenAPI adapter invocations now apply the same strict parsing to caller-supplied
   `arguments_json`, so non-standard constants are rejected before the executable request contract is
   canonicalized, digest-checked, or replayed through request-contract projections.
+  Remote-service, MCP, and OpenAPI adapter invocations now reject space-separated datetimes and
+  compact timezone offsets such as `+0000` in resolved-tool `valid_until` and caller-supplied
+  `validation_time` checks, keeping scoped capability expiry enforcement aligned with the runtime's
+  RFC 3339-style timestamp contract while still accepting canonical offset timestamps such as
+  `-05:00`.
   `graphblocks-policy-opa` and `graphblocks-policy-cedar` now parse stored PDP request contracts
   with strict JSON semantics, rejecting non-standard constants such as `NaN` before OPA input or
   Cedar authorization payloads are exposed to external policy engines.
