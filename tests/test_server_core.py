@@ -6067,6 +6067,36 @@ def test_server_app_rejects_retrying_subscription_without_dead_letter_behavior()
     assert app.subscriptions("run-subscribe-retry-policy-1") == ()
 
 
+def test_server_app_rejects_subscription_with_whitespace_wrapped_failure_policy() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-failure-policy-whitespace-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-failure-policy-whitespace-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-failure-policy-whitespace",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort ",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server subscription failure_policy must not contain surrounding whitespace",
+    }
+    assert app.subscriptions("run-subscribe-failure-policy-whitespace-1") == ()
+
+
 def test_server_app_rejects_authoritative_event_subscription_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-authoritative-1"] = ()
@@ -8264,6 +8294,37 @@ def test_server_app_accepts_mandatory_callback_registration_failure_policy_with_
     assert response.status_code == 201
     assert json.loads(response.body.decode("utf-8"))["subscriptionId"] == "callback-sub-mandatory-policy-fallback"
     assert app.callback_registrations()[0].failure_policy == "fail_run_on_failure"
+
+
+def test_server_app_rejects_callback_registration_with_whitespace_wrapped_failure_policy() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-failure-policy-whitespace",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "best_effort ",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server subscription failure_policy must not contain surrounding whitespace",
+    }
+    assert app.callback_registrations() == ()
 
 
 def test_server_app_rejects_authoritative_callback_registration_projection() -> None:

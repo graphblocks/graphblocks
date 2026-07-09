@@ -180,7 +180,7 @@ def _validate_callback_subscription_scope(value: object) -> str:
 
 
 def _validate_callback_failure_policy(value: object) -> str:
-    failure_policy = _validate_non_empty_string("server subscription", "failure_policy", value)
+    failure_policy = _validate_exact_non_empty_string("server subscription", "failure_policy", value)
     if failure_policy not in VALID_CALLBACK_FAILURE_POLICIES:
         raise ValueError(
             "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
