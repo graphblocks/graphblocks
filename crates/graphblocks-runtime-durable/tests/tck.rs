@@ -2458,34 +2458,9 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.operation.{expected_schema_path}"),
                     }));
                 }
-                let deadline_is_iso = operation
-                    .get("deadline")
-                    .and_then(Value::as_str)
-                    .is_some_and(|deadline| {
-                        let deadline = deadline.trim();
-                        let bytes = deadline.as_bytes();
-                        let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
-                        bytes.len() >= 20
-                            && digit_positions
-                                .into_iter()
-                                .all(|position| bytes.get(position).is_some_and(u8::is_ascii_digit))
-                            && bytes.get(4) == Some(&b'-')
-                            && bytes.get(7) == Some(&b'-')
-                            && bytes.get(10) == Some(&b'T')
-                            && bytes.get(13) == Some(&b':')
-                            && bytes.get(16) == Some(&b':')
-                            && (deadline.ends_with('Z')
-                                || deadline.get(19..).is_some_and(|suffix| {
-                                    suffix.contains('+') || suffix.contains('-')
-                                }))
-                    });
-                if deadline_is_iso {
-                    operation_deadline_seconds = operation
-                        .get("deadline")
-                        .and_then(Value::as_str)
-                        .and_then(timestamp_seconds);
-                }
-                if !deadline_is_iso {
+                let operation_deadline = operation.get("deadline").and_then(Value::as_str);
+                operation_deadline_seconds = operation_deadline.and_then(timestamp_seconds);
+                if operation_deadline_seconds.is_none() {
                     diagnostics.push(json!({
                         "code": "DurableAsyncCallbackResumeInvalid",
                         "message": "async callback resume operation requires ISO deadline",
