@@ -465,6 +465,8 @@ def validate_webhook_target_url(url: str, *, allow_private: bool = False) -> Web
     _require_non_empty_string("url", url)
     if not isinstance(allow_private, bool):
         raise ValueError("allow_private must be a boolean")
+    if url != url.strip():
+        return WebhookTargetSafety(url=url, allowed=False, reason="surrounding_whitespace", host=None)
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return WebhookTargetSafety(url=url, allowed=False, reason="unsupported_scheme", host=parsed.hostname)

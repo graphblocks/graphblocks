@@ -1198,6 +1198,18 @@ def test_webhook_target_safety_rejects_forbidden_targets_by_default() -> None:
         assert safety.reason == reason
 
 
+def test_webhook_target_safety_rejects_surrounding_url_whitespace() -> None:
+    for url in (
+        " https://callbacks.example.com/graphblocks/events",
+        "https://callbacks.example.com/graphblocks/events ",
+    ):
+        safety = validate_webhook_target_url(url)
+
+        assert safety.allowed is False
+        assert safety.reason == "surrounding_whitespace"
+        assert safety.host is None
+
+
 def test_webhook_target_safety_can_allow_private_hosts_explicitly() -> None:
     safety = validate_webhook_target_url("https://10.0.0.7/callback", allow_private=True)
 
