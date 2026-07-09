@@ -623,7 +623,7 @@ def _diagnose_callback_subscription_config(
         or delivery.get("mandatory") is True
         or failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES
     )
-    if mandatory and not failure_policy:
+    if mandatory and not failure_policy and not _has_callback_dead_letter_behavior(config, delivery):
         diagnostics.append(
             Diagnostic(
                 "GB6006",

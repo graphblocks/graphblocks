@@ -1158,7 +1158,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`, with shared compiler TCK coverage.
 - Callback subscription diagnostics now report mandatory callback delivery without retry,
-  dead-letter, or fallback policy as `GB6006`, with shared compiler TCK coverage.
+  dead-letter, or fallback policy as `GB6006`, with shared compiler TCK coverage. The Python
+  compiler now treats explicit `deadLetterPolicy`/`deadLetterRef` or
+  `fallbackPolicy`/`fallbackRef` declarations as satisfying that mandatory callback recovery
+  requirement even when no separate `failurePolicy` field is present.
 - Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
   retrying or mandatory callback failure policies without explicit dead-letter or fallback behavior
   (`GB6014`), with shared compiler TCK coverage. The Rust and Python compilers both recognize
