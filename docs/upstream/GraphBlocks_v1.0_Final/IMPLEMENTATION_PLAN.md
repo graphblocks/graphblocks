@@ -1770,6 +1770,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python `ApplicationCommandMetadata` now applies the same exact-value validation to command ids,
   run ids, protocol versions, turn ids, and idempotency keys before control-plane commands can be
   routed, deduplicated, or audited.
+- Application command, protocol event, and authoritative application event payloads now reject
+  top-level and nested mapping keys with surrounding whitespace before freezing, so payload
+  evidence cannot depend on consumer-specific key trimming.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records and protocol events by
   event type, visibility, node id, operation id, severity floor, and terminal-event inclusion,
   treating absent protocol visibility as default client visibility while keeping malformed

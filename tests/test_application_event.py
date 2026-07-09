@@ -780,6 +780,16 @@ def test_application_protocol_envelopes_reject_invalid_metadata_payloads_and_log
         ApplicationCommand.new("CancelRun", command_metadata, payload=object())  # type: ignore[arg-type]
     with pytest.raises(ApplicationProtocolError, match="application command payload keys must be non-empty strings"):
         ApplicationCommand.new("CancelRun", command_metadata, payload={" ": "run-1"})
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command payload keys must not contain surrounding whitespace",
+    ):
+        ApplicationCommand.new("CancelRun", command_metadata, payload={" run_id": "run-1"})
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command payload.context keys must not contain surrounding whitespace",
+    ):
+        ApplicationCommand.new("CancelRun", command_metadata, payload={"context": {"run_id ": "run-1"}})
     with pytest.raises(ApplicationProtocolError, match="application protocol event metadata must be"):
         ApplicationProtocolEvent("RunStarted", object(), payload={})  # type: ignore[arg-type]
     with pytest.raises(ApplicationProtocolError, match="application protocol event payload must be a mapping"):
@@ -789,6 +799,20 @@ def test_application_protocol_envelopes_reject_invalid_metadata_payloads_and_log
         match="application protocol event payload keys must be non-empty strings",
     ):
         ApplicationProtocolEvent.new("RunStarted", event_metadata, payload={object(): "run-1"})  # type: ignore[dict-item]
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application protocol event payload keys must not contain surrounding whitespace",
+    ):
+        ApplicationProtocolEvent.new("RunStarted", event_metadata, payload={" response_id": "response-1"})
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application protocol event payload.metadata keys must not contain surrounding whitespace",
+    ):
+        ApplicationProtocolEvent.new(
+            "RunStarted",
+            event_metadata,
+            payload={"metadata": {"response_id ": "response-1"}},
+        )
     with pytest.raises(ApplicationProtocolError, match="application protocol log event must be"):
         log.append(object())  # type: ignore[arg-type]
     with pytest.raises(ApplicationProtocolError, match="application protocol replay cursor must be a string"):
@@ -1225,6 +1249,16 @@ def test_application_event_payloads_are_copied_and_read_only() -> None:
         ApplicationEvent.new("RunStarted", _metadata(), payload={"": "running"})
     with pytest.raises(ApplicationEventError, match="application event payload.nested keys must be non-empty strings"):
         ApplicationEvent.new("RunStarted", _metadata(), payload={"nested": {"": "running"}})
+    with pytest.raises(
+        ApplicationEventError,
+        match="application event payload keys must not contain surrounding whitespace",
+    ):
+        ApplicationEvent.new("RunStarted", _metadata(), payload={" response_id": "response-1"})
+    with pytest.raises(
+        ApplicationEventError,
+        match="application event payload.nested keys must not contain surrounding whitespace",
+    ):
+        ApplicationEvent.new("RunStarted", _metadata(), payload={"nested": {"response_id ": "response-1"}})
     with pytest.raises(ApplicationEventError, match="tool_call_id must be a string"):
         ApplicationEvent.tool(
             "ToolCallStarted",

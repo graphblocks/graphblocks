@@ -460,6 +460,8 @@ def _copy_payload_value(error_type: type[RuntimeError], label: str, value: objec
         copied = dict(value)
         if any(not isinstance(key, str) or not key.strip() for key in copied):
             raise error_type(f"{label} keys must be non-empty strings")
+        if any(key != key.strip() for key in copied):
+            raise error_type(f"{label} keys must not contain surrounding whitespace")
         return _FrozenPayloadMapping(
             {key: _copy_payload_value(error_type, f"{label}.{key}", item) for key, item in copied.items()}
         )
@@ -476,6 +478,8 @@ def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object)
     normalized = dict(payload)
     if any(not isinstance(key, str) or not key.strip() for key in normalized):
         raise error_type(f"{label} keys must be non-empty strings")
+    if any(key != key.strip() for key in normalized):
+        raise error_type(f"{label} keys must not contain surrounding whitespace")
     return MappingProxyType(
         {
             key: _copy_payload_value(error_type, f"{label}.{key}", value)
