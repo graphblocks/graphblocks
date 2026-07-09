@@ -2026,6 +2026,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now require `budgetExhaustionState` to be
   `paused_budget` before budget-exhausted callback receipts can satisfy resume-admission
   conformance.
+- Durable async callback resume-guard shared TCK cases now reject supplied operation envelopes with
+  an invalid `kind`, keeping callback-resume evidence aligned with the `AsyncOperation` kind set
+  already enforced by late external-operation reconciliation.
 - Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
   rejecting missing flags as well as truthy strings before they can prove cancellation/resume race

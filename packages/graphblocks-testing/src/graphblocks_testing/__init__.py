@@ -8614,6 +8614,26 @@ class TckRunner:
                                 "path": f"$.operation.{expected_schema_path}",
                             }
                         )
+                    if "kind" in raw_operation:
+                        operation_kind = raw_operation.get("kind")
+                        if operation_kind not in {
+                            "tool",
+                            "sandbox_task",
+                            "ci_job",
+                            "browser_task",
+                            "workspace_trial",
+                            "external_provider_job",
+                            "document_job",
+                            "research_task",
+                            "custom",
+                        }:
+                            diagnostics.append(
+                                {
+                                    "code": "DurableAsyncCallbackResumeInvalid",
+                                    "message": "async callback resume operation requires valid operation kind",
+                                    "path": "$.operation.kind",
+                                }
+                            )
                     deadline = raw_operation.get("deadline")
                     if not isinstance(deadline, str) or not deadline.strip():
                         diagnostics.append(

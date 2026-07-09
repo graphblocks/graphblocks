@@ -2483,6 +2483,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                         "path": format!("$.operation.{expected_schema_path}"),
                     }));
                 }
+                if operation.contains_key("kind")
+                    && !operation
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| {
+                            matches!(
+                                kind,
+                                "tool"
+                                    | "sandbox_task"
+                                    | "ci_job"
+                                    | "browser_task"
+                                    | "workspace_trial"
+                                    | "external_provider_job"
+                                    | "document_job"
+                                    | "research_task"
+                                    | "custom"
+                            )
+                        })
+                {
+                    diagnostics.push(json!({
+                        "code": "DurableAsyncCallbackResumeInvalid",
+                        "message": "async callback resume operation requires valid operation kind",
+                        "path": "$.operation.kind",
+                    }));
+                }
                 let operation_deadline = operation.get("deadline").and_then(Value::as_str);
                 operation_deadline_seconds = operation_deadline.and_then(timestamp_seconds);
                 if operation_deadline_seconds.is_none() {

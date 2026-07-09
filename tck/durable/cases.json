@@ -6358,6 +6358,74 @@
     }
   },
   {
+    "name": "async_callback_resume_invalid_operation_kind_rejected",
+    "kind": "async_callback_resume_guards",
+    "operation": {
+      "operationId": "op-ci-001",
+      "idempotencyKey": "idem-ci-operation-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "policySnapshotId": "policy-snap-callback-001",
+      "deadline": "2026-07-02T00:30:00Z",
+      "budgetState": "resume_reserved",
+      "resumeTokenHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedSchema": "schemas/CICallback@1",
+      "kind": "unknown_job"
+    },
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "eventType": "ExternalCallbackReceived",
+      "callbackId": "cb-ci-invalid-operation-kind",
+      "idempotencyKey": "idem-ci-callback-invalid-operation-kind",
+      "receivedAt": "2026-07-02T00:00:41Z",
+      "releaseId": "rel-coding-001",
+      "tenantId": "tenant-coding-001",
+      "operationId": "op-ci-001",
+      "runId": "run-coding-001",
+      "nodeId": "waitCI",
+      "attemptId": "attempt-1",
+      "policySnapshotId": "policy-snap-callback-001",
+      "journalSequence": 41,
+      "payloadDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "payloadSchemaValid": true,
+      "signatureVerified": true,
+      "verifiedBy": "hmac-sha256:callback-endpoint-1"
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release",
+        "idempotency"
+      ],
+      "budgetExhaustionState": "paused_budget",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume operation requires valid operation kind",
+        "path": "$.operation.kind"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "async_callback_resume_cancelled_operation_state_rejected",
     "kind": "async_callback_resume_guards",
     "operation": {
