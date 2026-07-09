@@ -305,7 +305,16 @@ def _webhook_url_is_unsafe(url: str) -> bool:
     try:
         address = ipaddress.ip_address(normalized_host)
     except ValueError:
-        return False
+        try:
+            if normalized_host.startswith("0x"):
+                numeric_ipv4 = int(normalized_host, 16)
+            elif normalized_host.isascii() and normalized_host.isdecimal():
+                numeric_ipv4 = int(normalized_host, 10)
+            else:
+                return False
+            address = ipaddress.ip_address(numeric_ipv4)
+        except ValueError:
+            return False
     return (
         address.is_loopback
         or address.is_private

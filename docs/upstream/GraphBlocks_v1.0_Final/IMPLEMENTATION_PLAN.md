@@ -1055,6 +1055,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime webhook target validation now also rejects alternate numeric IPv4 literals that resolve to
   forbidden internal addresses, such as decimal or hex loopback forms, before delivery can reach an
   HTTP transport.
+  Server-side callback registration now applies the same decimal and hex numeric IPv4 rejection
+  before storing webhook delivery subscriptions.
 - Runtime webhook target parsing now rejects empty, non-numeric, or out-of-range port syntax for
   both hostname and bracketed IPv6 authorities, keeping registration-time validation aligned with
   the eventual HTTP transport parser.
