@@ -147,6 +147,33 @@ def test_evidence_ref_validates_identity_source_kind_and_metadata() -> None:
         EvidenceRef("evidence-1", subject, "log", metadata={object(): "value"})  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: EvidenceRef(" evidence-1", ResourceSnapshotRef("candidate-1", "sha256:candidate"), "log"),
+            "evidence ref evidence_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: EvidenceRef("evidence-1", ResourceSnapshotRef("candidate-1", "sha256:candidate"), " log"),
+            "evidence ref evidence_kind must not contain surrounding whitespace",
+        ),
+        (
+            lambda: EvidenceRef(
+                "evidence-1",
+                ResourceSnapshotRef("candidate-1", "sha256:candidate"),
+                "log",
+                metadata={" path": "logs/test.txt"},
+            ),
+            "evidence ref metadata key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_evidence_ref_rejects_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_typed_value_ref_validates_identity_schema_digest_and_artifact() -> None:
     artifact = ArtifactRef("artifact-1", "file:///tmp/value.json", checksum="sha256:value")
     value_ref = TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", artifact=artifact)
@@ -166,6 +193,32 @@ def test_typed_value_ref_validates_identity_schema_digest_and_artifact() -> None
         TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", encoding=" ")
     with pytest.raises(ValueError, match="typed value ref artifact must be an ArtifactRef"):
         TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", artifact=object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: TypedValueRef(" value-1", "schemas/Answer@1", 1, "sha256:value"),
+            "typed value ref value_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: TypedValueRef("value-1", " schemas/Answer@1", 1, "sha256:value"),
+            "typed value ref schema_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: TypedValueRef("value-1", "schemas/Answer@1", 1, " sha256:value"),
+            "typed value ref digest must not contain surrounding whitespace",
+        ),
+        (
+            lambda: TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", encoding=" json"),
+            "typed value ref encoding must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_typed_value_ref_rejects_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
 
 
 def test_metric_observation_validates_identity_direction_and_copies_evaluator() -> None:
@@ -484,6 +537,36 @@ def test_resource_snapshot_ref_validates_identity_fields_and_copies_metadata() -
         ResourceSnapshotRef("candidate-1", "sha256:candidate", resource_kind=" ")
     with pytest.raises(ValueError, match="resource snapshot metadata must be a mapping"):
         ResourceSnapshotRef("candidate-1", "sha256:candidate", metadata=object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: ResourceSnapshotRef(" candidate-1", "sha256:candidate"),
+            "resource snapshot resource_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResourceSnapshotRef("candidate-1", " sha256:candidate"),
+            "resource snapshot digest must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResourceSnapshotRef("candidate-1", "sha256:candidate", resource_kind=" file"),
+            "resource snapshot resource_kind must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResourceSnapshotRef("candidate-1", "sha256:candidate", uri=" file:///tmp/candidate"),
+            "resource snapshot uri must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResourceSnapshotRef("candidate-1", "sha256:candidate", metadata={" path": "candidate/out.sv"}),
+            "resource snapshot metadata key must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_resource_snapshot_ref_rejects_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
 
 
 def test_change_set_freezes_operation_mappings_at_construction() -> None:

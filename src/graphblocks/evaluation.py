@@ -118,6 +118,8 @@ def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, objec
             raise ValueError(f"{owner} {field_name} keys must be strings")
         if not key.strip():
             raise ValueError(f"{owner} {field_name} key must not be empty")
+        if key != key.strip():
+            raise ValueError(f"{owner} {field_name} key must not contain surrounding whitespace")
     return mapping
 
 
@@ -143,20 +145,16 @@ class ResourceSnapshotRef:
 
     def __post_init__(self) -> None:
         for field_name in ("resource_id", "digest"):
-            value = getattr(self, field_name)
-            if not isinstance(value, str):
-                raise ValueError(f"resource snapshot {field_name} must be a string")
-            if not value.strip():
-                raise ValueError(f"resource snapshot {field_name} must not be empty")
+            _validate_exact_non_empty_string("resource snapshot", field_name, getattr(self, field_name))
         for field_name in ("resource_kind", "uri"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"resource snapshot {field_name} must be a string")
             if value is not None and not value.strip():
                 raise ValueError(f"resource snapshot {field_name} must not be empty")
-        if not isinstance(self.metadata, Mapping):
-            raise ValueError("resource snapshot metadata must be a mapping")
-        object.__setattr__(self, "metadata", dict(self.metadata))
+            if value is not None and value != value.strip():
+                raise ValueError(f"resource snapshot {field_name} must not contain surrounding whitespace")
+        object.__setattr__(self, "metadata", _copy_mapping("resource snapshot", "metadata", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,10 +165,10 @@ class EvidenceRef:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("evidence ref", "evidence_id", self.evidence_id)
+        _validate_exact_non_empty_string("evidence ref", "evidence_id", self.evidence_id)
         if not isinstance(self.source, (ResourceSnapshotRef, ArtifactRef)):
             raise ValueError("evidence ref source must be a ResourceSnapshotRef or ArtifactRef")
-        _validate_non_empty_string("evidence ref", "evidence_kind", self.evidence_kind)
+        _validate_exact_non_empty_string("evidence ref", "evidence_kind", self.evidence_kind)
         object.__setattr__(self, "metadata", _copy_mapping("evidence ref", "metadata", self.metadata))
 
 
@@ -184,14 +182,14 @@ class TypedValueRef:
     artifact: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("typed value ref", "value_id", self.value_id)
-        _validate_non_empty_string("typed value ref", "schema_id", self.schema_id)
+        _validate_exact_non_empty_string("typed value ref", "value_id", self.value_id)
+        _validate_exact_non_empty_string("typed value ref", "schema_id", self.schema_id)
         if not isinstance(self.schema_version, int) or isinstance(self.schema_version, bool):
             raise ValueError("typed value ref schema_version must be an integer")
         if self.schema_version <= 0:
             raise ValueError("typed value ref schema_version must be positive")
-        _validate_non_empty_string("typed value ref", "digest", self.digest)
-        _validate_non_empty_string("typed value ref", "encoding", self.encoding)
+        _validate_exact_non_empty_string("typed value ref", "digest", self.digest)
+        _validate_exact_non_empty_string("typed value ref", "encoding", self.encoding)
         if self.artifact is not None and not isinstance(self.artifact, ArtifactRef):
             raise ValueError("typed value ref artifact must be an ArtifactRef")
 

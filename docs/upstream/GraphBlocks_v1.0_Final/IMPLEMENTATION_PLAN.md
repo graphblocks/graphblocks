@@ -2843,6 +2843,9 @@ sandbox
 - Python model-visible tool provenance refs now reject whitespace-wrapped tool names, resolved-tool
   ids, definition/binding digests, and policy snapshot ids before run provenance can record the tool
   set exposed to a model invocation.
+- Python evaluation resource snapshots, evidence refs, and typed-value refs now reject
+  whitespace-wrapped resource ids, digests, schema ids, encodings, evidence kinds, URIs, and
+  metadata keys before result bundles or trial checks can treat them as provenance evidence.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.
