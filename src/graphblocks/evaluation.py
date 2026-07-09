@@ -653,9 +653,9 @@ class ResultBundle:
 
     def __post_init__(self) -> None:
         for field_name in ("bundle_id", "run_id", "release_id"):
-            _validate_non_empty_string("result bundle", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("result bundle", field_name, getattr(self, field_name))
         if self.deployment_revision_id is not None:
-            _validate_non_empty_string("result bundle", "deployment_revision_id", self.deployment_revision_id)
+            _validate_exact_non_empty_string("result bundle", "deployment_revision_id", self.deployment_revision_id)
         if not isinstance(self.provenance, RunProvenance):
             raise ValueError("result bundle provenance must be a RunProvenance")
         object.__setattr__(
@@ -701,12 +701,12 @@ class ResultBundle:
         object.__setattr__(
             self,
             "usage_records",
-            tuple(_validate_string_list("result bundle", "usage_records", self.usage_records)),
+            tuple(_validate_exact_string_list("result bundle", "usage_records", self.usage_records)),
         )
         object.__setattr__(
             self,
             "policy_decision_refs",
-            tuple(_validate_string_list("result bundle", "policy_decision_refs", self.policy_decision_refs)),
+            tuple(_validate_exact_string_list("result bundle", "policy_decision_refs", self.policy_decision_refs)),
         )
 
     def content_digest(self) -> str:

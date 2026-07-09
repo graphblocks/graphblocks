@@ -2849,6 +2849,9 @@ sandbox
 - Python evaluation check, metric, gate, and trial result primitives now reject
   whitespace-wrapped check ids, metric names and units, gate ids, violated constraint refs, trial
   ids, and usage refs before quality gates or result bundles can depend on normalized evidence.
+- Python result bundles now reject whitespace-wrapped bundle, run, release, deployment revision,
+  usage record, and policy decision refs before durable evaluation provenance is hashed or
+  persisted.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

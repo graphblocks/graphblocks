@@ -1032,3 +1032,39 @@ def test_result_bundle_validates_nested_records_and_copies_collections() -> None
         ResultBundle("bundle-1", "run-1", "release-1", inputs=[object()], outputs=[])  # type: ignore[list-item]
     with pytest.raises(ValueError, match="result bundle provenance must be a RunProvenance"):
         ResultBundle("bundle-1", "run-1", "release-1", inputs=[], outputs=[], provenance=object())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        ({"bundle_id": " bundle-1"}, "result bundle bundle_id must not contain surrounding whitespace"),
+        ({"run_id": " run-1"}, "result bundle run_id must not contain surrounding whitespace"),
+        ({"release_id": " release-1"}, "result bundle release_id must not contain surrounding whitespace"),
+        (
+            {"deployment_revision_id": " rev-1"},
+            "result bundle deployment_revision_id must not contain surrounding whitespace",
+        ),
+        (
+            {"usage_records": [" usage-1"]},
+            "result bundle usage_records item must not contain surrounding whitespace",
+        ),
+        (
+            {"policy_decision_refs": [" policy-1"]},
+            "result bundle policy_decision_refs item must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_result_bundle_rejects_whitespace_wrapped_identities(
+    overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    base = {
+        "bundle_id": "bundle-1",
+        "run_id": "run-1",
+        "release_id": "release-1",
+        "inputs": [],
+        "outputs": [],
+    }
+
+    with pytest.raises(ValueError, match=expected_error):
+        ResultBundle(**(base | overrides))  # type: ignore[arg-type]
