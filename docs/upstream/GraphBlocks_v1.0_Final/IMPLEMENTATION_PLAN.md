@@ -2858,6 +2858,9 @@ sandbox
 - Python evaluation change sets now reject whitespace-wrapped change-set ids, non-snapshot
   base/candidate refs, and invalid operation keys before workspace trials can freeze or hash
   candidate mutations.
+- Python SLO objectives, measurements, and reports now reject whitespace-wrapped SLO ids,
+  indicators, windows, units, and reason codes before operational evidence is evaluated or
+  attached to result bundles.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

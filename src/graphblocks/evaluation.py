@@ -442,11 +442,11 @@ class SloObjective:
     unit: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("SLO objective", "slo_id", self.slo_id)
-        _validate_non_empty_string("SLO objective", "indicator", self.indicator)
-        _validate_non_empty_string("SLO objective", "window", self.window)
+        _validate_exact_non_empty_string("SLO objective", "slo_id", self.slo_id)
+        _validate_exact_non_empty_string("SLO objective", "indicator", self.indicator)
+        _validate_exact_non_empty_string("SLO objective", "window", self.window)
         if self.unit is not None:
-            _validate_non_empty_string("SLO objective", "unit", self.unit)
+            _validate_exact_non_empty_string("SLO objective", "unit", self.unit)
         if self.comparison not in VALID_SLO_COMPARISONS:
             raise ValueError(f"unsupported SLO comparison {self.comparison!r}")
         object.__setattr__(self, "objective", _finite_float("SLO objective", "objective", self.objective))
@@ -511,10 +511,10 @@ class SloMeasurement:
     sample_count: int | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("SLO measurement", "indicator", self.indicator)
-        _validate_non_empty_string("SLO measurement", "window", self.window)
+        _validate_exact_non_empty_string("SLO measurement", "indicator", self.indicator)
+        _validate_exact_non_empty_string("SLO measurement", "window", self.window)
         if self.unit is not None:
-            _validate_non_empty_string("SLO measurement", "unit", self.unit)
+            _validate_exact_non_empty_string("SLO measurement", "unit", self.unit)
         object.__setattr__(self, "value", _finite_float("SLO measurement", "value", self.value))
         if self.sample_count is not None and (
             not isinstance(self.sample_count, int) or isinstance(self.sample_count, bool)
@@ -543,7 +543,7 @@ class SloReport:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("SLO report", "slo_id", self.slo_id)
+        _validate_exact_non_empty_string("SLO report", "slo_id", self.slo_id)
         if self.status not in VALID_SLO_REPORT_STATUSES:
             raise ValueError(f"invalid SLO report status {self.status}")
         if self.status == "no_data":
@@ -551,9 +551,13 @@ class SloReport:
                 raise ValueError("SLO report indicator must be a string")
             if not isinstance(self.window, str):
                 raise ValueError("SLO report window must be a string")
+            if self.indicator:
+                _validate_exact_non_empty_string("SLO report", "indicator", self.indicator)
+            if self.window:
+                _validate_exact_non_empty_string("SLO report", "window", self.window)
         else:
-            _validate_non_empty_string("SLO report", "indicator", self.indicator)
-            _validate_non_empty_string("SLO report", "window", self.window)
+            _validate_exact_non_empty_string("SLO report", "indicator", self.indicator)
+            _validate_exact_non_empty_string("SLO report", "window", self.window)
         object.__setattr__(self, "objective", _finite_float("SLO report", "objective", self.objective))
         if self.observed_value is not None:
             object.__setattr__(
@@ -570,7 +574,7 @@ class SloReport:
         if self.violated_by is not None:
             object.__setattr__(self, "violated_by", _finite_float("SLO report", "violated_by", self.violated_by))
         if self.reason is not None:
-            _validate_non_empty_string("SLO report", "reason", self.reason)
+            _validate_exact_non_empty_string("SLO report", "reason", self.reason)
 
 
 @dataclass(frozen=True, slots=True)

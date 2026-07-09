@@ -439,6 +439,74 @@ def test_slo_records_validate_identity_literals_and_finite_values() -> None:
     assert no_data_placeholder.status == "no_data"
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: SloObjective(" slo-1", "availability", "at_least", 0.99, "30d"),
+            "SLO objective slo_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloObjective("slo-1", " availability", "at_least", 0.99, "30d"),
+            "SLO objective indicator must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloObjective("slo-1", "availability", "at_least", 0.99, " 30d"),
+            "SLO objective window must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloObjective("slo-1", "latency", "at_most", 1500, "30d", unit=" ms"),
+            "SLO objective unit must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloMeasurement(" availability", 1.0, "30d"),
+            "SLO measurement indicator must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloMeasurement("availability", 1.0, " 30d"),
+            "SLO measurement window must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloMeasurement("latency", 1.0, "30d", unit=" ms"),
+            "SLO measurement unit must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloReport(" slo-1", "availability", "30d", "pass", 0.99),
+            "SLO report slo_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloReport("slo-1", " availability", "30d", "pass", 0.99),
+            "SLO report indicator must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloReport("slo-1", "availability", " 30d", "fail", 0.99),
+            "SLO report window must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloReport("slo-1", " availability", "30d", "no_data", 0.99),
+            "SLO report indicator must not contain surrounding whitespace",
+        ),
+        (
+            lambda: SloReport("slo-1", "availability", "30d", "no_data", 0.99, reason=" policy_hold"),
+            "SLO report reason must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_slo_records_reject_whitespace_wrapped_identities(factory, expected_error: str) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
+def test_slo_unit_helpers_validate_identity_values() -> None:
+    objective = SloObjective.at_most("first-draft", "p95(turn_first_draft_ms)", 1500.0, "30d")
+    measurement = SloMeasurement("p95(turn_first_draft_ms)", 1700.0, "30d")
+
+    with pytest.raises(ValueError, match="SLO objective unit must not contain surrounding whitespace"):
+        objective.with_unit(" ms")
+    with pytest.raises(ValueError, match="SLO measurement unit must not contain surrounding whitespace"):
+        measurement.with_unit(" ms")
+
+
 def test_review_record_is_invalid_for_changed_subject_digest() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:old")
     review = ReviewRecord(
