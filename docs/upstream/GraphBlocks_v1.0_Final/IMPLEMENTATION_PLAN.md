@@ -835,6 +835,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   late provider results or early timeout projections from being recorded as current operation
   outcomes. The same parser now rejects compact timezone offsets such as `+0000` and
   space-separated datetime forms across async operation lifecycle fields before ordering checks.
+- The Python `AsyncOperation` lifecycle validator now also rejects lifecycle timestamps that only
+  become valid after trimming whitespace or accepting lowercase `z`, keeping helper-driven
+  submissions and callback receipt transitions on the same strict RFC 3339-style boundary as
+  direct operation rehydration.
 - Rust `AsyncOperation` validation now rejects zero `created_at_unix_ms` values so durable
   operation records cannot start from a sentinel timestamp.
 - Rust `AsyncOperation` validation now rejects `created` records that already carry submitted,

@@ -113,6 +113,8 @@ def _validate_sha256_digest(owner: str, field_name: str, value: object) -> str:
 
 
 def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     if len(value) <= 19 or value[10] != "T":
         raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     suffix_start = 19
@@ -280,7 +282,6 @@ class AsyncOperation:
             "attempt_id",
             "expected_schema",
             "idempotency_key",
-            "created_at",
         ):
             object.__setattr__(
                 self,
@@ -299,10 +300,6 @@ class AsyncOperation:
             "callback_ref",
             "polling_ref",
             "infinite_wait_policy",
-            "submitted_at",
-            "expires_at",
-            "callback_received_at",
-            "completed_at",
         ):
             value = getattr(self, field_name)
             if value is not None:
@@ -311,6 +308,10 @@ class AsyncOperation:
                     field_name,
                     _validate_non_empty_string("async operation", field_name, value),
                 )
+        for field_name in ("created_at", "submitted_at", "expires_at", "callback_received_at", "completed_at"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _parse_iso_datetime("async operation", field_name, value)
         if self.state == "created" and (self.submitted_at is not None or self.completed_at is not None):
             raise ValueError("async operation created state must not have submitted_at or completed_at")
         if self.state == "created" and (self.expires_at is not None or self.infinite_wait_policy is not None):

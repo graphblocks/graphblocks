@@ -1334,6 +1334,51 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             completed_at="2026-07-02T00:10:00+0000"
         )
 
+    with raises_value_error("async operation created_at must be an ISO datetime"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-whitespace-created",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-ci-whitespace-created",
+            created_at="2026-07-02T00:00:00Z ",
+        )
+
+    with raises_value_error("async operation submitted_at must be an ISO datetime"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-whitespace-submitted",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-ci-whitespace-submitted",
+            created_at="2026-07-02T00:00:00Z",
+        ).mark_submitted(submitted_at=" 2026-07-02T00:00:01Z")
+
+    with raises_value_error("async operation callback_received_at must be an ISO datetime"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-lowercase-callback",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash=VALID_RESUME_TOKEN_HASH,
+            idempotency_key="idem-ci-lowercase-callback",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+        ).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z",
+            expires_at="2026-07-02T00:30:00Z",
+        ).wait_for_callback().mark_callback_received(
+            completed_at="2026-07-02T00:10:00z"
+        )
+
     with raises_value_error("async operation submitted_at must not be before created_at"):
         graphblocks.AsyncOperation.created(
             operation_id="op-ci-1",
