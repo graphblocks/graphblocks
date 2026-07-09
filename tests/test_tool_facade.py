@@ -237,6 +237,25 @@ def test_tool_definition_rejects_non_string_identity_fields() -> None:
             ToolDefinition(**{**base, **overrides})  # type: ignore[arg-type]
 
 
+def test_tool_definition_rejects_whitespace_wrapped_contract_identities() -> None:
+    base = {
+        "name": "knowledge.search",
+        "description": "Search support documentation.",
+        "input_schema": "schemas/SearchRequest@1",
+    }
+    cases = (
+        ({"name": " knowledge.search"}, "tool definition name must not contain surrounding whitespace"),
+        ({"input_schema": "schemas/SearchRequest@1 "}, "tool definition input_schema must not contain surrounding whitespace"),
+        ({"output_schema": " schemas/SearchResult@1"}, "tool definition output_schema must not contain surrounding whitespace"),
+        ({"version": "1.0.0 "}, "tool definition version must not contain surrounding whitespace"),
+        ({"tags": frozenset({" support"})}, "tool definition tag must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolDefinition(**{**base, **overrides})
+
+
 def test_tool_binding_digest_includes_execution_contract_not_definition_text() -> None:
     binding = ToolBinding(
         binding_id="binding-ticket-create",
@@ -333,6 +352,25 @@ def test_tool_binding_rejects_non_string_identity_fields() -> None:
             ToolBinding(**{**base, **overrides})  # type: ignore[arg-type]
 
 
+def test_tool_binding_rejects_whitespace_wrapped_contract_identities() -> None:
+    base = {
+        "binding_id": "binding-search",
+        "tool_name": "knowledge.search",
+        "implementation": BlockToolImplementation(block="knowledge.search@1"),
+    }
+    cases = (
+        ({"binding_id": " binding-search"}, "tool binding binding_id must not contain surrounding whitespace"),
+        ({"tool_name": "knowledge.search "}, "tool binding tool_name must not contain surrounding whitespace"),
+        ({"retry_policy_ref": "retry-standard "}, "tool binding retry_policy_ref must not contain surrounding whitespace"),
+        ({"policy_profile_ref": " policy-standard"}, "tool binding policy_profile_ref must not contain surrounding whitespace"),
+        ({"execution_class": "sandbox "}, "tool binding execution_class must not contain surrounding whitespace"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolBinding(**{**base, **overrides})
+
+
 def test_tool_implementations_reject_empty_execution_targets() -> None:
     with pytest.raises(ValueError, match="block tool implementation block must not be empty"):
         BlockToolImplementation(block=" ")
@@ -385,6 +423,47 @@ def test_tool_implementations_reject_non_string_execution_targets() -> None:
         (
             lambda: OpenApiToolImplementation(connection="ticket-system", operation_id=1),  # type: ignore[arg-type]
             "openapi tool implementation operation_id must be a string",
+        ),
+    )
+
+    for construct, message in cases:
+        with pytest.raises(ValueError, match=message):
+            construct()
+
+
+def test_tool_implementations_reject_whitespace_wrapped_execution_targets() -> None:
+    cases = (
+        (
+            lambda: BlockToolImplementation(block=" knowledge.search@1"),
+            "block tool implementation block must not contain surrounding whitespace",
+        ),
+        (
+            lambda: GraphToolImplementation(graph="graphs/knowledge-search "),
+            "graph tool implementation graph must not contain surrounding whitespace",
+        ),
+        (
+            lambda: RemoteToolImplementation(connection=" support-api", operation="search"),
+            "remote tool implementation connection must not contain surrounding whitespace",
+        ),
+        (
+            lambda: RemoteToolImplementation(connection="support-api", operation="search "),
+            "remote tool implementation operation must not contain surrounding whitespace",
+        ),
+        (
+            lambda: McpToolImplementation(server="support-mcp ", remote_name="tool.search"),
+            "mcp tool implementation server must not contain surrounding whitespace",
+        ),
+        (
+            lambda: McpToolImplementation(server="support-mcp", remote_name=" tool.search"),
+            "mcp tool implementation remote_name must not contain surrounding whitespace",
+        ),
+        (
+            lambda: OpenApiToolImplementation(connection="ticket-system ", operation_id="createTicket"),
+            "openapi tool implementation connection must not contain surrounding whitespace",
+        ),
+        (
+            lambda: OpenApiToolImplementation(connection="ticket-system", operation_id=" createTicket"),
+            "openapi tool implementation operation_id must not contain surrounding whitespace",
         ),
     )
 
@@ -584,6 +663,67 @@ def test_resolved_tool_rejects_non_string_identity_fields() -> None:
     for field_name in ("definition_digest", "binding_digest"):
         with pytest.raises(ValueError, match=f"resolved tool {field_name} must be a string"):
             replace(resolved, **{field_name: object()})
+
+
+def test_resolved_tool_rejects_whitespace_wrapped_policy_and_digest_identities() -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-knowledge-search",
+        tool_name="knowledge.search",
+        implementation=BlockToolImplementation(block="knowledge.search@1"),
+    )
+
+    cases = (
+        (
+            lambda: ResolvedTool.from_definition_and_binding(
+                resolved_tool_id=" resolved-1",
+                definition=definition,
+                binding=binding,
+                effective_policy_snapshot_id="policy-snapshot-1",
+                allowed_for_principal=True,
+            ),
+            "resolved tool resolved_tool_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResolvedTool.from_definition_and_binding(
+                resolved_tool_id="resolved-1",
+                definition=definition,
+                binding=binding,
+                effective_policy_snapshot_id="policy-snapshot-1 ",
+                allowed_for_principal=True,
+            ),
+            "resolved tool effective_policy_snapshot_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ResolvedTool.from_definition_and_binding(
+                resolved_tool_id="resolved-1",
+                definition=definition,
+                binding=binding,
+                effective_policy_snapshot_id="policy-snapshot-1",
+                allowed_for_principal=True,
+                valid_until=" 2026-07-02T00:00:00Z",
+            ),
+            "resolved tool valid_until must not contain surrounding whitespace",
+        ),
+    )
+    for construct, message in cases:
+        with pytest.raises(ValueError, match=message):
+            construct()
+
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-1",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    for field_name in ("definition_digest", "binding_digest"):
+        with pytest.raises(ValueError, match=f"resolved tool {field_name} must not contain surrounding whitespace"):
+            replace(resolved, **{field_name: f'{getattr(resolved, field_name)} '})
 
 
 def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:

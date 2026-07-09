@@ -225,10 +225,23 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return value
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    text = _validate_non_empty_string(owner, field_name, value)
+    if text != text.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return text
+
+
 def _validate_optional_non_empty_string(owner: str, field_name: str, value: object) -> str | None:
     if value is None:
         return None
     return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_optional_exact_non_empty_string(owner: str, field_name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    return _validate_exact_non_empty_string(owner, field_name, value)
 
 
 def _validate_integer(owner: str, field_name: str, value: object) -> int:
@@ -425,13 +438,16 @@ class ToolDefinition:
     version: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("name", "description", "input_schema"):
-            _validate_non_empty_string("tool definition", field_name, getattr(self, field_name))
-        _validate_optional_non_empty_string("tool definition", "output_schema", self.output_schema)
-        _validate_optional_non_empty_string("tool definition", "version", self.version)
+        for field_name in ("name", "input_schema"):
+            _validate_exact_non_empty_string("tool definition", field_name, getattr(self, field_name))
+        _validate_non_empty_string("tool definition", "description", self.description)
+        _validate_optional_exact_non_empty_string("tool definition", "output_schema", self.output_schema)
+        _validate_optional_exact_non_empty_string("tool definition", "version", self.version)
         tags = _validate_string_collection("tool definition", "tags", self.tags)
         if any(not tag.strip() for tag in tags):
             raise ValueError("tool definition tag must not be empty")
+        if any(tag != tag.strip() for tag in tags):
+            raise ValueError("tool definition tag must not contain surrounding whitespace")
         object.__setattr__(self, "tags", tags)
 
     def model_contract(self) -> dict[str, object]:
@@ -456,7 +472,7 @@ class BlockToolImplementation:
     kind: Literal["block"] = field(default="block", init=False)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("block tool implementation", "block", self.block)
+        _validate_exact_non_empty_string("block tool implementation", "block", self.block)
         object.__setattr__(
             self,
             "input_mapping",
@@ -485,7 +501,7 @@ class GraphToolImplementation:
     kind: Literal["graph"] = field(default="graph", init=False)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("graph tool implementation", "graph", self.graph)
+        _validate_exact_non_empty_string("graph tool implementation", "graph", self.graph)
         object.__setattr__(
             self,
             "input_mapping",
@@ -513,8 +529,8 @@ class RemoteToolImplementation:
     kind: Literal["remote"] = field(default="remote", init=False)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("remote tool implementation", "connection", self.connection)
-        _validate_non_empty_string("remote tool implementation", "operation", self.operation)
+        _validate_exact_non_empty_string("remote tool implementation", "connection", self.connection)
+        _validate_exact_non_empty_string("remote tool implementation", "operation", self.operation)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -531,8 +547,8 @@ class McpToolImplementation:
     kind: Literal["mcp"] = field(default="mcp", init=False)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("mcp tool implementation", "server", self.server)
-        _validate_non_empty_string("mcp tool implementation", "remote_name", self.remote_name)
+        _validate_exact_non_empty_string("mcp tool implementation", "server", self.server)
+        _validate_exact_non_empty_string("mcp tool implementation", "remote_name", self.remote_name)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -549,8 +565,8 @@ class OpenApiToolImplementation:
     kind: Literal["openapi"] = field(default="openapi", init=False)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("openapi tool implementation", "connection", self.connection)
-        _validate_non_empty_string("openapi tool implementation", "operation_id", self.operation_id)
+        _validate_exact_non_empty_string("openapi tool implementation", "connection", self.connection)
+        _validate_exact_non_empty_string("openapi tool implementation", "operation_id", self.operation_id)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -586,7 +602,7 @@ class ToolBinding:
 
     def __post_init__(self) -> None:
         for field_name in ("binding_id", "tool_name"):
-            _validate_non_empty_string("tool binding", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("tool binding", field_name, getattr(self, field_name))
         if not isinstance(
             self.implementation,
             (
@@ -617,7 +633,7 @@ class ToolBinding:
         ):
             raise ValueError("tool timeout_ms must be non-negative")
         for field_name in ("retry_policy_ref", "policy_profile_ref", "execution_class"):
-            _validate_optional_non_empty_string("tool binding", field_name, getattr(self, field_name))
+            _validate_optional_exact_non_empty_string("tool binding", field_name, getattr(self, field_name))
         object.__setattr__(self, "effects", effects)
 
     def binding_contract(self) -> dict[str, object]:
@@ -658,8 +674,8 @@ class ResolvedTool:
             "binding_digest",
             "effective_policy_snapshot_id",
         ):
-            _validate_non_empty_string("resolved tool", field_name, getattr(self, field_name))
-        _validate_optional_non_empty_string("resolved tool", "valid_until", self.valid_until)
+            _validate_exact_non_empty_string("resolved tool", field_name, getattr(self, field_name))
+        _validate_optional_exact_non_empty_string("resolved tool", "valid_until", self.valid_until)
         if self.binding.tool_name != self.definition.name:
             raise ToolResolutionError(
                 f"tool binding {self.binding.binding_id} references "

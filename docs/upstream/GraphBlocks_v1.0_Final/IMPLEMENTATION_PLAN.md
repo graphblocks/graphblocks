@@ -225,6 +225,10 @@ Message
 
 - `ToolDefinition`은 model-visible contract만 포함한다. credentials, transport config, provider SDK object, mutable implementation detail은 포함하지 않는다.
 - `ToolBinding`과 `ToolImplementation`은 block, graph, remote service, MCP server, OpenAPI operation 실행 방식을 분리해서 소유한다.
+- Python `ToolDefinition`, `ToolBinding`, `ToolImplementation`, and `ResolvedTool` facades now
+  validate schema refs, tool names, binding ids, execution targets, policy snapshot ids, and
+  digests as exact contract identities, rejecting values that only become valid after trimming
+  whitespace before canonical hashes or run provenance can depend on them.
 - model invocation 전에 application/graph/principal/tenant/conversation/data-classification/deployment/budget intersection으로 `ResolvedTool` set을 생성하고 run provenance에 기록한다.
 - `ToolCallDraft`는 streaming argument fragment만 표현하며 side effect를 실행할 수 없다.
 - final `ToolCall`은 schema-valid immutable arguments와 `arguments_digest`를 가진다. argument mutation은 revision과 approval을 invalidation한다.
