@@ -94,7 +94,9 @@ def _validate_positive_int(owner: str, field_name: str, value: object) -> int:
     return value
 
 
-def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
+def _parse_iso_datetime(owner: str, field_name: str, value: object) -> datetime:
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     if len(value) <= 19 or value[10] != "T":
         raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     suffix_start = 19
@@ -130,7 +132,7 @@ def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
 
 
 def _normalize_iso_datetime(owner: str, field_name: str, value: object) -> str:
-    parsed = _parse_iso_datetime(owner, field_name, _validate_non_empty_string(owner, field_name, value))
+    parsed = _parse_iso_datetime(owner, field_name, value)
     return parsed.isoformat().replace("+00:00", "Z")
 
 

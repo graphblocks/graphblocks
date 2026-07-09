@@ -107,6 +107,18 @@ def test_callback_subscription_rejects_non_rfc3339_timestamps() -> None:
             created_at="2026-07-02T00:00:00+0000",
         )
 
+    with raises_value_error("callback subscription created_at must be an ISO datetime"):
+        graphblocks.CallbackSubscription(
+            subscription_id="sub-trailing-created",
+            owner="principal:ide",
+            scope="run",
+            scope_id="run-1",
+            event_filter=graphblocks.EventFilter(),
+            delivery_target="webhook:ide-relay",
+            status="active",
+            created_at="2026-07-02T00:00:00Z ",
+        )
+
     with raises_value_error("callback subscription expires_at must be an ISO datetime"):
         graphblocks.CallbackSubscription(
             subscription_id="sub-space-separator",
@@ -419,6 +431,20 @@ def test_callback_delivery_rejects_non_rfc3339_timestamps() -> None:
             status="failed",
             next_retry_at="2026-07-02T00:00:30+0000",
             last_error="receiver returned 503",
+        )
+
+    with raises_value_error("callback delivery delivered_at must be an ISO datetime"):
+        graphblocks.CallbackDelivery(
+            delivery_id="del-delivered-leading-space",
+            subscription_id="sub-1",
+            event_id="evt-delivered-leading-space",
+            run_id="run-1",
+            sequence=15,
+            cursor="run-1:15",
+            attempt=1,
+            idempotency_key="sub-1:evt-delivered-leading-space",
+            status="delivered",
+            delivered_at=" 2026-07-02T00:00:01Z",
         )
 
     with raises_value_error("callback delivery acknowledged_at must be an ISO datetime"):

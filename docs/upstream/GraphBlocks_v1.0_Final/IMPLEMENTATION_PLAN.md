@@ -626,7 +626,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The Python core callback facade now applies the same timestamp parsing rule to
   `CallbackSubscription` and `CallbackDelivery` timestamps, so subscription lifetimes, retry
   schedules, delivery acknowledgements, and terminal timestamps reject compact offsets and
-  space-separated datetime forms before durable projection.
+  space-separated datetime forms before durable projection. The facade now also rejects callback
+  timestamps that only become valid after trimming surrounding whitespace, so subscription and
+  delivery projections cannot silently canonicalize malformed client input.
 - `CallbackEndpointRef` now rejects endpoint URLs with surrounding whitespace before scheme
   validation, preserving exact ingress route identity for signed callback submissions.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
