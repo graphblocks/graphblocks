@@ -2185,6 +2185,9 @@ fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError>
         let (host, suffix) = rest
             .split_once(']')
             .ok_or(WebhookEndpointError::MalformedUrl)?;
+        if host.contains('%') {
+            return Err(WebhookEndpointError::MalformedUrl);
+        }
         if !suffix.is_empty() {
             let port = suffix
                 .strip_prefix(':')

@@ -3174,6 +3174,25 @@ fn webhook_target_rejects_ipv6_multicast_destinations_by_default() {
 }
 
 #[test]
+fn webhook_target_rejects_scoped_ipv6_literals_by_default() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "https://[fe80::1%25eth0]/callback",
+        "https://[ff02::1%25eth0]/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+                    | Err(WebhookEndpointError::MalformedUrl)
+            ),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let policy = WebhookEgressPolicy::default_deny_internal();
     let target =
