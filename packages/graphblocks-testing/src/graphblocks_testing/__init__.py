@@ -9081,6 +9081,27 @@ class TckRunner:
                     successful_resume_count = 0
                 else:
                     successful_resume_count = raw_successful_resume_count
+                budget_exhaustion_state_path = (
+                    "budgetExhaustionState"
+                    if "budgetExhaustionState" in raw_resume
+                    or "budget_exhaustion_state" not in raw_resume
+                    else "budget_exhaustion_state"
+                )
+                budget_exhaustion_state = raw_resume.get(
+                    "budgetExhaustionState",
+                    raw_resume.get("budget_exhaustion_state"),
+                )
+                if (
+                    not isinstance(budget_exhaustion_state, str)
+                    or budget_exhaustion_state.strip() != "paused_budget"
+                ):
+                    diagnostics.append(
+                        {
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume requires paused_budget budgetExhaustionState",
+                            "path": f"$.resume.{budget_exhaustion_state_path}",
+                        }
+                    )
                 resume_reevaluates_missing = "reevaluates" not in raw_resume
                 raw_resume_reevaluates = raw_resume.get("reevaluates", ())
                 resume_reevaluates = ()

@@ -8085,6 +8085,44 @@
     }
   },
   {
+    "name": "async_callback_resume_non_paused_budget_state_rejected",
+    "kind": "async_callback_resume_guards",
+    "checks": {
+      "signatureFailureRevealsOperation": false,
+      "schemaFailureResumesRun": false,
+      "timeoutCallbackResumesExpiredOperation": false,
+      "cancelledCallbackCommitsResult": false,
+      "staleAttemptCanResume": false,
+      "unauthenticatedCallbackCanResume": false,
+      "nonExternalCallbackEventCanBecomeReceipt": false,
+      "providerOperationMismatchCanResume": false
+    },
+    "callback": {
+      "journalSequence": 41
+    },
+    "resume": {
+      "resumeSequence": 42,
+      "reevaluates": [
+        "policy",
+        "budget",
+        "release",
+        "idempotency"
+      ],
+      "budgetExhaustionState": "running",
+      "successfulResumeCount": 1
+    },
+    "expectedDiagnostics": [
+      {
+        "code": "DurableAsyncCallbackResumeInvalid",
+        "message": "async callback resume requires paused_budget budgetExhaustionState",
+        "path": "$.resume.budgetExhaustionState"
+      }
+    ],
+    "expected": {
+      "expectedDiagnosticsMatched": true
+    }
+  },
+  {
     "name": "callback_cancel_race_cancel_wins_and_blocks_resume",
     "kind": "async_callback_cancel_race",
     "operation": {

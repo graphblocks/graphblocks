@@ -3107,6 +3107,26 @@ fn run_case(case: &Value) -> Result<(), String> {
                     0
                 }
             };
+            let budget_exhaustion_state_path = if raw_resume.contains_key("budgetExhaustionState")
+                || !raw_resume.contains_key("budget_exhaustion_state")
+            {
+                "budgetExhaustionState"
+            } else {
+                "budget_exhaustion_state"
+            };
+            if raw_resume
+                .get("budgetExhaustionState")
+                .or_else(|| raw_resume.get("budget_exhaustion_state"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                != Some("paused_budget")
+            {
+                diagnostics.push(json!({
+                    "code": "DurableAsyncCallbackResumeInvalid",
+                    "message": "async callback resume requires paused_budget budgetExhaustionState",
+                    "path": format!("$.resume.{budget_exhaustion_state_path}"),
+                }));
+            }
             json!({
                 "signatureFailureRevealsOperation": guard_values
                     .get("signatureFailureRevealsOperation")

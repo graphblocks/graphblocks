@@ -1968,6 +1968,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Durable async callback resume-guard shared TCK cases now require valid `reevaluates` sequences to
   include `idempotency`, so callback resume conformance proves idempotency-state reevaluation as
   required by the async callback protocol.
+- Durable async callback resume-guard shared TCK cases now require `budgetExhaustionState` to be
+  `paused_budget` before budget-exhausted callback receipts can satisfy resume-admission
+  conformance.
 - Durable async cancel-race shared TCK cases now require real boolean values for callback receipt,
   resume-attempt, result-commit, and usage-reconciliation flags in both Rust and Python runners,
   rejecting missing flags as well as truthy strings before they can prove cancellation/resume race
