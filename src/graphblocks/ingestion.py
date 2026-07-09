@@ -27,10 +27,17 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     return value
 
 
+def _validate_exact_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    text = _validate_non_empty_string(owner, field_name, value)
+    if text != text.strip():
+        raise ValueError(f"{owner} {field_name} must not contain surrounding whitespace")
+    return text
+
+
 def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
     if value is None:
         return None
-    return _validate_non_empty_string(owner, field_name, value)
+    return _validate_exact_non_empty_string(owner, field_name, value)
 
 
 def _copy_metadata(owner: str, value: object) -> JsonObject:
@@ -42,6 +49,8 @@ def _copy_metadata(owner: str, value: object) -> JsonObject:
             raise ValueError(f"{owner} metadata keys must be strings")
         if not key.strip():
             raise ValueError(f"{owner} metadata keys must not be empty")
+        if key != key.strip():
+            raise ValueError(f"{owner} metadata keys must not contain surrounding whitespace")
     return metadata
 
 
@@ -75,8 +84,8 @@ class ProcessorRef:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("processor ref", "processor_id", self.processor_id)
-        _validate_non_empty_string("processor ref", "version", self.version)
+        _validate_exact_non_empty_string("processor ref", "processor_id", self.processor_id)
+        _validate_exact_non_empty_string("processor ref", "version", self.version)
         _validate_optional_non_empty_string("processor ref", "config_digest", self.config_digest)
         object.__setattr__(self, "metadata", _copy_metadata("processor ref", self.metadata))
 
@@ -103,7 +112,7 @@ class IndexRecordRef:
 
     def __post_init__(self) -> None:
         for field_name in ("index_id", "record_id", "asset_id", "revision_id"):
-            _validate_non_empty_string("index record ref", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("index record ref", field_name, getattr(self, field_name))
         if isinstance(self.chunk_ids, str):
             raise ValueError("index record ref chunk_ids must be a collection of strings")
         try:
@@ -111,7 +120,7 @@ class IndexRecordRef:
         except TypeError as error:
             raise ValueError("index record ref chunk_ids must be a collection of strings") from error
         for chunk_id in chunk_ids:
-            _validate_non_empty_string("index record ref", "chunk_id", chunk_id)
+            _validate_exact_non_empty_string("index record ref", "chunk_id", chunk_id)
         object.__setattr__(self, "chunk_ids", chunk_ids)
         object.__setattr__(self, "metadata", _copy_metadata("index record ref", self.metadata))
 
@@ -161,7 +170,7 @@ class IngestionManifest:
             "created_at",
             "updated_at",
         ):
-            _validate_non_empty_string("ingestion manifest", field_name, getattr(self, field_name))
+            _validate_exact_non_empty_string("ingestion manifest", field_name, getattr(self, field_name))
         if self.status not in VALID_INGESTION_STATUSES:
             raise ValueError(f"invalid ingestion status {self.status!r}")
         _validate_optional_non_empty_string("ingestion manifest", "acl_revision", self.acl_revision)

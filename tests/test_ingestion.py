@@ -135,6 +135,59 @@ def test_ingestion_records_validate_identity_metadata_and_nested_types() -> None
         replace(manifest, error="temporary failure")
 
 
+@pytest.mark.parametrize(
+    ("factory", "expected_error"),
+    (
+        (
+            lambda: ProcessorRef(" plain-text", "1"),
+            "processor ref processor_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ProcessorRef("plain-text", "1", config_digest=" sha256:parser-config"),
+            "processor ref config_digest must not contain surrounding whitespace",
+        ),
+        (
+            lambda: ProcessorRef("plain-text", "1", metadata={" profile": "plain-text"}),
+            "processor ref metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: IndexRecordRef(" knowledge-local", "record-1", "asset-1", "rev-1"),
+            "index record ref index_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: IndexRecordRef("knowledge-local", "record-1", "asset-1", "rev-1", chunk_ids=(" chunk-1",)),
+            "index record ref chunk_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: IndexRecordRef("knowledge-local", "record-1", "asset-1", "rev-1", metadata={" source": "kb"}),
+            "index record ref metadata keys must not contain surrounding whitespace",
+        ),
+        (
+            lambda: replace(_manifest("manifest-1", "rev-1"), manifest_id=" manifest-1"),
+            "ingestion manifest manifest_id must not contain surrounding whitespace",
+        ),
+        (
+            lambda: replace(_manifest("manifest-1", "rev-1"), acl_revision=" acl-rev-1"),
+            "ingestion manifest acl_revision must not contain surrounding whitespace",
+        ),
+        (
+            lambda: replace(_manifest("manifest-1", "rev-1"), status="failed", error=" parser failed"),
+            "ingestion manifest error must not contain surrounding whitespace",
+        ),
+        (
+            lambda: replace(_manifest("manifest-1", "rev-1"), metadata={" phase": "initial"}),
+            "ingestion manifest metadata keys must not contain surrounding whitespace",
+        ),
+    ),
+)
+def test_ingestion_records_reject_whitespace_wrapped_identities(
+    factory: object,
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        factory()
+
+
 def test_ingestion_manifest_store_commit_supersedes_previous_revision() -> None:
     store = InMemoryIngestionManifestStore()
     store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")

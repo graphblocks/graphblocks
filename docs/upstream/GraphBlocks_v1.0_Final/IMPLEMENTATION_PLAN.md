@@ -2530,6 +2530,9 @@ truth.
 - `InMemoryIngestionManifestStore` now distinguishes tombstone retention from hard delete via a
   typed `IngestionDeletePolicy`: tombstone retains a deleted manifest snapshot while hard delete
   removes the manifest and clears the current-asset pointer.
+- Ingestion processor refs, index record refs, manifest identities, ACL/error fields, chunk ids,
+  and metadata keys now reject values that only become valid after trimming, preserving exact
+  document-ingestion provenance across parser, chunker, embedding, and publish records.
 - RAG primitives cover local chunk indexing, tombstone/hard delete propagation, context packs,
   citation/source-trace resolution with retrieval rank/score/metadata provenance, answer grounding,
   abstention, fusion, and rerank projections.
