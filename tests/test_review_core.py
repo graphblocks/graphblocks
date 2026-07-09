@@ -153,6 +153,61 @@ def test_reviewer_credential_rejects_invalid_timestamps() -> None:
         )
 
 
+def test_review_timestamps_reject_non_rfc3339_forms() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:subject")
+    author = PrincipalRef("author-1")
+    reviewer = PrincipalRef("reviewer-1")
+    request_base = {
+        "request_id": "request-1",
+        "subject": subject,
+        "requested_by": author,
+        "required_scopes": ("quality",),
+    }
+    credential_base = {
+        "credential_ref": "cred-quality",
+        "reviewer": reviewer,
+        "scopes": ("quality",),
+        "issued_at": "2026-06-24T00:00:00Z",
+    }
+
+    for created_at in (
+        "2026-06-24 00:00:00Z",
+        "2026-06-24T00:00:00",
+        "2026-06-24T00:00:00+0000",
+        "2026-06-24T00:00:00z",
+        "2026-06-24T00:00:00Z ",
+    ):
+        with pytest.raises(ValueError, match="review request created_at must be an ISO datetime"):
+            ReviewRequest(**(request_base | {"created_at": created_at}))  # type: ignore[arg-type]
+
+    for issued_at in (
+        "2026-06-24 00:00:00Z",
+        "2026-06-24T00:00:00",
+        "2026-06-24T00:00:00+0000",
+        "2026-06-24T00:00:00z",
+    ):
+        with pytest.raises(ValueError, match="reviewer credential issued_at must be an ISO datetime"):
+            ReviewerCredential(**(credential_base | {"issued_at": issued_at}))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="reviewer credential expires_at must be an ISO datetime"):
+        ReviewerCredential(**(credential_base | {"expires_at": "2026-06-24T00:05:00+0000"}))
+
+    request = ReviewRequest(**(request_base | {"created_at": "2026-06-24T00:00:00Z"}))
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider([ReviewerCredential(**credential_base)]),
+    )
+
+    with pytest.raises(ValueError, match="review created_at must be an ISO datetime"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24 00:05:00Z",
+        )
+
+
 def test_reviewer_credential_rejects_invalid_identity_and_metadata_fields() -> None:
     reviewer = PrincipalRef("reviewer-1")
     base = {

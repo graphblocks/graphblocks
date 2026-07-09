@@ -63,15 +63,36 @@ def _thaw_metadata_value(value: object) -> object:
 
 
 def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
-    normalized = _validate_non_empty_string(owner, field_name, value).strip()
-    if normalized.endswith(("Z", "z")):
-        normalized = f"{normalized[:-1]}+00:00"
+    normalized = _validate_non_empty_string(owner, field_name, value)
+    if normalized != normalized.strip() or len(normalized) <= 19 or normalized[10] != "T":
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    timezone_start = 19
+    if normalized[timezone_start] == ".":
+        timezone_start += 1
+        while timezone_start < len(normalized) and normalized[timezone_start].isdigit():
+            timezone_start += 1
+        if timezone_start == 20:
+            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    suffix = normalized[timezone_start:]
+    if suffix == "Z":
+        normalized = f"{normalized[:timezone_start]}+00:00"
+    elif (
+        len(suffix) == 6
+        and suffix[0] in {"+", "-"}
+        and suffix[1:3].isdigit()
+        and suffix[3] == ":"
+        and suffix[4:6].isdigit()
+    ):
+        offset_hours = int(suffix[1:3])
+        offset_minutes = int(suffix[4:6])
+        if offset_hours > 23 or offset_minutes > 59:
+            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    else:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as error:
         raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 

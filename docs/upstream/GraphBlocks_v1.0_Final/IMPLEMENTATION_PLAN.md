@@ -2668,6 +2668,9 @@ sandbox
 - Python review requests and reviewer credentials now deep-freeze nested metadata while thawing
   those snapshots for canonical review-request digests, so retained caller references cannot alter
   review evidence or digest inputs after construction.
+- The Python review facade now validates review request, reviewer credential, and recorded review
+  timestamps as strict RFC 3339-style datetimes before credential expiry, active-review checks, or
+  review workflow state can observe them.
 - The Python evaluation facade now validates review and model-visible-tool timestamps as strict
   RFC 3339-style datetimes, rejecting space-separated forms, timezone-less values, lowercase `z`,
   compact offsets such as `+0000`, and surrounding whitespace before review invalidation or
