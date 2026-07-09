@@ -1442,6 +1442,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
   cursor while retaining authoritative run events for later attach/replay from that cursor.
   `InvokeGraph` validates event `occurredAt` timestamps as ISO datetimes before storing run events.
+  Server ingress timestamp validation now also rejects space-separated datetimes and compact
+  timezone offsets such as `+0000` for run invocation, async callback submission, and callback
+  registration request timestamps before those requests can project durable state.
   Run identifiers are single-assignment at this boundary: a repeated `InvokeGraph` request for an
   existing retained `runId` returns conflict and cannot overwrite the authoritative event stream.
 - `SubscribeEvents` and `RegisterCallback` server projections now have coverage for replay from

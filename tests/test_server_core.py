@@ -797,6 +797,31 @@ def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> No
     )
     assert status.status_code == 404
 
+    compact_offset = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-invalid-occurred-at-compact-offset",
+                    "responseId": "response-invalid-occurred-at-compact-offset",
+                    "occurredAt": "2026-07-02T00:00:00+0000",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert compact_offset.status_code == 400
+    assert json.loads(compact_offset.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request occurredAt must be an ISO datetime",
+    }
+
 
 def test_server_app_handles_authenticated_cancel_request() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
@@ -3758,6 +3783,25 @@ def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> 
 
     assert response.status_code == 400
     assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server async callback received_at must be an ISO datetime",
+    }
+    assert app.callback_submissions("op-ci-invalid-time") == ()
+
+    space_separator = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-invalid-time",
+            headers={"GraphBlocks-Idempotency-Key": "idem-callback-space-time"},
+            query={},
+            cookies={},
+            body=json.dumps({"callback_id": "cb-space-time", "payload": {"status": "completed"}}).encode("utf-8"),
+            requested_at="2026-07-02 00:00:00Z",
+        )
+    )
+
+    assert space_separator.status_code == 400
+    assert json.loads(space_separator.body.decode("utf-8")) == {
         "ok": False,
         "error": "server async callback received_at must be an ISO datetime",
     }
@@ -7874,6 +7918,33 @@ def test_server_app_rejects_callback_registration_with_invalid_created_timestamp
 
     assert response.status_code == 400
     assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration created_at must be an ISO datetime",
+    }
+    assert app.callback_registrations() == ()
+
+    compact_offset = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-created-time-compact-offset",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00+0000",
+        )
+    )
+
+    assert compact_offset.status_code == 400
+    assert json.loads(compact_offset.body.decode("utf-8")) == {
         "ok": False,
         "error": "server callback registration created_at must be an ISO datetime",
     }

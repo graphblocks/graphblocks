@@ -95,10 +95,37 @@ def _validate_transport(value: object) -> ServerTransport:
 
 def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
     timestamp = _validate_non_empty_string(owner, field_name, value)
+    if len(timestamp) <= 19 or timestamp[10] != "T":
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    suffix_start = 19
+    if timestamp[suffix_start] == ".":
+        suffix_start += 1
+        fraction_start = suffix_start
+        while suffix_start < len(timestamp) and timestamp[suffix_start].isdigit():
+            suffix_start += 1
+        if suffix_start == fraction_start:
+            raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    timezone_suffix = timestamp[suffix_start:]
+    if timestamp.endswith("Z"):
+        normalized = f"{timestamp[:-1]}+00:00"
+    elif (
+        len(timezone_suffix) != 6
+        or timezone_suffix[0] not in {"+", "-"}
+        or timezone_suffix[3] != ":"
+        or not timezone_suffix[1:3].isdigit()
+        or not timezone_suffix[4:6].isdigit()
+        or int(timezone_suffix[1:3]) > 23
+        or int(timezone_suffix[4:6]) > 59
+    ):
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
+    else:
+        normalized = timestamp
     try:
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
+    if parsed.tzinfo is None:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime")
     return timestamp
 
 
