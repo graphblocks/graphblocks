@@ -1544,6 +1544,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
   returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
   cursor while retaining authoritative run events for later attach/replay from that cursor.
+  Incoming `responseMode`, `runId`, `responseId`, `releaseId`, `policySnapshotId`, and optional
+  `turnId` values are exact non-empty fields; the server rejects surrounding whitespace instead of
+  trimming identities before creating the authoritative event stream.
   `InvokeGraph` validates event `occurredAt` timestamps as ISO datetimes before storing run events.
   Server ingress timestamp validation now also rejects space-separated datetimes and compact
   timezone offsets such as `+0000` for run invocation, async callback submission, and callback

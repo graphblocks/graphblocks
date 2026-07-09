@@ -666,6 +666,73 @@ def test_server_app_accepted_invoke_encodes_run_handle_route_links() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("field_name", "field_value", "expected_error"),
+    (
+        ("responseMode", " accepted", "run request responseMode must not contain surrounding whitespace"),
+        ("runId", " run-invoke-exact-1", "run request runId must not contain surrounding whitespace"),
+        ("responseId", "response-invoke-exact-1 ", "run request responseId must not contain surrounding whitespace"),
+        ("releaseId", " release-invoke-exact-1", "run request releaseId must not contain surrounding whitespace"),
+        (
+            "policySnapshotId",
+            "policy-invoke-exact-1 ",
+            "run request policySnapshotId must not contain surrounding whitespace",
+        ),
+        ("turnId", " turn-invoke-exact-1", "run request turnId must not contain surrounding whitespace"),
+    ),
+)
+def test_server_app_rejects_invoke_graph_whitespace_wrapped_metadata(
+    field_name: str,
+    field_value: object,
+    expected_error: str,
+) -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-invoke-exact-metadata"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Exact {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    payload = {
+        "graph": graph,
+        "inputs": {"message": {"text": "ok"}},
+        "runId": f"run-invoke-exact-{field_name}",
+        "responseId": f"response-invoke-exact-{field_name}",
+        "releaseId": "release-invoke-exact",
+        "policySnapshotId": "policy-invoke-exact",
+        "turnId": "turn-invoke-exact",
+        "responseMode": "accepted",
+        "occurredAt": "2026-07-02T00:00:00Z",
+    }
+    payload[field_name] = field_value
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(payload).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": expected_error,
+    }
+
+
 def test_server_app_rejects_duplicate_invoke_run_id_without_overwriting_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

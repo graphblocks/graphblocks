@@ -2841,14 +2841,14 @@ class GraphBlocksServerApp:
                 inputs = payload.get("inputs", {})
                 if not isinstance(inputs, dict):
                     raise ValueError("run request inputs must be a JSON object")
-                response_mode = _validate_non_empty_string(
+                response_mode = _validate_exact_non_empty_string(
                     "run request",
                     "responseMode",
                     payload.get("responseMode", payload.get("response_mode", "sync")),
                 )
                 if response_mode not in {"sync", "accepted", "background"}:
                     raise ValueError("run request responseMode must be one of sync, accepted, or background")
-                run_id = _validate_non_empty_string(
+                run_id = _validate_exact_non_empty_string(
                     "run request",
                     "runId",
                     payload.get("runId", payload.get("run_id", "run-000001")),
@@ -2862,17 +2862,17 @@ class GraphBlocksServerApp:
                             "error": f"run {run_id!r} already exists",
                         },
                     )
-                response_id = _validate_non_empty_string(
+                response_id = _validate_exact_non_empty_string(
                     "run request",
                     "responseId",
                     payload.get("responseId", payload.get("response_id", "response-000001")),
                 )
-                release_id = _validate_non_empty_string(
+                release_id = _validate_exact_non_empty_string(
                     "run request",
                     "releaseId",
                     payload.get("releaseId", payload.get("release_id", "local")),
                 )
-                policy_snapshot_id = _validate_non_empty_string(
+                policy_snapshot_id = _validate_exact_non_empty_string(
                     "run request",
                     "policySnapshotId",
                     payload.get("policySnapshotId", payload.get("policy_snapshot_id", "local")),
@@ -2883,7 +2883,7 @@ class GraphBlocksServerApp:
                 occurred_at = _validate_iso_datetime("run request", "occurredAt", occurred_at)
                 turn_id_value = payload.get("turnId", payload.get("turn_id"))
                 turn_id = (
-                    _validate_non_empty_string("run request", "turnId", turn_id_value)
+                    _validate_exact_non_empty_string("run request", "turnId", turn_id_value)
                     if turn_id_value is not None
                     else None
                 )
