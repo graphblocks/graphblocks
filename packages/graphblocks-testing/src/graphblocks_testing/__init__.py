@@ -8456,6 +8456,7 @@ class TckRunner:
                 if not isinstance(raw_checks, Mapping) or not isinstance(raw_resume, Mapping) or not isinstance(raw_callback, Mapping):
                     raise ValueError("durable async_callback_resume_guards case requires checks, callback, and resume")
                 raw_operation = fixture.get("operation")
+                operation_deadline_at = None
                 if isinstance(raw_operation, Mapping):
                     for key, alias in (
                         ("operationId", "operation_id"),
@@ -8551,7 +8552,10 @@ class TckRunner:
                         if deadline_text.endswith("Z"):
                             deadline_text = f"{deadline_text[:-1]}+00:00"
                         try:
-                            datetime.fromisoformat(deadline_text)
+                            operation_deadline_at = datetime.fromisoformat(deadline_text)
+                            if operation_deadline_at.tzinfo is None:
+                                operation_deadline_at = operation_deadline_at.replace(tzinfo=timezone.utc)
+                            operation_deadline_at = operation_deadline_at.astimezone(timezone.utc)
                         except ValueError:
                             diagnostics.append(
                                 {
@@ -8693,6 +8697,7 @@ class TckRunner:
                     received_at = raw_callback.get(
                         "receivedAt", raw_callback.get("received_at")
                     )
+                    callback_received_at = None
                     if not isinstance(received_at, str) or not received_at.strip():
                         diagnostics.append(
                             {
@@ -8706,7 +8711,10 @@ class TckRunner:
                         if received_at_text.endswith("Z"):
                             received_at_text = f"{received_at_text[:-1]}+00:00"
                         try:
-                            datetime.fromisoformat(received_at_text)
+                            callback_received_at = datetime.fromisoformat(received_at_text)
+                            if callback_received_at.tzinfo is None:
+                                callback_received_at = callback_received_at.replace(tzinfo=timezone.utc)
+                            callback_received_at = callback_received_at.astimezone(timezone.utc)
                         except ValueError:
                             diagnostics.append(
                                 {
@@ -8715,6 +8723,18 @@ class TckRunner:
                                     "path": f"$.callback.{received_at_path}",
                                 }
                             )
+                    if (
+                        callback_received_at is not None
+                        and operation_deadline_at is not None
+                        and callback_received_at > operation_deadline_at
+                    ):
+                        diagnostics.append(
+                            {
+                                "code": "DurableAsyncCallbackResumeInvalid",
+                                "message": "async callback resume callback receivedAt must not be after operation deadline",
+                                "path": f"$.callback.{received_at_path}",
+                            }
+                        )
                     release_id_path = (
                         "releaseId"
                         if "releaseId" in raw_callback or "release_id" not in raw_callback

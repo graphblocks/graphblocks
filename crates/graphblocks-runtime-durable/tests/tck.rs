@@ -2256,6 +2256,68 @@ fn run_case(case: &Value) -> Result<(), String> {
             let raw_checks = required_object(case, "checks", name)?;
             let raw_callback = required_object(case, "callback", name)?;
             let raw_resume = required_object(case, "resume", name)?;
+            let timestamp_seconds = |value: &str| -> Option<i64> {
+                let value = value.trim();
+                let year = value.get(0..4)?.parse::<i64>().ok()?;
+                let month = value.get(5..7)?.parse::<i64>().ok()?;
+                let day = value.get(8..10)?.parse::<i64>().ok()?;
+                let hour = value.get(11..13)?.parse::<i64>().ok()?;
+                let minute = value.get(14..16)?.parse::<i64>().ok()?;
+                let second = value.get(17..19)?.parse::<i64>().ok()?;
+                if !(1..=12).contains(&month)
+                    || !(1..=31).contains(&day)
+                    || !(0..=23).contains(&hour)
+                    || !(0..=59).contains(&minute)
+                    || !(0..=60).contains(&second)
+                {
+                    return None;
+                }
+                let mut offset_seconds = 0;
+                if !value.ends_with('Z') {
+                    let suffix = value.get(19..)?;
+                    let offset_start = suffix
+                        .rfind('+')
+                        .or_else(|| suffix.rfind('-'))
+                        .map(|position| 19 + position)?;
+                    let sign = if value.as_bytes().get(offset_start) == Some(&b'-') {
+                        -1
+                    } else {
+                        1
+                    };
+                    let offset_hour = value
+                        .get(offset_start + 1..offset_start + 3)?
+                        .parse::<i64>()
+                        .ok()?;
+                    let offset_minute = value
+                        .get(offset_start + 4..offset_start + 6)?
+                        .parse::<i64>()
+                        .ok()?;
+                    if value.as_bytes().get(offset_start + 3) != Some(&b':')
+                        || !(0..=23).contains(&offset_hour)
+                        || !(0..=59).contains(&offset_minute)
+                    {
+                        return None;
+                    }
+                    offset_seconds = sign * ((offset_hour * 60 + offset_minute) * 60);
+                }
+                let adjusted_year = year - i64::from(month <= 2);
+                let era = if adjusted_year >= 0 {
+                    adjusted_year
+                } else {
+                    adjusted_year - 399
+                } / 400;
+                let year_of_era = adjusted_year - era * 400;
+                let month_prime = month + if month > 2 { -3 } else { 9 };
+                let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+                let day_of_era =
+                    year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+                let days_since_epoch = era * 146_097 + day_of_era - 719_468;
+                Some(
+                    days_since_epoch * 86_400 + hour * 3_600 + minute * 60 + second
+                        - offset_seconds,
+                )
+            };
+            let mut operation_deadline_seconds = None;
             if let Some(operation) = case.get("operation").and_then(Value::as_object) {
                 for (key, alias) in [
                     ("operationId", "operation_id"),
@@ -2378,6 +2440,12 @@ fn run_case(case: &Value) -> Result<(), String> {
                                     suffix.contains('+') || suffix.contains('-')
                                 }))
                     });
+                if deadline_is_iso {
+                    operation_deadline_seconds = operation
+                        .get("deadline")
+                        .and_then(Value::as_str)
+                        .and_then(timestamp_seconds);
+                }
                 if !deadline_is_iso {
                     diagnostics.push(json!({
                         "code": "DurableAsyncCallbackResumeInvalid",
@@ -2563,12 +2631,32 @@ fn run_case(case: &Value) -> Result<(), String> {
                                     suffix.contains('+') || suffix.contains('-')
                                 }))
                     });
+                let callback_received_at_seconds = if received_at_is_iso {
+                    raw_callback
+                        .get("receivedAt")
+                        .or_else(|| raw_callback.get("received_at"))
+                        .and_then(Value::as_str)
+                        .and_then(timestamp_seconds)
+                } else {
+                    None
+                };
                 if !received_at_is_iso {
                     diagnostics.push(json!({
                         "code": "DurableAsyncCallbackResumeInvalid",
                         "message": "async callback resume callback requires ISO receivedAt",
                         "path": format!("$.callback.{received_at_path}"),
                     }));
+                }
+                if let (Some(callback_received_at_seconds), Some(operation_deadline_seconds)) =
+                    (callback_received_at_seconds, operation_deadline_seconds)
+                {
+                    if callback_received_at_seconds > operation_deadline_seconds {
+                        diagnostics.push(json!({
+                            "code": "DurableAsyncCallbackResumeInvalid",
+                            "message": "async callback resume callback receivedAt must not be after operation deadline",
+                            "path": format!("$.callback.{received_at_path}"),
+                        }));
+                    }
                 }
                 let release_id_path = if raw_callback.contains_key("releaseId")
                     || !raw_callback.contains_key("release_id")

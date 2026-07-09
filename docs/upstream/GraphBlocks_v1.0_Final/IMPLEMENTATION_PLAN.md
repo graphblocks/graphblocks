@@ -772,6 +772,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Shared durable async callback resume TCK fixtures now require supplied callback receipt envelopes
   to carry a nonblank `idempotencyKey` and ISO `receivedAt` value, so journal-before-resume
   conformance cannot be proven from an undeduplicable or untimestamped callback receipt.
+- Shared durable async callback resume TCK fixtures now reject callback receipts whose
+  `receivedAt` timestamp is after the waiting `AsyncOperation` deadline, so timed-out callbacks
+  cannot satisfy resume conformance.
 - Shared durable async callback resume TCK fixtures now require supplied callback receipt envelopes
   to carry `releaseId` evidence that matches the waiting `AsyncOperation`, so a stale receipt from
   an incompatible release cannot satisfy resume conformance.
