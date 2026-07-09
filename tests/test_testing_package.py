@@ -1199,7 +1199,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 261
+    assert [case.kind for case in cases] == ["durable"] * 262
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1465,6 +1465,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_late_callback_commits_result_rejected",
         "external_operation_missing_diagnostic_rejected",
         "external_operation_missing_artifact_projection_rejected",
+        "external_operation_inline_callback_payload_rejected",
         "external_operation_missing_usage_reconciled_rejected",
         "external_operation_reconciled_without_usage_records_rejected",
         "external_operation_usage_record_missing_metric_rejected",
@@ -2688,6 +2689,11 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     )
     assert any(
         result.case_id == "external_operation_missing_artifact_projection_rejected"
+        and result.observed.get("expectedDiagnosticsMatched") is True
+        for result in report.results
+    )
+    assert any(
+        result.case_id == "external_operation_inline_callback_payload_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -6393,6 +6399,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_late_callback_commits_result_rejected",
         "external_operation_missing_diagnostic_rejected",
         "external_operation_missing_artifact_projection_rejected",
+        "external_operation_inline_callback_payload_rejected",
         "external_operation_missing_usage_reconciled_rejected",
         "external_operation_reconciled_without_usage_records_rejected",
         "external_operation_usage_record_missing_metric_rejected",

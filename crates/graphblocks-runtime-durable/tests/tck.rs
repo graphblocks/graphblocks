@@ -4076,6 +4076,26 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{commits_result_path}"),
                 }));
             }
+            let payload_artifact_path = if raw_late_callback
+                .contains_key("payloadConvertedToArtifactRef")
+                || !raw_late_callback.contains_key("payload_converted_to_artifact_ref")
+            {
+                "payloadConvertedToArtifactRef"
+            } else {
+                "payload_converted_to_artifact_ref"
+            };
+            if raw_late_callback
+                .get("payloadConvertedToArtifactRef")
+                .or_else(|| raw_late_callback.get("payload_converted_to_artifact_ref"))
+                .and_then(Value::as_bool)
+                .is_some_and(|payload_converted| !payload_converted)
+            {
+                diagnostics.push(json!({
+                    "code": "DurableExternalOperationInvalid",
+                    "message": "external operation reconciliation requires artifact-backed callback payload",
+                    "path": format!("$.lateCallback.{payload_artifact_path}"),
+                }));
+            }
             if reconciliation_values
                 .get(&("usage", "reconciled"))
                 .copied()

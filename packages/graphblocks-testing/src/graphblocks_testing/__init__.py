@@ -9977,6 +9977,24 @@ class TckRunner:
                             "path": f"$.lateCallback.{commits_result_path}",
                         }
                     )
+                payload_artifact_path = (
+                    "payloadConvertedToArtifactRef"
+                    if "payloadConvertedToArtifactRef" in raw_late_callback
+                    or "payload_converted_to_artifact_ref" not in raw_late_callback
+                    else "payload_converted_to_artifact_ref"
+                )
+                payload_converted_to_artifact_ref = raw_late_callback.get(
+                    "payloadConvertedToArtifactRef",
+                    raw_late_callback.get("payload_converted_to_artifact_ref"),
+                )
+                if payload_converted_to_artifact_ref is False:
+                    diagnostics.append(
+                        {
+                            "code": "DurableExternalOperationInvalid",
+                            "message": "external operation reconciliation requires artifact-backed callback payload",
+                            "path": f"$.lateCallback.{payload_artifact_path}",
+                        }
+                    )
                 raw_provider_usage_records = raw_usage.get(
                     "providerUsageRecords", raw_usage.get("provider_usage_records", ())
                 )
