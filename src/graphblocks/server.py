@@ -148,7 +148,7 @@ def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
 
 
 def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object) -> str:
-    cursor = _validate_non_empty_string(owner, field_name, value)
+    cursor = _validate_exact_non_empty_string(owner, field_name, value)
     prefix = f"{run_id}:"
     if not cursor.startswith(prefix):
         raise ValueError(f"{owner} {field_name} must belong to run {run_id!r}")
@@ -1390,7 +1390,7 @@ class ServerEventSubscription:
             object.__setattr__(
                 self,
                 "replay_from_cursor",
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "server event subscription",
                     "replay_from_cursor",
                     self.replay_from_cursor,
@@ -1443,7 +1443,7 @@ class ServerEventSubscription:
             delivery=delivery,
             failure_policy=failure_policy,
             replay_from_cursor=(
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "server event subscription",
                     "replay_from_cursor",
                     replay_from_cursor,
@@ -1532,7 +1532,7 @@ class ServerCallbackRegistration:
             object.__setattr__(
                 self,
                 "replay_from_cursor",
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "server callback registration",
                     "replay_from_cursor",
                     self.replay_from_cursor,
@@ -1589,7 +1589,7 @@ class ServerCallbackRegistration:
             delivery=delivery,
             failure_policy=failure_policy,
             replay_from_cursor=(
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "server callback registration",
                     "replay_from_cursor",
                     replay_from_cursor,

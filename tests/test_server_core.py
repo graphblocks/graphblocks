@@ -5853,6 +5853,42 @@ def test_server_app_rejects_malformed_subscription_replay_cursor() -> None:
     assert app.subscriptions("run-subscribe-cursor-format-1") == ()
 
 
+def test_server_app_rejects_subscription_with_whitespace_wrapped_replay_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-cursor-whitespace-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-cursor-whitespace-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-cursor-whitespace",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replayFromCursor": "run-subscribe-cursor-whitespace-1:0 ",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription replay_from_cursor must not contain surrounding whitespace",
+    }
+    assert app.subscriptions("run-subscribe-cursor-whitespace-1") == ()
+
+
 def test_server_app_rejects_subscription_without_delivery_kind() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -8012,6 +8048,44 @@ def test_server_app_registers_callback_projection_from_accepted_run_initial_curs
     assert payload["lastCursor"] == "run-register-initial-1:2"
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
     assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Callback initial"}
+
+
+def test_server_app_rejects_callback_registration_with_whitespace_wrapped_replay_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-callback-replay-cursor-whitespace-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-cursor-whitespace",
+                    "scope": "run",
+                    "scopeId": "run-callback-replay-cursor-whitespace-1",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replayFromCursor": "run-callback-replay-cursor-whitespace-1:0 ",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration replay_from_cursor must not contain surrounding whitespace",
+    }
+    assert app.callback_registrations() == ()
 
 
 def test_server_app_rejects_callback_registration_for_missing_run_scope() -> None:

@@ -1211,6 +1211,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime callback subscription `failure_policy` values are now exact enum literals.
   Whitespace-wrapped values are rejected instead of being normalized into a different
   retry/dead-letter contract.
+- Run event subscription and callback registration replay cursors are now exact cursor tokens.
+  Whitespace-wrapped `replayFromCursor` values are rejected before cursor replay so clients cannot
+  silently attach to a different retained event boundary.
 - Runtime callback subscription construction now validates typed webhook delivery targets so direct
   target construction cannot bypass non-empty URL checks.
 - Runtime callback event filters now match both spec camelCase `nodeId`/`operationId` payload
