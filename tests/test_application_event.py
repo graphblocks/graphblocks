@@ -702,6 +702,33 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
         )
 
 
+def test_application_command_metadata_rejects_whitespace_wrapped_control_fields() -> None:
+    base = {
+        "command_id": "command-1",
+        "protocol_version": "graphblocks.app.v1",
+        "run_id": "run-1",
+        "sequence": 1,
+        "issued_at_unix_ms": 1_765_843_200_000,
+    }
+    cases = (
+        ({"command_id": " command-1"}, "application command id must not contain surrounding whitespace"),
+        (
+            {"protocol_version": "graphblocks.app.v1 "},
+            "application command protocol_version must not contain surrounding whitespace",
+        ),
+        ({"run_id": " run-1"}, "application command run_id must not contain surrounding whitespace"),
+        ({"turn_id": "turn-1 "}, "application command turn_id must not contain surrounding whitespace"),
+        (
+            {"idempotency_key": " idem-1"},
+            "application command idempotency_key must not contain surrounding whitespace",
+        ),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ApplicationProtocolError, match=message):
+            ApplicationCommandMetadata(**{**base, **overrides})
+
+
 def test_application_protocol_event_metadata_rejects_whitespace_wrapped_authoritative_fields() -> None:
     base = {
         "event_id": "event-1",

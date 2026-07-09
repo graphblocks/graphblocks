@@ -1767,6 +1767,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   cursors, run/event/release identities, graph/node/operation routing fields, and event visibility
   as exact values, rejecting whitespace-wrapped identifiers before authoritative replay or callback
   filtering can store them.
+- Python `ApplicationCommandMetadata` now applies the same exact-value validation to command ids,
+  run ids, protocol versions, turn ids, and idempotency keys before control-plane commands can be
+  routed, deduplicated, or audited.
 - Python callback `EventFilter` now matches typed `ApplicationEvent` records and protocol events by
   event type, visibility, node id, operation id, severity floor, and terminal-event inclusion,
   treating absent protocol visibility as default client visibility while keeping malformed

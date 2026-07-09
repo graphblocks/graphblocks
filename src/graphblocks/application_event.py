@@ -497,13 +497,13 @@ class ApplicationCommandMetadata:
     def __post_init__(self) -> None:
         for field_name in ("command_id", "protocol_version", "run_id"):
             label = "id" if field_name == "command_id" else field_name
-            _validate_non_empty_string(
+            _validate_exact_non_empty_string(
                 ApplicationProtocolError,
                 f"application command {label}",
                 getattr(self, field_name),
             )
         for field_name in ("turn_id", "idempotency_key"):
-            _validate_optional_non_empty_string(
+            _validate_optional_exact_non_empty_string(
                 ApplicationProtocolError,
                 f"application command {field_name}",
                 getattr(self, field_name),
