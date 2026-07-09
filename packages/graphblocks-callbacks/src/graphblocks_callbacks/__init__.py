@@ -1381,13 +1381,13 @@ def evaluate_callback_resume(
         raise ValueError("endpoint must be a CallbackEndpointRef")
     if not isinstance(receipt, ExternalCallbackReceipt):
         raise ValueError("receipt must be an ExternalCallbackReceipt")
-    _require_non_empty_string("now", now)
+    now_at = _parse_utc_timestamp(now)
 
     endpoint_binding_key = endpoint.binding_key()
     receipt_binding_key = receipt.binding_key()
     if endpoint.expires_at is not None:
         endpoint_expires_at = _parse_utc_timestamp(endpoint.expires_at)
-        if _parse_utc_timestamp(now) > endpoint_expires_at:
+        if now_at > endpoint_expires_at:
             return CallbackResumeDecision(
                 status="expired",
                 can_resume=False,
