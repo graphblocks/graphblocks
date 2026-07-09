@@ -1004,6 +1004,8 @@ class CallbackReplayGuard:
             _require_non_empty_string("record key", key)
             if not isinstance(record, CallbackReplayRecord):
                 raise ValueError("records values must be CallbackReplayRecord")
+            if key != record.idempotency_key:
+                raise ValueError("record key must match record idempotency_key")
             self._records[key] = record
             existing_delivery = self._records_by_delivery_id.get(record.delivery_id)
             if existing_delivery is not None and existing_delivery != record:

@@ -2028,11 +2028,38 @@ def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
 
     _assert_raises_value_error(
         "records contain conflicting delivery_id identity",
-        lambda: CallbackReplayGuard({"first": first, "second": conflicting_delivery}),
+        lambda: CallbackReplayGuard(
+            {
+                first.idempotency_key: first,
+                conflicting_delivery.idempotency_key: conflicting_delivery,
+            }
+        ),
     )
     _assert_raises_value_error(
         "records contain conflicting subscription/event identity",
-        lambda: CallbackReplayGuard({"first": first, "third": conflicting_event}),
+        lambda: CallbackReplayGuard(
+            {
+                first.idempotency_key: first,
+                conflicting_event.idempotency_key: conflicting_event,
+            }
+        ),
+    )
+
+
+def test_callback_replay_guard_requires_restored_record_key_to_match_idempotency_key() -> None:
+    record = CallbackReplayRecord(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        cursor="evt_1042",
+        idempotency_key="sub_001:evt_1042",
+        envelope_digest=canonical_hash({"delivery": "accepted"}),
+    )
+
+    _assert_raises_value_error(
+        "record key must match record idempotency_key",
+        lambda: CallbackReplayGuard({"restored-under-wrong-key": record}),
     )
 
 
