@@ -15,7 +15,7 @@ use graphblocks_runtime_core::callback_delivery::{
 use rusqlite::{params, Connection};
 use serde_json::json;
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3099,6 +3099,25 @@ fn webhook_target_rejects_alternate_numeric_loopback_literals() {
 }
 
 #[test]
+fn webhook_target_rejects_ipv4_mapped_ipv6_internal_literals() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "http://[::ffff:127.0.0.1]/callback",
+        "http://[::ffff:169.254.169.254]/callback",
+        "http://[::ffff:10.0.0.4]/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+            ),
+            "{url} should be rejected before delivery"
+        );
+    }
+}
+
+#[test]
 fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let policy = WebhookEgressPolicy::default_deny_internal();
     let target =
@@ -3140,6 +3159,23 @@ fn webhook_egress_policy_rejects_public_hostname_resolving_to_internal_addresses
         Err(WebhookEndpointError::UnsafeResolvedAddress {
             host: "hooks.example.com".to_owned(),
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
+        })
+    );
+}
+
+#[test]
+fn webhook_egress_policy_rejects_resolved_ipv4_mapped_ipv6_internal_addresses() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+    let metadata_address = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xa9fe, 0xa9fe));
+
+    assert_eq!(
+        policy.validate_resolved_addresses(&target, [metadata_address]),
+        Err(WebhookEndpointError::UnsafeResolvedAddress {
+            host: "hooks.example.com".to_owned(),
+            address: metadata_address,
         })
     );
 }

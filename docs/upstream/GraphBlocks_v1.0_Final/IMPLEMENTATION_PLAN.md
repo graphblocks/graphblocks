@@ -1055,6 +1055,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime webhook target validation now also rejects alternate numeric IPv4 literals that resolve to
   forbidden internal addresses, such as decimal or hex loopback forms, before delivery can reach an
   HTTP transport.
+- Runtime webhook egress validation now treats IPv4-mapped IPv6 addresses as their embedded IPv4
+  addresses for both literal webhook hosts and DNS-resolved addresses, so mapped loopback,
+  link-local metadata, and private network targets cannot bypass SSRF policy.
 - Callback event filters now include visibility, node ID, operation ID, and minimum severity
   predicates in addition to event type and terminal-event inclusion. Runtime filters now treat
   `include_terminal_events: false` as an explicit terminal-event exclusion even for otherwise broad

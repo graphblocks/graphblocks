@@ -2263,6 +2263,10 @@ fn is_forbidden_ipv4(address: Ipv4Addr) -> bool {
 }
 
 fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
+    if let Some(mapped_address) = address.to_ipv4_mapped() {
+        return is_forbidden_ipv4(mapped_address);
+    }
+
     address.is_loopback()
         || address.is_unspecified()
         || matches!(address.segments()[0] & 0xfe00, 0xfc00)
