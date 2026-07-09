@@ -1038,11 +1038,15 @@ class ServerAsyncCallbackRejection:
     artifact_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        for field_name in ("operation_id", "callback_id", "idempotency_key", "reason", "received_at"):
+        for field_name in ("operation_id", "callback_id", "idempotency_key", "reason"):
             object.__setattr__(
                 self,
                 field_name,
-                _validate_non_empty_string("server async callback rejection", field_name, getattr(self, field_name)),
+                _validate_exact_non_empty_string(
+                    "server async callback rejection",
+                    field_name,
+                    getattr(self, field_name),
+                ),
             )
         object.__setattr__(
             self,
@@ -1053,7 +1057,7 @@ class ServerAsyncCallbackRejection:
             object.__setattr__(
                 self,
                 field_name,
-                _validate_non_empty_string(
+                _validate_exact_non_empty_string(
                     "server async callback rejection",
                     field_name,
                     getattr(self, field_name),
@@ -1065,13 +1069,13 @@ class ServerAsyncCallbackRejection:
                 object.__setattr__(
                     self,
                     field_name,
-                    _validate_non_empty_string("server async callback rejection", field_name, value),
+                    _validate_exact_non_empty_string("server async callback rejection", field_name, value),
                 )
         object.__setattr__(
             self,
             "artifact_ids",
             tuple(
-                _validate_non_empty_string("server async callback rejection", "artifact_ids", artifact_id)
+                _validate_exact_non_empty_string("server async callback rejection", "artifact_ids", artifact_id)
                 for artifact_id in self.artifact_ids
             ),
         )
@@ -1103,7 +1107,7 @@ class ServerAsyncCallbackRejection:
             run_id=submission.run_id,
             node_id=submission.node_id,
             attempt_id=submission.attempt_id,
-            status=_validate_non_empty_string("server async callback rejection", "status", status),
+            status=_validate_exact_non_empty_string("server async callback rejection", "status", status),
             reason="terminal_run",
             received_at=submission.received_at,
             **cls._receipt_metadata(submission),

@@ -11,6 +11,7 @@ from graphblocks.policy import PrincipalRef
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
+    ServerAsyncCallbackRejection,
     ServerAsyncCallbackSubmission,
     ServerAuthRequest,
     ServerCallbackRegistration,
@@ -3491,6 +3492,61 @@ def test_server_async_callback_response_projects_scope_fences() -> None:
     assert payload["nodeId"] == "waitCI"
     assert payload["attemptId"] == "attempt-1"
     assert payload["providerOperationId"] == "provider-ci-1"
+
+
+def test_server_async_callback_rejection_rejects_whitespace_wrapped_audit_fields() -> None:
+    payload_digest = graphblocks.canonical_hash({"status": "failed"})
+    base = {
+        "operation_id": "op-ci-1",
+        "callback_id": "cb-1",
+        "idempotency_key": "idem-callback-1",
+        "reason": "terminal_run",
+        "received_at": "2026-07-02T00:00:00Z",
+        "payload_digest": payload_digest,
+        "verified_by": "callback-relay",
+        "policy_snapshot_id": "policy-callback-1",
+        "run_id": "run-1",
+        "node_id": "waitCI",
+        "attempt_id": "attempt-1",
+        "provider_operation_id": "provider-ci-1",
+        "status": "failed",
+        "artifact_ids": ("artifact-ci-log-1",),
+    }
+    cases = (
+        ("operation_id", " op-ci-1", "server async callback rejection operation_id must not contain surrounding whitespace"),
+        ("callback_id", "cb-1 ", "server async callback rejection callback_id must not contain surrounding whitespace"),
+        (
+            "idempotency_key",
+            " idem-callback-1",
+            "server async callback rejection idempotency_key must not contain surrounding whitespace",
+        ),
+        ("reason", "terminal_run ", "server async callback rejection reason must not contain surrounding whitespace"),
+        (
+            "payload_digest",
+            f"{payload_digest} ",
+            "server async callback rejection payload_digest must not contain surrounding whitespace",
+        ),
+        ("verified_by", " callback-relay", "server async callback rejection verified_by must not contain surrounding whitespace"),
+        (
+            "policy_snapshot_id",
+            "policy-callback-1 ",
+            "server async callback rejection policy_snapshot_id must not contain surrounding whitespace",
+        ),
+        ("run_id", "run-1 ", "server async callback rejection run_id must not contain surrounding whitespace"),
+        ("node_id", " waitCI", "server async callback rejection node_id must not contain surrounding whitespace"),
+        ("attempt_id", "attempt-1 ", "server async callback rejection attempt_id must not contain surrounding whitespace"),
+        (
+            "provider_operation_id",
+            " provider-ci-1",
+            "server async callback rejection provider_operation_id must not contain surrounding whitespace",
+        ),
+        ("status", "failed ", "server async callback rejection status must not contain surrounding whitespace"),
+        ("artifact_ids", (" artifact-ci-log-1",), "server async callback rejection artifact_ids must not contain surrounding whitespace"),
+    )
+    for field_name, value, expected_error in cases:
+        kwargs = {**base, field_name: value}
+        with pytest.raises(ValueError, match=expected_error):
+            ServerAsyncCallbackRejection(**kwargs)
 
 
 def test_server_async_callback_from_request_preserves_artifacts() -> None:

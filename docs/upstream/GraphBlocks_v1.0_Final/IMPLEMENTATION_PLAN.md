@@ -1254,7 +1254,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   timestamp even for terminal-run rejections that never become accepted callback receipts. This supports payload-too-large,
   unknown-run, missing-fence,
   terminal-run, stale-attempt, node-mismatch, scope-mismatch, and idempotency-conflict rejection
-  audit and inspection.
+  audit and inspection. Rejection projection identities, reasons, statuses, policy snapshots,
+  verifier ids, and artifact ids are exact audit tokens and reject whitespace-normalized values
+  before they can be stored or replayed.
   Public callback ingress can opt into anti-enumeration acknowledgements for unknown declared runs:
   the server records the same `unknown_run` rejection projection but returns a generic `202`
   acknowledgement instead of exposing run existence through a `404`.
