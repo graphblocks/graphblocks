@@ -312,6 +312,9 @@ Message
 - A tool cannot execute before arguments are complete and schema-valid.
 - Model output alone never authorizes a tool effect.
 - Approval is bound to immutable tool-call revision, definition digest, binding digest, argument digest, policy snapshot, principal, and expiration.
+- The Python approval facade now rejects space-separated datetimes, compact timezone offsets such
+  as `+0000`, and timezone-less values for approval expiration, decision, invalidation, and
+  validity-check timestamps before an approval can be treated as current.
 - Retried state-changing tools preserve idempotency keys unless policy creates a new logical operation.
 - Tool output passes result validation and content policy before it is returned to a model.
 - Output policy enforcement occurs before mandatory client delivery.
