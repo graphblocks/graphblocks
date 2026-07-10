@@ -556,6 +556,15 @@ def test_testing_package_has_pure_python_layout_without_provider_dependencies() 
     assert (package_root / "src" / "graphblocks_testing" / "py.typed").exists()
 
 
+def test_testing_package_production_acceptance_extra_installs_callback_verifier() -> None:
+    package_root = ROOT / "packages" / "graphblocks-testing"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["optional-dependencies"]["production"] == [
+        "graphblocks-callbacks~=0.1"
+    ]
+
+
 def test_devtools_package_has_pure_python_layout_without_graph_or_template_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-devtools"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))

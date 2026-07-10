@@ -11,6 +11,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_testing(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-callbacks" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     return importlib.import_module("graphblocks_testing")
 
@@ -216,6 +217,141 @@ def test_acceptance_gate_runner_executes_exact_builtin_and_custom_handlers(
         "--expand",
     )
     assert report.content_digest().startswith("sha256:")
+
+
+def test_acceptance_gate_runner_executes_authenticated_coding_agent_semantic_gates(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    application = manifest.by_id("coding-agent-background-callbacks")
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=ROOT,
+    )
+    repeated = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=ROOT,
+    )
+
+    assert report.ok, report.report_contract()
+    assert [result.gate for result in report.results] == [
+        "graphblocks validate",
+        "accepted invocation handle check",
+        "cursor replay after detach",
+        "callback journal-before-resume check",
+        "signed webhook delivery check",
+    ]
+    assert all(result.output_digest.startswith("sha256:") for result in report.results)
+    assert repeated.report_contract() == report.report_contract()
+
+
+def test_callback_acceptance_gate_rejects_scenario_with_weakened_resume_fence(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    documents = _load_yaml_documents(
+        ROOT / "acceptance" / "scenarios" / "coding-agent-background-callbacks.yaml"
+    )
+    documents[1]["spec"]["nodes"]["waitCI"]["config"]["resume"][
+        "requirePolicyReevaluation"
+    ] = False
+    scenario = tmp_path / "weakened-coding-agent.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="coding-agent-background-callbacks",
+        profiles=("GB-C4-PRODUCTION",),
+        scenario_path=scenario.name,
+        gates=("callback journal-before-resume check",),
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=tmp_path,
+    )
+
+    assert not report.ok
+    assert report.results[0].diagnostic_contracts() == [
+        {
+            "code": "AcceptanceGateExecutionFailed",
+            "message": "coding-agent callback resume fences do not match the production contract",
+            "path": "$.applications.coding-agent-background-callbacks.gates[0]",
+        }
+    ]
+
+
+def test_coding_agent_semantic_gates_cannot_be_replaced_by_custom_handlers(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    application = manifest.by_id("coding-agent-background-callbacks")
+    signed_application = graphblocks_testing.AcceptanceApplication(
+        application_id=application.application_id,
+        profiles=application.profiles,
+        scenario_path=application.scenario_path,
+        gates=("signed webhook delivery check",),
+        description=application.description,
+    )
+    custom_calls: list[str] = []
+
+    def always_pass(application, scenario_path):
+        custom_calls.append(application.application_id)
+        return 0, "fabricated"
+
+    report = graphblocks_testing.AcceptanceGateRunner(
+        custom_handlers={"signed webhook delivery check": always_pass}
+    ).run_application(signed_application, root=ROOT)
+
+    assert report.ok, report.report_contract()
+    assert custom_calls == []
+
+
+def test_signed_webhook_acceptance_gate_fails_closed_without_callback_package(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    application = manifest.by_id("coding-agent-background-callbacks")
+    signed_application = graphblocks_testing.AcceptanceApplication(
+        application_id=application.application_id,
+        profiles=application.profiles,
+        scenario_path=application.scenario_path,
+        gates=("signed webhook delivery check",),
+        description=application.description,
+    )
+    real_import_module = graphblocks_testing.importlib.import_module
+
+    def missing_callbacks(name, package=None):
+        if name == "graphblocks_callbacks":
+            raise ModuleNotFoundError(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(graphblocks_testing.importlib, "import_module", missing_callbacks)
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        signed_application,
+        root=ROOT,
+    )
+
+    assert not report.ok
+    assert report.results[0].diagnostic_contracts() == [
+        {
+            "code": "AcceptanceGateExecutionFailed",
+            "message": (
+                "signed webhook delivery check requires the graphblocks-callbacks production dependency"
+            ),
+            "path": "$.applications.coding-agent-background-callbacks.gates[0]",
+        }
+    ]
 
 
 def test_acceptance_gate_runner_never_evaluates_unknown_shell_text(

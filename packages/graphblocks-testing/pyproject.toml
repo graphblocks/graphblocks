@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["graphblocks-core~=1.0"]
 
+[project.optional-dependencies]
+production = ["graphblocks-callbacks~=0.1"]
+
 [project.scripts]
 graphblocks-tck = "graphblocks_testing:main"
 

@@ -2719,6 +2719,21 @@ truth.
   reports. Exact built-in `graphblocks validate` and `graphblocks plan --expand` handlers invoke the
   CLI without shell evaluation, while unknown semantic gates fail closed until a trusted handler is
   registered.
+- The four `coding-agent-background-callbacks` production semantic gates are now non-overridable
+  `AcceptanceGateRunner` built-ins. They execute authenticated server requests for the accepted run
+  handle, detach/cursor replay, trusted callback admission, journal-before-resume event order,
+  terminal continuation, and duplicate callback suppression. The signed-delivery gate dynamically
+  loads the optional `graphblocks-callbacks` production extra, resolves the scenario's registered
+  secret reference, dispatches through `RegisteredSecretWebhookDispatcher`, and requires a receiver
+  to verify the canonical HMAC request before returning 202. Canonical gate output records only
+  digests, delivery identities, secret-reference lookup identity, and verification outcomes; it
+  excludes secret bytes and raw signatures. Missing optional callback support fails closed. These
+  gates validate and derive callback schema, idempotency, attempt fencing, resume fences,
+  checkpointing, and the 30-minute timeout from the scenario-bound fixture; weakening those fields
+  fails closed. Live operation timestamps remain inside that configured timeout while dynamic
+  timestamps are excluded from canonical evidence, keeping repeated reports stable without
+  expiration-sensitive constants. The gates do not claim that every provider/application block in
+  the full coding-agent design graph executes locally.
 - Conformance claims and release-candidate gates now require current passing acceptance execution
   reports; manifest path/profile coverage alone can no longer satisfy acceptance evidence.
 - Local acceptance scenarios now preserve the upstream design examples while adding the implemented

@@ -72,10 +72,26 @@ graphblocks-tck run-acceptance acceptance/applications.yaml --root . --json
 The runner dispatches only exact registered gate names. The built-in
 `graphblocks validate` and `graphblocks plan --expand` gates invoke the Python
 CLI directly with a fixed argument vector; manifest text is never evaluated by
-a shell. Semantic gates require an explicitly registered handler and fail closed
-when none exists. Structural manifest coverage alone is not sufficient for a
-conformance claim or release-candidate gate: every required application needs a
-current passing execution report bound to the manifest digest.
+a shell. The coding-agent production application also has four non-overridable
+built-ins: accepted invocation handles, cursor replay after detach, authenticated
+callback journal-before-resume ordering, and registered-secret signed webhook
+delivery. These gates run authenticated server flows and emit canonical,
+digest-backed evidence bound to the application and scenario. The signed gate
+uses the actual optional callback dispatcher and receiver verifier; install it
+with `graphblocks-testing[production]`. Missing optional dependencies or unknown
+semantic gates fail closed. Other semantic gates still require an explicitly
+registered handler.
+
+The coding-agent fixture proves those four framework semantics against the
+scenario contract. Callback schema, idempotency, attempt fencing, resume fences,
+checkpointing, and timeout settings are validated and projected from that
+scenario into the executable probe; weakening them fails the gate. Dynamic
+runtime timestamps are excluded from canonical evidence so repeat executions
+remain stable. This does not claim that every application/provider block in the
+complete design graph has a local implementation. Structural manifest coverage
+alone is not sufficient for a conformance claim or release-candidate gate: every
+required application needs a current passing execution report bound to the
+manifest digest.
 
 ## Claiming Support
 

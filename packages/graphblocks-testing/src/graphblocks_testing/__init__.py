@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -27,7 +28,7 @@ from graphblocks.application_event import (
     ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import (
@@ -150,7 +151,13 @@ from graphblocks.run_store import (
     StateConflictError,
 )
 from graphblocks.schema import SchemaId, SchemaIdError, TypedValue
-from graphblocks.server import ApplicationProtocolCapabilities
+from graphblocks.server import (
+    ApplicationProtocolCapabilities,
+    GraphBlocksServerApp,
+    ServerAsyncCallbackSubmission,
+    ServerRequest,
+    StaticBearerAuthHook,
+)
 from graphblocks.runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -3433,12 +3440,681 @@ class AcceptanceManifest:
 AcceptanceGateHandler = Callable[[AcceptanceApplication, Path], tuple[int, str]]
 
 
+def _exercise_coding_agent_background_callback(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+    *,
+    signed_delivery: bool,
+) -> dict[str, object]:
+    if application.application_id != "coding-agent-background-callbacks":
+        raise RuntimeError("coding-agent semantic gate requires the coding-agent acceptance application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 2:
+        raise RuntimeError("coding-agent acceptance scenario must contain one application and one graph")
+    application_document, graph_document = documents
+    if not isinstance(application_document, Mapping) or application_document.get("kind") != "Application":
+        raise RuntimeError("coding-agent acceptance scenario application contract is missing")
+    if not isinstance(graph_document, Mapping) or graph_document.get("kind") != "Graph":
+        raise RuntimeError("coding-agent acceptance scenario graph contract is missing")
+    application_spec = application_document.get("spec")
+    graph_spec = graph_document.get("spec")
+    if not isinstance(application_spec, Mapping) or not isinstance(graph_spec, Mapping):
+        raise RuntimeError("coding-agent acceptance scenario specs must be mappings")
+    capabilities = application_spec.get("capabilities")
+    required_capabilities = {
+        "background_runs",
+        "cursor_replay",
+        "callback_subscription",
+        "reconnect_resume",
+    }
+    if not isinstance(capabilities, list) or not required_capabilities.issubset(capabilities):
+        raise RuntimeError("coding-agent acceptance scenario is missing background callback capabilities")
+    callback_registration = application_spec.get("callbackRegistration")
+    if not isinstance(callback_registration, Mapping):
+        raise RuntimeError("coding-agent acceptance scenario callback registration is missing")
+    delivery_config = callback_registration.get("delivery")
+    event_filter = callback_registration.get("event_filter")
+    if not isinstance(delivery_config, Mapping) or not isinstance(event_filter, Mapping):
+        raise RuntimeError("coding-agent callback registration delivery and event filter must be mappings")
+    signing = delivery_config.get("signing")
+    if (
+        delivery_config.get("kind") != "webhook"
+        or not isinstance(signing, Mapping)
+        or signing.get("algorithm") != "hmac-sha256"
+        or signing.get("secret_ref") != "secret://callbacks/ide-relay"
+    ):
+        raise RuntimeError("coding-agent callback registration must use the registered HMAC webhook")
+    graph_nodes = graph_spec.get("nodes")
+    if not isinstance(graph_nodes, Mapping):
+        raise RuntimeError("coding-agent acceptance graph nodes must be a mapping")
+    scenario_start = graph_nodes.get("startCI")
+    scenario_wait = graph_nodes.get("waitCI")
+    if not isinstance(scenario_start, Mapping) or not isinstance(scenario_wait, Mapping):
+        raise RuntimeError("coding-agent acceptance graph must declare startCI and waitCI")
+    if scenario_start.get("block") != "async.start_operation@1":
+        raise RuntimeError("coding-agent startCI must declare the async operation block")
+    if scenario_wait.get("block") != "async.await_callback@1":
+        raise RuntimeError("coding-agent waitCI must declare the callback checkpoint block")
+    scenario_start_config = scenario_start.get("config")
+    scenario_wait_config = scenario_wait.get("config")
+    if not isinstance(scenario_start_config, Mapping) or not isinstance(scenario_wait_config, Mapping):
+        raise RuntimeError("coding-agent callback node configs must be mappings")
+    expected_resume_config = {
+        "requirePolicyReevaluation": True,
+        "requireBudgetReservation": True,
+        "requireReleaseCompatibility": True,
+        "requireOwnershipFence": True,
+    }
+    if (
+        scenario_start_config.get("resume") != expected_resume_config
+        or scenario_wait_config.get("resume") != expected_resume_config
+    ):
+        raise RuntimeError("coding-agent callback resume fences do not match the production contract")
+    scenario_start_callback = scenario_start_config.get("callback")
+    scenario_wait_callback = scenario_wait_config.get("callback")
+    if not isinstance(scenario_start_callback, Mapping) or not isinstance(scenario_wait_callback, Mapping):
+        raise RuntimeError("coding-agent callback schema contracts must be mappings")
+    callback_schema = scenario_start_callback.get("schema")
+    if (
+        callback_schema != "schemas/CICallback@1"
+        or scenario_wait_callback.get("schema") != callback_schema
+        or scenario_start_callback.get("required") is not True
+    ):
+        raise RuntimeError("coding-agent callback schema and required-delivery contract do not match")
+    pre_commit_race = scenario_start_callback.get("preCommitRace")
+    idempotency_key = scenario_start_config.get("idempotencyKey")
+    if not isinstance(pre_commit_race, Mapping) or pre_commit_race != {
+        "onEarlyCallback": "quarantine",
+        "quarantineTtl": "5m",
+        "onQuarantineExpired": "reject_without_resume",
+        "idempotencyKey": idempotency_key,
+    }:
+        raise RuntimeError("coding-agent early callback quarantine contract does not match")
+    if (
+        idempotency_key != "provider_delivery_id"
+        or scenario_wait_config.get("idempotencyKey") != idempotency_key
+        or scenario_start_config.get("attemptFencing") is not True
+        or scenario_wait_config.get("attemptFencing") is not True
+    ):
+        raise RuntimeError("coding-agent callback idempotency and attempt fences do not match")
+    if (
+        scenario_start_config.get("timeout") != "30m"
+        or scenario_wait_config.get("timeout") != "30m"
+        or scenario_wait_config.get("checkpoint") is not True
+        or scenario_wait_config.get("onTimeout") != "fail"
+    ):
+        raise RuntimeError("coding-agent callback checkpoint timeout contract does not match")
+    execution = graph_spec.get("execution")
+    event_stream = graph_spec.get("eventStream")
+    if execution != {
+        "lifetime": "job",
+        "durability": "checkpointed",
+        "interaction": "incremental",
+    }:
+        raise RuntimeError("coding-agent graph execution contract must remain checkpointed and incremental")
+    if not isinstance(event_stream, Mapping) or event_stream.get("replayable") is not True:
+        raise RuntimeError("coding-agent graph event stream must remain replayable")
+    routes = application_spec.get("routes")
+    if not isinstance(routes, list):
+        raise RuntimeError("coding-agent application routes must be a list")
+    routes_by_id = {
+        route.get("id"): route
+        for route in routes
+        if isinstance(route, Mapping) and isinstance(route.get("id"), str)
+    }
+    create_task_route = routes_by_id.get("create-task")
+    run_events_route = routes_by_id.get("run-events")
+    callback_route = routes_by_id.get("external-callback")
+    if not isinstance(create_task_route, Mapping) or create_task_route.get("responseMode") != "accepted":
+        raise RuntimeError("coding-agent create-task route must return an accepted invocation handle")
+    if not isinstance(run_events_route, Mapping) or run_events_route.get("cursorReplay") is not True:
+        raise RuntimeError("coding-agent run-events route must retain cursor replay")
+    if not isinstance(callback_route, Mapping) or callback_route.get("command") != "SubmitAsyncCallback":
+        raise RuntimeError("coding-agent external-callback route must submit authenticated callbacks")
+
+    callback_module: object | None = None
+    if signed_delivery:
+        try:
+            callback_module = importlib.import_module("graphblocks_callbacks")
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "signed webhook delivery check requires the graphblocks-callbacks production dependency"
+            ) from None
+
+    downstream_executions = 0
+
+    def fail_after_callback(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal downstream_executions
+        downstream_executions += 1
+        if inputs.get("callback") != {"status": "completed", "conclusion": "success"}:
+            raise RuntimeError("coding-agent callback payload was not restored from the checkpoint")
+        raise RuntimeError("acceptance terminal failure notification")
+
+    class TrustedResumeAdmission:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: object,
+        ) -> dict[str, object]:
+            operation = getattr(checkpoint, "operation", None)
+            if submission.verified_by != "callback-relay":
+                raise RuntimeError("coding-agent callback was not authenticated by the relay principal")
+            if not isinstance(operation, Mapping) or operation.get("expected_schema") != "schemas/CICallback@1":
+                raise RuntimeError("coding-agent callback checkpoint schema fence is missing")
+            return {
+                "schema_validated": True,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    registry = stdlib_registry()
+    registry.register("acceptance.fail-after-callback@1", fail_after_callback)
+    run_id = "run-coding-agent-acceptance-1"
+    operation_id = "operation-coding-agent-acceptance-1"
+    fixture_started = datetime.now(timezone.utc)
+    fixture_started_at = fixture_started.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    submitted_at_unix_ms = int(fixture_started.timestamp() * 1000)
+    timeout_ms = 30 * 60 * 1000
+    runtime_graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "coding-agent-acceptance-runtime"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": operation_id,
+                        "runId": run_id,
+                        "nodeId": "start",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-coding-agent-acceptance-1",
+                        "resumeTokenHash": "sha256:" + ("a" * 64),
+                        "idempotencyKey": idempotency_key,
+                        "expectedSchema": callback_schema,
+                        "createdAtUnixMs": submitted_at_unix_ms - 1000,
+                        "submittedAtUnixMs": submitted_at_unix_ms,
+                        "timeoutMs": timeout_ms,
+                        "resume": dict(expected_resume_config),
+                        "attemptFencing": scenario_start_config["attemptFencing"],
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": scenario_wait_config["onTimeout"],
+                        "timeoutMs": timeout_ms,
+                        "idempotencyKey": idempotency_key,
+                        "callback": {"schema": callback_schema},
+                        "resume": dict(expected_resume_config),
+                        "attemptFencing": scenario_wait_config["attemptFencing"],
+                    },
+                },
+                "finish": {
+                    "block": "acceptance.fail-after-callback@1",
+                    "inputs": {"callback": "wait.callback"},
+                },
+            }
+        },
+    }
+    app = GraphBlocksServerApp(
+        registry=registry,
+        auth_hook=StaticBearerAuthHook(
+            {
+                "user-token": PrincipalRef(
+                    "coding-agent-user",
+                    tenant_id="tenant-1",
+                    roles=("operator",),
+                ),
+                "relay-token": PrincipalRef(
+                    "callback-relay",
+                    tenant_id="tenant-1",
+                    roles=("operator",),
+                ),
+            }
+        ),
+        require_async_callback_authentication=True,
+        defer_accepted_runs=True,
+        async_callback_resume_admission_hook=TrustedResumeAdmission(),
+    )
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer user-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": runtime_graph,
+                    "runId": run_id,
+                    "responseId": "response-coding-agent-acceptance-1",
+                    "releaseId": "release-coding-agent-acceptance-1",
+                    "policySnapshotId": "policy-coding-agent-acceptance-1",
+                    "responseMode": "accepted",
+                    "occurredAt": fixture_started_at,
+                }
+            ).encode("utf-8"),
+        )
+    )
+    accepted_payload = json.loads(accepted.body.decode("utf-8"))
+    if accepted.status_code != 202:
+        raise RuntimeError("coding-agent accepted invocation did not return 202")
+    waiting = app.advance_accepted_run(run_id)
+    if waiting.get("status") != "waiting_callback":
+        raise RuntimeError("coding-agent accepted run did not reach waiting_callback")
+    waiting_events = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer user-token"},
+            query={},
+            cookies={},
+        )
+    )
+    waiting_events_payload = json.loads(waiting_events.body.decode("utf-8"))
+    waiting_event_rows = waiting_events_payload.get("events")
+    if waiting_events.status_code != 200 or not isinstance(waiting_event_rows, list) or len(waiting_event_rows) != 2:
+        raise RuntimeError("coding-agent waiting callback event stream is incomplete")
+    waiting_metadata = waiting_event_rows[-1].get("metadata")
+    if not isinstance(waiting_metadata, Mapping) or not isinstance(waiting_metadata.get("occurredAt"), str):
+        raise RuntimeError("coding-agent waiting callback event lacks an occurrence timestamp")
+    waiting_at = waiting_metadata["occurredAt"]
+    detached = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/detach",
+            headers={"Authorization": "Bearer user-token"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"clientId": "coding-agent-client-1", "reason": "network_disconnect"}
+            ).encode("utf-8"),
+            requested_at=waiting_at,
+        )
+    )
+    detached_payload = json.loads(detached.body.decode("utf-8"))
+    if detached.status_code != 202:
+        raise RuntimeError("coding-agent run detach did not return 202")
+    callback_request = ServerRequest(
+        method="POST",
+        path=f"/callbacks/{operation_id}",
+        headers={
+            "Authorization": "Bearer relay-token",
+            "GraphBlocks-Idempotency-Key": "delivery-idempotency-coding-agent-1",
+        },
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callbackId": "callback-coding-agent-acceptance-1",
+                "runId": run_id,
+                "nodeId": "start",
+                "attemptId": "attempt-1",
+                "providerOperationId": "provider-coding-agent-acceptance-1",
+                "policySnapshotId": "policy-coding-agent-acceptance-1",
+                "payload": {"status": "completed", "conclusion": "success"},
+            }
+        ).encode("utf-8"),
+        requested_at=waiting_at,
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        app.accepted_run_executor = executor
+        callback = app.handle(callback_request)
+        completion = app.wait_for_accepted_run(run_id, timeout=5)
+        duplicate_callback = app.handle(callback_request)
+    callback_payload = json.loads(callback.body.decode("utf-8"))
+    duplicate_callback_payload = json.loads(duplicate_callback.body.decode("utf-8"))
+    if callback.status_code != 202:
+        raise RuntimeError("coding-agent authenticated callback was not accepted")
+    if completion.get("status") != "failed":
+        raise RuntimeError("coding-agent resumed run did not reach its terminal fixture state")
+    if duplicate_callback.status_code != 200 or duplicate_callback_payload.get("status") != "duplicate":
+        raise RuntimeError("coding-agent duplicate callback was not deduplicated")
+    attached = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/attach",
+            headers={"Authorization": "Bearer user-token"},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": detached_payload.get("lastCursor")}).encode("utf-8"),
+        )
+    )
+    attached_payload = json.loads(attached.body.decode("utf-8"))
+    if attached.status_code != 200:
+        raise RuntimeError("coding-agent detached run could not replay from its retained cursor")
+    terminal_events = app.handle(
+        ServerRequest(
+            method="GET",
+            path=f"/runs/{run_id}/events",
+            headers={"Authorization": "Bearer user-token"},
+            query={},
+            cookies={},
+        )
+    )
+    terminal_events_payload = json.loads(terminal_events.body.decode("utf-8"))
+    terminal_event_rows = terminal_events_payload.get("events")
+    if terminal_events.status_code != 200 or not isinstance(terminal_event_rows, list):
+        raise RuntimeError("coding-agent terminal event stream is unavailable")
+    event_kinds = [event.get("kind") for event in terminal_event_rows]
+    replay_rows = attached_payload.get("events")
+    if not isinstance(replay_rows, list):
+        raise RuntimeError("coding-agent attach response events must be a list")
+    replay_event_kinds = [event.get("kind") for event in replay_rows]
+
+    signed_evidence: dict[str, object] | None = None
+    if signed_delivery:
+        assert callback_module is not None
+        secret_ref = "secret://callbacks/ide-relay"
+        secret = b"coding-agent-acceptance-registered-secret"
+
+        class RegisteredSecretResolver:
+            def __init__(self) -> None:
+                self.lookups: list[str] = []
+
+            def resolve(self, requested_secret_ref: str) -> bytes:
+                self.lookups.append(requested_secret_ref)
+                if requested_secret_ref != secret_ref:
+                    raise KeyError(requested_secret_ref)
+                return secret
+
+        class VerifyingWebhookReceiver:
+            def __init__(self) -> None:
+                self.requests: list[dict[str, object]] = []
+
+            def post(
+                self,
+                url: str,
+                *,
+                body: bytes,
+                headers: dict[str, str],
+            ) -> object:
+                envelope_payload = json.loads(body)
+                envelope = callback_module.CallbackEnvelope(**envelope_payload)
+                verified = callback_module.verify_webhook_headers_hmac_sha256(
+                    envelope,
+                    headers,
+                    secret,
+                    now=envelope.delivered_at,
+                )
+                self.requests.append(
+                    {
+                        "url": url,
+                        "verified": verified,
+                        "deliveryId": envelope.delivery_id,
+                        "eventId": envelope.event_id,
+                        "runId": envelope.run_id,
+                        "cursor": envelope.cursor,
+                        "idempotencyKey": envelope.idempotency_key,
+                    }
+                )
+                return callback_module.WebhookTransportResponse(202 if verified else 401)
+
+        resolver = RegisteredSecretResolver()
+        receiver = VerifyingWebhookReceiver()
+        app.callback_delivery_hook = callback_module.RegisteredSecretWebhookDispatcher(
+            secret_resolver=resolver,
+            transport=receiver,
+            delivered_at_factory=lambda: datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+        )
+        registered = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/register",
+                headers={"Authorization": "Bearer user-token"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "subscriptionId": "callback-sub-coding-agent-acceptance-1",
+                        "scope": callback_registration.get("scope"),
+                        "scopeId": run_id,
+                        "eventFilter": dict(event_filter),
+                        "delivery": dict(delivery_config),
+                        "replayFromCursor": accepted_payload.get("initialCursor"),
+                        "failurePolicy": "retry_then_dead_letter",
+                        "deadLetterPolicy": "webhook-standard",
+                    }
+                ).encode("utf-8"),
+                requested_at=datetime.now(timezone.utc)
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z"),
+            )
+        )
+        registered_payload = json.loads(registered.body.decode("utf-8"))
+        if registered.status_code != 201:
+            raise RuntimeError("coding-agent signed webhook callback registration failed")
+        registered_deliveries = registered_payload.get("deliveries", [])
+        if not isinstance(registered_deliveries, list):
+            raise RuntimeError("coding-agent signed webhook delivery evidence must be a list")
+        stable_delivery_evidence = [
+            {
+                key: delivery[key]
+                for key in (
+                    "deliveryId",
+                    "subscriptionId",
+                    "eventId",
+                    "runId",
+                    "sequence",
+                    "cursor",
+                    "attempt",
+                    "idempotencyKey",
+                    "status",
+                    "statusCode",
+                )
+                if key in delivery
+            }
+            for delivery in registered_deliveries
+            if isinstance(delivery, Mapping)
+        ]
+        signed_evidence = {
+            "registrationStatus": registered.status_code,
+            "selectedEventKinds": [event.get("kind") for event in registered_payload.get("events", [])],
+            "deliveries": stable_delivery_evidence,
+            "secretRefLookups": list(resolver.lookups),
+            "receiverRequests": list(receiver.requests),
+        }
+
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "scenarioApplicationDigest": canonical_hash(application_document),
+        "scenarioGraphDigest": canonical_hash(graph_document),
+        "accepted": {
+            "statusCode": accepted.status_code,
+            "runId": accepted_payload.get("runId"),
+            "status": accepted_payload.get("status"),
+            "eventStream": accepted_payload.get("eventStream"),
+            "websocket": accepted_payload.get("websocket"),
+            "cancel": accepted_payload.get("cancel"),
+            "initialCursor": accepted_payload.get("initialCursor"),
+        },
+        "waitingStatus": waiting.get("status"),
+        "detach": {
+            "statusCode": detached.status_code,
+            "lastCursor": detached_payload.get("lastCursor"),
+        },
+        "callback": {
+            "statusCode": callback.status_code,
+            "status": callback_payload.get("status"),
+            "duplicateStatusCode": duplicate_callback.status_code,
+            "duplicateStatus": duplicate_callback_payload.get("status"),
+            "receiptCount": len(app.callback_submissions(operation_id)),
+        },
+        "completionStatus": completion.get("status"),
+        "eventKinds": event_kinds,
+        "replayEventKinds": replay_event_kinds,
+        "replayLastCursor": attached_payload.get("lastCursor"),
+        "downstreamExecutions": downstream_executions,
+        "signedDelivery": signed_evidence,
+    }
+
+
+def _accepted_invocation_handle_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_coding_agent_background_callback(
+        application,
+        scenario_path,
+        signed_delivery=False,
+    )
+    accepted = evidence["accepted"]
+    if not isinstance(accepted, Mapping) or accepted != {
+        "statusCode": 202,
+        "runId": "run-coding-agent-acceptance-1",
+        "status": "accepted",
+        "eventStream": "/runs/run-coding-agent-acceptance-1/events",
+        "websocket": "/runs/run-coding-agent-acceptance-1/ws",
+        "cancel": "/runs/run-coding-agent-acceptance-1/cancel",
+        "initialCursor": "run-coding-agent-acceptance-1:0",
+    }:
+        raise RuntimeError("accepted invocation handle evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "accepted": accepted,
+        }
+    )
+
+
+def _cursor_replay_after_detach_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_coding_agent_background_callback(
+        application,
+        scenario_path,
+        signed_delivery=False,
+    )
+    if evidence["detach"] != {
+        "statusCode": 202,
+        "lastCursor": "run-coding-agent-acceptance-1:2",
+    }:
+        raise RuntimeError("cursor replay gate did not detach at the waiting callback cursor")
+    if evidence["replayEventKinds"] != [
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "RunFailed",
+    ]:
+        raise RuntimeError("cursor replay gate did not replay all events emitted after detach")
+    if evidence["replayLastCursor"] != "run-coding-agent-acceptance-1:5":
+        raise RuntimeError("cursor replay gate did not advance to the terminal cursor")
+    return 0, canonical_dumps(
+        {
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "detach": evidence["detach"],
+            "replayEventKinds": evidence["replayEventKinds"],
+            "replayLastCursor": evidence["replayLastCursor"],
+        }
+    )
+
+
+def _callback_journal_before_resume_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_coding_agent_background_callback(
+        application,
+        scenario_path,
+        signed_delivery=False,
+    )
+    if evidence["waitingStatus"] != "waiting_callback":
+        raise RuntimeError("callback journal gate did not observe a published callback checkpoint")
+    if evidence["eventKinds"] != [
+        "RunStarted",
+        "AsyncOperationWaitingCallback",
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "RunFailed",
+    ]:
+        raise RuntimeError("callback journal gate did not preserve journal-before-resume event order")
+    if evidence["callback"] != {
+        "statusCode": 202,
+        "status": "accepted",
+        "duplicateStatusCode": 200,
+        "duplicateStatus": "duplicate",
+        "receiptCount": 1,
+    }:
+        raise RuntimeError("callback journal gate did not authenticate and deduplicate the callback receipt")
+    if evidence["downstreamExecutions"] != 1 or evidence["completionStatus"] != "failed":
+        raise RuntimeError("callback journal gate did not resume the retained checkpoint exactly once")
+    return 0, canonical_dumps(
+        {
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "eventKinds": evidence["eventKinds"],
+            "callback": evidence["callback"],
+            "downstreamExecutions": evidence["downstreamExecutions"],
+            "completionStatus": evidence["completionStatus"],
+        }
+    )
+
+
+def _signed_webhook_delivery_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_coding_agent_background_callback(
+        application,
+        scenario_path,
+        signed_delivery=True,
+    )
+    signed = evidence["signedDelivery"]
+    if not isinstance(signed, Mapping):
+        raise RuntimeError("signed webhook delivery evidence is missing")
+    deliveries = signed.get("deliveries")
+    receiver_requests = signed.get("receiverRequests")
+    if signed.get("registrationStatus") != 201 or signed.get("selectedEventKinds") != ["RunFailed"]:
+        raise RuntimeError("signed webhook gate did not select the scenario's retained terminal event")
+    if not isinstance(deliveries, list) or len(deliveries) != 1 or deliveries[0].get("status") != "delivered":
+        raise RuntimeError("signed webhook gate did not record a successful delivery")
+    if signed.get("secretRefLookups") != ["secret://callbacks/ide-relay"]:
+        raise RuntimeError("signed webhook gate did not resolve the registered secret reference")
+    if (
+        not isinstance(receiver_requests, list)
+        or len(receiver_requests) != 1
+        or receiver_requests[0].get("verified") is not True
+        or receiver_requests[0].get("url") != "https://ide-relay.example.com/graphblocks/events"
+    ):
+        raise RuntimeError("signed webhook gate receiver did not verify the canonical HMAC request")
+    return 0, canonical_dumps(
+        {
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "scenarioApplicationDigest": evidence["scenarioApplicationDigest"],
+            "scenarioGraphDigest": evidence["scenarioGraphDigest"],
+            "signedDelivery": signed,
+        }
+    )
+
+
 class AcceptanceGateRunner:
     def __init__(
         self,
         *,
         custom_handlers: Mapping[str, AcceptanceGateHandler] | None = None,
     ) -> None:
+        self._builtin_semantic_handlers: dict[str, AcceptanceGateHandler] = {
+            "accepted invocation handle check": _accepted_invocation_handle_check,
+            "cursor replay after detach": _cursor_replay_after_detach_check,
+            "callback journal-before-resume check": _callback_journal_before_resume_check,
+            "signed webhook delivery check": _signed_webhook_delivery_check,
+        }
         self._custom_handlers = dict(custom_handlers or {})
 
     def run_manifest(
@@ -3511,6 +4187,26 @@ class AcceptanceGateRunner:
                     output = output_buffer.getvalue()
                 except (OSError, RuntimeError, TypeError, ValueError) as error:
                     output = output_buffer.getvalue()
+                    diagnostic = AcceptanceGateDiagnostic(
+                        code="AcceptanceGateExecutionFailed",
+                        message=(
+                            str(error)
+                            .replace(str(scenario_path), application.scenario_path)
+                            .replace(str(root), ".")
+                        ),
+                        path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                    )
+            elif gate in self._builtin_semantic_handlers:
+                try:
+                    exit_code, output = self._builtin_semantic_handlers[gate](
+                        application,
+                        scenario_path,
+                    )
+                    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+                        raise TypeError("acceptance gate handler exit code must be an integer")
+                    if not isinstance(output, str):
+                        raise TypeError("acceptance gate handler output must be a string")
+                except (OSError, RuntimeError, TypeError, ValueError) as error:
                     diagnostic = AcceptanceGateDiagnostic(
                         code="AcceptanceGateExecutionFailed",
                         message=(
