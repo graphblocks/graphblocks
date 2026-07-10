@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-voice~=1.0"]
+dependencies = ["graphblocks-voice~=0.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graphblocks_silero_vad"]

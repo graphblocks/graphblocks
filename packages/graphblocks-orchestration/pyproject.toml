@@ -21,9 +21,9 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "graphblocks-core~=1.0",
-  "graphblocks-policy~=1.0",
-  "graphblocks-budget~=1.0",
+  "graphblocks-core~=0.1",
+  "graphblocks-policy~=0.1",
+  "graphblocks-budget~=0.1",
 ]
 
 [tool.hatch.build.targets.wheel]

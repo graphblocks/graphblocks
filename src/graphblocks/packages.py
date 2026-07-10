@@ -6,6 +6,9 @@ from pathlib import Path
 import tomllib
 from typing import Any, Literal
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 import yaml
 
 from .canonical import canonical_hash
@@ -1121,6 +1124,28 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 *sorted(root_path.glob("packages/*/pyproject.toml")),
             ]
             known_distributions = set(packages_by_distribution)
+            local_versions: dict[str, str] = {}
+            for manifest_path in manifest_paths:
+                if not manifest_path.exists():
+                    continue
+                try:
+                    candidate_manifest = tomllib.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                except tomllib.TOMLDecodeError:
+                    continue
+                candidate_project = candidate_manifest.get("project")
+                if not isinstance(candidate_project, dict):
+                    continue
+                candidate_name = candidate_project.get("name")
+                candidate_version = candidate_project.get("version")
+                if (
+                    isinstance(candidate_name, str)
+                    and candidate_name.strip()
+                    and isinstance(candidate_version, str)
+                    and candidate_version.strip()
+                ):
+                    local_versions[canonicalize_name(candidate_name.strip())] = candidate_version.strip()
             for manifest_path in manifest_paths:
                 if not manifest_path.exists():
                     continue
@@ -1173,18 +1198,67 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 dependencies = project.get("dependencies", [])
                 actual_dependencies: list[str] = []
                 if isinstance(dependencies, list):
-                    for dependency in dependencies:
+                    for dependency_index, dependency in enumerate(dependencies):
                         if not isinstance(dependency, str):
                             continue
-                        dependency_name = dependency.strip().split(";", 1)[0].strip()
-                        for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
-                            marker_index = dependency_name.find(marker)
-                            if marker_index > 0:
-                                dependency_name = dependency_name[:marker_index]
-                                break
-                        dependency_name = dependency_name.strip().lower().replace("_", "-")
+                        dependency_requirement = dependency.strip()
+                        try:
+                            parsed_requirement = Requirement(dependency_requirement)
+                        except InvalidRequirement as error:
+                            diagnostics.append(
+                                Diagnostic(
+                                    "PackageManifestDependencyRequirementInvalid",
+                                    (
+                                        f"package manifest for {distribution!r} has invalid "
+                                        f"dependency requirement {dependency_requirement!r}: {error}"
+                                    ),
+                                    (
+                                        f"$.{relative_path}.project.dependencies"
+                                        f"[{dependency_index}]"
+                                    ),
+                                )
+                            )
+                            normalized_requirement = dependency_requirement.lower().replace("_", "-")
+                            for known_distribution in known_distributions:
+                                normalized_known = canonicalize_name(known_distribution)
+                                if normalized_requirement.startswith(normalized_known):
+                                    suffix = normalized_requirement[len(normalized_known) : len(normalized_known) + 1]
+                                    if not suffix or suffix in "[<>=!~ @;":
+                                        if normalized_known not in actual_dependencies:
+                                            actual_dependencies.append(normalized_known)
+                                        break
+                            continue
+                        dependency_name = canonicalize_name(parsed_requirement.name)
                         if dependency_name in known_distributions and dependency_name not in actual_dependencies:
                             actual_dependencies.append(dependency_name)
+                        local_version = local_versions.get(dependency_name)
+                        if dependency_name in known_distributions and local_version is not None:
+                            try:
+                                parsed_local_version = Version(local_version)
+                            except InvalidVersion as error:
+                                diagnostics.append(
+                                    Diagnostic(
+                                        "PackageManifestVersionInvalid",
+                                        f"local package {dependency_name!r} has invalid version {local_version!r}: {error}",
+                                        f"$.{relative_path}.project.dependencies[{dependency_index}]",
+                                    )
+                                )
+                            else:
+                                if parsed_requirement.specifier and not parsed_requirement.specifier.contains(
+                                    parsed_local_version,
+                                    prereleases=True,
+                                ):
+                                    diagnostics.append(
+                                        Diagnostic(
+                                            "PackageManifestDependencyVersionUnsatisfied",
+                                            (
+                                                f"package manifest for {distribution!r} requires "
+                                                f"{dependency_requirement!r}, but the local version is "
+                                                f"{local_version!r}"
+                                            ),
+                                            f"$.{relative_path}.project.dependencies[{dependency_index}]",
+                                        )
+                                    )
                 dependency_path = f"$.{relative_path}.project.dependencies"
                 for dependency in expected_dependencies:
                     if dependency not in actual_dependencies:

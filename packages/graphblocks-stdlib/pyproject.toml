@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-core~=1.0"]
+dependencies = ["graphblocks-core~=0.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graphblocks_stdlib"]

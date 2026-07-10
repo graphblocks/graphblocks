@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "graphblocks"
-version = "0.0.1"
+version = "0.1.0"
 description = "Reserved alpha metapackage for GraphBlocks"
 readme = "METAPACKAGE.md"
 requires-python = ">=3.11"
@@ -22,16 +22,16 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "graphblocks-core~=1.0",
-  "graphblocks-runtime~=1.0",
-  "graphblocks-stdlib~=1.0",
-  "graphblocks-documents~=1.0",
-  "graphblocks-rag~=1.0",
-  "graphblocks-conversation~=1.0",
-  "graphblocks-policy~=1.0",
-  "graphblocks-budget~=1.0",
-  "graphblocks-usage~=1.0",
-  "graphblocks-cli~=1.0",
+  "graphblocks-core~=0.1",
+  "graphblocks-runtime~=0.1",
+  "graphblocks-stdlib~=0.1",
+  "graphblocks-documents~=0.1",
+  "graphblocks-rag~=0.1",
+  "graphblocks-conversation~=0.1",
+  "graphblocks-policy~=0.1",
+  "graphblocks-budget~=0.1",
+  "graphblocks-usage~=0.1",
+  "graphblocks-cli~=0.1",
 ]
 
 [project.urls]

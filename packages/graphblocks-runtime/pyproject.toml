@@ -21,7 +21,7 @@ classifiers = [
   "Programming Language :: Rust",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-core~=1.0"]
+dependencies = ["graphblocks-core~=0.1"]
 
 [tool.maturin]
 manifest-path = "../../crates/graphblocks-python/Cargo.toml"

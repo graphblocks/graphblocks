@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import tomllib
 
@@ -22,6 +23,29 @@ from graphblocks.packages import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_wheelhouse_gate_rejects_stale_artifacts_before_build(tmp_path, monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "verify_wheelhouse",
+        ROOT / "tools" / "verify_wheelhouse.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    (wheelhouse / "graphblocks_core-9.9.9-py3-none-any.whl").write_bytes(b"stale")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("build must not start with stale wheels")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="wheelhouse must not contain existing wheel artifacts"):
+        module.main(["--wheelhouse", str(wheelhouse)])
 
 
 def test_graphblocks_python_crate_is_workspace_member() -> None:
@@ -99,16 +123,16 @@ def test_graphblocks_metapackage_is_dependency_only() -> None:
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks"
     assert pyproject["project"]["dependencies"] == [
-        "graphblocks-core~=1.0",
-        "graphblocks-runtime~=1.0",
-        "graphblocks-stdlib~=1.0",
-        "graphblocks-documents~=1.0",
-        "graphblocks-rag~=1.0",
-        "graphblocks-conversation~=1.0",
-        "graphblocks-policy~=1.0",
-        "graphblocks-budget~=1.0",
-        "graphblocks-usage~=1.0",
-        "graphblocks-cli~=1.0",
+        "graphblocks-core~=0.1",
+        "graphblocks-runtime~=0.1",
+        "graphblocks-stdlib~=0.1",
+        "graphblocks-documents~=0.1",
+        "graphblocks-rag~=0.1",
+        "graphblocks-conversation~=0.1",
+        "graphblocks-policy~=0.1",
+        "graphblocks-budget~=0.1",
+        "graphblocks-usage~=0.1",
+        "graphblocks-cli~=0.1",
     ]
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["only-include"] == [
         "METAPACKAGE.md"
@@ -182,7 +206,7 @@ def test_tool_adapter_packages_have_pure_python_layouts() -> None:
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+        assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
         assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
             f"src/{import_name}"
         ]
@@ -229,7 +253,7 @@ def test_model_provider_adapter_packages_have_pure_python_layouts_without_sdk_de
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-core~=1.0"]
+        assert dependencies == ["graphblocks-core~=0.1"]
         assert not any(
             provider in dependency.lower()
             for dependency in dependencies
@@ -248,7 +272,7 @@ def test_stdlib_package_has_pure_python_layout() -> None:
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-stdlib"
-    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "src/graphblocks_stdlib"
     ]
@@ -263,7 +287,7 @@ def test_documents_package_has_pure_python_layout_without_parser_dependencies() 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-documents"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any("pdf" in dependency.lower() or "ocr" in dependency.lower() for dependency in dependencies)
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "src/graphblocks_documents"
@@ -293,7 +317,7 @@ def test_pdf_parser_package_has_lazy_optional_parser_dependency() -> None:
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-pdf"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any("pypdf" in dependency.lower() or "pdfminer" in dependency.lower() for dependency in dependencies)
     assert pyproject["project"]["optional-dependencies"]["pypdf"] == ["pypdf>=4.0"]
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
@@ -310,7 +334,7 @@ def test_rag_package_has_pure_python_layout_without_vector_db_dependencies() -> 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-rag"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         vector_client in dependency.lower()
         for dependency in dependencies
@@ -344,7 +368,7 @@ def test_vector_store_adapter_packages_have_pure_python_layouts_without_sdk_depe
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-qdrant"
-    assert dependencies == ["graphblocks-rag~=1.0"]
+    assert dependencies == ["graphblocks-rag~=0.1"]
     assert not any(
         vector_client in dependency.lower()
         for dependency in dependencies
@@ -378,7 +402,7 @@ def test_framework_bridge_packages_have_pure_python_layouts_without_framework_de
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-haystack"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         framework in dependency.lower()
         for dependency in dependencies
@@ -398,7 +422,7 @@ def test_conversation_package_has_pure_python_layout_without_server_or_db_depend
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-conversation"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         forbidden in dependency.lower()
         for dependency in dependencies
@@ -418,7 +442,7 @@ def test_budget_package_has_pure_python_layout_without_backend_dependencies() ->
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-budget"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         backend in dependency.lower()
         for dependency in dependencies
@@ -438,7 +462,7 @@ def test_usage_package_has_pure_python_layout_without_backend_dependencies() -> 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-usage"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         backend in dependency.lower()
         for dependency in dependencies
@@ -458,7 +482,7 @@ def test_policy_package_has_pure_python_layout_without_external_pdp_dependencies
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-policy"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "src/graphblocks_policy"
@@ -473,7 +497,7 @@ def test_cli_package_has_python_entrypoint_layout_without_native_dependency() ->
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-cli"
-    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
     assert "maturin" not in pyproject
     assert pyproject["project"]["scripts"] == {"graphblocks": "graphblocks_cli:main"}
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
@@ -491,9 +515,9 @@ def test_agents_package_has_pure_python_layout_without_provider_sdk_dependencies
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-agents"
     assert dependencies == [
-        "graphblocks-core~=1.0",
-        "graphblocks-conversation~=1.0",
-        "graphblocks-policy~=1.0",
+        "graphblocks-core~=0.1",
+        "graphblocks-conversation~=0.1",
+        "graphblocks-policy~=0.1",
     ]
     assert not any(
         provider in dependency.lower()
@@ -514,7 +538,7 @@ def test_evaluation_package_has_pure_python_layout_without_model_provider_depend
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-evaluation"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         provider in dependency.lower()
         for dependency in dependencies
@@ -534,7 +558,7 @@ def test_testing_package_has_pure_python_layout_without_provider_dependencies() 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-testing"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         provider in dependency.lower()
         for dependency in dependencies
@@ -557,7 +581,7 @@ def test_testing_package_production_acceptance_extra_installs_callback_verifier(
         "graphblocks-callbacks~=0.1",
         "graphblocks-langfuse~=0.1",
         "graphblocks-otel~=0.1",
-        "graphblocks-telemetry~=1.0",
+        "graphblocks-telemetry~=0.1",
         "graphblocks-voice~=0.1",
     ]
 
@@ -569,7 +593,7 @@ def test_devtools_package_has_pure_python_layout_without_graph_or_template_depen
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-devtools"
-    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-cli~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-cli~=0.1"]
     assert not any(
         dependency_name in dependency.lower()
         for dependency in dependencies
@@ -589,7 +613,7 @@ def test_client_package_has_pure_python_layout_without_server_dependencies() -> 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-client"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         framework in dependency.lower()
         for dependency in dependencies
@@ -609,7 +633,7 @@ def test_tui_package_has_pure_python_layout_without_ui_framework_dependency() ->
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-tui"
-    assert dependencies == ["graphblocks-client~=1.0"]
+    assert dependencies == ["graphblocks-client~=0.1"]
     assert not any(
         framework in dependency.lower()
         for dependency in dependencies
@@ -629,7 +653,7 @@ def test_audit_package_has_pure_python_layout_without_backend_dependencies() -> 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-audit"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         backend in dependency.lower()
         for dependency in dependencies
@@ -649,7 +673,7 @@ def test_deployment_package_has_pure_python_layout_without_platform_sdk_dependen
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-deployment"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         platform in dependency.lower()
         for dependency in dependencies
@@ -669,7 +693,7 @@ def test_kubernetes_package_has_pure_python_layout_without_client_dependency() -
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-kubernetes"
-    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert dependencies == ["graphblocks-deployment~=0.1"]
     assert not any(
         client in dependency.lower()
         for dependency in dependencies
@@ -689,7 +713,7 @@ def test_terraform_package_has_pure_python_layout_without_cli_or_hcl_dependencie
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-terraform"
-    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert dependencies == ["graphblocks-deployment~=0.1"]
     assert not any(
         tool in dependency.lower()
         for dependency in dependencies
@@ -709,7 +733,7 @@ def test_oci_package_has_pure_python_layout_without_registry_client_dependency()
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-oci"
-    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert dependencies == ["graphblocks-deployment~=0.1"]
     assert not any(
         client in dependency.lower()
         for dependency in dependencies
@@ -729,7 +753,7 @@ def test_gitops_package_has_pure_python_layout_without_controller_dependencies()
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-gitops"
-    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert dependencies == ["graphblocks-deployment~=0.1"]
     assert not any(
         client in dependency.lower()
         for dependency in dependencies
@@ -749,7 +773,7 @@ def test_worker_package_has_pure_python_layout_without_server_dependencies() -> 
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-worker"
-    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-runtime~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-runtime~=0.1"]
     assert not any(
         framework in dependency.lower()
         for dependency in dependencies
@@ -769,7 +793,7 @@ def test_server_package_has_pure_python_layout_without_web_framework_dependencie
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-server"
-    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-runtime~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-runtime~=0.1"]
     assert not any(
         framework in dependency.lower()
         for dependency in dependencies
@@ -806,7 +830,7 @@ def test_callbacks_package_has_pure_python_layout_without_http_client_dependenci
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-callbacks"
-    assert dependencies == ["graphblocks-core~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1"]
     assert not any(
         client in dependency.lower()
         for dependency in dependencies
@@ -826,7 +850,7 @@ def test_workspace_package_has_pure_python_layout_without_vcs_or_process_depende
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-workspace"
-    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-policy~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-policy~=0.1"]
     assert not any(
         provider in dependency.lower()
         for dependency in dependencies
@@ -846,7 +870,7 @@ def test_review_package_has_pure_python_layout_without_identity_provider_depende
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-review"
-    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-policy~=1.0"]
+    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-policy~=0.1"]
     assert not any(
         provider in dependency.lower()
         for dependency in dependencies
@@ -867,9 +891,9 @@ def test_orchestration_package_has_pure_python_layout_without_provider_dependenc
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-orchestration"
     assert dependencies == [
-        "graphblocks-core~=1.0",
-        "graphblocks-policy~=1.0",
-        "graphblocks-budget~=1.0",
+        "graphblocks-core~=0.1",
+        "graphblocks-policy~=0.1",
+        "graphblocks-budget~=0.1",
     ]
     assert not any(
         provider in dependency.lower()
@@ -894,7 +918,7 @@ def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependenci
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-policy~=1.0"]
+        assert dependencies == ["graphblocks-policy~=0.1"]
         assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
         assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
             f"src/{import_name}"
@@ -905,9 +929,9 @@ def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependenci
 
 def test_observability_projection_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     cases = (
-        ("graphblocks-telemetry", "graphblocks_telemetry", ["graphblocks-core~=1.0"]),
-        ("graphblocks-otel", "graphblocks_otel", ["graphblocks-telemetry~=1.0"]),
-        ("graphblocks-langfuse", "graphblocks_langfuse", ["graphblocks-telemetry~=1.0"]),
+        ("graphblocks-telemetry", "graphblocks_telemetry", ["graphblocks-core~=0.1"]),
+        ("graphblocks-otel", "graphblocks_otel", ["graphblocks-telemetry~=0.1"]),
+        ("graphblocks-langfuse", "graphblocks_langfuse", ["graphblocks-telemetry~=0.1"]),
     )
     for distribution, import_name, expected_dependencies in cases:
         package_root = ROOT / "packages" / distribution
@@ -967,7 +991,7 @@ def test_prometheus_package_has_pure_python_layout_without_client_dependency() -
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-prometheus"
-    assert dependencies == ["graphblocks-telemetry~=1.0"]
+    assert dependencies == ["graphblocks-telemetry~=0.1"]
     assert not any(
         client in dependency.lower()
         for dependency in dependencies
@@ -987,7 +1011,7 @@ def test_dashboards_package_has_data_package_layout_without_vendor_dependencies(
 
     assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks-dashboards"
-    assert dependencies == ["graphblocks-telemetry~=1.0"]
+    assert dependencies == ["graphblocks-telemetry~=0.1"]
     assert not any(
         vendor in dependency.lower()
         for dependency in dependencies
@@ -1002,8 +1026,8 @@ def test_dashboards_package_has_data_package_layout_without_vendor_dependencies(
 
 def test_postgres_adapter_packages_have_sql_contract_layouts_without_db_driver_dependencies() -> None:
     cases = (
-        ("graphblocks-budget-postgres", "graphblocks_budget_postgres", ["graphblocks-budget~=1.0"]),
-        ("graphblocks-usage-postgres", "graphblocks_usage_postgres", ["graphblocks-usage~=1.0"]),
+        ("graphblocks-budget-postgres", "graphblocks_budget_postgres", ["graphblocks-budget~=0.1"]),
+        ("graphblocks-usage-postgres", "graphblocks_usage_postgres", ["graphblocks-usage~=0.1"]),
     )
     for distribution, import_name, expected_dependencies in cases:
         package_root = ROOT / "packages" / distribution
@@ -1039,7 +1063,7 @@ def test_durable_stream_adapter_packages_have_layouts_without_client_dependencie
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-durable~=1.0"]
+        assert dependencies == ["graphblocks-durable~=0.1"]
         assert not any(
             client in dependency.lower()
             for dependency in dependencies
@@ -1066,7 +1090,7 @@ def test_voice_adapter_packages_have_layouts_without_media_sdk_dependencies() ->
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-voice~=1.0"]
+        assert dependencies == ["graphblocks-voice~=0.1"]
         assert not any(
             client in dependency.lower()
             for dependency in dependencies
@@ -1100,7 +1124,7 @@ def test_package_lock_resolves_default_metapackage_closure_without_optional_inte
     ]
     assert "graphblocks-mcp" not in {entry.distribution for entry in lock.entries}
     assert "model_provider" in lock.excluded_categories
-    assert lock.entry("graphblocks-core").version_constraint == "~=1.0"
+    assert lock.entry("graphblocks-core").version_constraint == "~=0.1"
     assert lock.entry("graphblocks-openapi") is None
 
 
@@ -1141,7 +1165,7 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
             "kind": "pure_python",
             "layer": "schema_authoring",
             "stability": "foundation",
-            "versionConstraint": "~=1.0",
+            "versionConstraint": "~=0.1",
         },
         {
             "default": False,
@@ -1250,7 +1274,7 @@ def test_package_catalog_doctor_reports_default_closure_excluded_categories() ->
 def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
     entry = PackageLockEntry(
         distribution="graphblocks-core",
-        version_constraint="~=1.0",
+        version_constraint="~=0.1",
         import_package="graphblocks",
         default=True,
         layer="schema_authoring",
@@ -1391,7 +1415,7 @@ def test_package_catalog_doctor_reports_local_manifest_dependency_drift(tmp_path
 [project]
 name = "graphblocks-agents"
 version = "0.1.0"
-dependencies = ["graphblocks-core~=1.0"]
+dependencies = ["graphblocks-core~=0.1"]
 """.strip(),
         encoding="utf-8",
     )
@@ -1427,6 +1451,117 @@ dependencies = ["graphblocks-core~=1.0"]
     ]
 
 
+def test_package_catalog_doctor_rejects_unsatisfied_local_version_constraint(tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+name = "graphblocks-core"
+version = "0.1.0"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    package = tmp_path / "packages" / "graphblocks-agents" / "pyproject.toml"
+    package.parent.mkdir(parents=True)
+    package.write_text(
+        """
+[project]
+name = "graphblocks-agents"
+version = "0.1.0"
+dependencies = ["graphblocks-core~=1.0"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {
+                "distribution": "graphblocks-agents",
+                "dependencies": [],
+                "excludedCategories": [],
+            },
+            "packages": [
+                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
+                {
+                    "distribution": "graphblocks-agents",
+                    "default": True,
+                    "dependsOn": ["graphblocks-core"],
+                },
+            ],
+        },
+        root=tmp_path,
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        (
+            "PackageManifestDependencyVersionUnsatisfied",
+            "$.packages/graphblocks-agents/pyproject.toml.project.dependencies[0]",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("requirement", "local_version", "expected_code"),
+    [
+        ("graphblocks-core[fast]~=1.0", "0.1.0", "PackageManifestDependencyVersionUnsatisfied"),
+        ("graphblocks-core==1.*", "0.1.0", "PackageManifestDependencyVersionUnsatisfied"),
+        ("graphblocks-core>=0.1", "0.1.0rc1", "PackageManifestDependencyVersionUnsatisfied"),
+        ("graphblocks-core=>0.1", "0.1.0", "PackageManifestDependencyRequirementInvalid"),
+    ],
+)
+def test_package_catalog_doctor_fails_closed_for_pep508_requirements(
+    tmp_path,
+    requirement,
+    local_version,
+    expected_code,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f"""
+[project]
+name = "graphblocks-core"
+version = "{local_version}"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    package = tmp_path / "packages" / "graphblocks-agents" / "pyproject.toml"
+    package.parent.mkdir(parents=True)
+    package.write_text(
+        f"""
+[project]
+name = "graphblocks-agents"
+version = "0.1.0"
+dependencies = ["{requirement}"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {
+                "distribution": "graphblocks-agents",
+                "dependencies": [],
+                "excludedCategories": [],
+            },
+            "packages": [
+                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
+                {
+                    "distribution": "graphblocks-agents",
+                    "default": True,
+                    "dependsOn": ["graphblocks-core"],
+                },
+            ],
+        },
+        root=tmp_path,
+    )
+
+    assert [item.code for item in diagnostics.diagnostics] == [expected_code]
+
+
 def test_package_catalog_doctor_reports_unknown_dependency_and_default_constraint() -> None:
     diagnostics = doctor_package_catalog(
         {
@@ -1434,7 +1569,7 @@ def test_package_catalog_doctor_reports_unknown_dependency_and_default_constrain
             "specVersion": "1.0",
             "defaultMetaPackage": {
                 "distribution": "graphblocks",
-                "dependencies": ["missing-default~=1.0"],
+                "dependencies": ["missing-default~=0.1"],
                 "excludedCategories": [],
             },
             "packages": [

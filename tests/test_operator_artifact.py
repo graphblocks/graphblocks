@@ -69,3 +69,14 @@ def test_operator_chart_templates_controller_deployment_and_rbac() -> None:
     assert "graphreleases" in rbac
     assert "deploymentrevisions" in rbac
     assert "kind: ClusterRoleBinding" in rbac
+
+
+def test_operator_chart_uses_configured_service_account_name_consistently() -> None:
+    deployment = (OPERATOR_ROOT / "templates" / "deployment.yaml").read_text(encoding="utf-8")
+    service_account = (OPERATOR_ROOT / "templates" / "serviceaccount.yaml").read_text(encoding="utf-8")
+    rbac = (OPERATOR_ROOT / "templates" / "rbac.yaml").read_text(encoding="utf-8")
+
+    value_expression = "{{ .Values.serviceAccount.name | quote }}"
+    assert f"serviceAccountName: {value_expression}" in deployment
+    assert f"name: {value_expression}" in service_account
+    assert f"name: {value_expression}" in rbac

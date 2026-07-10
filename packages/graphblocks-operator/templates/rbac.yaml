@@ -39,6 +39,6 @@ roleRef:
   name: graphblocks-operator
 subjects:
   - kind: ServiceAccount
-    name: graphblocks-operator
+    name: {{ .Values.serviceAccount.name | quote }}
     namespace: {{ .Release.Namespace | quote }}
 {{- end }}

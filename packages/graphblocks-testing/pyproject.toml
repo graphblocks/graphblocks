@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-core~=1.0"]
+dependencies = ["graphblocks-core~=0.1"]
 
 [project.optional-dependencies]
 production = [
@@ -28,7 +28,7 @@ production = [
   "graphblocks-callbacks~=0.1",
   "graphblocks-langfuse~=0.1",
   "graphblocks-otel~=0.1",
-  "graphblocks-telemetry~=1.0",
+  "graphblocks-telemetry~=0.1",
   "graphblocks-voice~=0.1",
 ]
 
