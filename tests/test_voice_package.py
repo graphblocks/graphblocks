@@ -56,18 +56,93 @@ def test_voice_vad_authority_and_interruption_classifier(monkeypatch) -> None:
         graphblocks_voice.PlaybackEntry("assistant-audio-1", sequence=1, status="started", started_at_ms=0)
     )
 
-    decision = graphblocks_voice.InterruptionClassifier("barge-in").classify(
+    classifier = graphblocks_voice.InterruptionClassifier(
+        "barge-in",
+        provider_authority_id="provider-realtime",
+    )
+    advisory = classifier.classify(
         session_id="session-1",
         vad_decision=speech,
         playback=playback,
         occurred_at_ms=25,
     )
+    provider_continue = classifier.classify(
+        session_id="session-1",
+        vad_decision=speech,
+        playback=playback,
+        occurred_at_ms=25,
+        provider_decision=graphblocks_voice.ProviderInterruptionDecision(
+            authority_id="provider-realtime",
+            session_id="session-1",
+            kind="continue",
+            occurred_at_ms=26,
+            reason="provider_turn_continues",
+        ),
+    )
+    provider_interrupt = classifier.classify(
+        session_id="session-1",
+        vad_decision=silence,
+        playback=playback,
+        occurred_at_ms=27,
+        provider_decision=graphblocks_voice.ProviderInterruptionDecision(
+            authority_id="provider-realtime",
+            session_id="session-1",
+            kind="interrupt",
+            occurred_at_ms=27,
+            reason="provider_confirmed_barge_in",
+        ),
+    )
 
     assert silence.kind == "silence"
     assert speech.kind == "speech_start"
-    assert decision.kind == "interrupt"
-    assert decision.interrupted_playback_ids == ("assistant-audio-1",)
-    assert decision.reason == "user_speech_during_playback"
+    assert advisory.kind == "continue"
+    assert advisory.interrupted_playback_ids == ()
+    assert advisory.reason == "awaiting_provider_confirmation"
+    assert provider_continue.kind == "continue"
+    assert provider_continue.reason == "provider_turn_continues"
+    assert provider_interrupt.kind == "interrupt"
+    assert provider_interrupt.interrupted_playback_ids == ("assistant-audio-1",)
+    assert provider_interrupt.reason == "provider_confirmed_barge_in"
+
+
+def test_voice_interruption_classifier_rejects_wrong_provider_authority_or_session(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    classifier = graphblocks_voice.InterruptionClassifier(
+        "barge-in",
+        provider_authority_id="provider-realtime",
+    )
+    vad = graphblocks_voice.VadDecision("vad-local", "mic", 1, "speech_start", 0.9)
+    playback = graphblocks_voice.PlaybackLedger().append(
+        graphblocks_voice.PlaybackEntry("audio-1", sequence=1, status="started", started_at_ms=0)
+    )
+
+    decisions = (
+        graphblocks_voice.ProviderInterruptionDecision(
+            "other-provider",
+            "session-1",
+            "interrupt",
+            20,
+        ),
+        graphblocks_voice.ProviderInterruptionDecision(
+            "provider-realtime",
+            "other-session",
+            "interrupt",
+            20,
+        ),
+    )
+
+    for provider_decision in decisions:
+        try:
+            classifier.classify(
+                session_id="session-1",
+                vad_decision=vad,
+                playback=playback,
+                occurred_at_ms=20,
+                provider_decision=provider_decision,
+            )
+        except graphblocks_voice.VoiceContractError:
+            continue
+        raise AssertionError("provider interruption authority mismatch must fail closed")
 
 
 def test_voice_playback_ledger_marks_active_items_interrupted(monkeypatch) -> None:
@@ -85,6 +160,85 @@ def test_voice_playback_ledger_marks_active_items_interrupted(monkeypatch) -> No
     assert interrupted.entries[1].completed_at_ms == 150
     assert interrupted.entries[1].reason == "barge_in"
     assert interrupted.content_digest().startswith("sha256:")
+
+
+def test_voice_playback_ledger_enforces_lifecycle_acknowledgement_and_idempotency(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    queued = graphblocks_voice.PlaybackEntry(
+        "audio-1",
+        sequence=1,
+        status="queued",
+        audio_ref="artifact://voice/audio-1",
+    )
+    ledger = graphblocks_voice.PlaybackLedger().append(queued)
+
+    assert ledger.append(queued) == ledger
+    started = ledger.start("audio-1", occurred_at_ms=10)
+    assert started.entries[0].status == "started"
+    assert started.entries[0].started_at_ms == 10
+    completed = started.complete("audio-1", occurred_at_ms=30)
+    assert completed.entries[0].status == "completed"
+    assert completed.entries[0].completed_at_ms == 30
+    acknowledged = completed.acknowledge("audio-1", occurred_at_ms=35)
+    assert acknowledged.entries[0].acknowledged_at_ms == 35
+    assert acknowledged.acknowledge("audio-1", occurred_at_ms=35) == acknowledged
+
+    invalid_actions = (
+        lambda: ledger.acknowledge("audio-1", occurred_at_ms=5),
+        lambda: completed.acknowledge("audio-1", occurred_at_ms=29),
+        lambda: acknowledged.acknowledge("audio-1", occurred_at_ms=36),
+        lambda: ledger.append(
+            graphblocks_voice.PlaybackEntry("audio-2", sequence=1, status="queued")
+        ),
+        lambda: ledger.append(
+            graphblocks_voice.PlaybackEntry("audio-1", sequence=2, status="queued")
+        ),
+        lambda: ledger.append(
+            graphblocks_voice.PlaybackEntry("audio-2", sequence=0, status="queued")
+        ),
+    )
+    for action in invalid_actions:
+        try:
+            action()
+        except graphblocks_voice.VoiceContractError:
+            continue
+        raise AssertionError("invalid playback mutation must fail closed")
+
+
+def test_voice_playback_entries_reject_invalid_status_timestamp_combinations(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    invalid_entries = (
+        lambda: graphblocks_voice.PlaybackEntry("audio-1", 1, "queued", started_at_ms=1),
+        lambda: graphblocks_voice.PlaybackEntry("audio-1", 1, "started"),
+        lambda: graphblocks_voice.PlaybackEntry("audio-1", 1, "completed", started_at_ms=10),
+        lambda: graphblocks_voice.PlaybackEntry(
+            "audio-1",
+            1,
+            "completed",
+            started_at_ms=10,
+            completed_at_ms=9,
+        ),
+        lambda: graphblocks_voice.PlaybackEntry(
+            "audio-1",
+            1,
+            "interrupted",
+            started_at_ms=10,
+            completed_at_ms=20,
+        ),
+        lambda: graphblocks_voice.PlaybackEntry(
+            "audio-1",
+            1,
+            "started",
+            started_at_ms=10,
+            acknowledged_at_ms=20,
+        ),
+    )
+    for factory in invalid_entries:
+        try:
+            factory()
+        except graphblocks_voice.VoiceContractError:
+            continue
+        raise AssertionError("invalid playback entry lifecycle must fail closed")
 
 
 def test_voice_contracts_reject_boolean_timing_and_sequence_fields(monkeypatch) -> None:

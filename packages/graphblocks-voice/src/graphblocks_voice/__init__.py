@@ -197,14 +197,51 @@ class PlaybackEntry:
     started_at_ms: int | None = None
     completed_at_ms: int | None = None
     reason: str | None = None
+    acknowledged_at_ms: int | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("playback_id", self.playback_id)
         object.__setattr__(self, "sequence", _non_negative_int("playback sequence", self.sequence))
         object.__setattr__(self, "started_at_ms", _optional_non_negative_int("started_at_ms", self.started_at_ms))
         object.__setattr__(self, "completed_at_ms", _optional_non_negative_int("completed_at_ms", self.completed_at_ms))
+        object.__setattr__(
+            self,
+            "acknowledged_at_ms",
+            _optional_non_negative_int("acknowledged_at_ms", self.acknowledged_at_ms),
+        )
         if self.status not in {"queued", "started", "completed", "interrupted"}:
             raise VoiceContractError(f"unsupported playback status {self.status!r}")
+        if self.audio_ref is not None:
+            _require_non_empty("audio_ref", self.audio_ref)
+        if self.reason is not None:
+            _require_non_empty("playback reason", self.reason)
+        if self.status == "queued":
+            if any(
+                value is not None
+                for value in (
+                    self.started_at_ms,
+                    self.completed_at_ms,
+                    self.acknowledged_at_ms,
+                    self.reason,
+                )
+            ):
+                raise VoiceContractError("queued playback must not have lifecycle timestamps or a reason")
+        elif self.status == "started":
+            if self.started_at_ms is None:
+                raise VoiceContractError("started playback requires started_at_ms")
+            if any(value is not None for value in (self.completed_at_ms, self.acknowledged_at_ms, self.reason)):
+                raise VoiceContractError("started playback must not be completed, acknowledged, or have a reason")
+        else:
+            if self.started_at_ms is None or self.completed_at_ms is None:
+                raise VoiceContractError(f"{self.status} playback requires start and completion timestamps")
+            if self.completed_at_ms < self.started_at_ms:
+                raise VoiceContractError("completed_at_ms must be greater than or equal to started_at_ms")
+            if self.status == "completed" and self.reason is not None:
+                raise VoiceContractError("completed playback must not have a reason")
+            if self.status == "interrupted" and self.reason is None:
+                raise VoiceContractError("interrupted playback requires a reason")
+            if self.acknowledged_at_ms is not None and self.acknowledged_at_ms < self.completed_at_ms:
+                raise VoiceContractError("acknowledged_at_ms must be greater than or equal to completed_at_ms")
 
     def contract(self) -> dict[str, object]:
         return {
@@ -214,6 +251,7 @@ class PlaybackEntry:
             "audioRef": self.audio_ref,
             "startedAtMs": self.started_at_ms,
             "completedAtMs": self.completed_at_ms,
+            "acknowledgedAtMs": self.acknowledged_at_ms,
             "reason": self.reason,
         }
 
@@ -223,10 +261,79 @@ class PlaybackLedger:
     entries: tuple[PlaybackEntry, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "entries", tuple(sorted(self.entries, key=lambda entry: entry.sequence)))
+        entries = tuple(self.entries)
+        seen_ids: set[str] = set()
+        previous_sequence: int | None = None
+        for entry in entries:
+            if not isinstance(entry, PlaybackEntry):
+                raise VoiceContractError("playback ledger entries must be PlaybackEntry values")
+            if entry.playback_id in seen_ids:
+                raise VoiceContractError(f"duplicate playback_id {entry.playback_id!r}")
+            if previous_sequence is not None and entry.sequence <= previous_sequence:
+                raise VoiceContractError("playback sequences must be strictly increasing")
+            seen_ids.add(entry.playback_id)
+            previous_sequence = entry.sequence
+        object.__setattr__(self, "entries", entries)
 
     def append(self, entry: PlaybackEntry) -> PlaybackLedger:
+        if not isinstance(entry, PlaybackEntry):
+            raise VoiceContractError("playback ledger entries must be PlaybackEntry values")
+        for existing in self.entries:
+            if existing.playback_id == entry.playback_id or existing.sequence == entry.sequence:
+                if existing == entry:
+                    return self
+                raise VoiceContractError("playback_id and sequence must identify one immutable entry")
+        if self.entries and entry.sequence <= self.entries[-1].sequence:
+            raise VoiceContractError("playback entries must be appended in sequence order")
         return replace(self, entries=(*self.entries, entry))
+
+    def start(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
+        _require_non_empty("playback_id", playback_id)
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
+        for index, entry in enumerate(self.entries):
+            if entry.playback_id != playback_id:
+                continue
+            if entry.status == "started" and entry.started_at_ms == occurred_at_ms:
+                return self
+            if entry.status != "queued":
+                raise VoiceContractError(f"cannot start playback in {entry.status!r} status")
+            updated = replace(entry, status="started", started_at_ms=occurred_at_ms)
+            return replace(self, entries=(*self.entries[:index], updated, *self.entries[index + 1 :]))
+        raise VoiceContractError(f"unknown playback_id {playback_id!r}")
+
+    def complete(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
+        _require_non_empty("playback_id", playback_id)
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
+        for index, entry in enumerate(self.entries):
+            if entry.playback_id != playback_id:
+                continue
+            if entry.status == "completed" and entry.completed_at_ms == occurred_at_ms:
+                return self
+            if entry.status != "started":
+                raise VoiceContractError(f"cannot complete playback in {entry.status!r} status")
+            if occurred_at_ms < entry.started_at_ms:
+                raise VoiceContractError("playback completion occurred before playback start")
+            updated = replace(entry, status="completed", completed_at_ms=occurred_at_ms)
+            return replace(self, entries=(*self.entries[:index], updated, *self.entries[index + 1 :]))
+        raise VoiceContractError(f"unknown playback_id {playback_id!r}")
+
+    def acknowledge(self, playback_id: str, *, occurred_at_ms: int) -> PlaybackLedger:
+        _require_non_empty("playback_id", playback_id)
+        occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
+        for index, entry in enumerate(self.entries):
+            if entry.playback_id != playback_id:
+                continue
+            if entry.status not in {"completed", "interrupted"}:
+                raise VoiceContractError(f"cannot acknowledge playback in {entry.status!r} status")
+            if occurred_at_ms < entry.completed_at_ms:
+                raise VoiceContractError("playback acknowledgement occurred before playback completion")
+            if entry.acknowledged_at_ms is not None:
+                if entry.acknowledged_at_ms == occurred_at_ms:
+                    return self
+                raise VoiceContractError("playback acknowledgement conflicts with the recorded acknowledgement")
+            updated = replace(entry, acknowledged_at_ms=occurred_at_ms)
+            return replace(self, entries=(*self.entries[:index], updated, *self.entries[index + 1 :]))
+        raise VoiceContractError(f"unknown playback_id {playback_id!r}")
 
     def active_playback_ids(self) -> tuple[str, ...]:
         return tuple(entry.playback_id for entry in self.entries if entry.status == "started")
@@ -234,6 +341,9 @@ class PlaybackLedger:
     def interrupt_active(self, *, occurred_at_ms: int, reason: str) -> PlaybackLedger:
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         _require_non_empty("interruption reason", reason)
+        for entry in self.entries:
+            if entry.status == "started" and occurred_at_ms < entry.started_at_ms:
+                raise VoiceContractError("playback interruption occurred before playback start")
         return replace(
             self,
             entries=tuple(
@@ -269,11 +379,31 @@ class InterruptionDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderInterruptionDecision:
+    authority_id: str
+    session_id: str
+    kind: InterruptionKind
+    occurred_at_ms: int
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty("authority_id", self.authority_id)
+        _require_non_empty("session_id", self.session_id)
+        if self.kind not in {"continue", "interrupt"}:
+            raise VoiceContractError(f"unsupported interruption kind {self.kind!r}")
+        object.__setattr__(self, "occurred_at_ms", _non_negative_int("occurred_at_ms", self.occurred_at_ms))
+        if self.reason is not None:
+            _require_non_empty("interruption reason", self.reason)
+
+
+@dataclass(frozen=True, slots=True)
 class InterruptionClassifier:
     classifier_id: str
+    provider_authority_id: str = "provider"
 
     def __post_init__(self) -> None:
         _require_non_empty("classifier_id", self.classifier_id)
+        _require_non_empty("provider_authority_id", self.provider_authority_id)
 
     def classify(
         self,
@@ -282,24 +412,44 @@ class InterruptionClassifier:
         vad_decision: VadDecision,
         playback: PlaybackLedger,
         occurred_at_ms: int,
+        provider_decision: ProviderInterruptionDecision | None = None,
     ) -> InterruptionDecision:
         _require_non_empty("session_id", session_id)
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
+        if not isinstance(vad_decision, VadDecision):
+            raise VoiceContractError("vad_decision must be a VadDecision")
+        if not isinstance(playback, PlaybackLedger):
+            raise VoiceContractError("playback must be a PlaybackLedger")
         active_ids = playback.active_playback_ids()
-        if active_ids and vad_decision.kind in {"speech_start", "speech"}:
+        if provider_decision is None:
+            return InterruptionDecision(
+                classifier_id=self.classifier_id,
+                session_id=session_id,
+                kind="continue",
+                occurred_at_ms=occurred_at_ms,
+                reason="awaiting_provider_confirmation",
+            )
+        if not isinstance(provider_decision, ProviderInterruptionDecision):
+            raise VoiceContractError("provider_decision must be a ProviderInterruptionDecision")
+        if provider_decision.authority_id != self.provider_authority_id:
+            raise VoiceContractError("provider interruption authority does not match the classifier authority")
+        if provider_decision.session_id != session_id:
+            raise VoiceContractError("provider interruption decision belongs to a different session")
+        if provider_decision.kind == "interrupt":
             return InterruptionDecision(
                 classifier_id=self.classifier_id,
                 session_id=session_id,
                 kind="interrupt",
-                occurred_at_ms=occurred_at_ms,
+                occurred_at_ms=provider_decision.occurred_at_ms,
                 interrupted_playback_ids=active_ids,
-                reason="user_speech_during_playback",
+                reason=provider_decision.reason or "provider_confirmed_interruption",
             )
         return InterruptionDecision(
             classifier_id=self.classifier_id,
             session_id=session_id,
             kind="continue",
-            occurred_at_ms=occurred_at_ms,
+            occurred_at_ms=provider_decision.occurred_at_ms,
+            reason=provider_decision.reason,
         )
 
 
@@ -341,6 +491,7 @@ __all__ = [
     "PlaybackEntry",
     "PlaybackLedger",
     "PlaybackStatus",
+    "ProviderInterruptionDecision",
     "RealtimeSessionRequest",
     "VadAuthority",
     "VadDecision",
