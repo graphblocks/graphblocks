@@ -32,9 +32,14 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install build hatchling maturin
           python -m pip install -e ".[test]"
       - name: Run Python tests
         run: python -m pytest
+      - name: Build and install first-party wheelhouse
+        if: matrix.python-version == '3.11'
+        run: |
+          python tools/verify_wheelhouse.py --wheelhouse dist/wheelhouse
 
   examples:
     name: Examples
@@ -74,9 +79,16 @@ jobs:
         uses: actions/checkout@v6
       - name: Set up Rust
         run: |
-          rustup toolchain install 1.94.0 --profile minimal --component clippy
+          rustup toolchain install 1.94.0 --profile minimal --component clippy,rustfmt
           rustup default 1.94.0
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
       - name: Run Clippy
-        run: cargo clippy --workspace --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Run Rust tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --all-targets --locked
+      - name: Verify Rust packages
+        run: |
+          cargo package --workspace --locked --allow-dirty --no-verify
+          cargo package -p graphblocks-schema --locked --allow-dirty
+          cargo test --manifest-path target/package/graphblocks-schema-0.1.0/Cargo.toml --all-targets

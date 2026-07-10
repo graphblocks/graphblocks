@@ -17,6 +17,22 @@ pre-release alpha software.
 - Replaced the mutable architecture bundle with explicit documentation
   authorities, implementation status, and roadmap documents.
 - Made shipped catalogs under `src/graphblocks/data/` the canonical catalogs.
+- Hardened release and conformance gates: release bundles reject non-finite
+  numbers, native TCK fallback cannot satisfy a native claim, and TCK reports
+  bind suite, implementation version, and fixture digest evidence.
+- Aligned first-party Python dependency constraints with the `0.1` release
+  train, added an offline wheelhouse install gate, and made Rust workspace
+  crates packageable with versioned path dependencies and bundled schema TCK
+  fixtures.
+- Made Helm service-account identity consistent across the operator Deployment,
+  ServiceAccount, and RBAC binding, and promoted formatting, strict all-target
+  lint/tests, and package verification to CI release gates.
+- Bound budget-permit spending to its source budgets, enforced permit expiry on
+  every settlement path, rejected unsafe idempotency keys, and made SQLite
+  callback claims and async-operation mutations transactional across workers.
+- Pinned webhook connections to policy-validated DNS results, closed frozen
+  mapping mutation escapes, and aligned Python/Rust canonical number bytes for
+  large integers and floating-point exponents.
 
 ### Removed
 
