@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hmac
 import json
 import math
+from typing import Protocol
 
 from graphblocks import ArtifactRef, canonical_dumps, canonical_hash
+from graphblocks.server import ServerCallbackDeliveryResult, ServerCallbackRegistration
 from graphblocks.url_validation import validate_webhook_url
 
 
@@ -1214,6 +1216,242 @@ class CallbackEnvelope:
         }
 
 
+class CallbackSecretResolver(Protocol):
+    def resolve(self, secret_ref: str) -> bytes:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookTransportResponse:
+    status_code: int
+    headers: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status_code", _validate_http_status_code(self.status_code))
+        object.__setattr__(self, "headers", _string_headers(self.headers))
+
+
+class CallbackWebhookTransport(Protocol):
+    def post(
+        self,
+        url: str,
+        *,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> WebhookTransportResponse:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredSecretWebhookDispatcher:
+    secret_resolver: CallbackSecretResolver
+    transport: CallbackWebhookTransport
+    delivered_at_factory: Callable[[], str] = _utc_now_iso
+
+    def deliver(
+        self,
+        registration: ServerCallbackRegistration,
+        event: Mapping[str, object],
+    ) -> ServerCallbackDeliveryResult:
+        if not isinstance(registration, ServerCallbackRegistration):
+            raise ValueError("registration must be a ServerCallbackRegistration")
+        if not isinstance(event, Mapping):
+            raise ValueError("event must be a mapping")
+        delivery = registration.delivery
+        if delivery.get("kind") != "webhook":
+            raise ValueError("registered secret webhook dispatcher requires webhook delivery")
+        metadata = event.get("metadata")
+        payload = event.get("payload")
+        if not isinstance(metadata, Mapping):
+            raise ValueError("callback delivery event metadata must be a mapping")
+        if not isinstance(payload, Mapping):
+            raise ValueError("callback delivery event payload must be a mapping")
+        event_id = metadata.get("eventId")
+        run_id = metadata.get("runId")
+        sequence = metadata.get("sequence")
+        cursor = metadata.get("cursor")
+        event_type = event.get("kind")
+        occurred_at = metadata.get("occurredAt")
+        release_id = metadata.get("releaseId", "local")
+        for field_name, value in (
+            ("event_id", event_id),
+            ("run_id", run_id),
+            ("cursor", cursor),
+            ("event type", event_type),
+            ("occurred_at", occurred_at),
+            ("release_id", release_id),
+        ):
+            if not isinstance(value, str):
+                raise ValueError(f"callback delivery {field_name} must be a string")
+            _require_stable_string(field_name, value)
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise ValueError("callback delivery sequence must be a non-negative integer")
+
+        encoded_subscription_id = ""
+        for byte in registration.subscription_id.encode("utf-8"):
+            if chr(byte).isalnum() and byte < 128 or byte in {ord("-"), ord(".")}:
+                encoded_subscription_id += chr(byte)
+            else:
+                encoded_subscription_id += f"%{byte:02X}"
+        encoded_event_id = ""
+        for byte in event_id.encode("utf-8"):
+            if chr(byte).isalnum() and byte < 128 or byte in {ord("-"), ord(".")}:
+                encoded_event_id += chr(byte)
+            else:
+                encoded_event_id += f"%{byte:02X}"
+        delivery_id = f"del_{encoded_subscription_id}_{encoded_event_id}"
+        idempotency_key = f"{encoded_subscription_id}:{encoded_event_id}"
+        signing = delivery.get("signing")
+        if not isinstance(signing, Mapping):
+            raise ValueError("webhook delivery signing must be a mapping")
+        secret_ref = signing.get("secret_ref", signing.get("secretRef"))
+        if not isinstance(secret_ref, str):
+            raise ValueError("webhook delivery secret_ref must be a string")
+        _require_stable_string("secret_ref", secret_ref)
+        algorithm = signing.get("algorithm")
+        if algorithm != "hmac-sha256":
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="unsupported_signing_algorithm",
+            )
+        try:
+            secret = self.secret_resolver.resolve(secret_ref)
+        except Exception:
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="secret_resolution_failed",
+            )
+        if not isinstance(secret, bytes) or not secret:
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="secret_resolution_failed",
+            )
+        delivered_at = self.delivered_at_factory()
+        envelope = CallbackEnvelope(
+            delivery_id=delivery_id,
+            subscription_id=registration.subscription_id,
+            event_id=event_id,
+            run_id=run_id,
+            sequence=sequence,
+            cursor=cursor,
+            type=event_type,
+            payload=dict(payload),
+            idempotency_key=idempotency_key,
+            occurred_at=occurred_at,
+            delivered_at=delivered_at,
+            release_id=release_id,
+            tenant_id=registration.owner.tenant_id if registration.owner is not None else None,
+            operation_id=(
+                metadata.get("operationId")
+                if isinstance(metadata.get("operationId"), str)
+                else None
+            ),
+        )
+        key_id = signing.get("key_id", signing.get("keyId"))
+        if key_id is not None and not isinstance(key_id, str):
+            raise ValueError("webhook delivery key_id must be a string")
+        try:
+            headers = webhook_headers_hmac_sha256(
+                envelope,
+                secret,
+                timestamp=delivered_at,
+                key_id=key_id,
+            )
+        except (TypeError, ValueError):
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="signing_failed",
+            )
+        headers["Content-Type"] = "application/json"
+        try:
+            response = self.transport.post(
+                str(delivery["url"]),
+                body=envelope.canonical_body(),
+                headers=headers,
+            )
+        except Exception:
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="transport_failed",
+            )
+        if not isinstance(response, WebhookTransportResponse):
+            raise ValueError("webhook transport must return a WebhookTransportResponse")
+        decision = classify_webhook_response(
+            response.status_code,
+            headers=response.headers,
+            received_at=delivered_at,
+        )
+        if decision.status == "delivered":
+            result_status = "delivered"
+            last_error = None
+        elif decision.status == "acknowledged":
+            result_status = "acknowledged"
+            last_error = None
+        elif decision.status == "gone":
+            result_status = "cancelled"
+            last_error = decision.reason
+        elif decision.retry:
+            result_status = "pending"
+            last_error = decision.reason
+        else:
+            result_status = "failed"
+            last_error = decision.reason
+        return ServerCallbackDeliveryResult(
+            delivery_id=delivery_id,
+            subscription_id=registration.subscription_id,
+            event_id=event_id,
+            run_id=run_id,
+            sequence=sequence,
+            cursor=cursor,
+            attempt=1,
+            idempotency_key=idempotency_key,
+            status=result_status,
+            status_code=response.status_code,
+            delivered_at=delivered_at,
+            last_error=last_error,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ExternalCallbackReceipt:
     callback_id: str
@@ -1584,10 +1822,14 @@ __all__ = [
     "CallbackReplayRecord",
     "CallbackResumeDecision",
     "CallbackRetryPolicy",
+    "CallbackSecretResolver",
+    "CallbackWebhookTransport",
     "ExternalCallbackReceipt",
     "REQUIRED_WEBHOOK_HEADERS",
+    "RegisteredSecretWebhookDispatcher",
     "WebhookTargetSafety",
     "WebhookResponseDecision",
+    "WebhookTransportResponse",
     "classify_webhook_response",
     "evaluate_callback_delivery_failure_action",
     "evaluate_callback_resume",

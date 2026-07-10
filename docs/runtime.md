@@ -91,6 +91,16 @@ ordinary callback-subscription events cannot become async resume receipts.
 Persisted run provenance is also replay-validated without type coercion so
 corrupted release or physical-plan identity cannot become authoritative state.
 
+Run-scoped callback registration can also dispatch retained matching events
+through an injected `ServerCallbackDeliveryHook`. The optional
+`graphblocks-callbacks` implementation resolves the registered `secret_ref`
+through a deployment-owned resolver, signs the canonical webhook envelope with
+HMAC-SHA256, and sends it through an injected transport. The server records only
+secret-free delivery identity and outcome evidence. Missing secrets, signing
+failures, and transport failures fail closed and never place raw secret bytes in
+the registration response or delivery record. Without a delivery hook, callback
+registration remains a replay projection and performs no network request.
+
 Callback dead-letter records preserve original delivery identity and a
 consecutive attempt history starting at attempt `1`. Redrive uses that history
 to choose the next pending delivery attempt without creating a duplicate

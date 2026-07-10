@@ -68,6 +68,13 @@ VALID_ATTACH_CAPABILITIES = frozenset({
     "interrupt_resume",
 })
 VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
+VALID_SERVER_CALLBACK_DELIVERY_STATUSES = frozenset({
+    "pending",
+    "delivered",
+    "acknowledged",
+    "failed",
+    "cancelled",
+})
 SERVER_EVENT_SEVERITY_RANKS = {
     "debug": 10,
     "info": 20,
@@ -1616,7 +1623,12 @@ class ServerCallbackRegistration:
             owner=owner,
         )
 
-    def response_payload(self, replayed_events: list[dict[str, object]], last_cursor: str | None) -> dict[str, object]:
+    def response_payload(
+        self,
+        replayed_events: list[dict[str, object]],
+        last_cursor: str | None,
+        delivery_results: tuple[ServerCallbackDeliveryResult, ...] = (),
+    ) -> dict[str, object]:
         payload: dict[str, object] = {
             "ok": True,
             "subscriptionId": self.subscription_id,
@@ -1630,9 +1642,129 @@ class ServerCallbackRegistration:
             "eventFilter": _thaw_json_value(self.event_filter),
             "events": replayed_events,
         }
+        if delivery_results:
+            payload["deliveries"] = [result.protocol_value() for result in delivery_results]
         if self.owner is not None:
             payload["owner"] = _principal_response_payload(self.owner)
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class ServerCallbackDeliveryResult:
+    delivery_id: str
+    subscription_id: str
+    event_id: str
+    run_id: str
+    sequence: int
+    cursor: str
+    attempt: int
+    idempotency_key: str
+    status: str
+    status_code: int | None = None
+    delivered_at: str | None = None
+    last_error: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "delivery_id",
+            "subscription_id",
+            "event_id",
+            "run_id",
+            "cursor",
+            "idempotency_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_exact_non_empty_string(
+                    "server callback delivery result",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int) or self.sequence < 0:
+            raise ValueError("server callback delivery result sequence must be a non-negative integer")
+        if isinstance(self.attempt, bool) or not isinstance(self.attempt, int) or self.attempt < 1:
+            raise ValueError("server callback delivery result attempt must be a positive integer")
+        object.__setattr__(
+            self,
+            "status",
+            _validate_exact_non_empty_string(
+                "server callback delivery result",
+                "status",
+                self.status,
+            ),
+        )
+        if self.status not in VALID_SERVER_CALLBACK_DELIVERY_STATUSES:
+            raise ValueError(
+                "server callback delivery result status must be one of "
+                "pending, delivered, acknowledged, failed, or cancelled"
+            )
+        if self.status_code is not None and (
+            isinstance(self.status_code, bool)
+            or not isinstance(self.status_code, int)
+            or self.status_code < 100
+            or self.status_code > 599
+        ):
+            raise ValueError("server callback delivery result status_code must be a valid HTTP status")
+        if self.delivered_at is not None:
+            object.__setattr__(
+                self,
+                "delivered_at",
+                _validate_iso_datetime(
+                    "server callback delivery result",
+                    "delivered_at",
+                    self.delivered_at,
+                ),
+            )
+        if self.last_error is not None:
+            object.__setattr__(
+                self,
+                "last_error",
+                _validate_exact_non_empty_string(
+                    "server callback delivery result",
+                    "last_error",
+                    self.last_error,
+                ),
+            )
+        if self.status in {"delivered", "acknowledged"}:
+            if self.status_code is None or self.delivered_at is None:
+                raise ValueError(
+                    "successful server callback delivery result requires status_code and delivered_at"
+                )
+            if self.last_error is not None:
+                raise ValueError("successful server callback delivery result must not have last_error")
+        if self.status in {"failed", "cancelled"} and self.last_error is None:
+            raise ValueError("failed server callback delivery result requires last_error")
+
+    def protocol_value(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "deliveryId": self.delivery_id,
+            "subscriptionId": self.subscription_id,
+            "eventId": self.event_id,
+            "runId": self.run_id,
+            "sequence": self.sequence,
+            "cursor": self.cursor,
+            "attempt": self.attempt,
+            "idempotencyKey": self.idempotency_key,
+            "status": self.status,
+        }
+        if self.status_code is not None:
+            payload["statusCode"] = self.status_code
+        if self.delivered_at is not None:
+            payload["deliveredAt"] = self.delivered_at
+        if self.last_error is not None:
+            payload["lastError"] = self.last_error
+        return payload
+
+
+class ServerCallbackDeliveryHook(Protocol):
+    def deliver(
+        self,
+        registration: ServerCallbackRegistration,
+        event: Mapping[str, object],
+    ) -> ServerCallbackDeliveryResult:
+        ...
 
 
 def _callback_alias_value(
@@ -1808,6 +1940,7 @@ class GraphBlocksServerApp:
     defer_accepted_runs: bool = False
     accepted_run_executor: Executor | None = None
     async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
+    callback_delivery_hook: ServerCallbackDeliveryHook | None = None
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1840,6 +1973,14 @@ class GraphBlocksServerApp:
         repr=False,
     )
     _callback_registrations: dict[str, ServerCallbackRegistration] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_delivery_results_by_subscription_id: dict[
+        str,
+        tuple[ServerCallbackDeliveryResult, ...],
+    ] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -2285,8 +2426,50 @@ class GraphBlocksServerApp:
                 if isinstance(replay, ServerResponse):
                     return replay
                 replayed_events, last_cursor = replay
+                delivery_results: tuple[ServerCallbackDeliveryResult, ...] = ()
+                if self.callback_delivery_hook is not None and registration.delivery.get("kind") == "webhook":
+                    delivered: list[ServerCallbackDeliveryResult] = []
+                    for event in replayed_events:
+                        try:
+                            delivery_result = self.callback_delivery_hook.deliver(registration, event)
+                        except Exception:
+                            return ServerResponse.json(
+                                502,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "error": "callback delivery hook failed closed",
+                                },
+                            )
+                        if not isinstance(delivery_result, ServerCallbackDeliveryResult):
+                            return ServerResponse.json(
+                                502,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "error": "callback delivery hook returned an invalid result",
+                                },
+                            )
+                        if delivery_result.subscription_id != registration.subscription_id:
+                            return ServerResponse.json(
+                                502,
+                                {
+                                    "ok": False,
+                                    "subscriptionId": registration.subscription_id,
+                                    "error": "callback delivery hook returned a mismatched subscription",
+                                },
+                            )
+                        delivered.append(delivery_result)
+                    delivery_results = tuple(delivered)
                 self._callback_registrations[registration.subscription_id] = registration
-                return ServerResponse.json(201, registration.response_payload(replayed_events, last_cursor))
+                if delivery_results:
+                    self._callback_delivery_results_by_subscription_id[registration.subscription_id] = (
+                        delivery_results
+                    )
+                return ServerResponse.json(
+                    201,
+                    registration.response_payload(replayed_events, last_cursor, delivery_results),
+                )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -4373,6 +4556,17 @@ class GraphBlocksServerApp:
 
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
         return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
+
+    def callback_delivery_results(self, subscription_id: str) -> tuple[dict[str, object], ...]:
+        subscription_id = _validate_exact_non_empty_string(
+            "server callback delivery result",
+            "subscription_id",
+            subscription_id,
+        )
+        return tuple(
+            result.protocol_value()
+            for result in self._callback_delivery_results_by_subscription_id.get(subscription_id, ())
+        )
 
     def callback_delivery_redrives(self, delivery_id: str) -> tuple[dict[str, object], ...]:
         delivery_id = _validate_exact_non_empty_string(

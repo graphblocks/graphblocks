@@ -1704,6 +1704,15 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   with no default HTTP/WebSocket client dependency. Its initial facade projects webhook envelopes,
   required headers, and HMAC-SHA256 signing/verification helpers while keeping callback delivery
   non-authoritative relative to the event stream and runtime journals.
+- Run-scoped server callback registration can now deliver retained matching events through an
+  injected `ServerCallbackDeliveryHook`. The optional `graphblocks-callbacks`
+  `RegisteredSecretWebhookDispatcher` resolves the registration's `secret_ref` through a
+  deployment-owned resolver, creates the canonical delivery/idempotency identities used by the
+  runtime scheduler, signs the exact webhook body with HMAC-SHA256, and invokes an injected
+  transport. The server returns and retains only secret-free delivery outcome evidence. Missing
+  secrets, unsupported signing algorithms, signing failures, and transport failures are recorded
+  as fail-closed outcomes without a network attempt where signing material is unavailable. Servers
+  without a configured delivery hook preserve the existing replay-only registration behavior.
 - The callback projection facade now validates webhook payloads as strict JSON before signing:
   object keys must be non-empty exact strings, non-finite numbers are rejected, payloads are
   stored as immutable JSON snapshots, and a deterministic fuzz-style test pins signature stability under key
