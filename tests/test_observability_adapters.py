@@ -408,6 +408,268 @@ def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
     }
 
 
+def test_telemetry_export_outage_preserves_durable_records_and_recovers_once(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _add_observability_package_paths(monkeypatch)
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    from graphblocks.budget import SQLiteBudgetLedger, UsageAmount
+    from graphblocks.policy import ResourceRef
+    from graphblocks.runtime import SQLiteExecutionJournal
+    from graphblocks.usage import SQLiteUsageLedger, UsageRecord
+
+    journal = SQLiteExecutionJournal(tmp_path / "journal.sqlite3", "run-1")
+    journal.append("run_started", {"graphHash": "sha256:graph"})
+    journal.append("node_succeeded", {"node": "agent", "outputDigest": "sha256:output"})
+    journal.append_terminal("run_succeeded", {"outputDigest": "sha256:output"})
+    audit = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
+    audit.append(
+        "application_event",
+        {"event_id": "event-1", "kind": "RunSucceeded", "run_id": "run-1"},
+        occurred_at="2026-07-10T00:00:00Z",
+        record_id="audit-1",
+    )
+    usage = SQLiteUsageLedger(tmp_path / "usage.sqlite3")
+    usage.append(
+        UsageRecord(
+            record_id="usage-1",
+            source="provider_reported",
+            confidence="provider_exact",
+            amounts=(UsageAmount("model_total_tokens", Decimal("28"), "tokens"),),
+            occurred_at="2026-07-10T00:00:00Z",
+            run_id="run-1",
+            attempt_id="attempt-1",
+            provider_response_id="response-1",
+        )
+    )
+    budget = SQLiteBudgetLedger(tmp_path / "budget.sqlite3")
+    budget.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme", resource_kind="tenant"),
+        [UsageAmount("model_total_tokens", Decimal("100"), "tokens")],
+        policy_ref="policy-1",
+    )
+    reservation = budget.reserve(
+        "budget-1",
+        ResourceRef("run-1", resource_kind="run"),
+        [UsageAmount("model_total_tokens", Decimal("40"), "tokens")],
+        purpose="provider_call",
+        expires_at="2026-07-10T01:00:00Z",
+        reservation_id="reservation-1",
+    )
+    budget.commit(
+        reservation.reservation_id,
+        [UsageAmount("model_total_tokens", Decimal("28"), "tokens")],
+    )
+    record = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        release_id="release-1",
+        input_digest="sha256:input",
+        output_digest="sha256:output",
+        usage={"input_tokens": 20, "output_tokens": 8},
+        attributes={"environment": "production"},
+    )
+    outbox = graphblocks_telemetry.TelemetryExportOutbox()
+    assert outbox.accept((record,)) == ("gen-1",)
+    assert outbox.accept((record,)) == ("gen-1",)
+    otlp_attempts: list[list[dict[str, object]]] = []
+    langfuse_exports: list[dict[str, object]] = []
+
+    def durable_state() -> object:
+        budget_balance = budget.balance("budget-1")
+        return graphblocks_telemetry.TelemetryCorrectnessSnapshot.capture(
+            execution_journal=[entry.to_dict() for entry in journal.records],
+            audit_log=[
+                {
+                    "record_id": entry.record_id,
+                    "payload_digest": entry.payload_digest,
+                    "status": entry.status,
+                }
+                for entry in audit.pending()
+            ],
+            usage_ledger=[
+                {
+                    "record_id": entry.record_id,
+                    "amounts": [
+                        {
+                            "kind": amount.kind,
+                            "amount": str(amount.amount),
+                            "unit": amount.unit,
+                        }
+                        for amount in entry.amounts
+                    ],
+                }
+                for entry in usage.records_for_run("run-1")
+            ],
+            budget_ledger={
+                "budget_id": budget_balance.budget_id,
+                "revision": budget_balance.revision,
+                "committed": [
+                    {
+                        "kind": amount.kind,
+                        "amount": str(amount.amount),
+                        "unit": amount.unit,
+                    }
+                    for amount in budget_balance.committed
+                ],
+            },
+        )
+
+    def export_otlp(records) -> None:
+        projections = [
+            graphblocks_otel.otlp_span_from_generation(
+                entry,
+                schema_url="https://opentelemetry.io/schemas/1.27.0",
+            ).span_contract()
+            for entry in records
+        ]
+        otlp_attempts.append(projections)
+        if len(otlp_attempts) == 1:
+            raise TimeoutError("collector unavailable")
+
+    def export_langfuse(records) -> None:
+        langfuse_exports.extend(
+            graphblocks_langfuse.langfuse_generation_from_observation(
+                entry,
+                trace_id="trace-1",
+            ).generation_contract()
+            for entry in records
+        )
+
+    baseline = durable_state()
+    failed = outbox.attempt_export(
+        "otlp",
+        export_otlp,
+        correctness_probe=durable_state,
+        retryable=True,
+    )
+    langfuse = outbox.attempt_export(
+        "langfuse",
+        export_langfuse,
+        correctness_probe=durable_state,
+    )
+    recovered = outbox.attempt_export(
+        "otlp",
+        export_otlp,
+        correctness_probe=durable_state,
+        retryable=True,
+    )
+    redundant_retry = outbox.attempt_export(
+        "otlp",
+        export_otlp,
+        correctness_probe=durable_state,
+        retryable=True,
+    )
+
+    assert failed.result.result_contract() == {
+        "exporter": "otlp",
+        "status": "failed",
+        "record_ids": ["gen-1"],
+        "error_type": "TimeoutError",
+        "retryable": True,
+        "run_impact": "none",
+    }
+    assert failed.evaluation_contract() == {
+        "exporter": "otlp",
+        "attempt": 1,
+        "result": failed.result.result_contract(),
+        "correctness_preserved": True,
+        "correctness_before_digest": baseline.digest,
+        "correctness_after_digest": baseline.digest,
+        "accepted_record_ids": ["gen-1"],
+        "delivered_record_ids": [],
+        "pending_record_ids": ["gen-1"],
+    }
+    assert failed.correctness_preserved
+    assert failed.pending_record_ids == ("gen-1",)
+    assert langfuse.result.status == "completed"
+    assert recovered.result.status == "completed"
+    assert recovered.attempt == 2
+    assert recovered.result.record_ids == ("gen-1",)
+    assert recovered.pending_record_ids == ()
+    assert redundant_retry.attempt == 3
+    assert redundant_retry.result.record_ids == ()
+    assert len(otlp_attempts) == 2
+    assert [projection["span_id"] for projection in otlp_attempts[1]] == ["span-1"]
+    assert [projection["generation_id"] for projection in langfuse_exports] == ["span-1"]
+    assert outbox.accepted_record_ids == ("gen-1",)
+    assert durable_state() == baseline
+    assert len(journal.records) == 3
+    assert [entry.record_id for entry in audit.pending()] == ["audit-1"]
+    assert [entry.record_id for entry in usage.records_for_run("run-1")] == ["usage-1"]
+    assert [str(amount.amount) for amount in budget.balance("budget-1").committed] == ["28"]
+    assert "TelemetryExportOutbox" in graphblocks_telemetry.__all__
+    assert "TelemetryCorrectnessSnapshot" in graphblocks_telemetry.__all__
+
+    journal.close()
+    audit.close()
+    usage.close()
+    budget.close()
+
+
+def test_telemetry_export_outbox_rejects_conflicts_and_fails_closed_on_state_drift(
+    monkeypatch,
+) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    original = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+    )
+    conflicting = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-mutated",
+    )
+    outbox = graphblocks_telemetry.TelemetryExportOutbox()
+    outbox.accept((original,))
+
+    with pytest.raises(graphblocks_telemetry.TelemetryExportConflictError, match="gen-1"):
+        outbox.accept((conflicting,))
+
+    journal_state = [{"sequence": 1, "kind": "run_succeeded"}]
+
+    def mutate_authoritative_state(records) -> None:
+        assert [record.record_id for record in records] == ["gen-1"]
+        journal_state.append({"sequence": 2, "kind": "telemetry_side_effect"})
+        raise TimeoutError("collector unavailable")
+
+    with pytest.raises(
+        graphblocks_telemetry.TelemetryCorrectnessViolation,
+        match="authoritative durable state",
+    ):
+        outbox.attempt_export(
+            "otlp",
+            mutate_authoritative_state,
+            correctness_probe=lambda: graphblocks_telemetry.TelemetryCorrectnessSnapshot.capture(
+                execution_journal=journal_state,
+                audit_log=[],
+                usage_ledger=[],
+                budget_ledger={},
+            ),
+            retryable=True,
+        )
+
+    assert outbox.pending_record_ids("otlp") == ("gen-1",)
+
+
 def test_telemetry_diagnostic_bundle_combines_observability_health(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")

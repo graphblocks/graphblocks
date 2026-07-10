@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+import json
 from types import MappingProxyType
 
+from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.diagnostics import Diagnostic, Severity
 from graphblocks.output_policy import (
     VALID_DRAFT_DISPOSITIONS,
@@ -52,6 +54,14 @@ DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS = (
 
 
 class TelemetryProjectionError(RuntimeError):
+    pass
+
+
+class TelemetryExportConflictError(TelemetryProjectionError):
+    pass
+
+
+class TelemetryCorrectnessViolation(TelemetryProjectionError):
     pass
 
 
@@ -370,6 +380,75 @@ class ToolExecutionTelemetryRecord:
         }
 
 
+TelemetryRecord = GenerationTelemetryRecord | OutputPolicyTelemetryRecord | ToolExecutionTelemetryRecord
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCorrectnessSnapshot:
+    state_json: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state_json, str):
+            raise TelemetryProjectionError("telemetry correctness snapshot state_json must be a string")
+        try:
+            state = json.loads(
+                self.state_json,
+                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            )
+        except ValueError as error:
+            raise TelemetryProjectionError(
+                "telemetry correctness snapshot state_json must be valid strict JSON"
+            ) from error
+        if not isinstance(state, Mapping):
+            raise TelemetryProjectionError("telemetry correctness snapshot must contain an object")
+        expected_sections = {
+            "audit_log",
+            "budget_ledger",
+            "execution_journal",
+            "usage_ledger",
+        }
+        if set(state) != expected_sections:
+            raise TelemetryProjectionError(
+                "telemetry correctness snapshot must contain execution_journal, audit_log, "
+                "usage_ledger, and budget_ledger"
+            )
+        object.__setattr__(self, "state_json", canonical_dumps(state))
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        execution_journal: object,
+        audit_log: object,
+        usage_ledger: object,
+        budget_ledger: object,
+    ) -> TelemetryCorrectnessSnapshot:
+        try:
+            state_json = canonical_dumps(
+                {
+                    "execution_journal": execution_journal,
+                    "audit_log": audit_log,
+                    "usage_ledger": usage_ledger,
+                    "budget_ledger": budget_ledger,
+                }
+            )
+        except (TypeError, ValueError) as error:
+            raise TelemetryProjectionError(
+                "telemetry correctness snapshot values must be valid strict JSON"
+            ) from error
+        return cls(state_json)
+
+    @property
+    def digest(self) -> str:
+        return canonical_hash(self.snapshot_contract())
+
+    def snapshot_contract(self) -> dict[str, object]:
+        state = json.loads(self.state_json)
+        if not isinstance(state, dict):
+            raise TelemetryProjectionError("telemetry correctness snapshot must contain an object")
+        return state
+
+
 @dataclass(frozen=True, slots=True)
 class TelemetryCapturePolicy:
     redacted_attribute_keys: tuple[str, ...] = field(default_factory=tuple)
@@ -540,6 +619,175 @@ class TelemetryExportResult:
             "retryable": self.retryable,
             "run_impact": self.run_impact,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryExportEvaluation:
+    exporter: str
+    attempt: int
+    result: TelemetryExportResult
+    correctness_before: TelemetryCorrectnessSnapshot
+    correctness_after: TelemetryCorrectnessSnapshot
+    accepted_record_ids: tuple[str, ...]
+    delivered_record_ids: tuple[str, ...]
+    pending_record_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "exporter",
+            _require_non_empty_string("telemetry export evaluation", "exporter", self.exporter),
+        )
+        if not isinstance(self.attempt, int) or isinstance(self.attempt, bool) or self.attempt <= 0:
+            raise TelemetryProjectionError("telemetry export evaluation attempt must be a positive integer")
+        if self.result.exporter != self.exporter:
+            raise TelemetryProjectionError("telemetry export evaluation exporter must match its result")
+        for field_name in ("accepted_record_ids", "delivered_record_ids", "pending_record_ids"):
+            record_ids = tuple(getattr(self, field_name))
+            if len(record_ids) != len(set(record_ids)):
+                raise TelemetryProjectionError(
+                    f"telemetry export evaluation {field_name} must not contain duplicates"
+                )
+            object.__setattr__(self, field_name, record_ids)
+
+    @property
+    def correctness_preserved(self) -> bool:
+        return self.correctness_before == self.correctness_after
+
+    def evaluation_contract(self) -> dict[str, object]:
+        return {
+            "exporter": self.exporter,
+            "attempt": self.attempt,
+            "result": self.result.result_contract(),
+            "correctness_preserved": self.correctness_preserved,
+            "correctness_before_digest": self.correctness_before.digest,
+            "correctness_after_digest": self.correctness_after.digest,
+            "accepted_record_ids": list(self.accepted_record_ids),
+            "delivered_record_ids": list(self.delivered_record_ids),
+            "pending_record_ids": list(self.pending_record_ids),
+        }
+
+
+@dataclass(slots=True)
+class TelemetryExportOutbox:
+    _records: dict[str, TelemetryRecord] = field(default_factory=dict, init=False, repr=False)
+    _record_contracts: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _delivered_by_exporter: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
+    _attempts_by_exporter: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+
+    @property
+    def accepted_record_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._records))
+
+    def accept(self, records: Iterable[TelemetryRecord]) -> tuple[str, ...]:
+        try:
+            candidates = tuple(records)
+        except TypeError as error:
+            raise TelemetryProjectionError("telemetry export outbox records must be iterable") from error
+        staged_records: dict[str, TelemetryRecord] = {}
+        staged_contracts: dict[str, str] = {}
+        for record in candidates:
+            if not isinstance(
+                record,
+                GenerationTelemetryRecord | OutputPolicyTelemetryRecord | ToolExecutionTelemetryRecord,
+            ):
+                raise TelemetryProjectionError(
+                    "telemetry export outbox accepts generation, output-policy, or tool-execution records"
+                )
+            try:
+                contract_json = canonical_dumps(record.observation_contract())
+            except (TypeError, ValueError) as error:
+                raise TelemetryProjectionError(
+                    f"telemetry record {record.record_id!r} must have a strict JSON observation contract"
+                ) from error
+            existing_contract = self._record_contracts.get(record.record_id)
+            if existing_contract is None:
+                existing_contract = staged_contracts.get(record.record_id)
+            if existing_contract is not None and existing_contract != contract_json:
+                raise TelemetryExportConflictError(
+                    f"telemetry record {record.record_id!r} conflicts with its accepted observation contract"
+                )
+            staged_records.setdefault(record.record_id, record)
+            staged_contracts.setdefault(record.record_id, contract_json)
+        self._records.update(staged_records)
+        self._record_contracts.update(staged_contracts)
+        return self.accepted_record_ids
+
+    def pending_record_ids(self, exporter: str) -> tuple[str, ...]:
+        exporter = _require_non_empty_string("telemetry export outbox", "exporter", exporter)
+        delivered = self._delivered_by_exporter.get(exporter, set())
+        return tuple(record_id for record_id in self.accepted_record_ids if record_id not in delivered)
+
+    def attempt_export(
+        self,
+        exporter: str,
+        export: Callable[[tuple[TelemetryRecord, ...]], object],
+        *,
+        correctness_probe: Callable[[], TelemetryCorrectnessSnapshot],
+        retryable: bool = False,
+    ) -> TelemetryExportEvaluation:
+        exporter = _require_non_empty_string("telemetry export outbox", "exporter", exporter)
+        if not callable(export):
+            raise TelemetryProjectionError("telemetry export outbox export must be callable")
+        if not callable(correctness_probe):
+            raise TelemetryProjectionError("telemetry export outbox correctness_probe must be callable")
+        if not isinstance(retryable, bool):
+            raise TelemetryProjectionError("telemetry export outbox retryable must be a boolean")
+        record_ids = self.pending_record_ids(exporter)
+        records = tuple(self._records[record_id] for record_id in record_ids)
+        for record in records:
+            try:
+                current_contract = canonical_dumps(record.observation_contract())
+            except (TypeError, ValueError) as error:
+                raise TelemetryExportConflictError(
+                    f"telemetry record {record.record_id!r} changed after acceptance"
+                ) from error
+            if current_contract != self._record_contracts[record.record_id]:
+                raise TelemetryExportConflictError(
+                    f"telemetry record {record.record_id!r} changed after acceptance"
+                )
+        before = correctness_probe()
+        if not isinstance(before, TelemetryCorrectnessSnapshot):
+            raise TelemetryProjectionError(
+                "telemetry export outbox correctness_probe must return TelemetryCorrectnessSnapshot"
+            )
+        self._attempts_by_exporter[exporter] = self._attempts_by_exporter.get(exporter, 0) + 1
+        attempt = self._attempts_by_exporter[exporter]
+        export_error: Exception | None = None
+        if records:
+            try:
+                export(records)
+            except Exception as error:
+                export_error = error
+        after = correctness_probe()
+        if not isinstance(after, TelemetryCorrectnessSnapshot):
+            raise TelemetryProjectionError(
+                "telemetry export outbox correctness_probe must return TelemetryCorrectnessSnapshot"
+            )
+        if before != after:
+            raise TelemetryCorrectnessViolation(
+                f"telemetry exporter {exporter!r} changed authoritative durable state"
+            ) from export_error
+        if export_error is None:
+            self._delivered_by_exporter.setdefault(exporter, set()).update(record_ids)
+            result = TelemetryExportResult.completed(exporter=exporter, record_ids=record_ids)
+        else:
+            result = TelemetryExportResult.failed(
+                exporter=exporter,
+                record_ids=record_ids,
+                error_type=type(export_error).__name__,
+                retryable=retryable,
+            )
+        return TelemetryExportEvaluation(
+            exporter=exporter,
+            attempt=attempt,
+            result=result,
+            correctness_before=before,
+            correctness_after=after,
+            accepted_record_ids=self.accepted_record_ids,
+            delivered_record_ids=tuple(sorted(self._delivered_by_exporter.get(exporter, set()))),
+            pending_record_ids=self.pending_record_ids(exporter),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -801,10 +1049,16 @@ __all__ = [
     "TelemetryCapturePolicyIssue",
     "TelemetryCapturePolicyLintResult",
     "TelemetryCapturePolicyLinter",
+    "TelemetryCorrectnessSnapshot",
+    "TelemetryCorrectnessViolation",
     "TelemetryDiagnosticBundle",
     "TelemetryDiagnosticBundleSection",
+    "TelemetryExportConflictError",
+    "TelemetryExportEvaluation",
+    "TelemetryExportOutbox",
     "TelemetryExportResult",
     "TelemetryProjectionError",
+    "TelemetryRecord",
     "ToolExecutionTelemetryRecord",
     "VALID_DRAFT_DISPOSITIONS",
     "VALID_ENFORCEMENT_POINTS",
