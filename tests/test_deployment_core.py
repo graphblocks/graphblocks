@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from graphblocks.deployment import (
+    CanaryMetricThreshold,
     DeploymentCondition,
     DeploymentEvent,
     DeploymentEventKind,
@@ -23,6 +26,7 @@ from graphblocks.deployment import (
     PlacementRule,
     PlacementSelector,
     PromptLock,
+    ReleaseAttestation,
     ReleaseLockRef,
     SupplyChainLock,
     ReleaseBundle,
@@ -33,6 +37,9 @@ from graphblocks.deployment import (
     RolloutPlan,
     RolloutStep,
     UpgradePolicy,
+    evaluate_canary_metrics,
+    evaluate_rollback_and_drain,
+    verify_release_attestation,
 )
 from graphblocks.evaluation import SloMeasurement, SloObjective
 
@@ -213,6 +220,215 @@ def test_release_bundle_digest_is_stable_for_release_and_artifact_order() -> Non
         "artifacts": {"provenance": "sha256:provenance", "sbom": "sha256:sbom"},
         "signatures": {"cosign": "sha256:signature"},
     }
+
+
+def test_release_attestation_verifies_trusted_signature_and_fails_closed() -> None:
+    release = (
+        GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+    bundle = ReleaseBundle(
+        bundle_id="bundle-1",
+        release=release,
+        artifacts={"provenance": "sha256:provenance", "sbom": "sha256:sbom"},
+    )
+    attestation = ReleaseAttestation.sign(
+        bundle,
+        signer_id="production-publisher-1",
+        signing_key=b"local-production-publisher-key",
+    )
+
+    verified = verify_release_attestation(
+        bundle,
+        attestation,
+        trusted_signing_keys={"production-publisher-1": b"local-production-publisher-key"},
+    )
+    tampered = verify_release_attestation(
+        replace(bundle, artifacts={**bundle.artifacts, "sbom": "sha256:tampered"}),
+        attestation,
+        trusted_signing_keys={"production-publisher-1": b"local-production-publisher-key"},
+    )
+    untrusted = verify_release_attestation(
+        bundle,
+        attestation,
+        trusted_signing_keys={"staging-publisher": b"local-production-publisher-key"},
+    )
+    invalid_signature = verify_release_attestation(
+        bundle,
+        replace(attestation, signature="hmac-sha256:" + ("0" * 64)),
+        trusted_signing_keys={"production-publisher-1": b"local-production-publisher-key"},
+    )
+    wrong_subject = verify_release_attestation(
+        bundle,
+        replace(attestation, subject="bundle-other"),
+        trusted_signing_keys={"production-publisher-1": b"local-production-publisher-key"},
+    )
+
+    assert verified.verified is True
+    assert verified.reason == "trusted_signature"
+    assert verified.subject == "bundle-1"
+    assert verified.subject_digest == bundle.attestation_digest()
+    assert tampered.verified is False
+    assert tampered.reason == "subject_digest_mismatch"
+    assert untrusted.verified is False
+    assert untrusted.reason == "untrusted_signer"
+    assert invalid_signature.verified is False
+    assert invalid_signature.reason == "signature_mismatch"
+    assert wrong_subject.verified is False
+    assert wrong_subject.reason == "subject_mismatch"
+
+
+def test_canary_metric_evaluator_enforces_minimums_and_max_regression() -> None:
+    thresholds = (
+        CanaryMetricThreshold("turn_success_rate", minimum=0.995),
+        CanaryMetricThreshold("citation_validation_rate", minimum=0.98),
+        CanaryMetricThreshold("average_cost_per_turn", max_regression=0.10),
+    )
+
+    passing = evaluate_canary_metrics(
+        thresholds,
+        candidate_metrics={
+            "turn_success_rate": 0.997,
+            "citation_validation_rate": 0.985,
+            "average_cost_per_turn": 1.09,
+        },
+        baseline_metrics={"average_cost_per_turn": 1.00},
+    )
+    failing = evaluate_canary_metrics(
+        thresholds,
+        candidate_metrics={
+            "turn_success_rate": 0.994,
+            "citation_validation_rate": 0.985,
+            "average_cost_per_turn": 1.11,
+        },
+        baseline_metrics={"average_cost_per_turn": 1.00},
+    )
+    missing_baseline = evaluate_canary_metrics(
+        thresholds,
+        candidate_metrics={
+            "turn_success_rate": 0.997,
+            "citation_validation_rate": 0.985,
+            "average_cost_per_turn": 1.01,
+        },
+        baseline_metrics={},
+    )
+
+    assert passing.passed is True
+    assert passing.violations == ()
+    assert passing.evidence_contract()["metrics"] == [
+        {
+            "metric": "average_cost_per_turn",
+            "observed": 1.09,
+            "baseline": 1.0,
+            "minimum": None,
+            "maxRegression": 0.1,
+            "regression": 0.09,
+            "passed": True,
+            "reason": "within_threshold",
+        },
+        {
+            "metric": "citation_validation_rate",
+            "observed": 0.985,
+            "baseline": None,
+            "minimum": 0.98,
+            "maxRegression": None,
+            "regression": None,
+            "passed": True,
+            "reason": "within_threshold",
+        },
+        {
+            "metric": "turn_success_rate",
+            "observed": 0.997,
+            "baseline": None,
+            "minimum": 0.995,
+            "maxRegression": None,
+            "regression": None,
+            "passed": True,
+            "reason": "within_threshold",
+        },
+    ]
+    assert failing.passed is False
+    assert failing.violations == (
+        "average_cost_per_turn:max_regression_exceeded",
+        "turn_success_rate:minimum_not_met",
+    )
+    assert missing_baseline.passed is False
+    assert missing_baseline.violations == ("average_cost_per_turn:baseline_missing",)
+
+
+def test_rollback_and_drain_evidence_is_deterministic_and_fail_closed() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-rollback-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-10", traffic_percent=10),),
+    )
+    aborted = plan.initial_state().advance_for_test(2).evaluate_gate(
+        RolloutAnalysisResult(
+            step_id="canary-10",
+            passed=False,
+            reason="quality_gate_failed",
+        )
+    )
+    workloads = {
+        "realtime_session": ("rev-canary", True),
+        "new_request": (None, False),
+        "durable_job": ("rev-canary", True),
+        "conversation": ("rev-canary", False),
+        "existing_request": ("rev-canary", False),
+    }
+
+    evidence = evaluate_rollback_and_drain(aborted, workloads)
+    repeated = evaluate_rollback_and_drain(aborted, dict(reversed(tuple(workloads.items()))))
+    blocked = evaluate_rollback_and_drain(
+        replace(aborted, automatic_rollback_allowed=False),
+        workloads,
+    )
+
+    assert evidence.rollback_allowed is True
+    assert evidence.restored_revision_id == "rev-stable"
+    assert evidence.aborted_revision_id == "rev-canary"
+    assert evidence.decision_contracts() == [
+        {
+            "workload": "conversation",
+            "kind": "keep_affinity",
+            "revisionId": "rev-canary",
+            "fromRevisionId": None,
+            "toRevisionId": None,
+        },
+        {
+            "workload": "durable_job",
+            "kind": "checkpoint_and_migrate",
+            "revisionId": None,
+            "fromRevisionId": "rev-canary",
+            "toRevisionId": "rev-stable",
+        },
+        {
+            "workload": "existing_request",
+            "kind": "finish_on_old",
+            "revisionId": "rev-canary",
+            "fromRevisionId": None,
+            "toRevisionId": None,
+        },
+        {
+            "workload": "new_request",
+            "kind": "admit_on_new",
+            "revisionId": "rev-stable",
+            "fromRevisionId": None,
+            "toRevisionId": None,
+        },
+        {
+            "workload": "realtime_session",
+            "kind": "drain_on_old",
+            "revisionId": "rev-canary",
+            "fromRevisionId": None,
+            "toRevisionId": None,
+        },
+    ]
+    assert evidence.content_digest() == repeated.content_digest()
+    assert blocked.rollback_allowed is False
+    assert blocked.decision_contracts() == []
 
 
 def test_graph_deployment_builds_physical_plan_from_release_graph() -> None:

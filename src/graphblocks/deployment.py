@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from enum import Enum
+import hmac
+import math
 from typing import Literal
 
 from .canonical import canonical_dumps, canonical_hash
@@ -307,6 +310,127 @@ class ReleaseBundle:
                 "signatures": {key: self.signatures[key] for key in sorted(self.signatures)},
             }
         )
+
+    def attestation_digest(self) -> str:
+        return canonical_hash(
+            {
+                "release_digest": self.release.content_digest(),
+                "artifacts": {key: self.artifacts[key] for key in sorted(self.artifacts)},
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseAttestation:
+    signer_id: str
+    subject: str
+    subject_digest: str
+    signature: str
+    algorithm: Literal["hmac-sha256"] = "hmac-sha256"
+
+    def __post_init__(self) -> None:
+        for field_name in ("signer_id", "subject", "subject_digest", "signature"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise GraphReleaseError(f"release attestation {field_name} must be an exact non-empty string")
+        if self.algorithm != "hmac-sha256":
+            raise GraphReleaseError("release attestation algorithm must be hmac-sha256")
+        if not self.subject_digest.startswith("sha256:"):
+            raise GraphReleaseError("release attestation subject_digest must be a sha256 digest")
+        digest = self.subject_digest.removeprefix("sha256:")
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise GraphReleaseError("release attestation subject_digest must be a sha256 digest")
+        if not self.signature.startswith("hmac-sha256:"):
+            raise GraphReleaseError("release attestation signature must be an hmac-sha256 signature")
+        signature = self.signature.removeprefix("hmac-sha256:")
+        if len(signature) != 64 or any(character not in "0123456789abcdef" for character in signature):
+            raise GraphReleaseError("release attestation signature must be an hmac-sha256 signature")
+
+    def signing_payload(self) -> bytes:
+        return canonical_dumps(
+            {
+                "algorithm": self.algorithm,
+                "signer_id": self.signer_id,
+                "subject": self.subject,
+                "subject_digest": self.subject_digest,
+            }
+        ).encode("utf-8")
+
+    @classmethod
+    def sign(
+        cls,
+        bundle: ReleaseBundle,
+        *,
+        signer_id: str,
+        signing_key: bytes,
+    ) -> ReleaseAttestation:
+        if not isinstance(bundle, ReleaseBundle):
+            raise GraphReleaseError("release attestation bundle must be a ReleaseBundle")
+        if not isinstance(signing_key, bytes) or not signing_key:
+            raise GraphReleaseError("release attestation signing_key must be non-empty bytes")
+        unsigned = cls(
+            signer_id=signer_id,
+            subject=bundle.bundle_id,
+            subject_digest=bundle.attestation_digest(),
+            signature="hmac-sha256:" + ("0" * 64),
+        )
+        signature = hmac.digest(signing_key, unsigned.signing_payload(), "sha256").hex()
+        return replace(unsigned, signature=f"hmac-sha256:{signature}")
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseAttestationVerification:
+    verified: bool
+    reason: str
+    signer_id: str
+    subject: str
+    subject_digest: str
+
+
+def verify_release_attestation(
+    bundle: ReleaseBundle,
+    attestation: ReleaseAttestation,
+    *,
+    trusted_signing_keys: Mapping[str, bytes],
+) -> ReleaseAttestationVerification:
+    if not isinstance(bundle, ReleaseBundle):
+        raise GraphReleaseError("release attestation bundle must be a ReleaseBundle")
+    if not isinstance(attestation, ReleaseAttestation):
+        raise GraphReleaseError("release attestation must be a ReleaseAttestation")
+    if not isinstance(trusted_signing_keys, Mapping):
+        raise GraphReleaseError("trusted_signing_keys must be a mapping")
+    reason = "trusted_signature"
+    verified = True
+    if attestation.subject != bundle.bundle_id:
+        reason = "subject_mismatch"
+        verified = False
+    elif attestation.subject_digest != bundle.attestation_digest():
+        reason = "subject_digest_mismatch"
+        verified = False
+    else:
+        signing_key = trusted_signing_keys.get(attestation.signer_id)
+        if signing_key is None:
+            reason = "untrusted_signer"
+            verified = False
+        elif not isinstance(signing_key, bytes) or not signing_key:
+            reason = "invalid_trusted_key"
+            verified = False
+        else:
+            expected = "hmac-sha256:" + hmac.digest(
+                signing_key,
+                attestation.signing_payload(),
+                "sha256",
+            ).hex()
+            if not hmac.compare_digest(expected, attestation.signature):
+                reason = "signature_mismatch"
+                verified = False
+    return ReleaseAttestationVerification(
+        verified=verified,
+        reason=reason,
+        signer_id=attestation.signer_id,
+        subject=attestation.subject,
+        subject_digest=attestation.subject_digest,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +813,133 @@ class RolloutAnalysisResult:
         object.__setattr__(self, "metrics", dict(self.metrics))
 
 
+def _finite_canary_metric(value: object, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise RolloutError(f"canary metric {field_name} must be a number")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise RolloutError(f"canary metric {field_name} must be finite")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class CanaryMetricThreshold:
+    metric: str
+    minimum: float | None = None
+    max_regression: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string(
+            self.metric,
+            "canary metric",
+            "canary metric must not be empty",
+            RolloutError,
+        )
+        if self.minimum is None and self.max_regression is None:
+            raise RolloutError("canary metric threshold requires minimum or max_regression")
+        if self.minimum is not None:
+            object.__setattr__(self, "minimum", _finite_canary_metric(self.minimum, "minimum"))
+        if self.max_regression is not None:
+            max_regression = _finite_canary_metric(self.max_regression, "max_regression")
+            if max_regression < 0:
+                raise RolloutError("canary metric max_regression must be non-negative")
+            object.__setattr__(self, "max_regression", max_regression)
+
+
+@dataclass(frozen=True, slots=True)
+class CanaryMetricEvaluation:
+    passed: bool
+    violations: tuple[str, ...]
+    metrics: tuple[dict[str, object], ...]
+
+    def evidence_contract(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "violations": list(self.violations),
+            "metrics": [dict(metric) for metric in self.metrics],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.evidence_contract())
+
+
+def evaluate_canary_metrics(
+    thresholds: Iterable[CanaryMetricThreshold],
+    *,
+    candidate_metrics: Mapping[str, object],
+    baseline_metrics: Mapping[str, object] | None = None,
+) -> CanaryMetricEvaluation:
+    if not isinstance(candidate_metrics, Mapping):
+        raise RolloutError("candidate_metrics must be a mapping")
+    if baseline_metrics is not None and not isinstance(baseline_metrics, Mapping):
+        raise RolloutError("baseline_metrics must be a mapping")
+    try:
+        configured = tuple(sorted(thresholds, key=lambda threshold: threshold.metric))
+    except (AttributeError, TypeError) as error:
+        raise RolloutError("canary metric thresholds must contain CanaryMetricThreshold records") from error
+    if not configured:
+        raise RolloutError("canary metric evaluation requires at least one threshold")
+    if any(not isinstance(threshold, CanaryMetricThreshold) for threshold in configured):
+        raise RolloutError("canary metric thresholds must contain CanaryMetricThreshold records")
+    metric_names = [threshold.metric for threshold in configured]
+    if len(set(metric_names)) != len(metric_names):
+        raise RolloutError("canary metric thresholds must not contain duplicate metrics")
+
+    observations: list[dict[str, object]] = []
+    violations: list[str] = []
+    baselines = baseline_metrics or {}
+    for threshold in configured:
+        observed: float | None = None
+        baseline: float | None = None
+        regression: float | None = None
+        passed = True
+        reason = "within_threshold"
+        if threshold.metric not in candidate_metrics:
+            passed = False
+            reason = "metric_missing"
+        else:
+            observed = _finite_canary_metric(candidate_metrics[threshold.metric], threshold.metric)
+            if threshold.minimum is not None and observed < threshold.minimum:
+                passed = False
+                reason = "minimum_not_met"
+            if threshold.max_regression is not None:
+                if threshold.metric not in baselines:
+                    passed = False
+                    reason = "baseline_missing"
+                else:
+                    baseline = _finite_canary_metric(baselines[threshold.metric], f"{threshold.metric} baseline")
+                    if baseline == 0:
+                        passed = False
+                        reason = "baseline_zero"
+                    else:
+                        regression = float(
+                            (Decimal(str(observed)) - Decimal(str(baseline)))
+                            / abs(Decimal(str(baseline)))
+                        )
+                        if regression > threshold.max_regression:
+                            passed = False
+                            reason = "max_regression_exceeded"
+        if not passed:
+            violations.append(f"{threshold.metric}:{reason}")
+        observations.append(
+            {
+                "metric": threshold.metric,
+                "observed": observed,
+                "baseline": baseline,
+                "minimum": threshold.minimum,
+                "maxRegression": threshold.max_regression,
+                "regression": regression,
+                "passed": passed,
+                "reason": reason,
+            }
+        )
+    return CanaryMetricEvaluation(
+        passed=not violations,
+        violations=tuple(violations),
+        metrics=tuple(observations),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RolloutDecision:
     decision: RolloutDecisionKind
@@ -875,6 +1126,15 @@ class RevisionDecision:
     def drain_on_old(cls, revision_id: str) -> RevisionDecision:
         return cls(kind="drain_on_old", revision_id=revision_id)
 
+    def decision_contract(self, workload: WorkloadKind) -> dict[str, object]:
+        return {
+            "workload": workload,
+            "kind": self.kind,
+            "revisionId": self.revision_id,
+            "fromRevisionId": self.from_revision_id,
+            "toRevisionId": self.to_revision_id,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UpgradePolicy:
@@ -909,6 +1169,92 @@ class UpgradePolicy:
         if workload == "realtime_session":
             return RevisionDecision.drain_on_old(affinity_revision_id or self.old_revision_id)
         raise ValueError(f"unknown workload kind: {workload!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackDrainEvidence:
+    rollout_id: str
+    aborted_revision_id: str
+    restored_revision_id: str
+    rollback_allowed: bool
+    reason: str
+    workload_decisions: tuple[tuple[WorkloadKind, RevisionDecision], ...] = field(default_factory=tuple)
+
+    def decision_contracts(self) -> list[dict[str, object]]:
+        return [
+            decision.decision_contract(workload)
+            for workload, decision in self.workload_decisions
+        ]
+
+    def evidence_contract(self) -> dict[str, object]:
+        return {
+            "rolloutId": self.rollout_id,
+            "abortedRevisionId": self.aborted_revision_id,
+            "restoredRevisionId": self.restored_revision_id,
+            "rollbackAllowed": self.rollback_allowed,
+            "reason": self.reason,
+            "workloadDecisions": self.decision_contracts(),
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.evidence_contract())
+
+
+def evaluate_rollback_and_drain(
+    rollout_decision: RolloutDecision,
+    workloads: Mapping[WorkloadKind, tuple[str | None, bool]],
+) -> RollbackDrainEvidence:
+    if not isinstance(rollout_decision, RolloutDecision):
+        raise RolloutError("rollback evidence requires a RolloutDecision")
+    if not isinstance(workloads, Mapping):
+        raise RolloutError("rollback evidence workloads must be a mapping")
+    plan = rollout_decision.next_state.plan
+    rollback_allowed = (
+        rollout_decision.decision == "abort"
+        and rollout_decision.next_state.status == "aborted"
+        and rollout_decision.automatic_rollback_allowed
+    )
+    workload_decisions: list[tuple[WorkloadKind, RevisionDecision]] = []
+    if rollback_allowed:
+        policy = UpgradePolicy.workload_aware(
+            plan.candidate_revision_id,
+            plan.stable_revision_id,
+        )
+        valid_workloads = {
+            "new_request",
+            "existing_request",
+            "conversation",
+            "durable_job",
+            "realtime_session",
+        }
+        for workload, parameters in sorted(workloads.items()):
+            if workload not in valid_workloads:
+                raise RolloutError(f"rollback evidence workload {workload!r} is invalid")
+            if not isinstance(parameters, tuple) or len(parameters) != 2:
+                raise RolloutError("rollback evidence workload parameters must contain affinity and compatibility")
+            affinity_revision_id, checkpoint_compatible = parameters
+            if affinity_revision_id is not None and not isinstance(affinity_revision_id, str):
+                raise RolloutError("rollback evidence workload affinity must be a string or null")
+            if not isinstance(checkpoint_compatible, bool):
+                raise RolloutError("rollback evidence checkpoint compatibility must be a boolean")
+            workload_decisions.append(
+                (
+                    workload,
+                    policy.decide(workload, affinity_revision_id, checkpoint_compatible),
+                )
+            )
+    return RollbackDrainEvidence(
+        rollout_id=plan.rollout_id,
+        aborted_revision_id=plan.candidate_revision_id,
+        restored_revision_id=plan.stable_revision_id,
+        rollback_allowed=rollback_allowed,
+        reason=(
+            rollout_decision.reason
+            if rollback_allowed
+            else "automatic_rollback_not_allowed"
+        ),
+        workload_decisions=tuple(workload_decisions),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1426,6 +1772,8 @@ class GraphDeployment:
 
 
 __all__ = [
+    "CanaryMetricEvaluation",
+    "CanaryMetricThreshold",
     "DeploymentCondition",
     "DeploymentConditionStatus",
     "DeploymentEvent",
@@ -1459,8 +1807,11 @@ __all__ = [
     "ReleaseLockRef",
     "RecoveryObjective",
     "ReleaseBundle",
+    "ReleaseAttestation",
+    "ReleaseAttestationVerification",
     "ResolvedPlacement",
     "RevisionDecision",
+    "RollbackDrainEvidence",
     "RolloutAnalysisResult",
     "RolloutDecision",
     "RolloutError",
@@ -1471,4 +1822,7 @@ __all__ = [
     "SupplyChainLock",
     "UpgradePolicy",
     "WorkloadKind",
+    "evaluate_canary_metrics",
+    "evaluate_rollback_and_drain",
+    "verify_release_attestation",
 ]
