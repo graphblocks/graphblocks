@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-import ipaddress
 import json
 import math
 from types import MappingProxyType
@@ -14,6 +13,7 @@ from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
 from .policy import PrincipalRef
 from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
+from .url_validation import validate_webhook_url
 
 
 ServerTransport = Literal["http", "sse", "websocket"]
@@ -57,7 +57,6 @@ VALID_ATTACH_CAPABILITIES = frozenset({
     "interrupt_resume",
 })
 VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
-FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 SERVER_EVENT_SEVERITY_RANKS = {
     "debug": 10,
     "info": 20,
@@ -263,66 +262,7 @@ def _webhook_url_is_unsafe(url: str) -> bool:
         return True
     if parsed.scheme == "secret":
         return False
-    raw_rest = url.split("://", 1)[1] if "://" in url else ""
-    raw_authority = raw_rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
-    if any(character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F for character in raw_authority):
-        return True
-    try:
-        username = parsed.username
-        password = parsed.password
-        _ = parsed.port
-        host = parsed.hostname
-    except ValueError:
-        return True
-    if username is not None or password is not None:
-        return True
-    if host is None:
-        return True
-    normalized_host = host.strip().rstrip(".").lower()
-    if normalized_host != host.rstrip(".").lower() or "%" in normalized_host:
-        return True
-    try:
-        parsed_address = ipaddress.ip_address(normalized_host)
-    except ValueError:
-        if parsed.netloc.startswith("[") or ":" in normalized_host:
-            return True
-        if (
-            any(
-                not (character.isascii() and (character.isalnum() or character in "-."))
-                for character in normalized_host
-            )
-            or any(
-                not label or label.startswith("-") or label.endswith("-")
-                for label in normalized_host.split(".")
-            )
-        ):
-            return True
-    else:
-        if parsed.netloc.startswith("[") and parsed_address.version != 6:
-            return True
-    if normalized_host in FORBIDDEN_WEBHOOK_HOSTS or normalized_host.endswith(".localhost"):
-        return True
-    try:
-        address = ipaddress.ip_address(normalized_host)
-    except ValueError:
-        try:
-            if normalized_host.startswith("0x"):
-                numeric_ipv4 = int(normalized_host, 16)
-            elif normalized_host.isascii() and normalized_host.isdecimal():
-                numeric_ipv4 = int(normalized_host, 10)
-            else:
-                return False
-            address = ipaddress.ip_address(numeric_ipv4)
-        except ValueError:
-            return False
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    )
+    return not validate_webhook_url(url).allowed
 
 
 def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object]) -> None:

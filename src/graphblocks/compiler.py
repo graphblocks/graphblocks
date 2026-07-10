@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from ipaddress import ip_address
 from typing import Any
-from urllib.parse import urlparse
 
 from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
@@ -28,6 +26,7 @@ from .tools import (
     VALID_TOOL_IDEMPOTENCIES,
     VALID_TOOL_RESULT_MODES,
 )
+from .url_validation import validate_webhook_url
 
 STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
 FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
@@ -54,7 +53,6 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
     "local_callback",
 })
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
-UNSAFE_CALLBACK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
 
 
@@ -537,49 +535,11 @@ def _has_callback_signing(delivery: dict[str, Any]) -> bool:
 
 
 def _callback_url_is_unsafe(url: object) -> bool:
-    if not isinstance(url, str) or not url.strip() or url != url.strip():
-        return True
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        return True
-    if parsed.username is not None or parsed.password is not None:
-        return True
-    hostname = parsed.hostname
-    if not hostname:
-        return True
-    normalized_host = hostname.rstrip(".").lower()
-    if normalized_host in UNSAFE_CALLBACK_HOSTS or normalized_host.endswith(".localhost"):
-        return True
-    try:
-        address = ip_address(normalized_host)
-    except ValueError:
-        numeric_ipv4 = None
-        if normalized_host.startswith("0x"):
-            try:
-                numeric_ipv4 = int(normalized_host[2:], 16)
-            except ValueError:
-                numeric_ipv4 = None
-        elif normalized_host.isascii() and normalized_host.isdecimal():
-            numeric_ipv4 = int(normalized_host)
-        if numeric_ipv4 is None or not 0 <= numeric_ipv4 <= 0xFFFFFFFF:
-            return False
-        address = ip_address(numeric_ipv4)
-        return (
-            address.is_loopback
-            or address.is_private
-            or address.is_link_local
-            or address.is_multicast
-            or address.is_reserved
-            or address.is_unspecified
-        )
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    )
+    return not validate_webhook_url(
+        url,
+        allowed_schemes=frozenset({"https"}),
+        allow_private=False,
+    ).allowed
 
 
 def _has_callback_dead_letter_behavior(config: dict[str, Any], delivery: dict[str, Any]) -> bool:

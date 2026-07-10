@@ -691,6 +691,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Runtime endpoint validation also rejects malformed authority and host syntax, including userinfo,
   whitespace/control characters, percent-encoded hosts, invalid bracketed IPv6 literals, scoped
   IPv6 zone identifiers, and invalid ports before callback endpoint registration.
+  The Python `graphblocks-callbacks` `CallbackEndpointRef` facade now applies the same malformed
+  authority and host checks during construction, so signed ingress endpoint references cannot retain
+  ambiguous route identities.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, unknown operations, run/node identity mismatches, schema mismatches, payload-limit
   failures, callbacks that arrive after an operation's callback deadline, and callbacks that target
@@ -1060,6 +1063,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   HTTP transport.
   Server-side callback registration now applies the same decimal and hex numeric IPv4 rejection
   before storing webhook delivery subscriptions.
+  Shared Python webhook URL validation also recognizes legacy dotted IPv4 spellings such as
+  `127.1`, octal components, and per-component hex forms before compiler, server, or callback package
+  policy can mistake a loopback address for a DNS name.
 - Runtime webhook target parsing now rejects empty, non-numeric, or out-of-range port syntax for
   both hostname and bracketed IPv6 authorities, keeping registration-time validation aligned with
   the eventual HTTP transport parser.
@@ -1069,8 +1075,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime webhook target parsing now rejects invalid authority host syntax, including whitespace,
   control characters, percent-encoded host components, and bracketed authorities that are not valid
   IPv6 literals, before callback egress validation or target identity recording.
-  The normative Rust compiler now reports the same malformed callback webhook hosts as `GB6011`,
-  with shared compiler TCK coverage for runtime/compiler parity.
+  The normative Rust compiler and Python authoring compiler now report the same malformed callback
+  webhook hosts as `GB6011`, with shared compiler TCK coverage for runtime/compiler parity.
   The Python `graphblocks-callbacks` helper now rejects the same malformed authority syntax before
   reporting a target as allowed, so local callback tooling fails closed during development.
   Server-side callback registration now applies the same malformed-authority rejection before
@@ -1079,6 +1085,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before opening a TCP connection, protecting direct adapter use from bypassing target validation.
   The same client now rejects raw control or whitespace bytes in the HTTP request target before
   opening a TCP connection, preventing direct adapter use from injecting request-line content.
+  Python compiler, server, and callback facade paths now share the same raw request-target rejection,
+  so whitespace or control-byte injection is denied before registration as well as during delivery.
 - Runtime webhook egress validation now rejects multicast, reserved, and broadcast IPv4
   destinations plus IPv6 multicast destinations for both literal webhook hosts and DNS-resolved
   addresses, preventing non-unicast callback delivery targets from bypassing endpoint safety checks.

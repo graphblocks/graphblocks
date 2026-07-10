@@ -5,12 +5,11 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hmac
-import ipaddress
 import json
 import math
-from urllib.parse import urlparse
 
 from graphblocks import ArtifactRef, canonical_dumps, canonical_hash
+from graphblocks.url_validation import validate_webhook_url
 
 
 REQUIRED_WEBHOOK_HEADERS = (
@@ -49,7 +48,6 @@ VALID_CALLBACK_FAILURE_POLICIES = frozenset({
     "fail_run_on_failure",
 })
 VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
-FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
 
 class _FrozenJsonArray(tuple[object, ...]):
@@ -416,35 +414,6 @@ def project_callback_payload(
     )
 
 
-def _host_is_forbidden(host: str) -> bool:
-    normalized = host.strip().rstrip(".").lower()
-    return normalized in FORBIDDEN_WEBHOOK_HOSTS or normalized.endswith(".localhost")
-
-
-def _ip_is_forbidden(host: str) -> bool:
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        try:
-            if host.lower().startswith("0x"):
-                numeric_ipv4 = int(host, 16)
-            elif host.isascii() and host.isdecimal():
-                numeric_ipv4 = int(host, 10)
-            else:
-                return False
-            address = ipaddress.ip_address(numeric_ipv4)
-        except ValueError:
-            return False
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class WebhookTargetSafety:
     url: str
@@ -463,53 +432,13 @@ class WebhookTargetSafety:
 
 def validate_webhook_target_url(url: str, *, allow_private: bool = False) -> WebhookTargetSafety:
     _require_non_empty_string("url", url)
-    if not isinstance(allow_private, bool):
-        raise ValueError("allow_private must be a boolean")
-    if url != url.strip():
-        return WebhookTargetSafety(url=url, allowed=False, reason="surrounding_whitespace", host=None)
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=None)
-    if parsed.scheme not in {"http", "https"}:
-        return WebhookTargetSafety(url=url, allowed=False, reason="unsupported_scheme", host=parsed.hostname)
-    raw_rest = url.split("://", 1)[1] if "://" in url else ""
-    raw_authority = raw_rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
-    if any(character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F for character in raw_authority):
-        return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=None)
-    try:
-        username = parsed.username
-        password = parsed.password
-        _ = parsed.port
-        parsed_hostname = parsed.hostname
-    except ValueError:
-        return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=None)
-    if username is not None or password is not None:
-        return WebhookTargetSafety(url=url, allowed=False, reason="userinfo_not_allowed", host=parsed_hostname)
-    if parsed_hostname is None or not parsed_hostname.strip():
-        return WebhookTargetSafety(url=url, allowed=False, reason="missing_host", host=None)
-    raw_host = parsed_hostname
-    host = raw_host.strip().rstrip(".").lower()
-    if host != raw_host.rstrip(".").lower() or "%" in host:
-        return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=host or None)
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        if parsed.netloc.startswith("[") or ":" in host:
-            return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=host)
-        if (
-            any(not (character.isascii() and (character.isalnum() or character in "-.")) for character in host)
-            or any(not label or label.startswith("-") or label.endswith("-") for label in host.split("."))
-        ):
-            return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=host)
-    else:
-        if parsed.netloc.startswith("[") and address.version != 6:
-            return WebhookTargetSafety(url=url, allowed=False, reason="invalid_host", host=host)
-    if not allow_private and _host_is_forbidden(host):
-        return WebhookTargetSafety(url=url, allowed=False, reason="forbidden_host", host=host)
-    if not allow_private and _ip_is_forbidden(host):
-        return WebhookTargetSafety(url=url, allowed=False, reason="forbidden_ip", host=host)
-    return WebhookTargetSafety(url=url, allowed=True, reason="allowed", host=host)
+    validation = validate_webhook_url(url, allow_private=allow_private)
+    return WebhookTargetSafety(
+        url=url,
+        allowed=validation.allowed,
+        reason=validation.reason,
+        host=validation.host,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1172,11 +1101,13 @@ class CallbackEndpointRef:
             "tenant_id",
         ):
             _require_stable_string(field_name, getattr(self, field_name))
-        parsed_url = urlparse(self.url)
-        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        url_validation = validate_webhook_url(self.url, allow_private=True)
+        if url_validation.reason in {"unsupported_scheme", "missing_host"}:
             raise ValueError("url must be an absolute http(s) URL")
-        if parsed_url.username is not None or parsed_url.password is not None:
+        if url_validation.reason == "userinfo_not_allowed":
             raise ValueError("url must not contain embedded userinfo")
+        if not url_validation.allowed:
+            raise ValueError("url host is malformed")
         if not isinstance(self.auth, CallbackEndpointAuth):
             raise ValueError("auth must be a CallbackEndpointAuth")
         if self.expires_at is not None:
