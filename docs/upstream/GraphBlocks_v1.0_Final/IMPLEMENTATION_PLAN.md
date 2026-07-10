@@ -830,6 +830,19 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   This reference path supports one active callback wait per process-local checkpoint;
   restart recovery, remote-worker handoff, and durable checkpoint persistence remain owned by
   `graphblocks-runtime-durable`.
+- Python accepted/background server execution now retains the issuing runtime, checkpoint, journal,
+  and cancellation token across a callback wait. The executor publishes
+  `AsyncOperationWaitingCallback` without terminalizing the run; authenticated callback ingress then
+  matches the checkpoint operation/run/node/attempt/provider fences and asks a trusted server-side
+  resume-admission hook for schema, policy, budget, release, and ownership evidence. Missing or
+  denied evidence fails closed. An accepted receipt keeps its delivery idempotency key distinct from
+  the operation idempotency key, records `ExternalCallbackReceived`, and dispatches the same-runtime
+  continuation. The worker publishes `RunResuming` only after it claims the sealed checkpoint, then
+  executes the downstream graph exactly once. Exact delivery replays, including after terminal completion, do not
+  schedule another continuation. Pre-checkpoint callbacks and manual resume without a validated
+  receipt are rejected, while executor rejection retains the receipt and projects a recoverable
+  callback-delivery pause without a synthetic resume event. This server state remains process-local
+  and restart-nondurable pending durable scheduler ownership.
 - Python `graphblocks-core` now exposes an immutable `AsyncOperation` schema facade with the
   amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
   `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,

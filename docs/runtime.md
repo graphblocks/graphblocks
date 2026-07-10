@@ -41,6 +41,27 @@ is the replayable source of truth; callback subscriptions are delivery
 projections. External callbacks are authenticated resume signals for async
 operations, not the authoritative record of run correctness.
 
+The Python reference server can continue an accepted or background run from a
+checkpoint-enabled `async.await_callback@1` boundary. It retains the issuing
+`InProcessRuntime`, execution journal, cancellation token, and sealed checkpoint
+in process; publishes `AsyncOperationWaitingCallback`; and schedules only the
+remaining nodes after callback admission. This state is intentionally
+restart-nondurable. Durable recovery and remote-worker handoff remain runtime
+scheduler responsibilities.
+
+Automatic continuation is default-deny. A resumable callback must be tied to an
+authenticated principal and exactly match the checkpoint's operation, run,
+node, attempt, provider-operation, policy-snapshot, schema, and deadline fences.
+`ServerAsyncCallbackResumeAdmissionHook.admit()` is a trusted server-side hook,
+not callback-body evidence: it must validate the payload schema and return
+positive policy re-evaluation, budget reservation, release compatibility, and
+ownership-fence decisions. The provider delivery idempotency key remains
+distinct from the operation idempotency key. Without an executor, or when
+executor dispatch fails or is cancelled before claim, the accepted receipt is
+retained and the run projects `paused_callback_delivery`; an operator can retry
+through `/runs/{run_id}/resume` after a worker executor is available. The server
+emits `RunResuming` only when a worker actually claims the retained checkpoint.
+
 The runtime event stream rejects duplicate event IDs and non-increasing
 sequences within a run before applying response-specific policy cutoff rules.
 This keeps replay cursor state authoritative while still allowing different

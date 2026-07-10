@@ -163,7 +163,15 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         },
     }
     store = InMemoryRunStore()
-    runtime = InProcessRuntime(registry, run_store=store)
+    journals: dict[str, ExecutionJournal] = {}
+    runtime = InProcessRuntime(
+        registry,
+        run_store=store,
+        journal_factory=lambda run_id: journals.setdefault(
+            run_id,
+            ExecutionJournal(run_id),
+        ),
+    )
 
     waiting = runtime.run(graph, {}, run_id="run-runtime-resume-1")
 
@@ -248,7 +256,8 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         "node_id": "wait",
         "attempt_id": "attempt-1",
         "provider_operation_id": "provider-operation-1",
-        "idempotency_key": "idem-operation-runtime-resume-1",
+        "operation_idempotency_key": "idem-operation-runtime-resume-1",
+        "callback_idempotency_key": "delivery-runtime-resume-1",
         "resume_token_hash": VALID_RESUME_TOKEN_HASH,
         "schema_id": "schemas/CICallback@1",
         "schema_validated": True,
@@ -326,7 +335,24 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         "result": {"status": "completed", "conclusion": "success"}
     }
     assert resumed.checkpoint is None
-    assert resumed.journal.records[0].kind == "run_resuming"
+    resumed_journal_kinds = [record.kind for record in resumed.journal.records]
+    assert resumed_journal_kinds.index("run_waiting_callback") < (
+        resumed_journal_kinds.index("external_callback_received")
+    )
+    assert resumed_journal_kinds.index("external_callback_received") < (
+        resumed_journal_kinds.index("run_resuming")
+    )
+    assert resumed_journal_kinds.index("run_resuming") < (
+        resumed_journal_kinds.index("node_started", resumed_journal_kinds.index("run_resuming"))
+    )
+    callback_record = next(
+        record
+        for record in resumed.journal.records
+        if record.kind == "external_callback_received"
+    )
+    assert callback_record.payload["callbackIdempotencyKey"] == (
+        "delivery-runtime-resume-1"
+    )
     assert store.get_run("run-runtime-resume-1").status == "succeeded"
     assert prepare_calls == 1
     assert consume_calls == 1

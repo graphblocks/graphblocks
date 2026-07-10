@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from concurrent.futures import Executor
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
@@ -16,7 +16,14 @@ from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
 from .compiler import compile_graph
 from .policy import PrincipalRef
-from .runtime import CancellationToken, InProcessRuntime, RuntimeRegistry, stdlib_registry
+from .runtime import (
+    CancellationToken,
+    ExecutionJournal,
+    InProcessRuntime,
+    RuntimeCheckpoint,
+    RuntimeRegistry,
+    stdlib_registry,
+)
 from .url_validation import validate_webhook_url
 
 
@@ -1683,6 +1690,15 @@ class ServerAuthHook(Protocol):
         ...
 
 
+class ServerAsyncCallbackResumeAdmissionHook(Protocol):
+    def admit(
+        self,
+        submission: ServerAsyncCallbackSubmission,
+        checkpoint: RuntimeCheckpoint,
+    ) -> Mapping[str, object]:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class StaticBearerAuthHook:
     principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
@@ -1770,6 +1786,17 @@ class ServerHealth:
 
 
 @dataclass(slots=True)
+class _AcceptedRunExecution:
+    runtime: InProcessRuntime
+    cancellation_token: CancellationToken
+    journal: ExecutionJournal
+    checkpoint: RuntimeCheckpoint | None = None
+    callback_receipt: Mapping[str, object] | None = None
+    resume_dispatch_pending: bool = False
+    resume_future: Future[object] | None = None
+
+
+@dataclass(slots=True)
 class GraphBlocksServerApp:
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
     auth_hook: ServerAuthHook | None = None
@@ -1780,6 +1807,7 @@ class GraphBlocksServerApp:
     anti_enumerate_async_callbacks: bool = False
     defer_accepted_runs: bool = False
     accepted_run_executor: Executor | None = None
+    async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1847,6 +1875,11 @@ class GraphBlocksServerApp:
         repr=False,
     )
     _accepted_run_results_by_run_id: dict[str, Mapping[str, object]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _accepted_run_executions_by_run_id: dict[str, _AcceptedRunExecution] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -2370,6 +2403,28 @@ class GraphBlocksServerApp:
                             "error": "async callback payload exceeds max payload bytes",
                         },
                     )
+                for previous in self._callbacks_by_operation_id.get(
+                    submission.operation_id,
+                    (),
+                ):
+                    if (
+                        previous.idempotency_key == submission.idempotency_key
+                        and previous.callback_id == submission.callback_id
+                        and dict(previous.payload) == dict(submission.payload)
+                        and previous.artifacts == submission.artifacts
+                        and previous.run_id == submission.run_id
+                        and previous.node_id == submission.node_id
+                        and previous.attempt_id == submission.attempt_id
+                        and previous.provider_operation_id
+                        == submission.provider_operation_id
+                        and previous.verified_by == submission.verified_by
+                        and previous.policy_snapshot_id
+                        == submission.policy_snapshot_id
+                    ):
+                        return ServerResponse.json(
+                            200,
+                            previous.duplicate_response_payload(),
+                        )
                 if submission.run_id is not None and submission.run_id not in self._events_by_run_id:
                     rejection = ServerAsyncCallbackRejection.unknown_run(submission)
                     self._async_callback_rejections_by_operation_id[submission.operation_id] = (
@@ -2549,6 +2604,50 @@ class GraphBlocksServerApp:
                                 ),
                             },
                         )
+                if submission.run_id is not None:
+                    pending_execution = self._accepted_run_executions_by_run_id.get(
+                        submission.run_id
+                    )
+                    if (
+                        pending_execution is not None
+                        and pending_execution.checkpoint is None
+                    ):
+                        rejection = ServerAsyncCallbackRejection(
+                            operation_id=submission.operation_id,
+                            callback_id=submission.callback_id,
+                            idempotency_key=submission.idempotency_key,
+                            reason="checkpoint_not_published",
+                            received_at=submission.received_at,
+                            payload_digest=submission.payload_digest,
+                            verified_by=submission.verified_by,
+                            policy_snapshot_id=submission.policy_snapshot_id,
+                            run_id=submission.run_id,
+                            node_id=submission.node_id,
+                            attempt_id=submission.attempt_id,
+                            provider_operation_id=(
+                                submission.provider_operation_id
+                            ),
+                        )
+                        self._async_callback_rejections_by_operation_id[
+                            submission.operation_id
+                        ] = (
+                            *self._async_callback_rejections_by_operation_id.get(
+                                submission.operation_id,
+                                (),
+                            ),
+                            rejection,
+                        )
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    "async callback run has not published a callback checkpoint"
+                                ),
+                            },
+                        )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
                 for previous in existing:
                     if previous.idempotency_key == submission.idempotency_key:
@@ -2560,6 +2659,9 @@ class GraphBlocksServerApp:
                             or previous.node_id != submission.node_id
                             or previous.attempt_id != submission.attempt_id
                             or previous.provider_operation_id != submission.provider_operation_id
+                            or previous.verified_by != submission.verified_by
+                            or previous.policy_snapshot_id
+                            != submission.policy_snapshot_id
                         ):
                             rejection = ServerAsyncCallbackRejection.idempotency_conflict(submission)
                             self._async_callback_rejections_by_operation_id[submission.operation_id] = (
@@ -2721,12 +2823,397 @@ class GraphBlocksServerApp:
                     if submission.node_id is not None:
                         payload["nodeId"] = submission.node_id
                     return ServerResponse.json(409, payload)
+                resumable_execution = (
+                    self._accepted_run_executions_by_run_id.get(
+                        submission.run_id
+                    )
+                    if submission.run_id is not None
+                    else None
+                )
+                if (
+                    resumable_execution is not None
+                    and resumable_execution.checkpoint is not None
+                ):
+                    checkpoint = resumable_execution.checkpoint
+                    operation = checkpoint.operation
+                    if submission.verified_by == "unauthenticated":
+                        rejection = ServerAsyncCallbackRejection.authentication_failed(
+                            submission
+                        )
+                        self._async_callback_rejections_by_operation_id[
+                            submission.operation_id
+                        ] = (
+                            *self._async_callback_rejections_by_operation_id.get(
+                                submission.operation_id,
+                                (),
+                            ),
+                            rejection,
+                        )
+                        self._append_async_callback_diagnostic_event(
+                            "ExternalCallbackRejected",
+                            submission,
+                            "authentication_failed",
+                        )
+                        return ServerResponse.json(
+                            401,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": "resumable async callback requires authenticated principal",
+                            },
+                        )
+                    for submission_field, operation_field in (
+                        ("operation_id", "operation_id"),
+                        ("run_id", "run_id"),
+                        ("node_id", "node_id"),
+                        ("attempt_id", "attempt_id"),
+                        ("provider_operation_id", "provider_operation_id"),
+                    ):
+                        if getattr(submission, submission_field) != operation.get(
+                            operation_field
+                        ):
+                            rejection = ServerAsyncCallbackRejection(
+                                operation_id=submission.operation_id,
+                                callback_id=submission.callback_id,
+                                idempotency_key=submission.idempotency_key,
+                                reason="checkpoint_operation_mismatch",
+                                received_at=submission.received_at,
+                                payload_digest=submission.payload_digest,
+                                verified_by=submission.verified_by,
+                                policy_snapshot_id=submission.policy_snapshot_id,
+                                run_id=submission.run_id,
+                                node_id=submission.node_id,
+                                attempt_id=submission.attempt_id,
+                                provider_operation_id=(
+                                    submission.provider_operation_id
+                                ),
+                            )
+                            self._async_callback_rejections_by_operation_id[
+                                submission.operation_id
+                            ] = (
+                                *self._async_callback_rejections_by_operation_id.get(
+                                    submission.operation_id,
+                                    (),
+                                ),
+                                rejection,
+                            )
+                            self._append_async_callback_diagnostic_event(
+                                "ExternalCallbackRejected",
+                                submission,
+                                "checkpoint_operation_mismatch",
+                            )
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "operationId": submission.operation_id,
+                                    "runId": submission.run_id,
+                                    "error": (
+                                        "async callback does not match waiting checkpoint "
+                                        f"{submission_field}"
+                                    ),
+                                },
+                            )
+                    received_datetime = datetime.fromisoformat(
+                        f"{submission.received_at[:-1]}+00:00"
+                        if submission.received_at.endswith("Z")
+                        else submission.received_at
+                    ).astimezone(timezone.utc)
+                    waiting_events = self._events_by_run_id.get(
+                        submission.run_id,
+                        (),
+                    )
+                    waiting_event = next(
+                        (
+                            event
+                            for event in reversed(waiting_events)
+                            if event.get("kind")
+                            == "AsyncOperationWaitingCallback"
+                        ),
+                        None,
+                    )
+                    waiting_metadata = (
+                        waiting_event.get("metadata")
+                        if isinstance(waiting_event, Mapping)
+                        else None
+                    )
+                    waiting_occurred_at = (
+                        waiting_metadata.get("occurredAt")
+                        if isinstance(waiting_metadata, Mapping)
+                        else None
+                    )
+                    waiting_occurred_at = _validate_iso_datetime(
+                        "server async callback resume",
+                        "checkpoint_occurred_at",
+                        waiting_occurred_at,
+                    )
+                    waiting_datetime = datetime.fromisoformat(
+                        f"{waiting_occurred_at[:-1]}+00:00"
+                        if waiting_occurred_at.endswith("Z")
+                        else waiting_occurred_at
+                    ).astimezone(timezone.utc)
+                    if received_datetime < waiting_datetime:
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    "async callback receipt must not precede "
+                                    "callback checkpoint publication"
+                                ),
+                            },
+                        )
+                    received_at_unix_ms = int(
+                        received_datetime.timestamp() * 1000
+                    )
+                    submitted_at_unix_ms = operation.get(
+                        "submitted_at_unix_ms"
+                    )
+                    if (
+                        isinstance(submitted_at_unix_ms, int)
+                        and not isinstance(submitted_at_unix_ms, bool)
+                        and received_at_unix_ms < submitted_at_unix_ms
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    "async callback receipt must not precede "
+                                    "operation submission"
+                                ),
+                            },
+                        )
+                    expires_at_unix_ms = operation.get(
+                        "expires_at_unix_ms"
+                    )
+                    if (
+                        isinstance(expires_at_unix_ms, int)
+                        and not isinstance(expires_at_unix_ms, bool)
+                        and received_at_unix_ms > expires_at_unix_ms
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    "async callback receipt exceeds operation expiration"
+                                ),
+                            },
+                        )
+                    pending_run = self._pending_accepted_runs_by_run_id.get(
+                        submission.run_id
+                    )
+                    expected_policy_snapshot_id = (
+                        pending_run.get("policySnapshotId")
+                        if pending_run is not None
+                        else None
+                    )
+                    if (
+                        submission.policy_snapshot_id
+                        != expected_policy_snapshot_id
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": "async callback policy snapshot does not match waiting run",
+                            },
+                        )
+                    admission_hook = self.async_callback_resume_admission_hook
+                    if admission_hook is None:
+                        return ServerResponse.json(
+                            503,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": "async callback resume admission is unavailable",
+                            },
+                        )
+                    try:
+                        admission = admission_hook.admit(
+                            submission,
+                            checkpoint,
+                        )
+                    except Exception as error:
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": f"async callback resume admission failed: {error}",
+                            },
+                        )
+                    required_admission = {
+                        "schema_validated",
+                        "policy_reevaluated",
+                        "budget_reserved",
+                        "release_compatible",
+                        "ownership_fenced",
+                    }
+                    if not isinstance(admission, Mapping) or any(
+                        admission.get(field_name) is not True
+                        for field_name in required_admission
+                    ):
+                        return ServerResponse.json(
+                            403,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    "async callback resume admission requires schema, "
+                                    "policy, budget, release, and ownership evidence"
+                                ),
+                            },
+                        )
+                    callback_receipt = _freeze_json_value(
+                        "server async callback resume",
+                        "receipt",
+                        {
+                            "operation_id": submission.operation_id,
+                            "run_id": submission.run_id,
+                            "node_id": submission.node_id,
+                            "attempt_id": submission.attempt_id,
+                            "provider_operation_id": (
+                                submission.provider_operation_id
+                            ),
+                            "operation_idempotency_key": operation[
+                                "idempotency_key"
+                            ],
+                            "callback_idempotency_key": (
+                                submission.idempotency_key
+                            ),
+                            "resume_token_hash": operation[
+                                "resume_token_hash"
+                            ],
+                            "schema_id": operation["expected_schema"],
+                            "schema_validated": admission[
+                                "schema_validated"
+                            ],
+                            "payload": _thaw_json_value(submission.payload),
+                            "payload_digest": submission.payload_digest,
+                            "received_at_unix_ms": received_at_unix_ms,
+                            "verified_by": submission.verified_by,
+                            "resume_admission": {
+                                "policy_reevaluated": admission[
+                                    "policy_reevaluated"
+                                ],
+                                "budget_reserved": admission[
+                                    "budget_reserved"
+                                ],
+                                "release_compatible": admission[
+                                    "release_compatible"
+                                ],
+                                "ownership_fenced": admission[
+                                    "ownership_fenced"
+                                ],
+                            },
+                        },
+                    )
+                    assert isinstance(callback_receipt, Mapping)
+                    resumable_execution.callback_receipt = callback_receipt
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 self._append_async_callback_diagnostic_event(
                     "ExternalCallbackReceived",
                     submission,
                     None,
                 )
+                if (
+                    resumable_execution is not None
+                    and resumable_execution.checkpoint is not None
+                    and resumable_execution.callback_receipt is not None
+                    and not resumable_execution.resume_dispatch_pending
+                    and self.accepted_run_executor is not None
+                ):
+                    resumable_execution.resume_dispatch_pending = True
+                    try:
+                        resume_future = self.accepted_run_executor.submit(
+                            self.advance_accepted_run,
+                            submission.run_id,
+                        )
+                        resumable_execution.resume_future = resume_future
+                        resume_future.add_done_callback(
+                            lambda completed_future, dispatched_run_id=submission.run_id: (
+                                self._accepted_run_resume_dispatch_done(
+                                    str(dispatched_run_id),
+                                    completed_future,
+                                )
+                            )
+                        )
+                    except RuntimeError as error:
+                        resumable_execution.resume_dispatch_pending = False
+                        paused_record = _freeze_json_value(
+                            "run control record",
+                            "record",
+                            {
+                                "operation": "resume_run",
+                                "status": "paused_callback_delivery",
+                                "reason": (
+                                    "accepted run executor rejected callback resume: "
+                                    f"{error}"
+                                ),
+                                "occurredAt": submission.received_at,
+                                "lastCursor": (
+                                    f"{submission.run_id}:"
+                                    f"{self._last_event_sequence(self._events_by_run_id[submission.run_id])}"
+                                ),
+                            },
+                        )
+                        self._run_controls_by_run_id[submission.run_id] = (
+                            *self._run_controls_by_run_id.get(
+                                submission.run_id,
+                                (),
+                            ),
+                            paused_record,
+                        )
+                        self._accepted_run_condition.notify_all()
+                        paused_payload = submission.response_payload()
+                        paused_payload["status"] = "paused_callback_delivery"
+                        return ServerResponse.json(202, paused_payload)
+                    self._accepted_run_condition.notify_all()
+                elif (
+                    resumable_execution is not None
+                    and resumable_execution.checkpoint is not None
+                    and resumable_execution.callback_receipt is not None
+                    and self.accepted_run_executor is None
+                ):
+                    paused_record = _freeze_json_value(
+                        "run control record",
+                        "record",
+                        {
+                            "operation": "resume_run",
+                            "status": "paused_callback_delivery",
+                            "reason": "accepted run callback resume executor is unavailable",
+                            "occurredAt": submission.received_at,
+                            "lastCursor": (
+                                f"{submission.run_id}:"
+                                f"{self._last_event_sequence(self._events_by_run_id[submission.run_id])}"
+                            ),
+                        },
+                    )
+                    self._run_controls_by_run_id[submission.run_id] = (
+                        *self._run_controls_by_run_id.get(
+                            submission.run_id,
+                            (),
+                        ),
+                        paused_record,
+                    )
+                    self._accepted_run_condition.notify_all()
+                    paused_payload = submission.response_payload()
+                    paused_payload["status"] = "paused_callback_delivery"
+                    return ServerResponse.json(202, paused_payload)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 if str(error) == "server async callback operation_id must match callback endpoint operation_id":
@@ -3066,6 +3553,17 @@ class GraphBlocksServerApp:
                     },
                 )
                 assert isinstance(pending_run, Mapping)
+                accepted_run_cancellation_token = CancellationToken()
+                accepted_run_journal = ExecutionJournal(run_id)
+                accepted_run_execution = _AcceptedRunExecution(
+                    runtime=InProcessRuntime(
+                        self.registry,
+                        cancellation_token=accepted_run_cancellation_token,
+                        journal_factory=lambda _run_id: accepted_run_journal,
+                    ),
+                    cancellation_token=accepted_run_cancellation_token,
+                    journal=accepted_run_journal,
+                )
                 deferred = (
                     self.defer_accepted_runs
                     and response_mode in {"accepted", "background"}
@@ -3152,6 +3650,9 @@ class GraphBlocksServerApp:
                     with self._accepted_run_condition:
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
+                        self._accepted_run_executions_by_run_id[
+                            run_id
+                        ] = accepted_run_execution
                         self._admitting_accepted_run_ids.discard(run_id)
                         self._accepted_run_condition.notify_all()
                 else:
@@ -3170,6 +3671,9 @@ class GraphBlocksServerApp:
                             )
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
+                        self._accepted_run_executions_by_run_id[
+                            run_id
+                        ] = accepted_run_execution
                 if not deferred:
                     completion = self.advance_accepted_run(
                         run_id,
@@ -3259,6 +3763,26 @@ class GraphBlocksServerApp:
                         ),
                         "duplicate": False,
                     }
+                execution = self._accepted_run_executions_by_run_id.get(run_id)
+                if (
+                    execution is not None
+                    and execution.checkpoint is not None
+                    and execution.callback_receipt is None
+                ):
+                    events = self._events_by_run_id[run_id]
+                    outputs = _thaw_json_value(
+                        execution.checkpoint.output_values
+                    )
+                    assert isinstance(outputs, dict)
+                    return {
+                        "runId": run_id,
+                        "status": "waiting_callback",
+                        "outputs": outputs,
+                        "lastCursor": (
+                            f"{run_id}:{self._last_event_sequence(events)}"
+                        ),
+                        "duplicate": False,
+                    }
                 if (
                     run_id not in self._pending_accepted_runs_by_run_id
                     and run_id not in self._advancing_accepted_runs_by_run_id
@@ -3270,6 +3794,83 @@ class GraphBlocksServerApp:
                 if remaining == 0.0:
                     raise TimeoutError()
                 self._accepted_run_condition.wait(remaining)
+
+    def _accepted_run_resume_dispatch_done(
+        self,
+        run_id: str,
+        future: Future[object],
+    ) -> None:
+        with self._accepted_run_condition:
+            execution = self._accepted_run_executions_by_run_id.get(run_id)
+            if execution is None or execution.resume_future is not future:
+                return
+            if run_id in self._advancing_accepted_runs_by_run_id:
+                return
+            execution.resume_future = None
+            execution.resume_dispatch_pending = False
+            if future.cancelled():
+                reason = "accepted run callback resume dispatch was cancelled before claim"
+            else:
+                error = future.exception()
+                if error is None:
+                    return
+                reason = f"accepted run callback resume failed before claim: {error}"
+            events = self._events_by_run_id.get(run_id, ())
+            pause_at = _utc_now_iso()
+            pause_datetime = datetime.fromisoformat(
+                f"{pause_at[:-1]}+00:00"
+            ).astimezone(timezone.utc)
+            timestamp_floors: list[str] = []
+            if events:
+                latest_event_metadata = events[-1].get("metadata", {})
+                latest_event_at = (
+                    latest_event_metadata.get("occurredAt")
+                    if isinstance(latest_event_metadata, Mapping)
+                    else None
+                )
+                timestamp_floors.append(
+                    _validate_iso_datetime(
+                        "accepted run callback resume dispatch",
+                        "latest_event_at",
+                        latest_event_at,
+                    )
+                )
+            controls = self._run_controls_by_run_id.get(run_id, ())
+            if controls:
+                timestamp_floors.append(
+                    _validate_iso_datetime(
+                        "accepted run callback resume dispatch",
+                        "latest_control_at",
+                        controls[-1].get("occurredAt"),
+                    )
+                )
+            for timestamp_floor in timestamp_floors:
+                floor_datetime = datetime.fromisoformat(
+                    f"{timestamp_floor[:-1]}+00:00"
+                    if timestamp_floor.endswith("Z")
+                    else timestamp_floor
+                ).astimezone(timezone.utc)
+                if pause_datetime < floor_datetime:
+                    pause_at = timestamp_floor
+                    pause_datetime = floor_datetime
+            paused_record = _freeze_json_value(
+                "run control record",
+                "record",
+                {
+                    "operation": "resume_run",
+                    "status": "paused_callback_delivery",
+                    "reason": reason,
+                    "occurredAt": pause_at,
+                    "lastCursor": (
+                        f"{run_id}:{self._last_event_sequence(events)}"
+                    ),
+                },
+            )
+            self._run_controls_by_run_id[run_id] = (
+                *self._run_controls_by_run_id.get(run_id, ()),
+                paused_record,
+            )
+            self._accepted_run_condition.notify_all()
 
     def advance_accepted_run(
         self,
@@ -3400,6 +4001,30 @@ class GraphBlocksServerApp:
                         "duplicate": False,
                     }
 
+            execution = self._accepted_run_executions_by_run_id.get(run_id)
+            if execution is None:
+                raise ValueError(
+                    f"pending accepted run {run_id!r} has no process-local execution state"
+                )
+            if (
+                execution.checkpoint is not None
+                and execution.callback_receipt is None
+            ):
+                events = self._events_by_run_id[run_id]
+                waiting_outputs = _thaw_json_value(
+                    execution.checkpoint.output_values
+                )
+                assert isinstance(waiting_outputs, dict)
+                return {
+                    "runId": run_id,
+                    "status": "waiting_callback",
+                    "outputs": waiting_outputs,
+                    "lastCursor": (
+                        f"{run_id}:{self._last_event_sequence(events)}"
+                    ),
+                    "duplicate": True,
+                }
+
             graph = _thaw_json_value(pending.get("graph"))
             inputs = _thaw_json_value(pending.get("inputs"))
             if not isinstance(graph, dict) or not isinstance(inputs, dict):
@@ -3422,15 +4047,48 @@ class GraphBlocksServerApp:
                 raise ValueError(
                     "pending accepted run turnId must be a string or null"
                 )
-            cancellation_token = CancellationToken()
+            cancellation_token = execution.cancellation_token
+            checkpoint = execution.checkpoint
+            callback_receipt = execution.callback_receipt
+            execution.resume_dispatch_pending = False
+            execution.resume_future = None
             self._advancing_accepted_runs_by_run_id[run_id] = cancellation_token
+            if checkpoint is not None and callback_receipt is not None:
+                operation_id = checkpoint.operation.get("operation_id")
+                submissions = (
+                    self._callbacks_by_operation_id.get(operation_id, ())
+                    if isinstance(operation_id, str)
+                    else ()
+                )
+                resume_submission = next(
+                    (
+                        submission
+                        for submission in reversed(submissions)
+                        if submission.run_id == run_id
+                    ),
+                    None,
+                )
+                if resume_submission is None:
+                    self._advancing_accepted_runs_by_run_id.pop(run_id, None)
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} validated receipt has no accepted callback"
+                    )
+                self._append_async_callback_diagnostic_event(
+                    "RunResuming",
+                    resume_submission,
+                    None,
+                    occurred_at=_utc_now_iso(),
+                )
 
         try:
             try:
-                result = InProcessRuntime(
-                    self.registry,
-                    cancellation_token=cancellation_token,
-                ).run(graph, inputs, run_id=run_id)
+                result = execution.runtime.run(
+                    graph,
+                    inputs,
+                    run_id=run_id,
+                    checkpoint=checkpoint,
+                    callback_receipt=callback_receipt,
+                )
                 result_status = result.status
                 frozen_result_outputs = _freeze_json_value(
                     "server accepted run completion",
@@ -3460,6 +4118,109 @@ class GraphBlocksServerApp:
                     "error": str(error),
                 }
 
+            if result_status == "waiting_callback":
+                assert result.checkpoint is not None
+                waiting_at = completed_at or _utc_now_iso()
+                waiting_datetime = datetime.fromisoformat(
+                    f"{waiting_at[:-1]}+00:00"
+                    if waiting_at.endswith("Z")
+                    else waiting_at
+                ).astimezone(timezone.utc)
+                if waiting_datetime < started_datetime:
+                    waiting_at = started_at
+                with self._accepted_run_condition:
+                    stored_result = self._accepted_run_results_by_run_id.get(
+                        run_id
+                    )
+                    if stored_result is not None:
+                        duplicate_result = _thaw_json_value(stored_result)
+                        assert isinstance(duplicate_result, dict)
+                        duplicate_result["duplicate"] = True
+                        return duplicate_result
+                    if run_id not in self._pending_accepted_runs_by_run_id:
+                        raise ValueError(
+                            f"pending accepted run {run_id!r} ended before checkpoint publication"
+                        )
+                    current_execution = self._accepted_run_executions_by_run_id.get(
+                        run_id
+                    )
+                    if current_execution is not execution:
+                        raise ValueError(
+                            f"pending accepted run {run_id!r} changed execution ownership"
+                        )
+                    execution.checkpoint = result.checkpoint
+                    execution.callback_receipt = None
+                    execution.resume_dispatch_pending = False
+                    events = self._events_by_run_id[run_id]
+                    sequence = self._last_event_sequence(events) + 1
+                    operation = result.checkpoint.operation
+                    waiting_event = ApplicationEvent.new(
+                        "AsyncOperationWaitingCallback",
+                        ApplicationEventMetadata(
+                            event_id=(
+                                f"{run_id}:async-wait:{result.checkpoint.checkpoint_id}"
+                            ),
+                            run_id=run_id,
+                            response_id=response_id,
+                            turn_id=turn_id,
+                            sequence=sequence,
+                            release_id=release_id,
+                            policy_snapshot_id=policy_snapshot_id,
+                            occurred_at=waiting_at,
+                            cursor=f"{run_id}:{sequence}",
+                            node_id=result.checkpoint.wait_node,
+                            operation_id=str(operation["operation_id"]),
+                            visibility="operator",
+                        ),
+                        payload={
+                            "status": "waiting_callback",
+                            "checkpointId": result.checkpoint.checkpoint_id,
+                            "operationId": operation["operation_id"],
+                            "nodeId": operation["node_id"],
+                            "attemptId": operation["attempt_id"],
+                            "providerOperationId": operation.get(
+                                "provider_operation_id"
+                            ),
+                            "expectedSchema": operation["expected_schema"],
+                        },
+                    )
+                    waiting_event_payload = _freeze_json_value(
+                        "application event stream",
+                        "event",
+                        {
+                            "kind": waiting_event.kind,
+                            "metadata": {
+                                "eventId": waiting_event.metadata.event_id,
+                                "runId": waiting_event.metadata.run_id,
+                                "responseId": waiting_event.metadata.response_id,
+                                "turnId": waiting_event.metadata.turn_id,
+                                "sequence": waiting_event.metadata.sequence,
+                                "cursor": waiting_event.metadata.cursor,
+                                "releaseId": waiting_event.metadata.release_id,
+                                "policySnapshotId": waiting_event.metadata.policy_snapshot_id,
+                                "occurredAt": waiting_event.metadata.occurred_at,
+                                "graphId": waiting_event.metadata.graph_id,
+                                "nodeId": waiting_event.metadata.node_id,
+                                "operationId": waiting_event.metadata.operation_id,
+                                "visibility": waiting_event.metadata.visibility,
+                            },
+                            "payload": dict(waiting_event.payload),
+                        },
+                    )
+                    assert isinstance(waiting_event_payload, Mapping)
+                    self._events_by_run_id[run_id] = (
+                        *events,
+                        waiting_event_payload,
+                    )
+                    self._accepted_run_condition.notify_all()
+                    return {
+                        "runId": run_id,
+                        "status": "waiting_callback",
+                        "outputs": result_outputs,
+                        "lastCursor": f"{run_id}:{sequence}",
+                        "duplicate": False,
+                    }
+
             terminal_at = completed_at or _utc_now_iso()
             terminal_datetime = datetime.fromisoformat(
                 f"{terminal_at[:-1]}+00:00"
@@ -3478,6 +4239,26 @@ class GraphBlocksServerApp:
                     return duplicate_result
 
                 events = self._events_by_run_id[run_id]
+                latest_event_metadata = (
+                    events[-1].get("metadata", {}) if events else {}
+                )
+                latest_event_at = (
+                    latest_event_metadata.get("occurredAt")
+                    if isinstance(latest_event_metadata, Mapping)
+                    else None
+                )
+                latest_event_at = _validate_iso_datetime(
+                    "server accepted run completion",
+                    "latest_event_at",
+                    latest_event_at,
+                )
+                latest_event_datetime = datetime.fromisoformat(
+                    f"{latest_event_at[:-1]}+00:00"
+                    if latest_event_at.endswith("Z")
+                    else latest_event_at
+                ).astimezone(timezone.utc)
+                if terminal_datetime < latest_event_datetime:
+                    terminal_at = latest_event_at
                 sequence = self._last_event_sequence(events) + 1
                 terminal_event = ApplicationEvent.new(
                     {
@@ -3525,6 +4306,7 @@ class GraphBlocksServerApp:
                 assert isinstance(frozen_terminal_event, Mapping)
                 self._events_by_run_id[run_id] = (*events, frozen_terminal_event)
                 self._pending_accepted_runs_by_run_id.pop(run_id, None)
+                self._accepted_run_executions_by_run_id.pop(run_id, None)
                 completion: dict[str, object] = {
                     "runId": run_id,
                     "status": result_status,
@@ -3655,22 +4437,40 @@ class GraphBlocksServerApp:
             if isinstance(event_kind, str) and event_kind in terminal_states:
                 state = terminal_states[event_kind]
                 completed_at = updated_at
+            elif event_kind == "AsyncOperationWaitingCallback":
+                state = "waiting_callback"
+            elif event_kind == "RunResuming":
+                state = "resuming"
 
         controls = self._run_controls_by_run_id.get(run_id, ())
         terminal_statuses = {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}
         if controls and state not in terminal_statuses:
             latest_control = controls[-1]
-            control_status = latest_control.get("status")
-            if isinstance(control_status, str) and control_status:
-                state = control_status
-            control_occurred_at = latest_control.get("occurredAt")
-            if isinstance(control_occurred_at, str) and control_occurred_at:
-                updated_at = control_occurred_at
-                if control_status in {"cancelled", "expired"}:
-                    completed_at = control_occurred_at
+            control_cursor = latest_control.get("lastCursor")
+            control_sequence: int | None = None
+            if isinstance(control_cursor, str):
+                cursor_prefix, separator, cursor_sequence = control_cursor.rpartition(
+                    ":"
+                )
+                if (
+                    separator
+                    and cursor_prefix == run_id
+                    and cursor_sequence.isdigit()
+                ):
+                    control_sequence = int(cursor_sequence)
+            if control_sequence is None or control_sequence >= last_sequence:
+                control_status = latest_control.get("status")
+                if isinstance(control_status, str) and control_status:
+                    state = control_status
+                control_occurred_at = latest_control.get("occurredAt")
+                if isinstance(control_occurred_at, str) and control_occurred_at:
+                    updated_at = control_occurred_at
+                    if control_status in {"cancelled", "expired"}:
+                        completed_at = control_occurred_at
 
         waiting_on: list[dict[str, object]] = []
         active_operations: list[str] = []
+        current_checkpoint_operation_id: str | None = None
         if controls and state in {"paused_operator", "paused_budget", "paused_policy", "paused_callback_delivery"}:
             latest_control = controls[-1]
             wait_kind_by_state = {
@@ -3684,6 +4484,25 @@ class GraphBlocksServerApp:
             if isinstance(reason, str) and reason:
                 waiting["reason"] = reason
             waiting_on.append(waiting)
+        execution = self._accepted_run_executions_by_run_id.get(run_id)
+        if (
+            execution is not None
+            and execution.checkpoint is not None
+            and state not in terminal_statuses
+        ):
+            operation = execution.checkpoint.operation
+            operation_id = operation.get("operation_id")
+            if isinstance(operation_id, str):
+                current_checkpoint_operation_id = operation_id
+                active_operations.append(operation_id)
+                if state == "waiting_callback":
+                    waiting = {
+                        "kind": "callback",
+                        "operationId": operation_id,
+                        "nodeId": operation["node_id"],
+                        "attemptId": operation["attempt_id"],
+                    }
+                    waiting_on.append(waiting)
         if state not in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
             for operation_id in sorted(self._callbacks_by_operation_id):
                 submissions = self._callbacks_by_operation_id[operation_id]
@@ -3692,7 +4511,13 @@ class GraphBlocksServerApp:
                 submission = submissions[-1]
                 if submission.run_id != run_id:
                     continue
-                if state in {"running", "waiting_callback"}:
+                if (
+                    current_checkpoint_operation_id is not None
+                    and submission.operation_id
+                    != current_checkpoint_operation_id
+                ):
+                    continue
+                if not active_operations and state in {"running", "waiting_callback"}:
                     waiting: dict[str, object] = {
                         "kind": "callback",
                         "operationId": submission.operation_id,
@@ -3702,7 +4527,8 @@ class GraphBlocksServerApp:
                     if submission.attempt_id is not None:
                         waiting["attemptId"] = submission.attempt_id
                     waiting_on.append(waiting)
-                active_operations.append(submission.operation_id)
+                if submission.operation_id not in active_operations:
+                    active_operations.append(submission.operation_id)
             if waiting_on and state == "running":
                 state = "waiting_callback"
 
@@ -3731,6 +4557,38 @@ class GraphBlocksServerApp:
         actor: PrincipalRef | None,
     ) -> ServerResponse:
         occurred_at = _validate_iso_datetime("run control request", "occurred_at", occurred_at)
+        if events:
+            latest_event_metadata = events[-1].get("metadata", {})
+            latest_event_at = (
+                latest_event_metadata.get("occurredAt")
+                if isinstance(latest_event_metadata, Mapping)
+                else None
+            )
+            latest_event_at = _validate_iso_datetime(
+                "run control request",
+                "latest_event_at",
+                latest_event_at,
+            )
+            control_datetime = datetime.fromisoformat(
+                f"{occurred_at[:-1]}+00:00"
+                if occurred_at.endswith("Z")
+                else occurred_at
+            ).astimezone(timezone.utc)
+            latest_event_datetime = datetime.fromisoformat(
+                f"{latest_event_at[:-1]}+00:00"
+                if latest_event_at.endswith("Z")
+                else latest_event_at
+            ).astimezone(timezone.utc)
+            if control_datetime < latest_event_datetime:
+                timestamp_error = (
+                    "run control request occurred_at must not be before run start"
+                    if len(events) == 1
+                    and events[0].get("kind") == "RunStarted"
+                    else "run control request occurred_at must not precede latest run event"
+                )
+                raise ValueError(
+                    timestamp_error
+                )
         control_states = {
             "cancel_run": "cancelled",
             "pause_run": "paused_operator",
@@ -3789,6 +4647,27 @@ class GraphBlocksServerApp:
                 raise ValueError("run control request reason must not contain surrounding whitespace")
         existing = self._run_controls_by_run_id.get(run_id, ())
         if existing:
+            latest_control_at = existing[-1].get("occurredAt")
+            latest_control_at = _validate_iso_datetime(
+                "run control request",
+                "latest_control_at",
+                latest_control_at,
+            )
+            requested_control_datetime = datetime.fromisoformat(
+                f"{occurred_at[:-1]}+00:00"
+                if occurred_at.endswith("Z")
+                else occurred_at
+            ).astimezone(timezone.utc)
+            latest_control_datetime = datetime.fromisoformat(
+                f"{latest_control_at[:-1]}+00:00"
+                if latest_control_at.endswith("Z")
+                else latest_control_at
+            ).astimezone(timezone.utc)
+            if requested_control_datetime < latest_control_datetime:
+                raise ValueError(
+                    "run control request occurred_at must not precede latest run control"
+                )
+        if existing:
             latest_control = existing[-1]
             current_status = latest_control.get("status")
             if isinstance(current_status, str) and status == current_status:
@@ -3836,16 +4715,16 @@ class GraphBlocksServerApp:
                 },
             )
         if operation == "resume_run":
-            current_run_state = "running"
-            if existing:
-                latest_status = existing[-1].get("status")
-                if isinstance(latest_status, str):
-                    current_run_state = latest_status
-            else:
-                for submissions in self._callbacks_by_operation_id.values():
-                    if submissions and submissions[-1].run_id == run_id:
-                        current_run_state = "waiting_callback"
-                        break
+            projected_state = self._run_status_payload(
+                run_id,
+                events,
+                include_ok=False,
+            ).get("state")
+            current_run_state = (
+                projected_state
+                if isinstance(projected_state, str)
+                else "running"
+            )
             if current_run_state not in {
                 "waiting_input",
                 "waiting_approval",
@@ -3863,6 +4742,54 @@ class GraphBlocksServerApp:
                         "runId": run_id,
                         "state": current_run_state,
                         "error": f"run {run_id} is not paused or waiting and cannot be resumed",
+                    },
+                )
+            execution = self._accepted_run_executions_by_run_id.get(run_id)
+            if (
+                execution is not None
+                and execution.checkpoint is not None
+                and execution.resume_dispatch_pending
+            ):
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "state": current_run_state,
+                        "error": f"run {run_id} callback resume is already dispatched",
+                    },
+                )
+            if (
+                execution is not None
+                and execution.checkpoint is not None
+                and execution.callback_receipt is None
+            ):
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "state": current_run_state,
+                        "error": (
+                            f"run {run_id} requires a validated callback receipt before resume"
+                        ),
+                    },
+                )
+            if (
+                execution is not None
+                and execution.checkpoint is not None
+                and execution.callback_receipt is not None
+                and self.accepted_run_executor is None
+            ):
+                return ServerResponse.json(
+                    503,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "state": current_run_state,
+                        "error": (
+                            f"run {run_id} callback resume executor is unavailable"
+                        ),
                     },
                 )
         pending_run = self._pending_accepted_runs_by_run_id.get(run_id)
@@ -3954,6 +4881,7 @@ class GraphBlocksServerApp:
             events = (*events, frozen_terminal_event)
             self._events_by_run_id[run_id] = events
             self._pending_accepted_runs_by_run_id.pop(run_id, None)
+            self._accepted_run_executions_by_run_id.pop(run_id, None)
             active_token = self._advancing_accepted_runs_by_run_id.get(run_id)
             if active_token is not None:
                 active_token.cancel(reason or status)
@@ -3976,12 +4904,61 @@ class GraphBlocksServerApp:
             and pending_run is not None
             and self.accepted_run_executor is not None
         ):
+            checkpoint_execution = self._accepted_run_executions_by_run_id.get(
+                run_id
+            )
+            resume_submission: ServerAsyncCallbackSubmission | None = None
+            if (
+                checkpoint_execution is not None
+                and checkpoint_execution.checkpoint is not None
+                and checkpoint_execution.callback_receipt is not None
+            ):
+                operation_id = checkpoint_execution.checkpoint.operation.get(
+                    "operation_id"
+                )
+                submissions = (
+                    self._callbacks_by_operation_id.get(operation_id, ())
+                    if isinstance(operation_id, str)
+                    else ()
+                )
+                resume_submission = next(
+                    (
+                        submission
+                        for submission in reversed(submissions)
+                        if submission.run_id == run_id
+                    ),
+                    None,
+                )
+                if resume_submission is None:
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "runId": run_id,
+                            "error": (
+                                f"run {run_id} validated callback receipt has no accepted submission"
+                            ),
+                        },
+                    )
+                checkpoint_execution.resume_dispatch_pending = True
             try:
-                self.accepted_run_executor.submit(
+                resume_future = self.accepted_run_executor.submit(
                     self.advance_accepted_run,
                     run_id,
                 )
+                if checkpoint_execution is not None:
+                    checkpoint_execution.resume_future = resume_future
+                    resume_future.add_done_callback(
+                        lambda completed_future, dispatched_run_id=run_id: (
+                            self._accepted_run_resume_dispatch_done(
+                                dispatched_run_id,
+                                completed_future,
+                            )
+                        )
+                    )
             except RuntimeError as error:
+                if checkpoint_execution is not None:
+                    checkpoint_execution.resume_dispatch_pending = False
                 return ServerResponse.json(
                     503,
                     {
@@ -4261,12 +5238,42 @@ class GraphBlocksServerApp:
         reason: str | None,
         *,
         status: str | None = None,
+        occurred_at: str | None = None,
     ) -> None:
         if submission.run_id is None:
             return
         events = self._events_by_run_id.get(submission.run_id)
         if events is None:
             return
+        event_occurred_at = _validate_iso_datetime(
+            "async callback diagnostic event",
+            "occurred_at",
+            occurred_at or submission.received_at,
+        )
+        if events:
+            latest_event_metadata = events[-1].get("metadata", {})
+            latest_event_at = (
+                latest_event_metadata.get("occurredAt")
+                if isinstance(latest_event_metadata, Mapping)
+                else None
+            )
+            latest_event_at = _validate_iso_datetime(
+                "async callback diagnostic event",
+                "latest_event_at",
+                latest_event_at,
+            )
+            event_datetime = datetime.fromisoformat(
+                f"{event_occurred_at[:-1]}+00:00"
+                if event_occurred_at.endswith("Z")
+                else event_occurred_at
+            ).astimezone(timezone.utc)
+            latest_event_datetime = datetime.fromisoformat(
+                f"{latest_event_at[:-1]}+00:00"
+                if latest_event_at.endswith("Z")
+                else latest_event_at
+            ).astimezone(timezone.utc)
+            if event_datetime < latest_event_datetime:
+                event_occurred_at = latest_event_at
         sequence = self._last_event_sequence(events, owner="async callback diagnostic event") + 1
         run_status = self._run_status_payload(submission.run_id, events, include_ok=False)
         release_id = run_status.get("releaseId")
@@ -4297,7 +5304,7 @@ class GraphBlocksServerApp:
                 sequence=sequence,
                 release_id=release_id,
                 policy_snapshot_id=submission.policy_snapshot_id,
-                occurred_at=submission.received_at,
+                occurred_at=event_occurred_at,
                 cursor=f"{submission.run_id}:{sequence}",
                 node_id=submission.node_id,
                 operation_id=submission.operation_id,
@@ -4748,6 +5755,7 @@ __all__ = [
     "GraphBlocksServerApp",
     "ServerAuthDecision",
     "ServerAsyncCallbackRejection",
+    "ServerAsyncCallbackResumeAdmissionHook",
     "ServerAsyncCallbackSubmission",
     "ServerAuthHook",
     "ServerAuthRequest",

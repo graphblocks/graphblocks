@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import replace
 from itertools import permutations
 import json
 import math
 from threading import Barrier, Event, Lock, Thread
+from time import monotonic
 
 import graphblocks
 import pytest
@@ -848,6 +850,890 @@ def test_server_app_executor_advances_accepted_run_after_client_detach() -> None
     assert not hasattr(app, "_accepted_run_futures_by_run_id")
 
 
+def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() -> None:
+    prepare_calls = 0
+    consume_calls = 0
+    consume_started = Event()
+    release_consume = Event()
+
+    def prepare(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return {"subject": {"change": "patch-1"}}
+
+    def consume(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal consume_calls
+        consume_calls += 1
+        consume_started.set()
+        assert release_consume.wait(timeout=5)
+        return {"result": inputs["callback"]}
+
+    class AllowResume:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: graphblocks.RuntimeCheckpoint,
+        ) -> dict[str, object]:
+            assert submission.verified_by == "callback-relay"
+            assert checkpoint.operation["expected_schema"] == "schemas/CICallback@1"
+            return {
+                "schema_validated": True,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    class DenyResume:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: graphblocks.RuntimeCheckpoint,
+        ) -> dict[str, object]:
+            return {
+                "schema_validated": False,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    registry = graphblocks.stdlib_registry()
+    registry.register("test.prepare@1", prepare)
+    registry.register("test.consume-callback@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-callback-checkpoint-resume"},
+        "spec": {
+            "nodes": {
+                "prepare": {"block": "test.prepare@1"},
+                "start": {
+                    "block": "async.start_operation@1",
+                    "inputs": {"subject": "prepare.subject"},
+                    "config": {
+                        "operationId": "operation-server-resume-1",
+                        "runId": "run-server-resume-1",
+                        "nodeId": "start",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": "sha256:" + "a" * 64,
+                        "idempotencyKey": "operation-idem-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_750_000_000_000,
+                        "submittedAtUnixMs": 1_750_000_001_000,
+                        "timeoutMs": 100_000_000_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000_000_000,
+                        "idempotencyKey": "operation-idem-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "consume": {
+                    "block": "test.consume-callback@1",
+                    "inputs": {"callback": "wait.callback"},
+                    "outputs": {"result": "$output.result"},
+                },
+            }
+        },
+    }
+    auth_hook = StaticBearerAuthHook(
+        {
+            "token-1": PrincipalRef("callback-relay"),
+            "token-2": PrincipalRef("other-callback-relay"),
+        }
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        app = GraphBlocksServerApp(
+            registry=registry,
+            auth_hook=auth_hook,
+            require_async_callback_authentication=True,
+            defer_accepted_runs=True,
+            accepted_run_executor=executor,
+            async_callback_resume_admission_hook=AllowResume(),
+        )
+        accepted = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": graph,
+                        "runId": "run-server-resume-1",
+                        "responseId": "response-server-resume-1",
+                        "releaseId": "release-server-resume-1",
+                        "policySnapshotId": "policy-server-resume-1",
+                        "responseMode": "background",
+                        "occurredAt": "2026-07-10T00:00:00Z",
+                    }
+                ).encode("utf-8"),
+                )
+            )
+        assert accepted.status_code == 202, json.loads(
+            accepted.body.decode("utf-8")
+        )
+        deadline = monotonic() + 5
+        with app._accepted_run_condition:
+            while not any(
+                event["kind"] == "AsyncOperationWaitingCallback"
+                for event in app._events_by_run_id.get(
+                    "run-server-resume-1",
+                    (),
+                )
+            ):
+                remaining = deadline - monotonic()
+                assert remaining > 0
+                app._accepted_run_condition.wait(remaining)
+        waiting_status = app.handle(
+            ServerRequest(
+                method="GET",
+                path="/runs/run-server-resume-1",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+            )
+        )
+        waiting_occurred_at = app._events_by_run_id[
+            "run-server-resume-1"
+        ][-1]["metadata"]["occurredAt"]
+        assert isinstance(waiting_occurred_at, str)
+        callback_request = ServerRequest(
+            method="POST",
+            path="/callbacks/operation-server-resume-1",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "delivery-idem-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "callback-server-resume-1",
+                    "runId": "run-server-resume-1",
+                    "nodeId": "start",
+                    "attemptId": "attempt-1",
+                    "providerOperationId": "provider-operation-1",
+                    "policySnapshotId": "policy-server-resume-1",
+                    "payload": {"status": "completed", "conclusion": "success"},
+                }
+            ).encode("utf-8"),
+            requested_at=waiting_occurred_at,
+        )
+        stale_callback = app.handle(
+            replace(
+                callback_request,
+                requested_at="2026-07-10T00:00:00Z",
+            )
+        )
+        expired_callback = app.handle(
+            replace(
+                callback_request,
+                requested_at="2030-01-01T00:00:00Z",
+            )
+        )
+        app.async_callback_resume_admission_hook = None
+        missing_admission = app.handle(callback_request)
+        app.async_callback_resume_admission_hook = DenyResume()
+        denied_admission = app.handle(callback_request)
+        app.async_callback_resume_admission_hook = AllowResume()
+        callback = app.handle(callback_request)
+        assert consume_started.wait(timeout=5)
+        duplicate = app.handle(callback_request)
+        release_consume.set()
+        completed = app.wait_for_accepted_run(
+            "run-server-resume-1",
+            timeout=5,
+        )
+        terminal_duplicate = app.handle(callback_request)
+        different_principal_replay = app.handle(
+            replace(
+                callback_request,
+                headers={
+                    "Authorization": "Bearer token-2",
+                    "GraphBlocks-Idempotency-Key": "delivery-idem-1",
+                },
+            )
+        )
+        different_policy_body = json.loads(
+            callback_request.body.decode("utf-8")
+        )
+        different_policy_body["policySnapshotId"] = "different-policy"
+        different_policy_replay = app.handle(
+            replace(
+                callback_request,
+                body=json.dumps(different_policy_body).encode("utf-8"),
+            )
+        )
+
+    assert accepted.status_code == 202
+    assert json.loads(waiting_status.body.decode("utf-8"))["state"] == (
+        "waiting_callback"
+    )
+    assert callback.status_code == 202
+    assert stale_callback.status_code == 409
+    assert "precede callback checkpoint publication" in json.loads(
+        stale_callback.body.decode("utf-8")
+    )["error"]
+    assert expired_callback.status_code == 409
+    assert "operation expiration" in json.loads(
+        expired_callback.body.decode("utf-8")
+    )["error"]
+    assert missing_admission.status_code == 503
+    assert denied_admission.status_code == 403
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8"))["status"] == "duplicate"
+    assert completed["status"] == "succeeded"
+    assert completed["outputs"] == {
+        "result": {"status": "completed", "conclusion": "success"}
+    }
+    assert terminal_duplicate.status_code == 200
+    assert json.loads(terminal_duplicate.body.decode("utf-8"))["status"] == (
+        "duplicate"
+    )
+    assert different_principal_replay.status_code == 409
+    assert different_policy_replay.status_code == 409
+    assert prepare_calls == 1
+    assert consume_calls == 1
+    server_resume_event_kinds = [
+        event["kind"]
+        for event in app._events_by_run_id["run-server-resume-1"]
+    ]
+    assert server_resume_event_kinds[:5] == [
+        "RunStarted",
+        "AsyncOperationWaitingCallback",
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "RunSucceeded",
+    ]
+    assert server_resume_event_kinds[5:] == [
+        "LateExternalCallbackReceived",
+        "LateExternalCallbackReceived",
+    ]
+
+
+def test_server_app_rejects_callback_before_wait_checkpoint_is_published() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("callback-relay")}
+        ),
+        require_async_callback_authentication=True,
+        defer_accepted_runs=True,
+    )
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "callback-before-checkpoint"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-callback-before-checkpoint-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/operation-before-checkpoint-1",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "delivery-before-checkpoint-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "callback-before-checkpoint-1",
+                    "runId": "run-callback-before-checkpoint-1",
+                    "nodeId": "future-operation-node",
+                    "attemptId": "attempt-1",
+                    "policySnapshotId": "local",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-10T00:00:01Z",
+        )
+    )
+
+    assert accepted.status_code == 202
+    assert callback.status_code == 409
+    assert "has not published a callback checkpoint" in json.loads(
+        callback.body.decode("utf-8")
+    )["error"]
+    assert app.callback_submissions("operation-before-checkpoint-1") == ()
+    assert [
+        event["kind"]
+        for event in app._events_by_run_id[
+            "run-callback-before-checkpoint-1"
+        ]
+    ] == ["RunStarted"]
+
+
+def test_server_app_requires_receipt_for_manual_resume_and_preserves_rejected_dispatch() -> None:
+    class AllowResume:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: graphblocks.RuntimeCheckpoint,
+        ) -> dict[str, object]:
+            return {
+                "schema_validated": True,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    class RejectingExecutor(Executor):
+        def submit(
+            self,
+            fn: object,
+            /,
+            *args: object,
+            **kwargs: object,
+        ) -> Future[object]:
+            raise RuntimeError("resume worker pool is shut down")
+
+    queued_resume_future: Future[object] = Future()
+
+    class QueuedExecutor(Executor):
+        def submit(
+            self,
+            fn: object,
+            /,
+            *args: object,
+            **kwargs: object,
+        ) -> Future[object]:
+            return queued_resume_future
+
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("callback-relay")}
+        ),
+        require_async_callback_authentication=True,
+        defer_accepted_runs=True,
+        async_callback_resume_admission_hook=AllowResume(),
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "callback-resume-dispatch-rejection"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "operation-rejected-resume-1",
+                        "runId": "run-rejected-resume-1",
+                        "nodeId": "start",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": "sha256:" + "a" * 64,
+                        "idempotencyKey": "operation-idem-rejected-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_750_000_000_000,
+                        "submittedAtUnixMs": 1_750_000_001_000,
+                        "timeoutMs": 100_000_000_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000_000_000,
+                        "idempotencyKey": "operation-idem-rejected-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+            }
+        },
+    }
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "runId": "run-rejected-resume-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    waiting = app.advance_accepted_run("run-rejected-resume-1")
+    waiting_occurred_at = app._events_by_run_id[
+        "run-rejected-resume-1"
+    ][-1]["metadata"]["occurredAt"]
+    assert isinstance(waiting_occurred_at, str)
+    manual_resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-rejected-resume-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "resume without callback"}).encode(
+                "utf-8"
+            ),
+            requested_at=waiting_occurred_at,
+        )
+    )
+    app.accepted_run_executor = RejectingExecutor()
+    callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/operation-rejected-resume-1",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "delivery-idem-rejected-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "callback-rejected-resume-1",
+                    "runId": "run-rejected-resume-1",
+                    "nodeId": "start",
+                    "attemptId": "attempt-1",
+                    "providerOperationId": "provider-operation-1",
+                    "policySnapshotId": "local",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at=waiting_occurred_at,
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-rejected-resume-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    app.accepted_run_executor = None
+    unavailable_resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-rejected-resume-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "recover accepted callback"}).encode(
+                "utf-8"
+            ),
+            requested_at=waiting_occurred_at,
+        )
+    )
+    app.accepted_run_executor = QueuedExecutor()
+    queued_resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-rejected-resume-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "queue accepted callback"}).encode(
+                "utf-8"
+            ),
+            requested_at=waiting_occurred_at,
+        )
+    )
+    assert queued_resume_future.cancel()
+    cancelled_dispatch_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-rejected-resume-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    cancelled_dispatch_at = json.loads(
+        cancelled_dispatch_status.body.decode("utf-8")
+    )["updatedAt"]
+    assert isinstance(cancelled_dispatch_at, str)
+    with ThreadPoolExecutor(max_workers=1) as recovery_executor:
+        app.accepted_run_executor = recovery_executor
+        recovery_resume = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-rejected-resume-1/resume",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {"reason": "recover accepted callback"}
+                ).encode("utf-8"),
+                requested_at=cancelled_dispatch_at,
+            )
+        )
+        recovered = app.wait_for_accepted_run(
+            "run-rejected-resume-1",
+            timeout=5,
+        )
+
+    assert accepted.status_code == 202
+    assert waiting["status"] == "waiting_callback"
+    assert manual_resume.status_code == 409
+    assert "validated callback receipt" in json.loads(
+        manual_resume.body.decode("utf-8")
+    )["error"]
+    assert callback.status_code == 202
+    assert json.loads(callback.body.decode("utf-8"))["status"] == (
+        "paused_callback_delivery"
+    )
+    assert json.loads(status.body.decode("utf-8"))["state"] == (
+        "paused_callback_delivery"
+    )
+    assert unavailable_resume.status_code == 503
+    assert "executor is unavailable" in json.loads(
+        unavailable_resume.body.decode("utf-8")
+    )["error"]
+    assert queued_resume.status_code == 202
+    assert json.loads(cancelled_dispatch_status.body.decode("utf-8"))[
+        "state"
+    ] == "paused_callback_delivery"
+    assert recovery_resume.status_code == 202
+    assert recovered["status"] == "succeeded"
+    assert len(app.callback_submissions("operation-rejected-resume-1")) == 1
+    assert app.pending_accepted_run_ids() == ()
+    assert [
+        event["kind"]
+        for event in app._events_by_run_id["run-rejected-resume-1"]
+    ] == [
+        "RunStarted",
+        "AsyncOperationWaitingCallback",
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "RunSucceeded",
+    ]
+
+
+def test_server_app_clears_callback_receipt_before_sequential_wait() -> None:
+    class AllowResume:
+        def admit(
+            self,
+            submission: ServerAsyncCallbackSubmission,
+            checkpoint: graphblocks.RuntimeCheckpoint,
+        ) -> dict[str, object]:
+            return {
+                "schema_validated": True,
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            }
+
+    registry = graphblocks.stdlib_registry()
+    registry.register(
+        "test.finish-callback@1",
+        lambda inputs, config, context: {"result": inputs["callback"]},
+    )
+    resume_config = {
+        "requirePolicyReevaluation": True,
+        "requireBudgetReservation": True,
+        "requireReleaseCompatibility": True,
+        "requireOwnershipFence": True,
+    }
+    first_operation_config = {
+        "operationId": "operation-sequential-1",
+        "runId": "run-sequential-waits-1",
+        "nodeId": "start1",
+        "attemptId": "attempt-1",
+        "kind": "ci_job",
+        "providerOperationId": "provider-sequential-1",
+        "resumeTokenHash": "sha256:" + "a" * 64,
+        "idempotencyKey": "operation-idem-sequential-1",
+        "expectedSchema": "schemas/CICallback@1",
+        "createdAtUnixMs": 1_750_000_000_000,
+        "submittedAtUnixMs": 1_750_000_001_000,
+        "timeoutMs": 100_000_000_000,
+        "resume": resume_config,
+        "attemptFencing": True,
+    }
+    second_operation_config = {
+        **first_operation_config,
+        "operationId": "operation-sequential-2",
+        "nodeId": "start2",
+        "providerOperationId": "provider-sequential-2",
+        "idempotencyKey": "operation-idem-sequential-2",
+    }
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "sequential-callback-waits"},
+        "spec": {
+            "nodes": {
+                "start1": {
+                    "block": "async.start_operation@1",
+                    "config": first_operation_config,
+                },
+                "wait1": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start1.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000_000_000,
+                        "idempotencyKey": "operation-idem-sequential-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": resume_config,
+                        "attemptFencing": True,
+                    },
+                },
+                "start2": {
+                    "block": "async.start_operation@1",
+                    "inputs": {"subject": "wait1.callback"},
+                    "config": second_operation_config,
+                },
+                "wait2": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start2.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 100_000_000_000,
+                        "idempotencyKey": "operation-idem-sequential-2",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": resume_config,
+                        "attemptFencing": True,
+                    },
+                },
+                "finish": {
+                    "block": "test.finish-callback@1",
+                    "inputs": {"callback": "wait2.callback"},
+                    "outputs": {"result": "$output.result"},
+                },
+            }
+        },
+    }
+    app = GraphBlocksServerApp(
+        registry=registry,
+        auth_hook=StaticBearerAuthHook(
+            {"token-1": PrincipalRef("callback-relay")}
+        ),
+        require_async_callback_authentication=True,
+        defer_accepted_runs=True,
+        async_callback_resume_admission_hook=AllowResume(),
+    )
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "runId": "run-sequential-waits-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    first_wait = app.advance_accepted_run("run-sequential-waits-1")
+    first_wait_at = app._events_by_run_id["run-sequential-waits-1"][-1][
+        "metadata"
+    ]["occurredAt"]
+    assert isinstance(first_wait_at, str)
+    first_callback = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/operation-sequential-1",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "delivery-sequential-1",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callbackId": "callback-sequential-1",
+                    "runId": "run-sequential-waits-1",
+                    "nodeId": "start1",
+                    "attemptId": "attempt-1",
+                    "providerOperationId": "provider-sequential-1",
+                    "policySnapshotId": "local",
+                    "payload": {"step": 1},
+                }
+            ).encode("utf-8"),
+            requested_at=first_wait_at,
+        )
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        app.accepted_run_executor = executor
+        first_resume = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-sequential-waits-1/resume",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps({"reason": "continue to second wait"}).encode(
+                    "utf-8"
+                ),
+                requested_at=first_wait_at,
+            )
+        )
+        second_wait = app.wait_for_accepted_run(
+            "run-sequential-waits-1",
+            timeout=5,
+        )
+        duplicate_advance = app.advance_accepted_run(
+            "run-sequential-waits-1"
+        )
+        execution = app._accepted_run_executions_by_run_id[
+            "run-sequential-waits-1"
+        ]
+        assert execution.checkpoint is not None
+        assert execution.callback_receipt is None
+        assert execution.checkpoint.operation["operation_id"] == (
+            "operation-sequential-2"
+        )
+        second_wait_status = app.handle(
+            ServerRequest(
+                method="GET",
+                path="/runs/run-sequential-waits-1",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+            )
+        )
+        second_wait_at = app._events_by_run_id[
+            "run-sequential-waits-1"
+        ][-1]["metadata"]["occurredAt"]
+        assert isinstance(second_wait_at, str)
+        second_callback = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/operation-sequential-2",
+                headers={
+                    "Authorization": "Bearer token-1",
+                    "GraphBlocks-Idempotency-Key": "delivery-sequential-2",
+                },
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callbackId": "callback-sequential-2",
+                        "runId": "run-sequential-waits-1",
+                        "nodeId": "start2",
+                        "attemptId": "attempt-1",
+                        "providerOperationId": "provider-sequential-2",
+                        "policySnapshotId": "local",
+                        "payload": {"step": 2},
+                    }
+                ).encode("utf-8"),
+                requested_at=second_wait_at,
+            )
+        )
+        completed = app.wait_for_accepted_run(
+            "run-sequential-waits-1",
+            timeout=5,
+        )
+
+    assert accepted.status_code == 202
+    assert first_wait["status"] == "waiting_callback"
+    assert json.loads(first_callback.body.decode("utf-8"))["status"] == (
+        "paused_callback_delivery"
+    )
+    assert first_resume.status_code == 202
+    assert second_wait["status"] == "waiting_callback"
+    assert duplicate_advance["status"] == "waiting_callback"
+    assert json.loads(second_wait_status.body.decode("utf-8"))["state"] == (
+        "waiting_callback"
+    )
+    assert json.loads(second_wait_status.body.decode("utf-8"))[
+        "activeOperations"
+    ] == ["operation-sequential-2"]
+    assert second_callback.status_code == 202
+    assert completed["status"] == "succeeded"
+    assert completed["outputs"] == {"result": {"step": 2}}
+    assert [
+        event["kind"]
+        for event in app._events_by_run_id["run-sequential-waits-1"]
+    ] == [
+        "RunStarted",
+        "AsyncOperationWaitingCallback",
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "AsyncOperationWaitingCallback",
+        "ExternalCallbackReceived",
+        "RunResuming",
+        "RunSucceeded",
+    ]
+
+
 def test_server_app_executor_rejection_does_not_leave_ghost_run() -> None:
     class RejectingExecutor(Executor):
         def submit(self, fn: object, /, *args: object, **kwargs: object) -> Future[object]:
@@ -1607,6 +2493,16 @@ def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
         "run-deferred-pause-1",
         completed_at="2026-07-10T00:00:02Z",
     )
+    regressive_resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-pause-1/resume",
+            headers={},
+            query={},
+            cookies={},
+            requested_at="2026-07-10T00:00:00Z",
+        )
+    )
     resumed = app.handle(
         ServerRequest(
             method="POST",
@@ -1631,6 +2527,10 @@ def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
         "duplicate": False,
     }
     assert app.pending_accepted_run_ids() == ()
+    assert regressive_resume.status_code == 400
+    assert "latest run control" in json.loads(
+        regressive_resume.body.decode("utf-8")
+    )["error"]
     assert resumed.status_code == 202
     assert completed["status"] == "succeeded"
 

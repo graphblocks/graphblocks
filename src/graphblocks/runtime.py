@@ -33,6 +33,7 @@ from .tools import (
 JournalKind = Literal[
     "run_started",
     "run_waiting_callback",
+    "external_callback_received",
     "run_resuming",
     "node_started",
     "node_retry",
@@ -715,7 +716,7 @@ class InProcessRuntime:
                     "runtime callback_receipt provider_operation_id must match checkpoint operation"
                 )
             for receipt_field, operation_field in (
-                ("idempotency_key", "idempotency_key"),
+                ("operation_idempotency_key", "idempotency_key"),
                 ("resume_token_hash", "resume_token_hash"),
                 ("schema_id", "expected_schema"),
             ):
@@ -723,6 +724,17 @@ class InProcessRuntime:
                     raise ValueError(
                         f"runtime callback_receipt {receipt_field} must match checkpoint operation"
                     )
+            callback_idempotency_key = receipt.get(
+                "callback_idempotency_key"
+            )
+            if (
+                not isinstance(callback_idempotency_key, str)
+                or not callback_idempotency_key.strip()
+                or callback_idempotency_key != callback_idempotency_key.strip()
+            ):
+                raise ValueError(
+                    "runtime callback_receipt callback_idempotency_key must be an exact non-empty string"
+                )
             if receipt.get("schema_validated") is not True:
                 raise ValueError(
                     "runtime callback_receipt must carry successful schema validation evidence"
@@ -834,6 +846,15 @@ class InProcessRuntime:
                     raise ValueError(
                         "runtime checkpoint state does not match the issuing runtime"
                     )
+                journal.append(
+                    "external_callback_received",
+                    {
+                        "operationId": operation.get("operation_id"),
+                        "callbackIdempotencyKey": callback_idempotency_key,
+                        "payloadDigest": receipt.get("payload_digest"),
+                        "verifiedBy": verified_by,
+                    },
+                )
                 journal.append(
                     "run_resuming",
                     {
