@@ -31,6 +31,7 @@ claim.
 ## Operations
 
 - [Applications, async runs, and callbacks](operations/applications-async-callbacks.md)
+- [Admission tickets and overload queues](operations/admission-tickets.md)
 - [Release and deployment](operations/release-deployment.md)
 - [Observability and telemetry](operations/observability.md)
 

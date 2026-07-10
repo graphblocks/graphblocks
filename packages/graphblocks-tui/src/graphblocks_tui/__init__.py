@@ -294,6 +294,71 @@ def run_status_screen(
     )
 
 
+def admission_ticket_screen(ticket: Mapping[str, object]) -> TuiScreen:
+    """Project an admission ticket contract without opening a TUI session."""
+
+    if not isinstance(ticket, Mapping):
+        raise TuiContractError("admission ticket must be a mapping")
+    contract = dict(ticket)
+
+    ticket_id = contract.get("ticketId")
+    if not isinstance(ticket_id, str) or not ticket_id.strip():
+        raise TuiContractError("admission ticket ticketId must be a non-empty string")
+    run_id = contract.get("runId")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise TuiContractError("admission ticket runId must be a non-empty string")
+    state = contract.get("state")
+    valid_states = ("queued", "admitted", "running", "completed", "failed", "cancelled", "expired")
+    if state not in valid_states:
+        raise TuiContractError(
+            "admission ticket state must be queued, admitted, running, completed, failed, cancelled, or expired"
+        )
+
+    limiter_id = contract.get("limiterId")
+    if limiter_id is not None and (not isinstance(limiter_id, str) or not limiter_id.strip()):
+        raise TuiContractError("admission ticket limiterId must be a non-empty string")
+    retry_after_ms = contract.get("retryAfterMs")
+    if retry_after_ms is not None and (
+        not isinstance(retry_after_ms, int) or isinstance(retry_after_ms, bool) or retry_after_ms < 0
+    ):
+        raise TuiContractError("admission ticket retryAfterMs must be a non-negative integer")
+    queue_position = contract.get("queuePosition")
+    if queue_position is not None and (
+        not isinstance(queue_position, int) or isinstance(queue_position, bool) or queue_position <= 0
+    ):
+        raise TuiContractError("admission ticket queuePosition must be a positive integer")
+    queue_name = contract.get("queueName")
+    if queue_name is not None and (not isinstance(queue_name, str) or not queue_name.strip()):
+        raise TuiContractError("admission ticket queueName must be a non-empty string")
+
+    ticket_rows: dict[str, object] = {"ticket_id": ticket_id}
+    if limiter_id is not None:
+        ticket_rows["limiter_id"] = limiter_id
+    sections = [
+        TuiSection("Ticket", ticket_rows),
+        TuiSection("Run", {"run_id": run_id, "state": state}),
+    ]
+    queue_rows: dict[str, object] = {}
+    if queue_name is not None:
+        queue_rows["name"] = queue_name
+    if queue_position is not None:
+        queue_rows["position"] = queue_position
+    if retry_after_ms is not None:
+        queue_rows["retry_after_ms"] = retry_after_ms
+    if queue_rows:
+        sections.append(TuiSection("Queue", queue_rows))
+
+    return TuiScreen(
+        name="admission-ticket",
+        title=f"Admission ticket {ticket_id}",
+        sections=tuple(sections),
+        commands=(
+            TuiCommand("Refresh", "refresh", "r"),
+            TuiCommand("Cancel", "cancel", "c"),
+        ),
+    )
+
+
 def workspace_assistant_screen(state: TuiProtocolSession) -> TuiScreen:
     commands = [
         TuiCommand("Refresh", "refresh", "r"),
@@ -349,6 +414,7 @@ __all__ = [
     "TuiScreen",
     "TuiSection",
     "TuiSessionSnapshot",
+    "admission_ticket_screen",
     "run_status_screen",
     "workspace_assistant_screen",
 ]

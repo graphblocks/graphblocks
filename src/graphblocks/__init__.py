@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 
+from .admission import (
+    TERMINAL_ADMISSION_TICKET_STATES,
+    AdmissionError,
+    AdmissionIdempotencyConflictError,
+    AdmissionQueueFullError,
+    AdmissionStaleFencingTokenError,
+    AdmissionSubmission,
+    AdmissionTicket,
+    AdmissionTicketNotFoundError,
+    AdmissionTicketQueue,
+    AdmissionTicketState,
+    AdmissionTicketStateError,
+)
 from .application_event import (
     APPLICATION_COMMAND_KINDS,
     APPLICATION_EVENT_VISIBILITIES,
@@ -600,6 +613,17 @@ from .workspace import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "TERMINAL_ADMISSION_TICKET_STATES",
+    "AdmissionError",
+    "AdmissionIdempotencyConflictError",
+    "AdmissionQueueFullError",
+    "AdmissionStaleFencingTokenError",
+    "AdmissionSubmission",
+    "AdmissionTicket",
+    "AdmissionTicketNotFoundError",
+    "AdmissionTicketQueue",
+    "AdmissionTicketState",
+    "AdmissionTicketStateError",
     "Diagnostic",
     "DiagnosticSet",
     "Plan",

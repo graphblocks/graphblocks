@@ -1,17 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
 from threading import Condition, get_ident
-from time import monotonic
+from time import monotonic, time
 from types import MappingProxyType
 from typing import Literal, Protocol
 from urllib.parse import quote, unquote, urlparse
 
+from .admission import (
+    AdmissionError,
+    AdmissionIdempotencyConflictError,
+    AdmissionQueueFullError,
+    AdmissionTicket,
+    AdmissionTicketQueue,
+)
 from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
 from .compiler import compile_graph
@@ -1939,6 +1946,11 @@ class GraphBlocksServerApp:
     anti_enumerate_async_callbacks: bool = False
     defer_accepted_runs: bool = False
     accepted_run_executor: Executor | None = None
+    admission_ticket_queue: AdmissionTicketQueue | None = None
+    admission_clock: Callable[[], int] = field(
+        default=lambda: int(time() * 1_000),
+        repr=False,
+    )
     async_callback_resume_admission_hook: ServerAsyncCallbackResumeAdmissionHook | None = None
     callback_delivery_hook: ServerCallbackDeliveryHook | None = None
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
@@ -2000,6 +2012,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _admission_ticket_ids_by_run_id: dict[str, str] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _admitting_accepted_run_ids: set[str] = field(
         default_factory=set,
         init=False,
@@ -2039,6 +2056,13 @@ class GraphBlocksServerApp:
             raise ValueError("server anti_enumerate_async_callbacks must be a boolean")
         if not isinstance(self.defer_accepted_runs, bool):
             raise ValueError("server defer_accepted_runs must be a boolean")
+        if self.admission_ticket_queue is not None and not isinstance(
+            self.admission_ticket_queue,
+            AdmissionTicketQueue,
+        ):
+            raise ValueError("server admission_ticket_queue must be AdmissionTicketQueue or null")
+        if not callable(self.admission_clock):
+            raise ValueError("server admission_clock must be callable")
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -3631,7 +3655,47 @@ class GraphBlocksServerApp:
                     "runId",
                     payload.get("runId", payload.get("run_id", "run-000001")),
                 )
+                request_id = _validate_exact_non_empty_string(
+                    "run request",
+                    "requestId",
+                    payload.get("requestId", payload.get("request_id", run_id)),
+                )
                 if run_id in self._events_by_run_id:
+                    existing_ticket_id = self._admission_ticket_ids_by_run_id.get(
+                        run_id
+                    )
+                    if (
+                        existing_ticket_id is not None
+                        and self.admission_ticket_queue is not None
+                        and response_mode in {"accepted", "background"}
+                    ):
+                        existing_ticket = self.admission_ticket_queue.get(
+                            existing_ticket_id
+                        )
+                        owner_id = (
+                            auth_decision.principal.principal_id
+                            if auth_decision.principal is not None
+                            else "anonymous"
+                        )
+                        if (
+                            existing_ticket.request_id == request_id
+                            and existing_ticket.owner_id == owner_id
+                        ):
+                            route_run_id = quote(run_id, safe="")
+                            return ServerResponse.json(
+                                202,
+                                {
+                                    "ok": True,
+                                    "runId": run_id,
+                                    "status": response_mode,
+                                    "eventStream": f"/runs/{route_run_id}/events",
+                                    "websocket": f"/runs/{route_run_id}/ws",
+                                    "cancel": f"/runs/{route_run_id}/cancel",
+                                    "initialCursor": f"{run_id}:0",
+                                    "admissionTicket": existing_ticket.contract(),
+                                    "duplicate": True,
+                                },
+                            )
                     return ServerResponse.json(
                         409,
                         {
@@ -3665,6 +3729,20 @@ class GraphBlocksServerApp:
                     if turn_id_value is not None
                     else None
                 )
+                ticketed_admission = (
+                    self.admission_ticket_queue is not None
+                    and response_mode in {"accepted", "background"}
+                )
+                admission_units = payload.get(
+                    "admissionUnits",
+                    payload.get("admission_units", 1),
+                )
+                if (
+                    not isinstance(admission_units, int)
+                    or isinstance(admission_units, bool)
+                    or admission_units < 1
+                ):
+                    raise ValueError("run request admissionUnits must be a positive integer")
 
                 plan = compile_graph(graph)
                 plan_errors = [
@@ -3679,49 +3757,51 @@ class GraphBlocksServerApp:
                             for item in plan_errors
                         )
                     )
-                start_event = ApplicationEvent.new(
-                    "RunStarted",
-                    ApplicationEventMetadata(
-                        event_id=f"{run_id}:run-started",
-                        run_id=run_id,
-                        response_id=response_id,
-                        turn_id=turn_id,
-                        sequence=1,
-                        release_id=release_id,
-                        policy_snapshot_id=policy_snapshot_id,
-                        occurred_at=occurred_at,
-                        cursor=f"{run_id}:1",
-                    ),
-                    payload={
-                        "status": "running",
-                        "graph_hash": plan.graph_hash,
-                    },
-                )
-                start_event_payload: dict[str, object] = {
-                    "kind": start_event.kind,
-                    "metadata": {
-                        "eventId": start_event.metadata.event_id,
-                        "runId": start_event.metadata.run_id,
-                        "responseId": start_event.metadata.response_id,
-                        "turnId": start_event.metadata.turn_id,
-                        "sequence": start_event.metadata.sequence,
-                        "cursor": start_event.metadata.cursor,
-                        "releaseId": start_event.metadata.release_id,
-                        "policySnapshotId": start_event.metadata.policy_snapshot_id,
-                        "occurredAt": start_event.metadata.occurred_at,
-                        "graphId": start_event.metadata.graph_id,
-                        "nodeId": start_event.metadata.node_id,
-                        "operationId": start_event.metadata.operation_id,
-                        "visibility": start_event.metadata.visibility,
-                    },
-                    "payload": dict(start_event.payload),
-                }
-                frozen_start_event = _freeze_json_value(
-                    "application event stream",
-                    "event",
-                    start_event_payload,
-                )
-                assert isinstance(frozen_start_event, Mapping)
+                frozen_start_event: Mapping[str, object] | None = None
+                if not ticketed_admission:
+                    start_event = ApplicationEvent.new(
+                        "RunStarted",
+                        ApplicationEventMetadata(
+                            event_id=f"{run_id}:run-started",
+                            run_id=run_id,
+                            response_id=response_id,
+                            turn_id=turn_id,
+                            sequence=1,
+                            release_id=release_id,
+                            policy_snapshot_id=policy_snapshot_id,
+                            occurred_at=occurred_at,
+                            cursor=f"{run_id}:1",
+                        ),
+                        payload={
+                            "status": "running",
+                            "graph_hash": plan.graph_hash,
+                        },
+                    )
+                    start_event_payload: dict[str, object] = {
+                        "kind": start_event.kind,
+                        "metadata": {
+                            "eventId": start_event.metadata.event_id,
+                            "runId": start_event.metadata.run_id,
+                            "responseId": start_event.metadata.response_id,
+                            "turnId": start_event.metadata.turn_id,
+                            "sequence": start_event.metadata.sequence,
+                            "cursor": start_event.metadata.cursor,
+                            "releaseId": start_event.metadata.release_id,
+                            "policySnapshotId": start_event.metadata.policy_snapshot_id,
+                            "occurredAt": start_event.metadata.occurred_at,
+                            "graphId": start_event.metadata.graph_id,
+                            "nodeId": start_event.metadata.node_id,
+                            "operationId": start_event.metadata.operation_id,
+                            "visibility": start_event.metadata.visibility,
+                        },
+                        "payload": dict(start_event.payload),
+                    }
+                    frozen_start_event = _freeze_json_value(
+                        "application event stream",
+                        "event",
+                        start_event_payload,
+                    )
+                    assert isinstance(frozen_start_event, Mapping)
                 pending_run = _freeze_json_value(
                     "server pending accepted run",
                     "run",
@@ -3733,6 +3813,8 @@ class GraphBlocksServerApp:
                         "releaseId": release_id,
                         "policySnapshotId": policy_snapshot_id,
                         "turnId": turn_id,
+                        "requestedAt": occurred_at,
+                        "graphHash": plan.graph_hash,
                     },
                 )
                 assert isinstance(pending_run, Mapping)
@@ -3748,11 +3830,76 @@ class GraphBlocksServerApp:
                     journal=accepted_run_journal,
                 )
                 deferred = (
-                    self.defer_accepted_runs
-                    and response_mode in {"accepted", "background"}
+                    ticketed_admission
+                    or (
+                        self.defer_accepted_runs
+                        and response_mode in {"accepted", "background"}
+                    )
                 )
                 completion = None
-                if deferred and self.accepted_run_executor is not None:
+                admission_ticket: AdmissionTicket | None = None
+                if ticketed_admission:
+                    assert self.admission_ticket_queue is not None
+                    admission_now_ms = self.admission_clock()
+                    self.promote_admission_tickets(now_ms=admission_now_ms)
+                    owner_id = (
+                        auth_decision.principal.principal_id
+                        if auth_decision.principal is not None
+                        else "anonymous"
+                    )
+                    with self._accepted_run_condition:
+                        if (
+                            run_id in self._events_by_run_id
+                            or run_id in self._admitting_accepted_run_ids
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": f"run {run_id!r} already exists",
+                                },
+                            )
+                        try:
+                            submission = self.admission_ticket_queue.submit(
+                                run_id,
+                                request_id,
+                                owner_id,
+                                now_ms=admission_now_ms,
+                                units=admission_units,
+                            )
+                        except AdmissionQueueFullError as error:
+                            return ServerResponse.json(
+                                429,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "limiterId": error.limiter_id,
+                                    "error": str(error),
+                                },
+                            )
+                        except AdmissionIdempotencyConflictError as error:
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": str(error),
+                                },
+                            )
+                        admission_ticket = submission.ticket
+                        self._events_by_run_id[run_id] = ()
+                        self._pending_accepted_runs_by_run_id[run_id] = pending_run
+                        self._accepted_run_executions_by_run_id[
+                            run_id
+                        ] = accepted_run_execution
+                        self._admission_ticket_ids_by_run_id[
+                            run_id
+                        ] = admission_ticket.ticket_id
+                        self._accepted_run_condition.notify_all()
+                    if admission_ticket.state == "admitted":
+                        self._dispatch_admitted_tickets((admission_ticket,))
+                elif deferred and self.accepted_run_executor is not None:
                     try:
                         executor_probe = self.accepted_run_executor.submit(
                             get_ident
@@ -3831,6 +3978,7 @@ class GraphBlocksServerApp:
                             },
                         )
                     with self._accepted_run_condition:
+                        assert frozen_start_event is not None
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -3852,6 +4000,7 @@ class GraphBlocksServerApp:
                                     "error": f"run {run_id!r} already exists",
                                 },
                             )
+                        assert frozen_start_event is not None
                         self._events_by_run_id[run_id] = (frozen_start_event,)
                         self._pending_accepted_runs_by_run_id[run_id] = pending_run
                         self._accepted_run_executions_by_run_id[
@@ -3864,17 +4013,26 @@ class GraphBlocksServerApp:
                     )
                 if response_mode in {"accepted", "background"}:
                     route_run_id = quote(run_id, safe="")
+                    accepted_payload: dict[str, object] = {
+                        "ok": True,
+                        "runId": run_id,
+                        "status": response_mode,
+                        "eventStream": f"/runs/{route_run_id}/events",
+                        "websocket": f"/runs/{route_run_id}/ws",
+                        "cancel": f"/runs/{route_run_id}/cancel",
+                        "initialCursor": f"{run_id}:0",
+                    }
+                    if admission_ticket is not None:
+                        accepted_payload["admissionTicket"] = (
+                            self.admission_ticket_queue.get(
+                                admission_ticket.ticket_id
+                            ).contract()
+                            if self.admission_ticket_queue is not None
+                            else admission_ticket.contract()
+                        )
                     return ServerResponse.json(
                         202,
-                        {
-                            "ok": True,
-                            "runId": run_id,
-                            "status": response_mode,
-                            "eventStream": f"/runs/{route_run_id}/events",
-                            "websocket": f"/runs/{route_run_id}/ws",
-                            "cancel": f"/runs/{route_run_id}/cancel",
-                            "initialCursor": f"{run_id}:0",
-                        },
+                        accepted_payload,
                     )
                 assert completion is not None
                 return ServerResponse.json(
@@ -3908,6 +4066,71 @@ class GraphBlocksServerApp:
     def pending_accepted_run_ids(self) -> tuple[str, ...]:
         with self._accepted_run_condition:
             return tuple(sorted(self._pending_accepted_runs_by_run_id))
+
+    def promote_admission_tickets(
+        self,
+        *,
+        now_ms: int | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        """Run one non-blocking admission maintenance pass.
+
+        An external server loop may call this at the next retry deadline.  A
+        process without an executor can claim admitted runs explicitly through
+        ``advance_accepted_run``.
+        """
+
+        if self.admission_ticket_queue is None:
+            return ()
+        maintenance_now_ms = (
+            self.admission_clock() if now_ms is None else now_ms
+        )
+        expired = self.admission_ticket_queue.expire(now_ms=maintenance_now_ms)
+        expired_at = (
+            datetime.fromtimestamp(maintenance_now_ms / 1_000, timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+        for ticket in expired:
+            with self._accepted_run_condition:
+                events = self._events_by_run_id.get(ticket.run_id)
+                if (
+                    events is None
+                    or ticket.run_id
+                    not in self._pending_accepted_runs_by_run_id
+                ):
+                    continue
+                self._run_control_response(
+                    ticket.run_id,
+                    "expire_run",
+                    events,
+                    {"reason": "admission ticket TTL expired"},
+                    expired_at,
+                    None,
+                )
+        promoted = self.admission_ticket_queue.promote(
+            now_ms=maintenance_now_ms
+        )
+        self._dispatch_admitted_tickets(promoted)
+        return tuple(ticket.contract() for ticket in promoted)
+
+    def _dispatch_admitted_tickets(
+        self,
+        tickets: tuple[AdmissionTicket, ...],
+    ) -> None:
+        if self.accepted_run_executor is None:
+            return
+        for ticket in tickets:
+            if ticket.state != "admitted":
+                continue
+            try:
+                self.accepted_run_executor.submit(
+                    self.advance_accepted_run,
+                    ticket.run_id,
+                )
+            except RuntimeError:
+                # The admitted ticket remains claimable by a later worker pass;
+                # no RunStarted event is published before an actual claim.
+                continue
 
     def wait_for_accepted_run(
         self,
@@ -4072,6 +4295,8 @@ class GraphBlocksServerApp:
                 "completed_at",
                 completed_at,
             )
+        admission_ticket_id = self._admission_ticket_ids_by_run_id.get(run_id)
+        admission_fencing_token: int | None = None
         with self._accepted_run_condition:
             while run_id in self._admitting_accepted_run_ids:
                 self._accepted_run_condition.wait()
@@ -4133,6 +4358,108 @@ class GraphBlocksServerApp:
                     "lastCursor": cursor,
                     "duplicate": True,
                 }
+
+            if admission_ticket_id is not None:
+                if self.admission_ticket_queue is None:
+                    raise ValueError(
+                        f"run {run_id!r} has an admission ticket but no admission queue"
+                    )
+                admission_ticket = self.admission_ticket_queue.get(
+                    admission_ticket_id
+                )
+                if admission_ticket.state == "queued":
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} is queued for admission"
+                    )
+                if admission_ticket.state not in {"admitted", "running"}:
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} admission ticket is {admission_ticket.state}"
+                    )
+                admission_fencing_token = admission_ticket.fencing_token
+                if admission_fencing_token is None:
+                    raise ValueError(
+                        f"pending accepted run {run_id!r} has no admission fencing token"
+                    )
+                if admission_ticket.state == "admitted":
+                    admission_ticket = self.admission_ticket_queue.mark_running(
+                        admission_ticket_id,
+                        admission_fencing_token,
+                        now_ms=self.admission_clock(),
+                    )
+                if not self._events_by_run_id.get(run_id, ()):
+                    start_response_id = pending.get("responseId")
+                    start_release_id = pending.get("releaseId")
+                    start_policy_snapshot_id = pending.get("policySnapshotId")
+                    start_turn_id = pending.get("turnId")
+                    graph_hash = pending.get("graphHash")
+                    if not isinstance(start_response_id, str):
+                        raise ValueError(
+                            "pending accepted run responseId must be a string"
+                        )
+                    if not isinstance(start_release_id, str):
+                        raise ValueError(
+                            "pending accepted run releaseId must be a string"
+                        )
+                    if not isinstance(start_policy_snapshot_id, str):
+                        raise ValueError(
+                            "pending accepted run policySnapshotId must be a string"
+                        )
+                    if start_turn_id is not None and not isinstance(
+                        start_turn_id,
+                        str,
+                    ):
+                        raise ValueError(
+                            "pending accepted run turnId must be a string or null"
+                        )
+                    if not isinstance(graph_hash, str):
+                        raise ValueError(
+                            "pending accepted run graphHash must be a string"
+                        )
+                    claimed_at = _utc_now_iso()
+                    start_event = ApplicationEvent.new(
+                        "RunStarted",
+                        ApplicationEventMetadata(
+                            event_id=f"{run_id}:run-started",
+                            run_id=run_id,
+                            response_id=start_response_id,
+                            turn_id=start_turn_id,
+                            sequence=1,
+                            release_id=start_release_id,
+                            policy_snapshot_id=start_policy_snapshot_id,
+                            occurred_at=claimed_at,
+                            cursor=f"{run_id}:1",
+                        ),
+                        payload={
+                            "status": "running",
+                            "graph_hash": graph_hash,
+                            "admission_ticket_id": admission_ticket_id,
+                        },
+                    )
+                    frozen_claim_event = _freeze_json_value(
+                        "application event stream",
+                        "event",
+                        {
+                            "kind": start_event.kind,
+                            "metadata": {
+                                "eventId": start_event.metadata.event_id,
+                                "runId": start_event.metadata.run_id,
+                                "responseId": start_event.metadata.response_id,
+                                "turnId": start_event.metadata.turn_id,
+                                "sequence": start_event.metadata.sequence,
+                                "cursor": start_event.metadata.cursor,
+                                "releaseId": start_event.metadata.release_id,
+                                "policySnapshotId": start_event.metadata.policy_snapshot_id,
+                                "occurredAt": start_event.metadata.occurred_at,
+                                "graphId": start_event.metadata.graph_id,
+                                "nodeId": start_event.metadata.node_id,
+                                "operationId": start_event.metadata.operation_id,
+                                "visibility": start_event.metadata.visibility,
+                            },
+                            "payload": dict(start_event.payload),
+                        },
+                    )
+                    assert isinstance(frozen_claim_event, Mapping)
+                    self._events_by_run_id[run_id] = (frozen_claim_event,)
 
             start_events = self._events_by_run_id.get(run_id, ())
             start_metadata = (
@@ -4508,7 +4835,40 @@ class GraphBlocksServerApp:
         finally:
             with self._accepted_run_condition:
                 self._advancing_accepted_runs_by_run_id.pop(run_id, None)
+                admission_result = self._accepted_run_results_by_run_id.get(run_id)
+                admission_pending = run_id in self._pending_accepted_runs_by_run_id
                 self._accepted_run_condition.notify_all()
+            promoted_tickets: tuple[AdmissionTicket, ...] = ()
+            if (
+                admission_ticket_id is not None
+                and admission_fencing_token is not None
+                and self.admission_ticket_queue is not None
+                and admission_result is not None
+                and not admission_pending
+            ):
+                result_status = admission_result.get("status")
+                try:
+                    if result_status in {"cancelled", "expired"}:
+                        _, promoted_tickets = self.admission_ticket_queue.cancel(
+                            admission_ticket_id,
+                            now_ms=self.admission_clock(),
+                            state=(
+                                "expired"
+                                if result_status == "expired"
+                                else "cancelled"
+                            ),
+                            fencing_token=admission_fencing_token,
+                        )
+                    else:
+                        _, promoted_tickets = self.admission_ticket_queue.complete(
+                            admission_ticket_id,
+                            admission_fencing_token,
+                            "failed" if result_status == "failed" else "completed",
+                            now_ms=self.admission_clock(),
+                        )
+                except AdmissionError:
+                    promoted_tickets = ()
+            self._dispatch_admitted_tickets(promoted_tickets)
 
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
         operation_id = _validate_exact_non_empty_string("server async callback", "operation_id", operation_id)
@@ -4593,10 +4953,34 @@ class GraphBlocksServerApp:
     ) -> dict[str, object]:
         last_sequence = 0
         release_id = ""
-        started_at = ""
+        started_at: str | None = None
         updated_at = ""
         completed_at: str | None = None
         state = "running"
+        admission_ticket: AdmissionTicket | None = None
+        admission_ticket_id = self._admission_ticket_ids_by_run_id.get(run_id)
+        if (
+            admission_ticket_id is not None
+            and self.admission_ticket_queue is not None
+        ):
+            admission_ticket = self.admission_ticket_queue.get(
+                admission_ticket_id
+            )
+            state = admission_ticket.state
+            issued_at = datetime.fromtimestamp(
+                admission_ticket.issued_at_ms / 1_000,
+                timezone.utc,
+            )
+            updated_at = (
+                issued_at.isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
+            pending = self._pending_accepted_runs_by_run_id.get(run_id)
+            pending_release_id = (
+                pending.get("releaseId") if pending is not None else None
+            )
+            if isinstance(pending_release_id, str):
+                release_id = pending_release_id
         terminal_states = {
             "RunSucceeded": "succeeded",
             "RunCompleted": "completed",
@@ -4606,7 +4990,7 @@ class GraphBlocksServerApp:
             "RunExpired": "expired",
         }
 
-        for index, event in enumerate(events):
+        for event in events:
             metadata = event.get("metadata")
             if not isinstance(metadata, Mapping):
                 raise ValueError("server run status metadata must be an object")
@@ -4621,7 +5005,7 @@ class GraphBlocksServerApp:
             if not isinstance(raw_occurred_at, str) or not raw_occurred_at:
                 raise ValueError("server run status occurredAt must be an ISO datetime")
             occurred_at = _validate_iso_datetime("server run status", "occurredAt", raw_occurred_at)
-            if index == 0:
+            if event.get("kind") == "RunStarted":
                 started_at = occurred_at
             updated_at = occurred_at
             event_release_id = metadata.get("releaseId")
@@ -4665,6 +5049,14 @@ class GraphBlocksServerApp:
         waiting_on: list[dict[str, object]] = []
         active_operations: list[str] = []
         current_checkpoint_operation_id: str | None = None
+        if admission_ticket is not None and state in {"queued", "admitted"}:
+            waiting_on.append(
+                {
+                    "kind": "admission",
+                    "ticketId": admission_ticket.ticket_id,
+                    "limiterId": admission_ticket.limiter_id,
+                }
+            )
         if controls and state in {"paused_operator", "paused_budget", "paused_policy", "paused_callback_delivery"}:
             latest_control = controls[-1]
             wait_kind_by_state = {
@@ -4737,6 +5129,8 @@ class GraphBlocksServerApp:
             "waitingOn": waiting_on,
             "activeOperations": active_operations,
         }
+        if admission_ticket is not None:
+            payload["admissionTicket"] = admission_ticket.contract()
         if include_ok:
             return {"ok": True, **payload}
         return payload
@@ -4987,32 +5381,34 @@ class GraphBlocksServerApp:
                     },
                 )
         pending_run = self._pending_accepted_runs_by_run_id.get(run_id)
+        promoted_on_control: tuple[AdmissionTicket, ...] = ()
         if status in {"cancelled", "expired"} and pending_run is not None:
-            start_metadata = events[0].get("metadata", {}) if events else {}
-            started_at = (
-                start_metadata.get("occurredAt")
-                if isinstance(start_metadata, Mapping)
-                else None
-            )
-            started_at = _validate_iso_datetime(
-                "run control request",
-                "started_at",
-                started_at,
-            )
-            controlled_datetime = datetime.fromisoformat(
-                f"{occurred_at[:-1]}+00:00"
-                if occurred_at.endswith("Z")
-                else occurred_at
-            ).astimezone(timezone.utc)
-            started_datetime = datetime.fromisoformat(
-                f"{started_at[:-1]}+00:00"
-                if started_at.endswith("Z")
-                else started_at
-            ).astimezone(timezone.utc)
-            if controlled_datetime < started_datetime:
-                raise ValueError(
-                    "run control request occurred_at must not be before run start"
+            if events:
+                start_metadata = events[0].get("metadata", {})
+                started_at = (
+                    start_metadata.get("occurredAt")
+                    if isinstance(start_metadata, Mapping)
+                    else None
                 )
+                started_at = _validate_iso_datetime(
+                    "run control request",
+                    "started_at",
+                    started_at,
+                )
+                controlled_datetime = datetime.fromisoformat(
+                    f"{occurred_at[:-1]}+00:00"
+                    if occurred_at.endswith("Z")
+                    else occurred_at
+                ).astimezone(timezone.utc)
+                started_datetime = datetime.fromisoformat(
+                    f"{started_at[:-1]}+00:00"
+                    if started_at.endswith("Z")
+                    else started_at
+                ).astimezone(timezone.utc)
+                if controlled_datetime < started_datetime:
+                    raise ValueError(
+                        "run control request occurred_at must not be before run start"
+                    )
 
             response_id = pending_run.get("responseId")
             release_id = pending_run.get("releaseId")
@@ -5092,6 +5488,17 @@ class GraphBlocksServerApp:
             )
             assert isinstance(completion, Mapping)
             self._accepted_run_results_by_run_id[run_id] = completion
+            ticket_id = self._admission_ticket_ids_by_run_id.get(run_id)
+            if (
+                ticket_id is not None
+                and self.admission_ticket_queue is not None
+                and run_id not in self._advancing_accepted_runs_by_run_id
+            ):
+                _, promoted_on_control = self.admission_ticket_queue.cancel(
+                    ticket_id,
+                    now_ms=self.admission_clock(),
+                    state="expired" if status == "expired" else "cancelled",
+                )
             self._accepted_run_condition.notify_all()
         if (
             operation == "resume_run"
@@ -5176,6 +5583,7 @@ class GraphBlocksServerApp:
         record = _freeze_json_value("run control record", "record", record_payload)
         self._run_controls_by_run_id[run_id] = (*existing, record)
         self._accepted_run_condition.notify_all()
+        self._dispatch_admitted_tickets(promoted_on_control)
         return ServerResponse.json(
             202,
             {
