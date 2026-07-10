@@ -2916,6 +2916,16 @@ interoperability: Haystack Component/Pipeline adapter
 - Python OTLP and Langfuse projection contracts now parse stored exporter payloads with strict JSON
   semantics and require JSON object roots, rejecting non-standard constants such as `NaN` before
   telemetry payloads are handed to lossy observability exporters.
+- Python `TelemetryExportOutbox` now accepts immutable observation contracts, tracks delivery per
+  exporter, retains retryable failures, and deduplicates successful recovery. Every export attempt
+  compares a `TelemetryCorrectnessSnapshot` covering the execution journal, audit log, usage
+  ledger, and budget ledger; authoritative-state drift fails closed instead of being attributed to
+  a lossy exporter.
+- The OTel, Langfuse, and telemetry-outage acceptance gates are non-overridable runner built-ins.
+  They bind the profile's privacy, exporter, cardinality, and durable-store declarations, execute
+  protected OTel/Langfuse generation projections, and fault an OTLP delivery while real SQLite
+  journal, audit, usage, and budget state remains unchanged through deterministic recovery. The
+  canonical evidence excludes temporary paths and protected content.
 
 ## 8. Phase 5 — Remote Workers, Release, Deployment (`GB-C4-PRODUCTION`)
 
@@ -2992,6 +3002,18 @@ sandbox
 - `WorkerDrainPlan` now blocks new work from draining workers by routing new admissions to a
   replacement worker while preserving existing conversation/job affinity on the old worker until
   those affinities complete.
+- Python release bundles now support canonical HMAC-SHA256 attestations bound to a bundle subject,
+  artifact digest, trusted signer id, and trust-root key mapping; tampering, signature mismatch, and
+  untrusted signers fail closed. Canary metric evaluation derives minimum and relative-regression
+  constraints from observed/baseline measurements rather than trusting a declarative `passed`
+  flag, and rollback evidence projects workload-aware finish, affinity, migrate, admit, and drain
+  decisions only when automatic rollback remains safe.
+- The release verification, canary quality, and rollback/drain acceptance gates validate the
+  deployment's exact release reference, digest-qualified bundle reference, non-empty
+  SHA-256-qualified identity locks, signature policy, rollout steps and thresholds, affinity,
+  workload upgrades, and drain lifecycle before executing those contracts. The testing package's
+  `production` extra now installs callback verification plus compatible audit, telemetry, OTel,
+  Langfuse, and voice dependencies required by the complete production acceptance manifest.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 
@@ -3124,8 +3146,16 @@ DuplexSession, transport, VAD authority, interruption classifier, playback ledge
 - Python voice interruption now treats local VAD as advisory and requires a session- and
   authority-matched provider decision before interrupting playback. The playback ledger enforces
   ordered, idempotent queued/started/completed/interrupted transitions and explicit
-  acknowledgement. The shared voice TCK supplies the provider confirmation explicitly, so it no
-  longer treats a local speech threshold as cancellation authority.
+  acknowledgement. The shared voice fixture carries provider-confirmation fields and the Python
+  TCK runner consumes them. The Rust runtime-core TCK still exercises its legacy local-VAD
+  classifier and is tracked as `TEST-001` in `RISK_REGISTER.md`; it is not counted as evidence of
+  provider-authoritative interruption.
+- The duplex session, interruption authority, and playback-ledger acceptance gates are
+  non-overridable runner built-ins. They validate the voice extension, provider/transport/tool
+  dataflow, local-VAD role, provider-confirmed interruption actions, and required acknowledgement
+  policy before executing a realtime session request and ordered, idempotent playout lifecycle.
+  The interruption probe confirms that local speech alone does not cancel playback and that a
+  matching provider interrupt remains authoritative even when local VAD reports silence.
 
 ### Durable unbounded stream (`GB-X3-DURABLE-STREAM`)
 

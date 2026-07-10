@@ -47,6 +47,7 @@ from graphblocks.conversation import (
     TurnConflictError,
 )
 from graphblocks.deployment import (
+    CanaryMetricThreshold,
     DeploymentRevision,
     DeploymentSloProfile,
     GraphRelease,
@@ -55,12 +56,17 @@ from graphblocks.deployment import (
     ImageRef,
     KnowledgeBinding,
     PromptLock,
+    ReleaseAttestation,
+    ReleaseBundle,
     ReleaseLockRef,
     RolloutAnalysisResult,
     RolloutPlan,
     RolloutStep,
     SupplyChainLock,
     UpgradePolicy,
+    evaluate_canary_metrics,
+    evaluate_rollback_and_drain,
+    verify_release_attestation,
 )
 from graphblocks.blob_store import BlobKey, LocalBlobStore, PutOptions
 from graphblocks.document_parsers import (
@@ -93,6 +99,7 @@ from graphblocks.budget import (
     BudgetExceededError,
     BudgetPermit,
     InMemoryBudgetLedger,
+    SQLiteBudgetLedger,
     UsageAmount,
 )
 from graphblocks.exhaustion import (
@@ -216,7 +223,7 @@ from graphblocks.tools import (
     admit_tool_call,
     validate_tool_result_for_model,
 )
-from graphblocks.usage import InMemoryUsageLedger, UsageRecord
+from graphblocks.usage import InMemoryUsageLedger, SQLiteUsageLedger, UsageRecord
 from graphblocks.workspace import (
     InMemoryWorkspaceStore,
     WorkspaceMutationDecision,
@@ -4124,6 +4131,1102 @@ def _governed_trial_commit_gate(
     )
 
 
+def _exercise_kubernetes_canary(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "kubernetes-canary":
+        raise RuntimeError("deployment semantic gate requires the kubernetes-canary application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 2:
+        raise RuntimeError("kubernetes canary scenario must contain release and deployment documents")
+    release_document, deployment_document = documents
+    if release_document.get("kind") != "GraphRelease" or deployment_document.get("kind") != "GraphDeployment":
+        raise RuntimeError("kubernetes canary scenario requires GraphRelease and GraphDeployment documents")
+    release_spec = release_document.get("spec")
+    deployment_spec = deployment_document.get("spec")
+    if not isinstance(release_spec, Mapping) or not isinstance(deployment_spec, Mapping):
+        raise RuntimeError("kubernetes canary release and deployment specs must be mappings")
+    release_metadata = release_document.get("metadata")
+    release_ref = deployment_spec.get("releaseRef")
+    if not isinstance(release_metadata, Mapping) or not isinstance(release_metadata.get("name"), str):
+        raise RuntimeError("kubernetes canary release name is missing")
+    release_name = release_metadata["name"]
+    if release_ref != {"name": release_name}:
+        raise RuntimeError("kubernetes canary deployment must reference the verified release")
+    bundle_spec = release_spec.get("bundle")
+    identity = release_spec.get("identity")
+    rollout = deployment_spec.get("rollout")
+    upgrades = deployment_spec.get("upgrades")
+    targets = deployment_spec.get("targets")
+    if (
+        not isinstance(bundle_spec, Mapping)
+        or not isinstance(identity, Mapping)
+        or not isinstance(rollout, Mapping)
+        or not isinstance(upgrades, Mapping)
+        or not isinstance(targets, Mapping)
+    ):
+        raise RuntimeError("kubernetes canary release identity, rollout, upgrades, and targets are required")
+    bundle_ref = bundle_spec.get("ref")
+    bundle_digest_ref = bundle_ref.rsplit("@sha256:", 1)[-1] if isinstance(bundle_ref, str) else ""
+    if (
+        not isinstance(bundle_ref, str)
+        or "@sha256:" not in bundle_ref
+        or not bundle_digest_ref
+        or bundle_digest_ref != bundle_digest_ref.strip()
+        or bundle_spec.get("mediaType") != "application/vnd.graphblocks.bundle.v1"
+        or bundle_spec.get("signaturePolicy") != "production-publishers"
+    ):
+        raise RuntimeError("kubernetes canary release must require a digest-pinned, production-signed bundle")
+    expected_identity_fields = {
+        "graphHash",
+        "physicalPlanHash",
+        "bindingLockHash",
+        "packageLockHash",
+        "promptLockHash",
+    }
+    if set(identity) != expected_identity_fields or any(
+        not isinstance(identity[field_name], str)
+        or not identity[field_name].startswith("sha256:")
+        or not identity[field_name].removeprefix("sha256:")
+        or identity[field_name] != identity[field_name].strip()
+        for field_name in expected_identity_fields
+    ):
+        raise RuntimeError("kubernetes canary release identity locks do not match")
+    rollout_steps = rollout.get("steps")
+    rollout_gates = rollout.get("gates")
+    if (
+        rollout.get("strategy") != "canary"
+        or rollout.get("affinity") != "conversation_id"
+        or rollout_steps
+        != [
+            {"traffic": 1, "minimumSamples": 200},
+            {"traffic": 10, "minimumDuration": "30m"},
+            {"traffic": 50, "minimumDuration": "1h"},
+        ]
+        or rollout_gates
+        != [
+            {"metric": "turn_success_rate", "min": 0.995},
+            {"metric": "citation_validation_rate", "min": 0.98},
+            {"metric": "average_cost_per_turn", "maxRegression": 0.10},
+        ]
+    ):
+        raise RuntimeError("kubernetes canary rollout thresholds and steps do not match")
+    if upgrades != {
+        "existingRequests": "finish_on_old",
+        "conversations": "keep_affinity",
+        "durableJobs": "checkpoint_and_migrate",
+    }:
+        raise RuntimeError("kubernetes canary workload-aware upgrade contract does not match")
+    control_target = targets.get("control")
+    if not isinstance(control_target, Mapping) or control_target.get("lifecycle") != {
+        "startup": "120s",
+        "drain": "60s",
+    }:
+        raise RuntimeError("kubernetes canary control target must declare its drain lifecycle")
+
+    release = (
+        GraphRelease(release_name, "2026.06.22.1")
+        .with_bundle(canonical_hash(release_document), str(bundle_spec["mediaType"]))
+        .with_application_hash(canonical_hash({"application": release_spec.get("application")}))
+        .with_graph(
+            "enterprise-rag",
+            GraphReleaseGraph(
+                canonical_hash({"graphHash": identity["graphHash"]}),
+                canonical_hash({"physicalPlanHash": identity["physicalPlanHash"]}),
+            ),
+        )
+        .with_lock(
+            "bindings",
+            ReleaseLockRef("locks/bindings.lock", canonical_hash({"binding": identity["bindingLockHash"]})),
+        )
+        .with_lock(
+            "packages",
+            ReleaseLockRef("locks/packages.lock", canonical_hash({"package": identity["packageLockHash"]})),
+        )
+        .with_lock(
+            "prompt",
+            ReleaseLockRef("locks/prompts.lock", canonical_hash({"prompt": identity["promptLockHash"]})),
+        )
+        .with_prompt_lock("rag", PromptLock.versioned("enterprise-rag", "2026.06.22.1"))
+        .with_supply_chain(
+            SupplyChainLock(
+                sbom_ref="oci://registry.example.com/sbom@sha256:sbom",
+                provenance_ref="oci://registry.example.com/provenance@sha256:provenance",
+                signature_policy=str(bundle_spec["signaturePolicy"]),
+            )
+        )
+    )
+    release.validate_production_pins()
+    release_bundle = ReleaseBundle(
+        bundle_id="enterprise-rag-production-bundle",
+        release=release,
+        artifacts={
+            "provenance": canonical_hash({"release": release.content_digest(), "kind": "provenance"}),
+            "sbom": canonical_hash({"release": release.content_digest(), "kind": "sbom"}),
+        },
+    )
+    signing_key = b"graphblocks-local-production-publisher"
+    attestation = ReleaseAttestation.sign(
+        release_bundle,
+        signer_id="production-publisher-1",
+        signing_key=signing_key,
+    )
+    verified = verify_release_attestation(
+        release_bundle,
+        attestation,
+        trusted_signing_keys={"production-publisher-1": signing_key},
+    )
+    tampered = verify_release_attestation(
+        replace(
+            release_bundle,
+            artifacts={**release_bundle.artifacts, "sbom": canonical_hash({"tampered": True})},
+        ),
+        attestation,
+        trusted_signing_keys={"production-publisher-1": signing_key},
+    )
+    untrusted = verify_release_attestation(
+        release_bundle,
+        attestation,
+        trusted_signing_keys={"staging-publisher": signing_key},
+    )
+
+    thresholds = tuple(
+        CanaryMetricThreshold(
+            metric=str(gate["metric"]),
+            minimum=float(gate["min"]) if "min" in gate else None,
+            max_regression=float(gate["maxRegression"]) if "maxRegression" in gate else None,
+        )
+        for gate in rollout_gates
+        if isinstance(gate, Mapping)
+    )
+    passing_metrics = {
+        "average_cost_per_turn": 0.102,
+        "citation_validation_rate": 0.985,
+        "turn_success_rate": 0.997,
+    }
+    quality = evaluate_canary_metrics(
+        thresholds,
+        candidate_metrics=passing_metrics,
+        baseline_metrics={"average_cost_per_turn": 0.1},
+    )
+    failing_quality = evaluate_canary_metrics(
+        thresholds,
+        candidate_metrics={**passing_metrics, "average_cost_per_turn": 0.12},
+        baseline_metrics={"average_cost_per_turn": 0.1},
+    )
+    rollout_plan = RolloutPlan.canary(
+        "rollout-enterprise-rag-1",
+        "revision-stable",
+        "revision-canary",
+        affinity=str(rollout["affinity"]),
+        canary_steps=(
+            RolloutStep.canary("canary-1", traffic_percent=1, minimum_samples=200),
+            RolloutStep.canary("canary-10", traffic_percent=10, minimum_duration_seconds=1800),
+            RolloutStep.canary("canary-50", traffic_percent=50, minimum_duration_seconds=3600),
+        ),
+    )
+    aborted = rollout_plan.initial_state().advance_for_test(2).evaluate_gate(
+        RolloutAnalysisResult(
+            step_id="canary-1",
+            passed=False,
+            sample_count=200,
+            metrics=failing_quality.evidence_contract(),
+            reason="canary_quality_gate_failed",
+        )
+    )
+    rollback = evaluate_rollback_and_drain(
+        aborted,
+        {
+            "conversation": ("revision-canary", False),
+            "durable_job": ("revision-canary", True),
+            "existing_request": ("revision-canary", False),
+            "new_request": (None, False),
+            "realtime_session": ("revision-canary", False),
+        },
+    )
+    rollback_suppressed = evaluate_rollback_and_drain(
+        replace(aborted, automatic_rollback_allowed=False),
+        {"new_request": (None, False)},
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "release": {
+            "bundleId": release_bundle.bundle_id,
+            "bundleDigest": release_bundle.content_digest(),
+            "attestationDigest": release_bundle.attestation_digest(),
+            "signerId": verified.signer_id,
+            "verified": verified.verified,
+            "reason": verified.reason,
+            "tamperedVerified": tampered.verified,
+            "tamperedReason": tampered.reason,
+            "untrustedVerified": untrusted.verified,
+            "untrustedReason": untrusted.reason,
+        },
+        "canary": {
+            "passing": quality.evidence_contract(),
+            "failing": failing_quality.evidence_contract(),
+            "passingDigest": quality.content_digest(),
+            "failingDigest": failing_quality.content_digest(),
+        },
+        "rollback": {
+            **rollback.evidence_contract(),
+            "suppressedAllowed": rollback_suppressed.rollback_allowed,
+            "controlDrain": control_target["lifecycle"]["drain"],  # type: ignore[index]
+        },
+    }
+
+
+def _release_bundle_verification(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_kubernetes_canary(application, scenario_path)
+    release = evidence["release"]
+    if (
+        not isinstance(release, Mapping)
+        or release.get("verified") is not True
+        or release.get("reason") != "trusted_signature"
+        or release.get("tamperedVerified") is not False
+        or release.get("tamperedReason") != "subject_digest_mismatch"
+        or release.get("untrustedVerified") is not False
+        or release.get("untrustedReason") != "untrusted_signer"
+    ):
+        raise RuntimeError("signed release bundle verification evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "release bundle verification",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "release": release,
+        }
+    )
+
+
+def _canary_quality_gate(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_kubernetes_canary(application, scenario_path)
+    canary = evidence["canary"]
+    if (
+        not isinstance(canary, Mapping)
+        or canary.get("passing", {}).get("passed") is not True  # type: ignore[union-attr]
+        or canary.get("passing", {}).get("violations") != []  # type: ignore[union-attr]
+        or canary.get("failing", {}).get("passed") is not False  # type: ignore[union-attr]
+        or canary.get("failing", {}).get("violations")
+        != ["average_cost_per_turn:max_regression_exceeded"]  # type: ignore[union-attr]
+    ):
+        raise RuntimeError("canary threshold evaluation evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "canary quality gate",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "canary": canary,
+        }
+    )
+
+
+def _rollback_and_drain_gate(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_kubernetes_canary(application, scenario_path)
+    rollback = evidence["rollback"]
+    decisions = rollback.get("workloadDecisions") if isinstance(rollback, Mapping) else None
+    if (
+        not isinstance(rollback, Mapping)
+        or rollback.get("rollbackAllowed") is not True
+        or rollback.get("restoredRevisionId") != "revision-stable"
+        or rollback.get("abortedRevisionId") != "revision-canary"
+        or rollback.get("suppressedAllowed") is not False
+        or rollback.get("controlDrain") != "60s"
+        or not isinstance(decisions, list)
+        or {decision.get("workload"): decision.get("kind") for decision in decisions}
+        != {
+            "conversation": "keep_affinity",
+            "durable_job": "checkpoint_and_migrate",
+            "existing_request": "finish_on_old",
+            "new_request": "admit_on_new",
+            "realtime_session": "drain_on_old",
+        }
+    ):
+        raise RuntimeError("rollback and workload drain evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "rollback and drain gate",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "rollback": rollback,
+        }
+    )
+
+
+def _exercise_realtime_voice_agent(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "realtime-voice-agent":
+        raise RuntimeError("voice semantic gate requires the realtime-voice-agent application")
+    try:
+        voice = importlib.import_module("graphblocks_voice")
+    except ModuleNotFoundError as error:
+        raise RuntimeError("voice semantic gates require the graphblocks-voice production dependency") from error
+    documents = load_documents(scenario_path)
+    if len(documents) != 1:
+        raise RuntimeError("realtime voice scenario must contain exactly one graph")
+    graph = documents[0]
+    graph_spec = graph.get("spec")
+    if not isinstance(graph_spec, Mapping):
+        raise RuntimeError("realtime voice graph spec must be a mapping")
+    execution = graph_spec.get("execution")
+    voice_spec = graph_spec.get("voice")
+    nodes = graph_spec.get("nodes")
+    if not isinstance(execution, Mapping) or not isinstance(voice_spec, Mapping) or not isinstance(nodes, Mapping):
+        raise RuntimeError("realtime voice execution, voice, and node contracts are required")
+    if (
+        graph_spec.get("extensions") != ["graphblocks.voice/v1alpha1"]
+        or execution
+        != {
+            "lifetime": "session",
+            "interaction": "duplex",
+            "durability": "checkpointed",
+        }
+    ):
+        raise RuntimeError("realtime voice graph must declare checkpointed duplex session execution")
+    provider = voice_spec.get("provider")
+    turn_detection = voice_spec.get("turnDetection")
+    local_vad = voice_spec.get("localVad")
+    interruption = voice_spec.get("interruption")
+    playback_config = voice_spec.get("playback")
+    session_node = nodes.get("session")
+    tools_node = nodes.get("tools")
+    telemetry_node = nodes.get("telemetry")
+    if any(
+        not isinstance(value, Mapping)
+        for value in (
+            provider,
+            turn_detection,
+            local_vad,
+            interruption,
+            playback_config,
+            session_node,
+            tools_node,
+            telemetry_node,
+        )
+    ):
+        raise RuntimeError("realtime voice provider, authority, playback, and node contracts are required")
+    assert isinstance(provider, Mapping)
+    assert isinstance(turn_detection, Mapping)
+    assert isinstance(local_vad, Mapping)
+    assert isinstance(interruption, Mapping)
+    assert isinstance(playback_config, Mapping)
+    assert isinstance(session_node, Mapping)
+    assert isinstance(tools_node, Mapping)
+    assert isinstance(telemetry_node, Mapping)
+    if (
+        turn_detection != {"authority": "provider", "mode": "semantic"}
+        or local_vad != {"enabled": True, "role": "metrics_and_early_duck_only"}
+        or interruption
+        != {
+            "authority": "provider",
+            "policy": "adaptive",
+            "onPossible": "duck",
+            "onConfirmed": ["clear_playout", "cancel_response", "truncate_conversation"],
+        }
+    ):
+        raise RuntimeError("realtime voice provider interruption authority contract does not match")
+    if playback_config != {"acknowledgements": "required", "reportInterval": "100ms"}:
+        raise RuntimeError("realtime voice playback acknowledgement contract does not match")
+    transport_config = session_node.get("config", {}).get("transport")
+    if (
+        session_node.get("block") != "realtime.session@1"
+        or session_node.get("bindings") != {"provider": "realtime-provider"}
+        or transport_config
+        != {
+            "kind": "provider_realtime",
+            "uri": "wss://realtime.example.com/v1/sessions",
+            "codec": "pcm16",
+            "sampleRateHz": 24000,
+            "channels": 1,
+        }
+        or tools_node.get("block") != "tools.dispatch@1"
+        or tools_node.get("inputs") != {"calls": "session.toolCalls"}
+        or tools_node.get("outputs") != {"results": "session.toolResults"}
+        or telemetry_node.get("block") != "telemetry.voice_session@1"
+    ):
+        raise RuntimeError("realtime voice session, tool, and telemetry dataflow does not match")
+    if (
+        provider.get("adapterId") != "openai-realtime"
+        or provider.get("authSecretRef") != "secret://providers/openai-realtime"
+        or provider.get("defaultModel") != "gpt-realtime"
+        or provider.get("defaultInstructions") != "Use concise voice-safe answers."
+    ):
+        raise RuntimeError("realtime voice provider binding contract does not match")
+
+    transport = voice.VoiceTransport(
+        kind=str(transport_config["kind"]),
+        uri=str(transport_config["uri"]),
+        codec=str(transport_config["codec"]),
+        sample_rate_hz=int(transport_config["sampleRateHz"]),
+        channels=int(transport_config["channels"]),
+    )
+    session = voice.DuplexSession(
+        "voice-session-1",
+        transport,
+        started_at_ms=0,
+        metadata={"provider": str(provider["adapterId"])},
+    ).begin_turn("voice-turn-1")
+    request = voice.RealtimeSessionRequest(
+        session=session,
+        model=str(provider["defaultModel"]),
+        instructions=str(provider["defaultInstructions"]),
+        modalities=("audio", "text"),
+        tools=("knowledge.search", "ticket.create"),
+    )
+    local_authority = voice.VadAuthority("local-vad", speech_threshold=0.6)
+    speech = local_authority.evaluate(
+        voice.AudioFrame("microphone", sequence=1, start_ms=0, duration_ms=20, speech_probability=0.9)
+    )
+    silence = local_authority.evaluate(
+        voice.AudioFrame("microphone", sequence=2, start_ms=20, duration_ms=20, speech_probability=0.1)
+    )
+    playback = voice.PlaybackLedger().append(
+        voice.PlaybackEntry(
+            "playback-1",
+            sequence=1,
+            status="queued",
+            audio_ref="artifact://voice/playback-1",
+        )
+    )
+    started = playback.start("playback-1", occurred_at_ms=5)
+    classifier = voice.InterruptionClassifier(
+        "adaptive-barge-in",
+        provider_authority_id=str(turn_detection["authority"]),
+    )
+    advisory = classifier.classify(
+        session_id=session.session_id,
+        vad_decision=speech,
+        playback=started,
+        occurred_at_ms=20,
+    )
+    confirmed = classifier.classify(
+        session_id=session.session_id,
+        vad_decision=silence,
+        playback=started,
+        occurred_at_ms=25,
+        provider_decision=voice.ProviderInterruptionDecision(
+            authority_id="provider",
+            session_id=session.session_id,
+            kind="interrupt",
+            occurred_at_ms=25,
+            reason="provider_confirmed_barge_in",
+        ),
+    )
+    interrupted = started.interrupt_active(
+        occurred_at_ms=confirmed.occurred_at_ms,
+        reason=str(confirmed.reason),
+    )
+    acknowledged = interrupted.acknowledge("playback-1", occurred_at_ms=30)
+    repeated_acknowledgement_is_idempotent = (
+        acknowledged.acknowledge("playback-1", occurred_at_ms=30) == acknowledged
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "session": {
+            "state": session.state,
+            "currentTurnId": session.current_turn_id,
+            "providerContract": request.provider_contract(),
+        },
+        "interruption": {
+            "localVadKind": speech.kind,
+            "advisoryKind": advisory.kind,
+            "advisoryReason": advisory.reason,
+            "advisoryInterruptedIds": list(advisory.interrupted_playback_ids),
+            "confirmedLocalVadKind": silence.kind,
+            "confirmedKind": confirmed.kind,
+            "confirmedReason": confirmed.reason,
+            "confirmedInterruptedIds": list(confirmed.interrupted_playback_ids),
+        },
+        "playback": {
+            "status": acknowledged.entries[0].status,
+            "startedAtMs": acknowledged.entries[0].started_at_ms,
+            "completedAtMs": acknowledged.entries[0].completed_at_ms,
+            "acknowledgedAtMs": acknowledged.entries[0].acknowledged_at_ms,
+            "reason": acknowledged.entries[0].reason,
+            "idempotentAcknowledgement": repeated_acknowledgement_is_idempotent,
+            "digest": acknowledged.content_digest(),
+        },
+    }
+
+
+def _duplex_session_contract_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_realtime_voice_agent(application, scenario_path)
+    session = evidence["session"]
+    provider_contract = session.get("providerContract") if isinstance(session, Mapping) else None
+    if (
+        not isinstance(session, Mapping)
+        or session.get("state") != "open"
+        or session.get("currentTurnId") != "voice-turn-1"
+        or not isinstance(provider_contract, Mapping)
+        or provider_contract.get("sessionId") != "voice-session-1"
+        or provider_contract.get("transport", {}).get("kind") != "provider_realtime"  # type: ignore[union-attr]
+        or provider_contract.get("modalities") != ["audio", "text"]
+        or provider_contract.get("tools") != ["knowledge.search", "ticket.create"]
+    ):
+        raise RuntimeError("duplex realtime session evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "duplex session contract check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "session": session,
+        }
+    )
+
+
+def _interruption_authority_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_realtime_voice_agent(application, scenario_path)
+    interruption = evidence["interruption"]
+    if not isinstance(interruption, Mapping) or interruption != {
+        "localVadKind": "speech_start",
+        "advisoryKind": "continue",
+        "advisoryReason": "awaiting_provider_confirmation",
+        "advisoryInterruptedIds": [],
+        "confirmedLocalVadKind": "silence",
+        "confirmedKind": "interrupt",
+        "confirmedReason": "provider_confirmed_barge_in",
+        "confirmedInterruptedIds": ["playback-1"],
+    }:
+        raise RuntimeError("provider-confirmed interruption authority evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "interruption authority check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "interruption": interruption,
+        }
+    )
+
+
+def _playback_ledger_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_realtime_voice_agent(application, scenario_path)
+    playback = evidence["playback"]
+    if (
+        not isinstance(playback, Mapping)
+        or playback.get("status") != "interrupted"
+        or playback.get("startedAtMs") != 5
+        or playback.get("completedAtMs") != 25
+        or playback.get("acknowledgedAtMs") != 30
+        or playback.get("reason") != "provider_confirmed_barge_in"
+        or playback.get("idempotentAcknowledgement") is not True
+    ):
+        raise RuntimeError("ordered acknowledged playback ledger evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "playback ledger check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "playback": playback,
+        }
+    )
+
+
+def _exercise_telemetry_outage_correctness(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "telemetry-outage-correctness":
+        raise RuntimeError("telemetry semantic gate requires the telemetry-outage-correctness application")
+    try:
+        audit_module = importlib.import_module("graphblocks_audit")
+        langfuse_module = importlib.import_module("graphblocks_langfuse")
+        otel_module = importlib.import_module("graphblocks_otel")
+        telemetry_module = importlib.import_module("graphblocks_telemetry")
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "telemetry semantic gates require the audit, telemetry, OTel, and Langfuse production dependencies"
+        ) from error
+    documents = load_documents(scenario_path)
+    if len(documents) != 1 or documents[0].get("kind") != "ObservabilityProfile":
+        raise RuntimeError("telemetry outage scenario must contain exactly one ObservabilityProfile")
+    profile = documents[0]
+    profile_spec = profile.get("spec")
+    if not isinstance(profile_spec, Mapping):
+        raise RuntimeError("telemetry outage profile spec must be a mapping")
+    capture = profile_spec.get("capture")
+    metrics = profile_spec.get("metrics")
+    exporters = profile_spec.get("exporters")
+    durable_records = profile_spec.get("durableRecords")
+    if any(not isinstance(value, Mapping) for value in (capture, metrics, exporters, durable_records)):
+        raise RuntimeError("telemetry capture, metric, exporter, and durable-record contracts are required")
+    assert isinstance(capture, Mapping)
+    assert isinstance(metrics, Mapping)
+    assert isinstance(exporters, Mapping)
+    assert isinstance(durable_records, Mapping)
+    if capture != {
+        "messages": "redacted",
+        "documentContent": "reference_only",
+        "toolArguments": "schema_only",
+        "toolResults": "metadata",
+        "embeddings": "none",
+        "rawFiles": "none",
+    }:
+        raise RuntimeError("telemetry capture policy does not match the privacy contract")
+    allowed_dimensions = [
+        "environment",
+        "release_channel",
+        "graph_id",
+        "block_type",
+        "target_id",
+        "provider",
+        "outcome",
+    ]
+    forbidden_dimensions = [
+        "run_id",
+        "user_id",
+        "conversation_id",
+        "document_id",
+        "chunk_id",
+    ]
+    if (
+        metrics.get("dimensions") != allowed_dimensions
+        or metrics.get("forbiddenDimensions") != forbidden_dimensions
+        or set(allowed_dimensions) & set(forbidden_dimensions)
+    ):
+        raise RuntimeError("telemetry metrics must forbid high-cardinality identity dimensions")
+    otlp_config = exporters.get("otlp")
+    langfuse_config = exporters.get("langfuse")
+    if not isinstance(otlp_config, Mapping) or otlp_config != {"endpoint": "otel-gateway:4317"}:
+        raise RuntimeError("telemetry OTel exporter contract does not match")
+    if not isinstance(langfuse_config, Mapping) or langfuse_config != {
+        "mode": "collector",
+        "project": "company-ai",
+    }:
+        raise RuntimeError("telemetry Langfuse collector contract does not match")
+    if durable_records != {
+        "executionJournal": "run-postgres",
+        "auditLog": {
+            "sink": "audit-postgres",
+            "delivery": "transactional_outbox",
+            "retention": "7y",
+        },
+        "usageLedger": {
+            "sink": "usage-postgres",
+            "deduplicateBy": ["provider_response_id", "node_attempt_id"],
+        },
+        "budgetLedger": "budget-postgres",
+    }:
+        raise RuntimeError("telemetry outage durable correctness stores do not match")
+
+    record = telemetry_module.GenerationTelemetryRecord(
+        record_id="generation-telemetry-1",
+        run_id="run-telemetry-1",
+        span_id="span-telemetry-1",
+        node_id="answer",
+        provider="openai-compatible",
+        model="gpt-test",
+        release_id="release-telemetry-1",
+        input_digest="sha256:input",
+        output_digest="sha256:output",
+        usage={"input_tokens": 20, "output_tokens": 8},
+        attributes={
+            "environment": "production",
+            "api_key": "must-not-appear",
+            "prompt": "private prompt must not appear",
+        },
+    )
+    cardinality_linter = telemetry_module.MetricCardinalityLinter(
+        blocked_labels=tuple(forbidden_dimensions),
+    )
+    allowed_cardinality = cardinality_linter.lint_samples(
+        (
+            {
+                "name": "graphblocks_generation_total",
+                "labels": {dimension: f"value-{dimension}" for dimension in allowed_dimensions},
+                "value": 1,
+            },
+        )
+    )
+    blocked_cardinality = cardinality_linter.lint_samples(
+        (
+            {
+                "name": "graphblocks_generation_total",
+                "labels": {"run_id": "run-telemetry-1"},
+                "value": 1,
+            },
+        )
+    )
+    if (
+        not allowed_cardinality.passed
+        or blocked_cardinality.issue_contracts()
+        != [
+            {
+                "metric_name": "graphblocks_generation_total",
+                "label": "run_id",
+                "distinct_values": 1,
+                "limit": 0,
+                "reason": "blocked_label",
+            }
+        ]
+    ):
+        raise RuntimeError("telemetry metric cardinality policy did not enforce forbidden dimensions")
+    otel_projection = otel_module.otlp_span_from_generation(
+        record,
+        schema_url="https://opentelemetry.io/schemas/1.27.0",
+    ).span_contract()
+    langfuse_projection = langfuse_module.langfuse_generation_from_observation(
+        record,
+        trace_id="trace-telemetry-1",
+    ).generation_contract()
+    if "must-not-appear" in repr(otel_projection) or "private prompt must not appear" in repr(otel_projection):
+        raise RuntimeError("OTel projection exposed protected telemetry content")
+    if "must-not-appear" in repr(langfuse_projection) or "private prompt must not appear" in repr(
+        langfuse_projection
+    ):
+        raise RuntimeError("Langfuse projection exposed protected telemetry content")
+
+    with TemporaryDirectory(prefix="graphblocks-telemetry-acceptance-") as directory:
+        journal = SQLiteExecutionJournal(Path(directory) / "journal.sqlite3", "run-telemetry-1")
+        audit = audit_module.SQLiteAuditOutbox(Path(directory) / "audit.sqlite3")
+        usage = SQLiteUsageLedger(Path(directory) / "usage.sqlite3")
+        budget = SQLiteBudgetLedger(Path(directory) / "budget.sqlite3")
+        try:
+            journal.append("run_started", {"graphHash": "sha256:graph"})
+            journal.append("node_succeeded", {"node": "answer", "outputDigest": "sha256:output"})
+            journal.append_terminal("run_succeeded", {"outputDigest": "sha256:output"})
+            audit.append(
+                "application_event",
+                {"event_id": "event-1", "kind": "RunSucceeded", "run_id": "run-telemetry-1"},
+                occurred_at="2026-07-10T00:00:00Z",
+                record_id="audit-telemetry-1",
+            )
+            usage.append(
+                UsageRecord(
+                    record_id="usage-telemetry-1",
+                    source="provider_reported",
+                    confidence="provider_exact",
+                    amounts=(UsageAmount("model_total_tokens", Decimal("28"), "tokens"),),
+                    occurred_at="2026-07-10T00:00:00Z",
+                    run_id="run-telemetry-1",
+                    attempt_id="attempt-1",
+                    provider_response_id="response-1",
+                )
+            )
+            budget.allocate(
+                "budget-telemetry-1",
+                PolicyResourceRef("tenant:acme", resource_kind="tenant"),
+                [UsageAmount("model_total_tokens", Decimal("100"), "tokens")],
+                policy_ref="policy-1",
+            )
+            reservation = budget.reserve(
+                "budget-telemetry-1",
+                PolicyResourceRef("run-telemetry-1", resource_kind="run"),
+                [UsageAmount("model_total_tokens", Decimal("40"), "tokens")],
+                purpose="provider_call",
+                expires_at="2026-07-10T01:00:00Z",
+                reservation_id="reservation-telemetry-1",
+            )
+            budget.commit(
+                reservation.reservation_id,
+                [UsageAmount("model_total_tokens", Decimal("28"), "tokens")],
+            )
+            balance = budget.balance("budget-telemetry-1")
+            baseline = telemetry_module.TelemetryCorrectnessSnapshot.capture(
+                execution_journal=[entry.to_dict() for entry in journal.records],
+                audit_log=[
+                    {
+                        "record_id": entry.record_id,
+                        "payload_digest": entry.payload_digest,
+                        "status": entry.status,
+                    }
+                    for entry in audit.pending()
+                ],
+                usage_ledger=[
+                    {
+                        "record_id": entry.record_id,
+                        "amounts": [
+                            {
+                                "kind": amount.kind,
+                                "amount": str(amount.amount),
+                                "unit": amount.unit,
+                            }
+                            for amount in entry.amounts
+                        ],
+                    }
+                    for entry in usage.records_for_run("run-telemetry-1")
+                ],
+                budget_ledger={
+                    "budget_id": balance.budget_id,
+                    "revision": balance.revision,
+                    "committed": [
+                        {
+                            "kind": amount.kind,
+                            "amount": str(amount.amount),
+                            "unit": amount.unit,
+                        }
+                        for amount in balance.committed
+                    ],
+                },
+            )
+            outbox = telemetry_module.TelemetryExportOutbox()
+            outbox.accept((record,))
+            outbox.accept((record,))
+            failed = outbox.attempt_export(
+                "otlp",
+                lambda records: (_ for _ in ()).throw(TimeoutError("collector unavailable")),
+                correctness_probe=lambda: baseline,
+                retryable=True,
+            )
+            balance_after_failure = budget.balance("budget-telemetry-1")
+            after_failure = telemetry_module.TelemetryCorrectnessSnapshot.capture(
+                execution_journal=[entry.to_dict() for entry in journal.records],
+                audit_log=[
+                    {
+                        "record_id": entry.record_id,
+                        "payload_digest": entry.payload_digest,
+                        "status": entry.status,
+                    }
+                    for entry in audit.pending()
+                ],
+                usage_ledger=[
+                    {
+                        "record_id": entry.record_id,
+                        "amounts": [
+                            {
+                                "kind": amount.kind,
+                                "amount": str(amount.amount),
+                                "unit": amount.unit,
+                            }
+                            for amount in entry.amounts
+                        ],
+                    }
+                    for entry in usage.records_for_run("run-telemetry-1")
+                ],
+                budget_ledger={
+                    "budget_id": balance_after_failure.budget_id,
+                    "revision": balance_after_failure.revision,
+                    "committed": [
+                        {
+                            "kind": amount.kind,
+                            "amount": str(amount.amount),
+                            "unit": amount.unit,
+                        }
+                        for amount in balance_after_failure.committed
+                    ],
+                },
+            )
+            delivered_ids: list[str] = []
+            recovered = outbox.attempt_export(
+                "otlp",
+                lambda records: delivered_ids.extend(item.record_id for item in records),
+                correctness_probe=lambda: after_failure,
+                retryable=True,
+            )
+            redundant = outbox.attempt_export(
+                "otlp",
+                lambda records: delivered_ids.extend(item.record_id for item in records),
+                correctness_probe=lambda: after_failure,
+                retryable=True,
+            )
+            langfuse_delivery = outbox.attempt_export(
+                "langfuse",
+                lambda records: None,
+                correctness_probe=lambda: after_failure,
+            )
+            final_balance = budget.balance("budget-telemetry-1")
+            final_snapshot = telemetry_module.TelemetryCorrectnessSnapshot.capture(
+                execution_journal=[entry.to_dict() for entry in journal.records],
+                audit_log=[
+                    {
+                        "record_id": entry.record_id,
+                        "payload_digest": entry.payload_digest,
+                        "status": entry.status,
+                    }
+                    for entry in audit.pending()
+                ],
+                usage_ledger=[
+                    {
+                        "record_id": entry.record_id,
+                        "amounts": [
+                            {
+                                "kind": amount.kind,
+                                "amount": str(amount.amount),
+                                "unit": amount.unit,
+                            }
+                            for amount in entry.amounts
+                        ],
+                    }
+                    for entry in usage.records_for_run("run-telemetry-1")
+                ],
+                budget_ledger={
+                    "budget_id": final_balance.budget_id,
+                    "revision": final_balance.revision,
+                    "committed": [
+                        {
+                            "kind": amount.kind,
+                            "amount": str(amount.amount),
+                            "unit": amount.unit,
+                        }
+                        for amount in final_balance.committed
+                    ],
+                },
+            )
+            return {
+                "applicationDigest": canonical_hash(application.application_contract()),
+                "scenarioDigest": canonical_hash(documents),
+                "otel": otel_projection,
+                "langfuse": langfuse_projection,
+                "cardinality": {
+                    "allowedPassed": allowed_cardinality.passed,
+                    "blockedIssues": blocked_cardinality.issue_contracts(),
+                },
+                "outage": {
+                    "failed": failed.evaluation_contract(),
+                    "recovered": recovered.evaluation_contract(),
+                    "redundant": redundant.evaluation_contract(),
+                    "langfuseDelivery": langfuse_delivery.evaluation_contract(),
+                    "baselineDigest": baseline.digest,
+                    "afterFailureDigest": after_failure.digest,
+                    "finalDigest": final_snapshot.digest,
+                    "deliveredIds": delivered_ids,
+                    "journalRecordCount": len(journal.records),
+                    "auditRecordIds": [entry.record_id for entry in audit.pending()],
+                    "usageRecordIds": [
+                        entry.record_id for entry in usage.records_for_run("run-telemetry-1")
+                    ],
+                    "budgetCommitted": [str(amount.amount) for amount in final_balance.committed],
+                },
+            }
+        finally:
+            journal.close()
+            audit.close()
+            usage.close()
+            budget.close()
+
+
+def _otel_projection_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_telemetry_outage_correctness(application, scenario_path)
+    otel = evidence["otel"]
+    cardinality = evidence["cardinality"]
+    attributes = otel.get("attributes") if isinstance(otel, Mapping) else None
+    if (
+        not isinstance(otel, Mapping)
+        or otel.get("schema_url") != "https://opentelemetry.io/schemas/1.27.0"
+        or otel.get("span_id") != "span-telemetry-1"
+        or not isinstance(attributes, Mapping)
+        or attributes.get("graphblocks.attribute.environment") != "production"
+        or attributes.get("graphblocks.attribute.api_key") != "[redacted]"
+        or "graphblocks.attribute.prompt" in attributes
+        or otel.get("metrics") != {"usage.input_tokens": 20, "usage.output_tokens": 8}
+        or not isinstance(cardinality, Mapping)
+        or cardinality.get("allowedPassed") is not True
+        or cardinality.get("blockedIssues")
+        != [
+            {
+                "metric_name": "graphblocks_generation_total",
+                "label": "run_id",
+                "distinct_values": 1,
+                "limit": 0,
+                "reason": "blocked_label",
+            }
+        ]
+    ):
+        raise RuntimeError("OTel generation projection evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "OTel projection check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "otel": otel,
+            "cardinality": cardinality,
+        }
+    )
+
+
+def _langfuse_projection_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_telemetry_outage_correctness(application, scenario_path)
+    langfuse = evidence["langfuse"]
+    metadata = langfuse.get("metadata") if isinstance(langfuse, Mapping) else None
+    attributes = metadata.get("attributes") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(langfuse, Mapping)
+        or langfuse.get("trace_id") != "trace-telemetry-1"
+        or langfuse.get("generation_id") != "span-telemetry-1"
+        or not isinstance(attributes, Mapping)
+        or attributes.get("environment") != "production"
+        or attributes.get("api_key") != "[redacted]"
+        or "prompt" in attributes
+        or langfuse.get("usage") != {"input_tokens": 20, "output_tokens": 8}
+    ):
+        raise RuntimeError("Langfuse generation projection evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "Langfuse projection check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "langfuse": langfuse,
+        }
+    )
+
+
+def _telemetry_outage_correctness_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_telemetry_outage_correctness(application, scenario_path)
+    outage = evidence["outage"]
+    failed = outage.get("failed") if isinstance(outage, Mapping) else None
+    recovered = outage.get("recovered") if isinstance(outage, Mapping) else None
+    redundant = outage.get("redundant") if isinstance(outage, Mapping) else None
+    if (
+        not isinstance(outage, Mapping)
+        or not isinstance(failed, Mapping)
+        or not isinstance(recovered, Mapping)
+        or not isinstance(redundant, Mapping)
+        or failed.get("result", {}).get("status") != "failed"  # type: ignore[union-attr]
+        or failed.get("result", {}).get("run_impact") != "none"  # type: ignore[union-attr]
+        or failed.get("pending_record_ids") != ["generation-telemetry-1"]
+        or recovered.get("result", {}).get("status") != "completed"  # type: ignore[union-attr]
+        or recovered.get("pending_record_ids") != []
+        or redundant.get("result", {}).get("record_ids") != []  # type: ignore[union-attr]
+        or outage.get("baselineDigest") != outage.get("afterFailureDigest")
+        or outage.get("baselineDigest") != outage.get("finalDigest")
+        or outage.get("deliveredIds") != ["generation-telemetry-1"]
+        or outage.get("journalRecordCount") != 3
+        or outage.get("auditRecordIds") != ["audit-telemetry-1"]
+        or outage.get("usageRecordIds") != ["usage-telemetry-1"]
+        or outage.get("budgetCommitted") != ["28"]
+    ):
+        raise RuntimeError("telemetry outage durable correctness evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "telemetry outage correctness check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "outage": outage,
+        }
+    )
+
+
 def _exercise_direct_file_analysis(
     application: AcceptanceApplication,
     scenario_path: Path,
@@ -5386,6 +6489,15 @@ class AcceptanceGateRunner:
             "budget lease reservation check": _budget_lease_reservation_check,
             "review invalidation check": _review_invalidation_check,
             "governed trial commit gate": _governed_trial_commit_gate,
+            "release bundle verification": _release_bundle_verification,
+            "canary quality gate": _canary_quality_gate,
+            "rollback and drain gate": _rollback_and_drain_gate,
+            "duplex session contract check": _duplex_session_contract_check,
+            "interruption authority check": _interruption_authority_check,
+            "playback ledger check": _playback_ledger_check,
+            "OTel projection check": _otel_projection_check,
+            "Langfuse projection check": _langfuse_projection_check,
+            "telemetry outage correctness check": _telemetry_outage_correctness_check,
             "source reference check": _source_reference_check,
             "generated artifact check": _generated_artifact_check,
             "parser fallback check": _parser_fallback_check,

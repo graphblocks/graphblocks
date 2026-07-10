@@ -561,7 +561,12 @@ def test_testing_package_production_acceptance_extra_installs_callback_verifier(
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["optional-dependencies"]["production"] == [
-        "graphblocks-callbacks~=0.1"
+        "graphblocks-audit~=0.1",
+        "graphblocks-callbacks~=0.1",
+        "graphblocks-langfuse~=0.1",
+        "graphblocks-otel~=0.1",
+        "graphblocks-telemetry~=1.0",
+        "graphblocks-voice~=0.1",
     ]
 
 

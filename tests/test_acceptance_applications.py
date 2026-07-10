@@ -11,8 +11,13 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_testing(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-callbacks" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-langfuse" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-otel" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     return importlib.import_module("graphblocks_testing")
 
 
@@ -371,6 +376,184 @@ def test_orchestration_and_trial_semantic_gates_reject_weakened_scenarios(
         application,
         root=tmp_path,
     )
+
+    assert not report.ok, report.report_contract()
+
+
+def test_default_acceptance_gate_runner_executes_full_manifest(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_manifest(
+        manifest,
+        root=ROOT,
+    )
+
+    assert report.ok, {
+        application.application_id: [
+            result.gate for result in application.results if not result.ok
+        ]
+        for application in report.applications
+        if not application.ok
+    }
+
+
+def test_default_runner_executes_deployment_voice_and_telemetry_semantic_gates(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    runner = graphblocks_testing.AcceptanceGateRunner()
+
+    reports = tuple(
+        runner.run_application(manifest.by_id(application_id), root=ROOT)
+        for application_id in (
+            "kubernetes-canary",
+            "realtime-voice-agent",
+            "telemetry-outage-correctness",
+        )
+    )
+    repeated = tuple(
+        runner.run_application(manifest.by_id(application_id), root=ROOT)
+        for application_id in (
+            "kubernetes-canary",
+            "realtime-voice-agent",
+            "telemetry-outage-correctness",
+        )
+    )
+
+    assert all(report.ok for report in reports), {
+        report.application_id: [result.gate for result in report.results if not result.ok]
+        for report in reports
+        if not report.ok
+    }
+    assert [report.report_contract() for report in repeated] == [
+        report.report_contract() for report in reports
+    ]
+
+
+@pytest.mark.parametrize(
+    ("application_id", "gate"),
+    (
+        ("kubernetes-canary", "release bundle verification"),
+        ("kubernetes-canary", "canary quality gate"),
+        ("kubernetes-canary", "rollback and drain gate"),
+        ("realtime-voice-agent", "duplex session contract check"),
+        ("realtime-voice-agent", "interruption authority check"),
+        ("realtime-voice-agent", "playback ledger check"),
+        ("telemetry-outage-correctness", "OTel projection check"),
+        ("telemetry-outage-correctness", "Langfuse projection check"),
+        ("telemetry-outage-correctness", "telemetry outage correctness check"),
+    ),
+)
+def test_production_extension_semantic_gates_reject_weakened_scenarios(
+    monkeypatch,
+    tmp_path,
+    application_id,
+    gate,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id(application_id)
+    documents = _load_yaml_documents(ROOT / original.scenario_path)
+    if application_id == "kubernetes-canary":
+        release, deployment = documents
+        if gate == "release bundle verification":
+            release["spec"]["bundle"]["signaturePolicy"] = "none"
+        elif gate == "canary quality gate":
+            deployment["spec"]["rollout"]["gates"][2].pop("maxRegression")
+        else:
+            deployment["spec"]["upgrades"]["existingRequests"] = "migrate"
+    elif application_id == "realtime-voice-agent":
+        graph = documents[0]
+        if gate == "duplex session contract check":
+            graph["spec"]["execution"]["interaction"] = "incremental"
+        elif gate == "interruption authority check":
+            graph["spec"]["voice"]["localVad"]["role"] = "authoritative"
+        else:
+            graph["spec"]["voice"]["playback"]["acknowledgements"] = "optional"
+    else:
+        profile = documents[0]
+        if gate == "OTel projection check":
+            profile["spec"]["exporters"]["otlp"]["endpoint"] = ""
+        elif gate == "Langfuse projection check":
+            profile["spec"]["exporters"]["langfuse"]["mode"] = "direct"
+        else:
+            profile["spec"]["durableRecords"]["auditLog"]["delivery"] = "best_effort"
+    scenario = tmp_path / f"{application_id}.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id=application_id,
+        profiles=original.profiles,
+        scenario_path=scenario.name,
+        gates=(gate,),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(application, root=tmp_path)
+
+    assert not report.ok, report.report_contract()
+
+
+@pytest.mark.parametrize("weakening", ("release_ref", "mutable_identity"))
+def test_release_verification_binds_deployment_reference_and_release_identity(
+    monkeypatch,
+    tmp_path,
+    weakening,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id("kubernetes-canary")
+    documents = _load_yaml_documents(ROOT / original.scenario_path)
+    if weakening == "release_ref":
+        documents[1]["spec"]["releaseRef"]["name"] = "unverified-release"
+    else:
+        documents[0]["spec"]["identity"]["graphHash"] = "latest"
+    scenario = tmp_path / f"kubernetes-canary-{weakening}.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="kubernetes-canary",
+        profiles=original.profiles,
+        scenario_path=scenario.name,
+        gates=("release bundle verification",),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(application, root=tmp_path)
+
+    assert not report.ok, report.report_contract()
+
+
+def test_telemetry_gates_reject_allowed_and_forbidden_dimension_overlap(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id("telemetry-outage-correctness")
+    documents = _load_yaml_documents(ROOT / original.scenario_path)
+    documents[0]["spec"]["metrics"]["dimensions"].append("run_id")
+    scenario = tmp_path / "telemetry-cardinality-overlap.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="telemetry-outage-correctness",
+        profiles=original.profiles,
+        scenario_path=scenario.name,
+        gates=("OTel projection check",),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(application, root=tmp_path)
 
     assert not report.ok, report.report_contract()
 
