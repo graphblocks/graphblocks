@@ -322,8 +322,14 @@ def run_stdlib_graph(
     run_id: str | None = None,
     run_store_path: str | None = None,
     journal_store_path: str | None = None,
+    deployment_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    if run_id is not None or run_store_path is not None or journal_store_path is not None:
+    if (
+        run_id is not None
+        or run_store_path is not None
+        or journal_store_path is not None
+        or deployment_provenance is not None
+    ):
         options: dict[str, object] = {}
         if run_id is not None:
             options["runId"] = run_id
@@ -331,6 +337,8 @@ def run_stdlib_graph(
             options["runStorePath"] = run_store_path
         if journal_store_path is not None:
             options["journalStorePath"] = journal_store_path
+        if deployment_provenance is not None:
+            options["deploymentProvenance"] = deployment_provenance
         return _json_object_result(
             run_stdlib_graph_with_options_json(
                 _canonical_json(graph),
@@ -353,8 +361,14 @@ def run_test_graph(
     run_id: str | None = None,
     run_store_path: str | None = None,
     journal_store_path: str | None = None,
+    deployment_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    if run_id is not None or run_store_path is not None or journal_store_path is not None:
+    if (
+        run_id is not None
+        or run_store_path is not None
+        or journal_store_path is not None
+        or deployment_provenance is not None
+    ):
         options: dict[str, object] = {}
         if run_id is not None:
             options["runId"] = run_id
@@ -362,6 +376,8 @@ def run_test_graph(
             options["runStorePath"] = run_store_path
         if journal_store_path is not None:
             options["journalStorePath"] = journal_store_path
+        if deployment_provenance is not None:
+            options["deploymentProvenance"] = deployment_provenance
         return _json_object_result(
             run_test_graph_with_options_json(
                 _canonical_json(graph),

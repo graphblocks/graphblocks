@@ -11,7 +11,7 @@ import tarfile
 import yaml
 
 from . import __version__
-from .canonical import canonical_hash
+from .canonical import canonical_dumps, canonical_hash
 from .compiler import compile_graph
 from .deployment import (
     DeploymentRevision,
@@ -55,7 +55,7 @@ from .policy import (
 )
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, SQLiteExecutionJournal, stdlib_registry
-from .run_store import SQLiteRunStore
+from .run_store import RunDeploymentProvenance, SQLiteRunStore
 from .schema import SchemaManifest, SchemaManifestError
 
 STRUCTURAL_KINDS = {
@@ -152,6 +152,15 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--run-store", type=Path, help="persist run metadata to a SQLite run store")
     run_parser.add_argument("--journal-store", type=Path, help="persist execution journal records to SQLite")
     run_parser.add_argument("--run-id", help="caller-selected run id for deterministic local execution evidence")
+    run_parser.add_argument(
+        "--deployment-plan",
+        type=Path,
+        help="deploy plan JSON whose immutable release and physical-plan identities are recorded on the run",
+    )
+    run_parser.add_argument(
+        "--release-signature-digest",
+        help="signature digest for the release referenced by --deployment-plan",
+    )
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -381,6 +390,171 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(inputs, dict):
             print("--input-json must decode to a JSON object")
             return 1
+        deployment_provenance = None
+        if (args.deployment_plan is None) != (args.release_signature_digest is None):
+            print("--deployment-plan and --release-signature-digest must be provided together")
+            return 1
+        if args.deployment_plan is not None:
+            try:
+                deployment_plan_payload = _loads_strict_json(
+                    "deploy plan payload",
+                    args.deployment_plan.read_text(encoding="utf-8"),
+                )
+                if not isinstance(deployment_plan_payload, Mapping):
+                    raise ValueError("deploy plan payload must be a JSON object")
+                if deployment_plan_payload.get("ok") is not True:
+                    raise ValueError("deploy plan payload is not successful")
+                provenance_fields: dict[str, str] = {}
+                for field_name in (
+                    "releaseDigest",
+                    "deploymentRevisionId",
+                    "planHash",
+                ):
+                    value = deployment_plan_payload.get(field_name)
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError(
+                            f"deploy plan payload {field_name} must be a non-empty string"
+                        )
+                    if value != value.strip():
+                        raise ValueError(
+                            f"deploy plan payload {field_name} must not contain surrounding whitespace"
+                        )
+                    provenance_fields[field_name] = value
+                deployment_revision = deployment_plan_payload.get("deploymentRevision")
+                if not isinstance(deployment_revision, Mapping):
+                    raise ValueError("deploy plan payload deploymentRevision must be an object")
+                for revision_field, top_level_field in (
+                    ("revisionId", "deploymentRevisionId"),
+                    ("releaseDigest", "releaseDigest"),
+                    ("physicalPlanHash", "planHash"),
+                ):
+                    if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
+                        raise ValueError(
+                            "deploy plan payload deploymentRevision does not match top-level provenance"
+                        )
+                deployment_provenance = RunDeploymentProvenance(
+                    release_digest=provenance_fields["releaseDigest"],
+                    deployment_revision_id=provenance_fields["deploymentRevisionId"],
+                    physical_plan_hash=provenance_fields["planHash"],
+                    release_signature_digest=args.release_signature_digest,
+                ).validate_for_production()
+                physical_plan = deployment_plan_payload.get("plan")
+                if not isinstance(physical_plan, Mapping):
+                    raise ValueError("deploy plan payload plan must be an object")
+                graph_hash = physical_plan.get("graphHash")
+                if not isinstance(graph_hash, str) or not graph_hash.strip():
+                    raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
+                compiled_graph_hash = compile_graph(graph_documents[0]).graph_hash
+                if graph_hash != compiled_graph_hash:
+                    raise ValueError("deploy plan graphHash does not match the runtime graph")
+                targets = physical_plan.get("targets", {})
+                if not isinstance(targets, Mapping):
+                    raise ValueError("deploy plan payload plan.targets must be an object")
+                canonical_targets: list[dict[str, object]] = []
+                for target_id, target in sorted(targets.items()):
+                    if not isinstance(target, Mapping):
+                        raise ValueError("deploy plan payload plan target must be an object")
+                    capabilities = target.get("capabilities", [])
+                    effects = target.get("effects", [])
+                    if not isinstance(capabilities, list) or not isinstance(effects, list):
+                        raise ValueError(
+                            "deploy plan payload plan target capabilities and effects must be arrays"
+                        )
+                    canonical_targets.append(
+                        {
+                            "target_id": target_id,
+                            "kind": target.get("kind"),
+                            "execution_host": target.get("executionHost"),
+                            "capabilities": capabilities,
+                            "effects": effects,
+                            "package_lock": target.get("packageLock"),
+                            "image": target.get("image"),
+                        }
+                    )
+                placements = physical_plan.get("placements", [])
+                if not isinstance(placements, list):
+                    raise ValueError("deploy plan payload plan.placements must be an array")
+                canonical_placements: list[dict[str, object]] = []
+                for placement in placements:
+                    if not isinstance(placement, Mapping):
+                        raise ValueError("deploy plan payload plan placement must be an object")
+                    selector = placement.get("selector")
+                    if not isinstance(selector, Mapping):
+                        raise ValueError("deploy plan payload plan placement selector must be an object")
+                    selector_values = selector.get("values", [])
+                    if not isinstance(selector_values, list):
+                        raise ValueError(
+                            "deploy plan payload plan placement selector values must be an array"
+                        )
+                    canonical_placements.append(
+                        {
+                            "rule_id": placement.get("ruleId"),
+                            "selector": {
+                                "kind": selector.get("kind"),
+                                "values": selector_values,
+                            },
+                            "target_id": placement.get("target"),
+                        }
+                    )
+                canonical_placements.sort(key=canonical_dumps)
+                computed_plan_hash = canonical_hash(
+                    {
+                        "release_digest": provenance_fields["releaseDigest"],
+                        "deployment_revision_id": provenance_fields["deploymentRevisionId"],
+                        "graph_hash": graph_hash,
+                        "package_lock_hash": physical_plan.get("packageLockHash"),
+                        "targets": canonical_targets,
+                        "placements": canonical_placements,
+                        "default_target": physical_plan.get("defaultTarget"),
+                    }
+                )
+                if computed_plan_hash != provenance_fields["planHash"]:
+                    raise ValueError("deploy plan payload planHash does not match plan content")
+                revision_digest_fields: dict[str, str] = {}
+                for field_name in (
+                    "deploymentSpecHash",
+                    "resolvedBindingHash",
+                    "targetCapabilityHash",
+                    "contentDigest",
+                ):
+                    value = deployment_revision.get(field_name)
+                    if not isinstance(value, str):
+                        raise ValueError(
+                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                        )
+                    digest = value.removeprefix("sha256:")
+                    if (
+                        not value.startswith("sha256:")
+                        or len(digest) != 64
+                        or any(character not in "0123456789abcdef" for character in digest)
+                    ):
+                        raise ValueError(
+                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                        )
+                    revision_digest_fields[field_name] = value
+                top_level_deployment_spec_hash = deployment_plan_payload.get(
+                    "deploymentSpecHash"
+                )
+                if top_level_deployment_spec_hash != revision_digest_fields["deploymentSpecHash"]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
+                    )
+                computed_revision_digest = canonical_hash(
+                    {
+                        "release_digest": provenance_fields["releaseDigest"],
+                        "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
+                        "physical_plan_hash": provenance_fields["planHash"],
+                        "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
+                        "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
+                    }
+                )
+                if computed_revision_digest != revision_digest_fields["contentDigest"]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision contentDigest does not match revision content"
+                    )
+            except (OSError, ValueError) as error:
+                print(error)
+                return 1
         if args.runtime == "native":
             try:
                 import graphblocks_runtime
@@ -394,7 +568,12 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 graph_json = json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True)
                 inputs_json = json.dumps(inputs, separators=(",", ":"), sort_keys=True)
-                if args.run_id is not None or args.run_store is not None or args.journal_store is not None:
+                if (
+                    args.run_id is not None
+                    or args.run_store is not None
+                    or args.journal_store is not None
+                    or deployment_provenance is not None
+                ):
                     runtime_options: dict[str, object] = {}
                     if args.run_id is not None:
                         runtime_options["runId"] = args.run_id
@@ -402,6 +581,8 @@ def main(argv: list[str] | None = None) -> int:
                         runtime_options["runStorePath"] = str(args.run_store)
                     if args.journal_store is not None:
                         runtime_options["journalStorePath"] = str(args.journal_store)
+                    if deployment_provenance is not None:
+                        runtime_options["deploymentProvenance"] = deployment_provenance.canonical_value()
                     result_json = graphblocks_runtime.run_stdlib_graph_with_options_json(
                         graph_json,
                         inputs_json,
@@ -432,7 +613,12 @@ def main(argv: list[str] | None = None) -> int:
             stdlib_registry(),
             run_store=run_store,
             journal_factory=journal_factory,
-        ).run(graph_documents[0], inputs, run_id=args.run_id or "run-000001")
+        ).run(
+            graph_documents[0],
+            inputs,
+            run_id=args.run_id or "run-000001",
+            deployment_provenance=deployment_provenance,
+        )
         print(
             json.dumps(
                 {

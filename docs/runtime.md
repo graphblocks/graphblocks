@@ -81,3 +81,22 @@ Remote workers, deployments, and release bundles add more checks: worker
 advertisement, protocol compatibility, package lock identity, remote payload
 serialization, artifact references, immutable release digests, and physical plan
 hashes.
+
+Production runs can bind execution evidence to an existing `deploy plan --json`
+payload. The run command verifies that the deployment revision repeats the same
+release digest and physical-plan hash as the top-level plan, that the plan's
+graph hash matches the graph being executed, and that all digest identities are
+canonical SHA-256 values. It also recomputes the physical-plan hash from the plan
+content and the deployment-revision content digest before execution. Python and
+native runtimes persist those four identities with the run record; the native
+result and local `run_started` journal record also expose the same provenance. The
+supplied signature digest is provenance for a signature already checked by the
+release-verification workflow; `run` does not replace that cryptographic verification.
+
+```bash
+graphblocks deploy plan deployment.yaml --revision revision-1 --json > deployment-plan.json
+graphblocks run graph.yaml \
+  --deployment-plan deployment-plan.json \
+  --release-signature-digest sha256:... \
+  --run-store runs.sqlite3
+```

@@ -2869,6 +2869,16 @@ sandbox
 - Production run provenance now has deterministic diagnostics: `GB7101` for missing signed release
   digest, `GB7102` for missing physical execution plan hash, and `GB7103` for missing release
   signature digest.
+- Python local execution, the Rust stdlib runtime, and the PyO3 native test runtime now carry a
+  complete deployment provenance payload into persisted run records. Native result payloads and
+  Python `run_started` journal evidence expose the same release, revision, physical-plan, and
+  signature identities.
+- `graphblocks run --deployment-plan ... --release-signature-digest ...` now consumes the existing
+  deploy-plan JSON contract, rejects incomplete or internally inconsistent revision provenance, and
+  verifies canonical SHA-256 identities, recomputes the physical-plan and deployment-revision
+  content hashes, and checks that the plan graph hash matches the graph being executed before local
+  or native work starts. The signature digest records evidence from the release-verification
+  workflow rather than replacing signature verification.
 - `OciReleaseBundleManifest` now records release bundle layers with path, media type, digest, and
   size, computes a stable bundle manifest digest, and rejects mutable or empty production layer
   references before publishing.

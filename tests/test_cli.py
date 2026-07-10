@@ -9,8 +9,68 @@ from types import SimpleNamespace
 import yaml
 
 from graphblocks.cli import main
+from graphblocks.canonical import canonical_hash
+from graphblocks.compiler import compile_graph
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
+
+RELEASE_DIGEST = "sha256:" + ("1" * 64)
+SIGNATURE_DIGEST = "sha256:" + ("3" * 64)
+
+
+def _deployment_plan_payload(
+    graph: dict[str, object],
+    *,
+    graph_hash: str | None = None,
+) -> dict[str, object]:
+    resolved_graph_hash = graph_hash or compile_graph(graph).graph_hash
+    deployment_spec_hash = "sha256:" + ("5" * 64)
+    resolved_binding_hash = "sha256:" + ("6" * 64)
+    target_capability_hash = "sha256:" + ("7" * 64)
+    physical_plan = {
+        "graphHash": resolved_graph_hash,
+        "packageLockHash": None,
+        "defaultTarget": None,
+        "targets": {},
+        "placements": [],
+    }
+    plan_hash = canonical_hash(
+        {
+            "release_digest": RELEASE_DIGEST,
+            "deployment_revision_id": "revision-1",
+            "graph_hash": resolved_graph_hash,
+            "package_lock_hash": None,
+            "targets": [],
+            "placements": [],
+            "default_target": None,
+        }
+    )
+    revision_content_digest = canonical_hash(
+        {
+            "release_digest": RELEASE_DIGEST,
+            "deployment_spec_hash": deployment_spec_hash,
+            "physical_plan_hash": plan_hash,
+            "resolved_binding_hash": resolved_binding_hash,
+            "target_capability_hash": target_capability_hash,
+        }
+    )
+    return {
+        "ok": True,
+        "releaseDigest": RELEASE_DIGEST,
+        "deploymentRevisionId": "revision-1",
+        "deploymentSpecHash": deployment_spec_hash,
+        "planHash": plan_hash,
+        "deploymentRevision": {
+            "revisionId": "revision-1",
+            "releaseDigest": RELEASE_DIGEST,
+            "deploymentSpecHash": deployment_spec_hash,
+            "physicalPlanHash": plan_hash,
+            "resolvedBindingHash": resolved_binding_hash,
+            "targetCapabilityHash": target_capability_hash,
+            "contentDigest": revision_content_digest,
+        },
+        "plan": physical_plan,
+    }
 
 
 def test_validate_cli_accepts_valid_graph(tmp_path, capsys) -> None:
@@ -252,6 +312,283 @@ def test_run_cli_persists_sqlite_run_and_journal_stores(tmp_path, capsys) -> Non
     stored_journal.close()
 
 
+def test_run_cli_persists_signed_deployment_plan_provenance(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-production-provenance"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Production {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    run_store_path = tmp_path / "runs.sqlite3"
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    deployment_plan_path.write_text(
+        json.dumps(_deployment_plan_payload(graph)),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--input-json",
+            '{"message":{"text":"hello"}}',
+            "--run-id",
+            "run-cli-production-1",
+            "--run-store",
+            str(run_store_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            SIGNATURE_DIGEST,
+        ]
+    ) == 0
+    capsys.readouterr()
+    store = SQLiteRunStore(run_store_path)
+    persisted = store.get_run("run-cli-production-1")
+    store.close()
+
+    assert persisted.deployment_provenance.canonical_value() == {
+        "release_digest": RELEASE_DIGEST,
+        "deployment_revision_id": "revision-1",
+        "physical_plan_hash": _deployment_plan_payload(graph)["planHash"],
+        "release_signature_digest": SIGNATURE_DIGEST,
+    }
+
+
+def test_run_cli_rejects_incomplete_production_provenance(tmp_path, capsys) -> None:
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    graph_path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "incomplete-production-provenance"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    deployment_plan_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "releaseDigest": "sha256:release",
+                "deploymentRevisionId": "revision-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            "sha256:signature",
+        ]
+    ) == 1
+    assert "deploy plan payload planHash must be a non-empty string" in capsys.readouterr().out
+
+
+def test_run_cli_rejects_noncanonical_production_digest(tmp_path, capsys) -> None:
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    graph_path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "noncanonical-production-digest"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    deployment_plan_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "releaseDigest": "not-a-digest",
+                "deploymentRevisionId": "revision-1",
+                "planHash": "sha256:" + ("2" * 64),
+                "deploymentRevision": {
+                    "revisionId": "revision-1",
+                    "releaseDigest": "not-a-digest",
+                    "physicalPlanHash": "sha256:" + ("2" * 64),
+                },
+                "plan": {"graphHash": "sha256:" + ("3" * 64)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            "sha256:" + ("4" * 64),
+        ]
+    ) == 1
+    assert (
+        "production deployment provenance release_digest must be a canonical sha256 digest"
+        in capsys.readouterr().out
+    )
+
+
+def test_run_cli_rejects_tampered_physical_plan_hash(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tampered-physical-plan"},
+        "spec": {"nodes": {}},
+    }
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    release_digest = "sha256:" + ("1" * 64)
+    graph_hash = compile_graph(graph).graph_hash
+    physical_plan = {
+        "graphHash": graph_hash,
+        "packageLockHash": None,
+        "defaultTarget": None,
+        "targets": {},
+        "placements": [],
+    }
+    untampered_plan_hash = canonical_hash(
+        {
+            "release_digest": release_digest,
+            "deployment_revision_id": "revision-1",
+            "graph_hash": graph_hash,
+            "package_lock_hash": None,
+            "targets": [],
+            "placements": [],
+            "default_target": None,
+        }
+    )
+    assert untampered_plan_hash != "sha256:" + ("2" * 64)
+    deployment_plan_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "releaseDigest": release_digest,
+                "deploymentRevisionId": "revision-1",
+                "planHash": "sha256:" + ("2" * 64),
+                "deploymentRevision": {
+                    "revisionId": "revision-1",
+                    "releaseDigest": release_digest,
+                    "physicalPlanHash": "sha256:" + ("2" * 64),
+                },
+                "plan": physical_plan,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            "sha256:" + ("3" * 64),
+        ]
+    ) == 1
+    assert "deploy plan payload planHash does not match plan content" in capsys.readouterr().out
+
+
+def test_run_cli_rejects_tampered_deployment_revision_digest(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tampered-deployment-revision"},
+        "spec": {"nodes": {}},
+    }
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    deployment_plan = _deployment_plan_payload(graph)
+    deployment_revision = deployment_plan["deploymentRevision"]
+    assert isinstance(deployment_revision, dict)
+    deployment_revision["contentDigest"] = "sha256:" + ("8" * 64)
+    deployment_plan_path.write_text(json.dumps(deployment_plan), encoding="utf-8")
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            SIGNATURE_DIGEST,
+        ]
+    ) == 1
+    assert (
+        "deploy plan payload deploymentRevision contentDigest does not match revision content"
+        in capsys.readouterr().out
+    )
+
+
+def test_run_cli_rejects_deployment_plan_for_different_graph(tmp_path, capsys) -> None:
+    graph_path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
+    graph_path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "production-graph-mismatch"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "production-graph-mismatch"},
+        "spec": {"nodes": {}},
+    }
+    deployment_plan_path.write_text(
+        json.dumps(
+            _deployment_plan_payload(
+                graph,
+                graph_hash="sha256:" + ("4" * 64),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            "run",
+            str(graph_path),
+            "--deployment-plan",
+            str(deployment_plan_path),
+            "--release-signature-digest",
+            SIGNATURE_DIGEST,
+        ]
+    ) == 1
+    assert "deploy plan graphHash does not match the runtime graph" in capsys.readouterr().out
+
+
 def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeypatch) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -345,9 +682,14 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
         ),
     )
     path = tmp_path / "graph.yaml"
+    deployment_plan_path = tmp_path / "deployment-plan.json"
     run_store_path = tmp_path / "native-runs.sqlite3"
     journal_store_path = tmp_path / "native-journal.sqlite3"
     path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    deployment_plan_path.write_text(
+        json.dumps(_deployment_plan_payload(graph)),
+        encoding="utf-8",
+    )
 
     assert (
         main(
@@ -362,6 +704,10 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
                 str(run_store_path),
                 "--journal-store",
                 str(journal_store_path),
+                "--deployment-plan",
+                str(deployment_plan_path),
+                "--release-signature-digest",
+                SIGNATURE_DIGEST,
                 "--input-json",
                 '{"message":{"text":"ok"}}',
             ]
@@ -377,6 +723,12 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
             graph,
             {"message": {"text": "ok"}},
             {
+                "deploymentProvenance": {
+                    "deployment_revision_id": "revision-1",
+                    "physical_plan_hash": _deployment_plan_payload(graph)["planHash"],
+                    "release_digest": RELEASE_DIGEST,
+                    "release_signature_digest": SIGNATURE_DIGEST,
+                },
                 "journalStorePath": str(journal_store_path),
                 "runId": "run-native-requested-1",
                 "runStorePath": str(run_store_path),

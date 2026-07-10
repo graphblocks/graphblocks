@@ -55,7 +55,7 @@ use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
-use graphblocks_runtime_core::run_store::{RunStatus, SqliteRunStore};
+use graphblocks_runtime_core::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
@@ -6298,13 +6298,19 @@ fn persist_test_runtime_evidence(
     inputs: &Value,
     run_store_path: Option<&str>,
     journal_store_path: Option<&str>,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
 ) -> PyResult<()> {
     if let Some(run_store_path) = run_store_path {
         let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
             PyRuntimeError::new_err(format!("failed to open SQLite run store: {error:?}"))
         })?;
         store
-            .create_run_with_run_id(&result.run_id, graph_hash, inputs.clone())
+            .create_run_with_run_id_and_provenance(
+                &result.run_id,
+                graph_hash,
+                inputs.clone(),
+                deployment_provenance.cloned().unwrap_or_default(),
+            )
             .map_err(|error| {
                 PyRuntimeError::new_err(format!(
                     "failed to persist native test runtime run record: {error:?}"
@@ -6438,6 +6444,7 @@ fn serialize_runtime_result(
     result: graphblocks_runtime_core::test_runtime::TestRunResult,
     graph_hash: String,
     output_values: Value,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
 ) -> PyResult<String> {
     let status = match result.status {
         TestRunStatus::Succeeded => "succeeded",
@@ -6463,13 +6470,19 @@ fn serialize_runtime_result(
             })
         })
         .collect::<Vec<_>>();
-    let payload = json!({
+    let mut payload = json!({
         "runId": result.run_id,
         "graphHash": graph_hash,
         "status": status,
         "outputs": output_values,
         "journal": journal,
     });
+    if let (Some(provenance), Some(payload)) = (deployment_provenance, payload.as_object_mut()) {
+        payload.insert(
+            "deploymentProvenance".to_owned(),
+            provenance.canonical_value(),
+        );
+    }
 
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!("failed to serialize runtime result: {error}"))
@@ -6506,6 +6519,13 @@ fn run_test_graph_with_options_json(
         test_runtime_option_string(options_object, "runStorePath", "run_store_path")?;
     let journal_store_path =
         test_runtime_option_string(options_object, "journalStorePath", "journal_store_path")?;
+    let deployment_provenance = options_object
+        .get("deploymentProvenance")
+        .or_else(|| options_object.get("deployment_provenance"))
+        .filter(|value| !value.is_null())
+        .map(RunDeploymentProvenance::from_production_value)
+        .transpose()
+        .map_err(|message| PyValueError::new_err(format!("test runtime options {message}")))?;
     let Some(node_outputs) = node_outputs.as_object() else {
         return Err(PyValueError::new_err(
             "node outputs JSON must be an object keyed by node id",
@@ -6534,8 +6554,14 @@ fn run_test_graph_with_options_json(
         &inputs,
         run_store_path,
         journal_store_path,
+        deployment_provenance.as_ref(),
     )?;
-    serialize_runtime_result(result, bridge_plan.graph_hash, output_values)
+    serialize_runtime_result(
+        result,
+        bridge_plan.graph_hash,
+        output_values,
+        deployment_provenance.as_ref(),
+    )
 }
 
 #[pyfunction]
@@ -11592,6 +11618,9 @@ mod tests {
     fn run_test_graph_with_options_json_persists_sqlite_evidence() -> Result<(), String> {
         let run_store_path = unique_sqlite_path("run-store");
         let journal_store_path = unique_sqlite_path("journal-store");
+        let release_digest = format!("sha256:{}", "1".repeat(64));
+        let physical_plan_hash = format!("sha256:{}", "2".repeat(64));
+        let release_signature_digest = format!("sha256:{}", "3".repeat(64));
         let graph = json!({
             "apiVersion": "graphblocks.ai/v1alpha3",
             "kind": "Graph",
@@ -11611,6 +11640,12 @@ mod tests {
             "runId": "run-native-test-evidence-1",
             "runStorePath": run_store_path.to_string_lossy(),
             "journalStorePath": journal_store_path.to_string_lossy(),
+            "deploymentProvenance": {
+                "releaseDigest": release_digest,
+                "deploymentRevisionId": "revision-1",
+                "physicalPlanHash": physical_plan_hash,
+                "releaseSignatureDigest": release_signature_digest,
+            },
         });
 
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
@@ -11629,6 +11664,10 @@ mod tests {
 
         assert_eq!(result["runId"], "run-native-test-evidence-1");
         assert_eq!(result["status"], "succeeded");
+        assert_eq!(
+            result["deploymentProvenance"]["release_digest"],
+            release_digest
+        );
 
         let store = graphblocks_runtime_core::run_store::SqliteRunStore::open(&run_store_path)
             .map_err(|error| format!("run store reopens: {error:?}"))?;
@@ -11640,6 +11679,24 @@ mod tests {
             graphblocks_runtime_core::run_store::RunStatus::Completed
         );
         assert_eq!(run.inputs["message"]["text"], "hello");
+        assert_eq!(
+            run.deployment_provenance.release_digest.as_deref(),
+            Some(release_digest.as_str())
+        );
+        assert_eq!(
+            run.deployment_provenance.deployment_revision_id.as_deref(),
+            Some("revision-1")
+        );
+        assert_eq!(
+            run.deployment_provenance.physical_plan_hash.as_deref(),
+            Some(physical_plan_hash.as_str())
+        );
+        assert_eq!(
+            run.deployment_provenance
+                .release_signature_digest
+                .as_deref(),
+            Some(release_signature_digest.as_str())
+        );
 
         let journal = graphblocks_runtime_core::journal::SqliteExecutionJournal::open(
             &journal_store_path,

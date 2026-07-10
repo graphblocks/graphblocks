@@ -15,7 +15,7 @@ from .canonical import canonical_dumps
 from .compiler import compile_graph
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
-from .run_store import InMemoryRunStore
+from .run_store import InMemoryRunStore, RunDeploymentProvenance
 from .tools import (
     BlockToolImplementation,
     GraphToolImplementation,
@@ -344,7 +344,20 @@ class InProcessRuntime:
     journal_factory: JournalFactory | None = None
     lease_pool: InMemoryLeasePool | None = None
 
-    def run(self, graph: dict[str, Any], inputs: dict[str, Any], run_id: str = "run-000001") -> RunResult:
+    def run(
+        self,
+        graph: dict[str, Any],
+        inputs: dict[str, Any],
+        run_id: str = "run-000001",
+        deployment_provenance: RunDeploymentProvenance | None = None,
+    ) -> RunResult:
+        if deployment_provenance is not None and not isinstance(
+            deployment_provenance,
+            RunDeploymentProvenance,
+        ):
+            raise ValueError("deployment_provenance must be RunDeploymentProvenance")
+        if deployment_provenance is not None:
+            deployment_provenance.validate_for_production()
         plan = compile_graph(graph)
         errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
         if errors:
@@ -353,14 +366,22 @@ class InProcessRuntime:
 
         normalized = plan.normalized
         if self.run_store is not None:
-            stored = self.run_store.create_run(plan.graph_hash, inputs, run_id=run_id)
+            stored = self.run_store.create_run(
+                plan.graph_hash,
+                inputs,
+                run_id=run_id,
+                deployment_provenance=deployment_provenance,
+            )
             run_id = stored.run_id
             self.run_store.set_status(run_id, "running")
         spec = normalized.get("spec", {})
         nodes = spec.get("nodes", {})
         edges = spec.get("edges", [])
         journal = self.journal_factory(run_id) if self.journal_factory is not None else ExecutionJournal(run_id)
-        journal.append("run_started", {"graphHash": plan.graph_hash})
+        run_started_payload: dict[str, Any] = {"graphHash": plan.graph_hash}
+        if deployment_provenance is not None:
+            run_started_payload["deploymentProvenance"] = deployment_provenance.canonical_value()
+        journal.append("run_started", run_started_payload)
 
         node_inputs: dict[str, dict[str, Any]] = {name: {} for name in nodes}
         node_outputs: dict[str, dict[str, Any]] = {}
@@ -373,6 +394,7 @@ class InProcessRuntime:
             "cancellation_token": self.cancellation_token or CancellationToken(),
             "lease_pool": self.lease_pool,
             "run_store": self.run_store,
+            "deployment_provenance": deployment_provenance,
         }
 
         while remaining:

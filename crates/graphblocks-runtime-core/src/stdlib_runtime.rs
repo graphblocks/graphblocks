@@ -13,7 +13,7 @@ use crate::async_operation::{
 use crate::journal::{JournalMetadata, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
-use crate::run_store::{RunStatus, SqliteRunStore};
+use crate::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
 use crate::scheduler::{ScheduledNode, StartedNode};
 use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
 use crate::tool::{
@@ -163,6 +163,13 @@ pub fn run_stdlib_graph_with_options_json(
     let run_store_path = optional_options_string(options, "runStorePath", "run_store_path")?;
     let journal_store_path =
         optional_options_string(options, "journalStorePath", "journal_store_path")?;
+    let deployment_provenance = options
+        .get("deploymentProvenance")
+        .or_else(|| options.get("deployment_provenance"))
+        .filter(|value| !value.is_null())
+        .map(RunDeploymentProvenance::from_production_value)
+        .transpose()
+        .map_err(|message| StdlibRuntimeError::invalid(format!("runtime options {message}")))?;
     let bridge_plan = build_runtime_bridge_plan(&graph)?;
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
     let mut executor = StdlibExecutor {
@@ -184,8 +191,14 @@ pub fn run_stdlib_graph_with_options_json(
         &inputs,
         run_store_path,
         journal_store_path,
+        deployment_provenance.as_ref(),
     )?;
-    serialize_runtime_result(result, bridge_plan.graph_hash, output_values)
+    serialize_runtime_result(
+        result,
+        bridge_plan.graph_hash,
+        output_values,
+        deployment_provenance.as_ref(),
+    )
 }
 
 fn parse_json_argument(text: &str, label: &str) -> Result<Value, StdlibRuntimeError> {
@@ -338,13 +351,19 @@ fn persist_runtime_evidence(
     inputs: &Value,
     run_store_path: Option<&str>,
     journal_store_path: Option<&str>,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
 ) -> Result<(), StdlibRuntimeError> {
     if let Some(run_store_path) = run_store_path {
         let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
             StdlibRuntimeError::runtime(format!("failed to open SQLite run store: {error:?}"))
         })?;
         store
-            .create_run_with_run_id(&result.run_id, graph_hash, inputs.clone())
+            .create_run_with_run_id_and_provenance(
+                &result.run_id,
+                graph_hash,
+                inputs.clone(),
+                deployment_provenance.cloned().unwrap_or_default(),
+            )
             .map_err(|error| {
                 StdlibRuntimeError::runtime(format!(
                     "failed to persist native runtime run record: {error:?}"
@@ -478,6 +497,7 @@ fn serialize_runtime_result(
     result: TestRunResult,
     graph_hash: String,
     output_values: Value,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
 ) -> Result<String, StdlibRuntimeError> {
     let status = match result.status {
         TestRunStatus::Succeeded => "succeeded",
@@ -503,13 +523,19 @@ fn serialize_runtime_result(
             })
         })
         .collect::<Vec<_>>();
-    let payload = json!({
+    let mut payload = json!({
         "runId": result.run_id,
         "graphHash": graph_hash,
         "status": status,
         "outputs": output_values,
         "journal": journal,
     });
+    if let (Some(provenance), Some(payload)) = (deployment_provenance, payload.as_object_mut()) {
+        payload.insert(
+            "deploymentProvenance".to_owned(),
+            provenance.canonical_value(),
+        );
+    }
 
     serde_json::to_string(&payload).map_err(StdlibRuntimeError::serialization)
 }
@@ -3144,9 +3170,42 @@ mod tests {
     }
 
     #[test]
+    fn stdlib_runtime_options_reject_incomplete_deployment_provenance() {
+        let error = run_stdlib_graph_with_options_json(
+            "{}",
+            "{}",
+            r#"{"deploymentProvenance":{"releaseDigest":"sha256:release"}}"#,
+        )
+        .expect_err("incomplete production provenance should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "runtime options deploymentProvenance field deploymentRevisionId is required"
+        );
+    }
+
+    #[test]
+    fn stdlib_runtime_options_reject_noncanonical_deployment_digest() {
+        let error = run_stdlib_graph_with_options_json(
+            "{}",
+            "{}",
+            r#"{"deploymentProvenance":{"releaseDigest":"not-a-digest","deploymentRevisionId":"revision-1","physicalPlanHash":"sha256:physical-plan","releaseSignatureDigest":"sha256:signature"}}"#,
+        )
+        .expect_err("noncanonical production provenance should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "runtime options deploymentProvenance field releaseDigest must be a canonical sha256 digest"
+        );
+    }
+
+    #[test]
     fn stdlib_runtime_options_persist_sqlite_run_and_journal_evidence() {
         let run_store_path = unique_sqlite_path("run-store");
         let journal_store_path = unique_sqlite_path("journal-store");
+        let release_digest = format!("sha256:{}", "1".repeat(64));
+        let physical_plan_hash = format!("sha256:{}", "2".repeat(64));
+        let release_signature_digest = format!("sha256:{}", "3".repeat(64));
         let graph_json = r#"{
             "apiVersion": "graphblocks.ai/v1alpha3",
             "kind": "Graph",
@@ -3166,6 +3225,12 @@ mod tests {
             "runId": "run-native-evidence-1",
             "runStorePath": run_store_path.to_string_lossy(),
             "journalStorePath": journal_store_path.to_string_lossy(),
+            "deploymentProvenance": {
+                "releaseDigest": release_digest,
+                "deploymentRevisionId": "revision-1",
+                "physicalPlanHash": physical_plan_hash,
+                "releaseSignatureDigest": release_signature_digest,
+            },
         });
         let result_json = run_stdlib_graph_with_options_json(
             graph_json,
@@ -3184,6 +3249,24 @@ mod tests {
             .expect("run record is persisted");
         assert_eq!(run.status, RunStatus::Completed);
         assert_eq!(run.inputs["message"]["text"], "ok");
+        assert_eq!(
+            run.deployment_provenance.release_digest.as_deref(),
+            Some(release_digest.as_str())
+        );
+        assert_eq!(
+            run.deployment_provenance.deployment_revision_id.as_deref(),
+            Some("revision-1")
+        );
+        assert_eq!(
+            run.deployment_provenance.physical_plan_hash.as_deref(),
+            Some(physical_plan_hash.as_str())
+        );
+        assert_eq!(
+            run.deployment_provenance
+                .release_signature_digest
+                .as_deref(),
+            Some(release_signature_digest.as_str())
+        );
 
         let journal = SqliteExecutionJournal::open(&journal_store_path, "run-native-evidence-1")
             .expect("journal reopens");

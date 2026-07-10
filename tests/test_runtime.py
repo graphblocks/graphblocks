@@ -10,7 +10,7 @@ from graphblocks.runtime import (
     SQLiteExecutionJournal,
     stdlib_registry,
 )
-from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore
+from graphblocks.run_store import InMemoryRunStore, RunDeploymentProvenance, SQLiteRunStore
 
 
 VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
@@ -623,6 +623,67 @@ def test_runtime_updates_supplied_sqlite_run_store_status(tmp_path) -> None:
 
     assert result.run_id == "run-000001"
     assert store.get_run(result.run_id).status == "succeeded"
+
+
+def test_runtime_persists_deployment_provenance_with_run_record(tmp_path) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "production-provenance"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Provenance {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    store_path = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(store_path)
+    provenance = RunDeploymentProvenance(
+        release_digest="sha256:" + ("1" * 64),
+        deployment_revision_id="revision-1",
+        physical_plan_hash="sha256:" + ("2" * 64),
+        release_signature_digest="sha256:" + ("3" * 64),
+    )
+
+    result = InProcessRuntime(stdlib_registry(), run_store=store).run(
+        graph,
+        {"message": {"text": "hello"}},
+        run_id="run-production-1",
+        deployment_provenance=provenance,
+    )
+    store.close()
+    reopened = SQLiteRunStore(store_path)
+    persisted = reopened.get_run(result.run_id)
+    reopened.close()
+
+    assert persisted.deployment_provenance == provenance
+    assert result.journal.records[0].payload["deploymentProvenance"] == provenance.canonical_value()
+
+
+def test_runtime_rejects_incomplete_production_deployment_provenance() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "incomplete-production-provenance"},
+        "spec": {"nodes": {}},
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="production deployment provenance deployment_revision_id is required",
+    ):
+        InProcessRuntime(stdlib_registry()).run(
+            graph,
+            {},
+            deployment_provenance=RunDeploymentProvenance(
+                release_digest="sha256:" + ("1" * 64),
+            ),
+        )
 
 
 def test_runtime_uses_requested_run_id_for_store_and_journal(tmp_path) -> None:

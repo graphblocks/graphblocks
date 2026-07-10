@@ -170,6 +170,70 @@ impl RunDeploymentProvenance {
         self
     }
 
+    pub fn from_production_value(value: &Value) -> Result<Self, String> {
+        let Some(object) = value.as_object() else {
+            return Err("deploymentProvenance must be an object".to_owned());
+        };
+        let required_string = |camel_key: &'static str,
+                               snake_key: &'static str|
+         -> Result<String, String> {
+            let Some(value) = object.get(camel_key).or_else(|| object.get(snake_key)) else {
+                return Err(format!(
+                    "deploymentProvenance field {camel_key} is required"
+                ));
+            };
+            let Some(text) = value.as_str() else {
+                return Err(format!(
+                    "deploymentProvenance field {camel_key} must be a string"
+                ));
+            };
+            if text.trim().is_empty() {
+                return Err(format!(
+                    "deploymentProvenance field {camel_key} must not be empty"
+                ));
+            }
+            if text != text.trim() {
+                return Err(format!(
+                    "deploymentProvenance field {camel_key} must not contain surrounding whitespace"
+                ));
+            }
+            Ok(text.to_owned())
+        };
+
+        let release_digest = required_string("releaseDigest", "release_digest")?;
+        let deployment_revision_id =
+            required_string("deploymentRevisionId", "deployment_revision_id")?;
+        let physical_plan_hash = required_string("physicalPlanHash", "physical_plan_hash")?;
+        let release_signature_digest =
+            required_string("releaseSignatureDigest", "release_signature_digest")?;
+        for (field_name, value) in [
+            ("releaseDigest", release_digest.as_str()),
+            ("physicalPlanHash", physical_plan_hash.as_str()),
+            ("releaseSignatureDigest", release_signature_digest.as_str()),
+        ] {
+            let Some(digest) = value.strip_prefix("sha256:") else {
+                return Err(format!(
+                    "deploymentProvenance field {field_name} must be a canonical sha256 digest"
+                ));
+            };
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            {
+                return Err(format!(
+                    "deploymentProvenance field {field_name} must be a canonical sha256 digest"
+                ));
+            }
+        }
+
+        Ok(Self::new()
+            .with_release_digest(release_digest)
+            .with_deployment_revision_id(deployment_revision_id)
+            .with_physical_plan_hash(physical_plan_hash)
+            .with_release_signature_digest(release_signature_digest))
+    }
+
     pub fn canonical_value(&self) -> Value {
         json!({
             "release_digest": self.release_digest,
@@ -1346,6 +1410,23 @@ impl InMemoryRunStore {
         )
     }
 
+    pub fn create_run_with_run_id_and_provenance(
+        &mut self,
+        run_id: impl Into<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            Some(run_id.into()),
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            deployment_provenance,
+            Vec::new(),
+        )
+    }
+
     pub fn create_run_with_invocation_mode(
         &mut self,
         graph_hash: impl Into<String>,
@@ -1736,6 +1817,23 @@ impl SqliteRunStore {
             inputs,
             RunInvocationMode::Sync,
             RunDeploymentProvenance::new(),
+            Vec::new(),
+        )
+    }
+
+    pub fn create_run_with_run_id_and_provenance(
+        &mut self,
+        run_id: impl Into<String>,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_optional_run_id_invocation_provenance_and_mode(
+            Some(run_id.into()),
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            deployment_provenance,
             Vec::new(),
         )
     }

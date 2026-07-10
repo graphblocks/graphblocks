@@ -187,6 +187,33 @@ class RunDeploymentProvenance:
             "release_signature_digest": self.release_signature_digest,
         }
 
+    def validate_for_production(self) -> RunDeploymentProvenance:
+        for field_name in (
+            "release_digest",
+            "deployment_revision_id",
+            "physical_plan_hash",
+            "release_signature_digest",
+        ):
+            if getattr(self, field_name) is None:
+                raise ValueError(f"production deployment provenance {field_name} is required")
+        for field_name in (
+            "release_digest",
+            "physical_plan_hash",
+            "release_signature_digest",
+        ):
+            value = getattr(self, field_name)
+            assert isinstance(value, str)
+            digest = value.removeprefix("sha256:")
+            if (
+                not value.startswith("sha256:")
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise ValueError(
+                    f"production deployment provenance {field_name} must be a canonical sha256 digest"
+                )
+        return self
+
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> RunDeploymentProvenance:
         if not isinstance(value, dict):

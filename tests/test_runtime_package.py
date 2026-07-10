@@ -598,6 +598,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         run_id="run-requested-native-1",
         run_store_path="/tmp/graphblocks-runs.sqlite3",
         journal_store_path="/tmp/graphblocks-journal.sqlite3",
+        deployment_provenance={
+            "release_digest": "sha256:release",
+            "deployment_revision_id": "revision-1",
+            "physical_plan_hash": "sha256:physical-plan",
+            "release_signature_digest": "sha256:signature",
+        },
     )
     test_run = runtime.run_test_graph({"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}})
     test_run_requested = runtime.run_test_graph(
@@ -607,6 +613,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         run_id="run-test-requested-1",
         run_store_path="/tmp/graphblocks-test-run.sqlite3",
         journal_store_path="/tmp/graphblocks-test-journal.sqlite3",
+        deployment_provenance={
+            "release_digest": "sha256:release",
+            "deployment_revision_id": "revision-1",
+            "physical_plan_hash": "sha256:physical-plan",
+            "release_signature_digest": "sha256:signature",
+        },
     )
     finalized = runtime.finalize_tool_call(
         {
@@ -1211,7 +1223,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             (
                 '{"kind":"Graph"}',
                 '{"message":{"text":"hi"}}',
-                '{"journalStorePath":"/tmp/graphblocks-journal.sqlite3","runId":"run-requested-native-1","runStorePath":"/tmp/graphblocks-runs.sqlite3"}',
+                '{"deploymentProvenance":{"deployment_revision_id":"revision-1",'
+                '"physical_plan_hash":"sha256:physical-plan","release_digest":"sha256:release",'
+                '"release_signature_digest":"sha256:signature"},'
+                '"journalStorePath":"/tmp/graphblocks-journal.sqlite3",'
+                '"runId":"run-requested-native-1","runStorePath":"/tmp/graphblocks-runs.sqlite3"}',
             ),
         ),
         ("run_test", ('{"kind":"Graph"}', '{"message":"hi"}', '{"node":{"value":"ok"}}')),
@@ -1221,7 +1237,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 '{"kind":"Graph"}',
                 '{"message":"hi"}',
                 '{"node":{"value":"ok"}}',
-                '{"journalStorePath":"/tmp/graphblocks-test-journal.sqlite3","runId":"run-test-requested-1","runStorePath":"/tmp/graphblocks-test-run.sqlite3"}',
+                '{"deploymentProvenance":{"deployment_revision_id":"revision-1",'
+                '"physical_plan_hash":"sha256:physical-plan","release_digest":"sha256:release",'
+                '"release_signature_digest":"sha256:signature"},'
+                '"journalStorePath":"/tmp/graphblocks-test-journal.sqlite3",'
+                '"runId":"run-test-requested-1",'
+                '"runStorePath":"/tmp/graphblocks-test-run.sqlite3"}',
             ),
         ),
         (
