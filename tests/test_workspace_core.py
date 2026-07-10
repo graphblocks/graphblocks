@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
-from graphblocks.evaluation import ChangeSet, ResourceSnapshotRef
-from graphblocks.policy import PrincipalRef
+from graphblocks.budget import BudgetPermit, UsageAmount
+from graphblocks.evaluation import (
+    ChangeSet,
+    CheckResult,
+    ResourceSnapshotRef,
+    ReviewRecord,
+    evaluate_gate,
+)
+from graphblocks.orchestration import LeasePool, LeaseRequest
+from graphblocks.policy import PrincipalRef, ResourceRef
 from graphblocks.workspace import (
     InMemoryWorkspaceStore,
     WorkspaceCommit,
+    WorkspaceCommitAuthorizationError,
     WorkspaceMutationDecision,
     WorkspaceMutationDeniedError,
     WorkspaceMutationPolicy,
     WorkspaceSnapshot,
     WorkspaceSnapshotConflictError,
+    WorkspaceTrialError,
+    WorkspaceTrialPlan,
 )
 
 
@@ -507,3 +520,172 @@ def test_workspace_store_rejects_policy_denied_commit() -> None:
         )
 
     assert error.value.reason_codes == ("workspace.resource_kind_denied",)
+
+
+def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request() -> None:
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-rtl",
+        snapshot_id="snapshot-base",
+        revision=7,
+        resources=(ResourceSnapshotRef("design.v", "sha256:base-design", resource_kind="file"),),
+        created_at="2026-07-02T00:00:00Z",
+    )
+    candidate_resources = (
+        ResourceSnapshotRef("design.v", "sha256:candidate-design", resource_kind="file"),
+    )
+    candidate = WorkspaceSnapshot(
+        workspace_id="workspace-rtl",
+        snapshot_id="snapshot-candidate",
+        revision=8,
+        resources=candidate_resources,
+        created_at="2026-07-02T00:30:00Z",
+        base_snapshot_id=base.snapshot_id,
+        base_snapshot_digest=base.content_digest(),
+    )
+    change_set = ChangeSet(
+        "changeset-rtl-1",
+        base=ResourceSnapshotRef("workspace-rtl", base.content_digest(), resource_kind="workspace"),
+        candidate=ResourceSnapshotRef(
+            "workspace-rtl",
+            candidate.content_digest(),
+            resource_kind="workspace",
+        ),
+        operations=({"op": "file.replace", "resource_id": "design.v", "resource_kind": "file"},),
+    )
+    checks = (
+        CheckResult("lint", change_set.candidate, "passed"),
+        CheckResult("compile", change_set.candidate, "passed"),
+        CheckResult("regression", change_set.candidate, "passed"),
+        CheckResult("formal", change_set.candidate, "passed"),
+    )
+    gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate,
+        checks=list(checks),
+        required_check_ids=["lint", "compile", "regression", "formal"],
+    )
+    holder = ResourceSnapshotRef("workspace-rtl", candidate.content_digest(), resource_kind="workspace")
+    permit_owner = ResourceRef("trial:rtl-1")
+    permit = BudgetPermit(
+        permit_id="permit-formal",
+        reservation_refs=("reservation-formal",),
+        owner=permit_owner,
+        atomic_unit=permit_owner,
+        admission_epoch=1,
+        authorized_amounts=[UsageAmount("licensed_resource_seconds", Decimal("900"), "second")],
+        continuation_profile="default",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-07-02T00:40:00Z",
+        fencing_tokens={"reservation-formal": 1},
+    )
+    _, lease = LeasePool("formal-license", "eda.formal", 1).acquire_with_budget_permit(
+        LeaseRequest("formal-check", permit_owner, "eda.formal"),
+        permit,
+        [UsageAmount("licensed_resource_seconds", Decimal("300"), "second")],
+        lease_id="lease-formal",
+        acquired_at="2026-07-02T00:10:00Z",
+        expires_at="2026-07-02T00:35:00Z",
+    )
+    review = ReviewRecord(
+        "review-rtl-1",
+        change_set.candidate,
+        change_set.candidate.digest,
+        "design_intent",
+        PrincipalRef("reviewer-1"),
+        "accept",
+        created_at="2026-07-02T00:20:00Z",
+    )
+    plan = WorkspaceTrialPlan(
+        trial_id="rtl-1",
+        change_set=change_set,
+        expected_base_revision=7,
+        required_check_ids=("lint", "compile", "regression", "formal"),
+        required_lease_kinds=("eda.formal",),
+        required_review_scopes=("design_intent",),
+        checks=checks,
+        gate=gate,
+        mutation_decision=WorkspaceMutationDecision(True),
+        leases=(lease,),
+        reviews=(review,),
+    )
+
+    request = plan.to_commit_request("commit-rtl-1", now="2026-07-02T00:25:00Z")
+    committed = InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
+        workspace_id="workspace-rtl",
+        request=request,
+        new_snapshot_id="snapshot-candidate",
+        resources=candidate_resources,
+        committed_by=PrincipalRef("optimizer-1"),
+        committed_at="2026-07-02T00:30:00Z",
+    )
+
+    assert holder.digest == change_set.candidate.digest
+    assert request.metadata == {
+        "change_set_digest": change_set.content_digest(),
+        "lease_ids": ["lease-formal"],
+        "trial_id": "rtl-1",
+    }
+    assert committed.snapshot.content_digest() == change_set.candidate.digest
+    assert committed.snapshot.revision == 8
+
+
+def test_workspace_trial_plan_fails_closed_when_governance_evidence_is_missing_or_stale() -> None:
+    base = ResourceSnapshotRef("workspace-rtl", "sha256:base", resource_kind="workspace")
+    candidate = ResourceSnapshotRef("workspace-rtl", "sha256:candidate", resource_kind="workspace")
+    change_set = ChangeSet("changeset-rtl-1", base=base, candidate=candidate)
+    lint = CheckResult("lint", candidate, "passed")
+    gate = evaluate_gate("rtl-quality", candidate, checks=[lint], required_check_ids=["lint"])
+
+    with pytest.raises(WorkspaceTrialError, match="required mutation decision"):
+        WorkspaceTrialPlan(
+            trial_id="rtl-1",
+            change_set=change_set,
+            expected_base_revision=7,
+            required_check_ids=("lint",),
+            checks=(lint,),
+            gate=gate,
+        ).to_commit_request("commit-rtl-1", now="2026-07-02T00:25:00Z")
+
+    stale_review = ReviewRecord(
+        "review-stale",
+        ResourceSnapshotRef("workspace-rtl", "sha256:old", resource_kind="workspace"),
+        "sha256:old",
+        "design_intent",
+        PrincipalRef("reviewer-1"),
+        "accept",
+        created_at="2026-07-02T00:20:00Z",
+    )
+    with pytest.raises(WorkspaceTrialError, match="review scope 'design_intent'"):
+        WorkspaceTrialPlan(
+            trial_id="rtl-1",
+            change_set=change_set,
+            expected_base_revision=7,
+            required_check_ids=("lint",),
+            required_review_scopes=("design_intent",),
+            checks=(lint,),
+            gate=gate,
+            mutation_decision=WorkspaceMutationDecision(True),
+            reviews=(stale_review,),
+        ).to_commit_request("commit-rtl-1", now="2026-07-02T00:25:00Z")
+
+    store = InMemoryWorkspaceStore().put_snapshot(
+        WorkspaceSnapshot("workspace-rtl", "snapshot-base", 6, created_at="2026-07-02T00:00:00Z")
+    )
+    request = WorkspaceTrialPlan(
+        trial_id="rtl-1",
+        change_set=change_set,
+        expected_base_revision=7,
+        required_check_ids=("lint",),
+        checks=(lint,),
+        gate=gate,
+        mutation_decision=WorkspaceMutationDecision(True),
+    ).to_commit_request("commit-rtl-1", now="2026-07-02T00:25:00Z")
+    with pytest.raises(WorkspaceCommitAuthorizationError, match="base revision"):
+        store.compare_and_swap_commit_request(
+            workspace_id="workspace-rtl",
+            request=request,
+            new_snapshot_id="snapshot-candidate",
+            resources=(),
+            committed_by=PrincipalRef("optimizer-1"),
+            committed_at="2026-07-02T00:30:00Z",
+        )

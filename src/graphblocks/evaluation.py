@@ -321,6 +321,19 @@ class ChangeSet:
             operations.append(_copy_mapping("change set", "operation", operation))
         object.__setattr__(self, "operations", tuple(operations))
 
+    def content_digest(self) -> str:
+        return canonical_hash(
+            _canonical_value(
+                {
+                    "change_set_id": self.change_set_id,
+                    "base": self.base,
+                    "candidate": self.candidate,
+                    "operations": self.operations,
+                    "summary": self.summary,
+                }
+            )
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:

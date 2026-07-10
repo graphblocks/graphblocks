@@ -273,6 +273,108 @@ def test_default_runner_executes_all_c2_semantic_gates(monkeypatch) -> None:
     }
 
 
+def test_default_runner_executes_orchestration_and_verified_trial_semantic_gates(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    runner = graphblocks_testing.AcceptanceGateRunner()
+
+    reports = tuple(
+        runner.run_application(manifest.by_id(application_id), root=ROOT)
+        for application_id in (
+            "bounded-research-orchestrator",
+            "verified-rtl-workspace-trial",
+        )
+    )
+    repeated = tuple(
+        runner.run_application(manifest.by_id(application_id), root=ROOT)
+        for application_id in (
+            "bounded-research-orchestrator",
+            "verified-rtl-workspace-trial",
+        )
+    )
+
+    assert all(report.ok for report in reports), {
+        report.application_id: [result.gate for result in report.results if not result.ok]
+        for report in reports
+        if not report.ok
+    }
+    assert [result.gate for result in reports[0].results] == [
+        "graphblocks validate",
+        "graphblocks plan --expand",
+        "bounded task plan check",
+        "task budget delegation check",
+        "replan patch CAS check",
+    ]
+    assert [result.gate for result in reports[1].results] == [
+        "graphblocks validate",
+        "budget lease reservation check",
+        "review invalidation check",
+        "governed trial commit gate",
+    ]
+    assert [report.report_contract() for report in repeated] == [
+        report.report_contract() for report in reports
+    ]
+
+
+@pytest.mark.parametrize(
+    ("application_id", "gate"),
+    (
+        ("bounded-research-orchestrator", "bounded task plan check"),
+        ("bounded-research-orchestrator", "task budget delegation check"),
+        ("bounded-research-orchestrator", "replan patch CAS check"),
+        ("verified-rtl-workspace-trial", "budget lease reservation check"),
+        ("verified-rtl-workspace-trial", "review invalidation check"),
+        ("verified-rtl-workspace-trial", "governed trial commit gate"),
+    ),
+)
+def test_orchestration_and_trial_semantic_gates_reject_weakened_scenarios(
+    monkeypatch,
+    tmp_path,
+    application_id,
+    gate,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id(application_id)
+    documents = _load_yaml_documents(ROOT / original.scenario_path)
+    graph = documents[0]
+    nodes = graph["spec"]["nodes"]
+    if gate == "bounded task plan check":
+        nodes["plan"]["config"]["limits"]["maxDepth"] = 0
+    elif gate == "task budget delegation check":
+        nodes["execute"]["config"]["reservation"] = "shared"
+    elif gate == "replan patch CAS check":
+        nodes["patch"]["config"]["concurrency"] = "last_write_wins"
+    elif gate == "budget lease reservation check":
+        documents[1]["spec"]["nodes"]["formal"]["flow"] = {}
+    elif gate == "review invalidation check":
+        nodes["review"]["config"]["invalidateOnSubjectChange"] = False
+    else:
+        nodes["verifyTrial"]["config"]["requiredChecks"] = ["lint", "compile", "regression"]
+    scenario = tmp_path / f"{application_id}.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id=application_id,
+        profiles=original.profiles,
+        scenario_path=scenario.name,
+        gates=(gate,),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=tmp_path,
+    )
+
+    assert not report.ok, report.report_contract()
+
+
 @pytest.mark.parametrize(
     ("application_id", "gate"),
     (

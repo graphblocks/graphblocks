@@ -79,7 +79,15 @@ from graphblocks.documents import (
     create_local_text_revision,
     parse_plain_text_document,
 )
-from graphblocks.evaluation import ModelVisibleToolRef, ResourceSnapshotRef, ResultBundle, SloReport
+from graphblocks.evaluation import (
+    ChangeSet,
+    CheckResult,
+    ModelVisibleToolRef,
+    ResourceSnapshotRef,
+    ResultBundle,
+    SloReport,
+    evaluate_gate,
+)
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -115,11 +123,14 @@ from graphblocks.orchestration import (
     ModelSelectionRequest,
     ModelToolNotAllowedError,
     TaskContextAccess,
+    TaskExecutionContract,
     TaskPlan,
     TaskPlanContextAccessError,
     TaskPlanCycleError,
     TaskPlanDependencyError,
+    TaskPlanLimits,
     TaskPlanPatch,
+    TaskPlanPatchMismatchError,
     TaskStep,
     WorkerProfile,
 )
@@ -206,6 +217,13 @@ from graphblocks.tools import (
     validate_tool_result_for_model,
 )
 from graphblocks.usage import InMemoryUsageLedger, UsageRecord
+from graphblocks.workspace import (
+    InMemoryWorkspaceStore,
+    WorkspaceMutationDecision,
+    WorkspaceMutationPolicy,
+    WorkspaceSnapshot,
+    WorkspaceTrialPlan,
+)
 
 
 def run_native_test_graph(
@@ -3451,6 +3469,661 @@ class AcceptanceManifest:
 AcceptanceGateHandler = Callable[[AcceptanceApplication, Path], tuple[int, str]]
 
 
+def _exercise_bounded_research_orchestrator(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "bounded-research-orchestrator":
+        raise RuntimeError("bounded orchestration gate requires the bounded-research-orchestrator application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 1:
+        raise RuntimeError("bounded research scenario must contain exactly one graph")
+    graph = documents[0]
+    graph_spec = graph.get("spec")
+    if not isinstance(graph_spec, Mapping) or not isinstance(graph_spec.get("nodes"), Mapping):
+        raise RuntimeError("bounded research graph nodes must be a mapping")
+    nodes = graph_spec["nodes"]
+    expected_blocks = {
+        "snapshot": "resource.snapshot@1",
+        "resolveWorkers": "orchestration.resolve_worker_pool@1",
+        "plan": "orchestration.plan@1",
+        "validate": "orchestration.validate_plan@1",
+        "execute": "orchestration.execute_task_plan@1",
+        "detectGaps": "research.detect_gaps@1",
+        "patch": "orchestration.replan@1",
+        "verify": "check.run_suite@1",
+        "gate": "gate.evaluate@1",
+        "bundle": "result.bundle@1",
+    }
+    if any(
+        not isinstance(nodes.get(node_id), Mapping)
+        or nodes[node_id].get("block") != block
+        for node_id, block in expected_blocks.items()
+    ):
+        raise RuntimeError("bounded research orchestration block identities do not match")
+    plan_node = nodes["plan"]
+    validate_node = nodes["validate"]
+    execute_node = nodes["execute"]
+    patch_node = nodes["patch"]
+    verify_node = nodes["verify"]
+    plan_config = plan_node.get("config")
+    validate_config = validate_node.get("config")
+    execute_config = execute_node.get("config")
+    patch_config = patch_node.get("config")
+    verify_config = verify_node.get("config")
+    if (
+        plan_node.get("inputs")
+        != {"objective": "$input.objective", "workers": "resolveWorkers.pool"}
+        or validate_node.get("inputs") != {"plan": "plan.value"}
+        or execute_node.get("inputs")
+        != {"plan": "validate.plan", "snapshot": "snapshot.value"}
+        or patch_node.get("inputs") != {"plan": "execute.plan", "gaps": "detectGaps.gaps"}
+        or verify_node.get("inputs")
+        != {"subject": "execute.result", "evidence": "execute.evidence"}
+    ):
+        raise RuntimeError("bounded research orchestration dataflow does not match")
+    if not isinstance(plan_config, Mapping) or not isinstance(plan_config.get("limits"), Mapping):
+        raise RuntimeError("bounded research task-plan limits are missing")
+    raw_limits = plan_config["limits"]
+    if raw_limits != {"maxTasks": 48, "maxDepth": 4, "maxParallelTasks": 8}:
+        raise RuntimeError("bounded research task-plan limits do not match")
+    phase_budgets = plan_config.get("phaseBudgets")
+    if not isinstance(phase_budgets, Mapping) or sum(
+        Decimal(str(value)) for value in phase_budgets.values()
+    ) != Decimal("1.00"):
+        raise RuntimeError("bounded research phase budgets must partition the full budget")
+    if validate_config != {
+        "requireAcyclicDependencies": True,
+        "requireBoundedRecursion": True,
+        "requireExplicitContextAccess": True,
+    }:
+        raise RuntimeError("bounded research validation contract does not match")
+    if not isinstance(execute_config, Mapping):
+        raise RuntimeError("bounded research execution contract is missing")
+    pressure = execute_config.get("onBudgetPressure")
+    if (
+        execute_config.get("checkpoint") != "each_task"
+        or execute_config.get("reservation") != "per_task"
+        or pressure
+        != {
+            "cancelPriorities": ["optional", "normal"],
+            "preserve": ["required", "verification", "finalization"],
+        }
+    ):
+        raise RuntimeError("bounded research task checkpoint, reservation, and budget pressure contract does not match")
+    if (
+        not isinstance(patch_config, Mapping)
+        or patch_config.get("concurrency") != "compare_and_swap"
+        or patch_node.get("when") != "detectGaps.requiresMoreWork"
+    ):
+        raise RuntimeError("bounded research replan patch must use compare-and-swap")
+    if not isinstance(verify_config, Mapping) or verify_config != {
+        "checks": ["claim_support", "source_resolution", "contradiction_scan"],
+        "independence": "exclude_originating_workers",
+    }:
+        raise RuntimeError("bounded research verification contract does not match")
+
+    limits = TaskPlanLimits(
+        max_steps=int(raw_limits["maxTasks"]),
+        max_depth=int(raw_limits["maxDepth"]),
+        max_parallel_tasks=int(raw_limits["maxParallelTasks"]),
+    )
+    plan = TaskPlan(
+        plan_id="research-plan-1",
+        objective="Research the declared objective with bounded independent verification",
+        steps=(
+            TaskStep("collect-optional", "Collect optional source", metadata={"priority": "optional"}),
+            TaskStep("collect-required", "Collect required source", metadata={"priority": "required"}),
+            TaskStep(
+                "synthesize",
+                "Synthesize supported claims",
+                depends_on=("collect-optional", "collect-required"),
+                metadata={"priority": "normal"},
+            ),
+            TaskStep(
+                "verify",
+                "Verify claims independently",
+                depends_on=("synthesize",),
+                metadata={"priority": "verification"},
+            ),
+            TaskStep(
+                "finalize",
+                "Finalize the result bundle",
+                depends_on=("verify",),
+                metadata={"priority": "finalization"},
+            ),
+        ),
+        limits=limits,
+        context_resources=("source-snapshot", "draft-result"),
+        context_access=(
+            TaskContextAccess("collect-optional", "source-snapshot", "read"),
+            TaskContextAccess("collect-required", "source-snapshot", "read"),
+            TaskContextAccess("synthesize", "source-snapshot", "read"),
+            TaskContextAccess("synthesize", "draft-result", "write"),
+            TaskContextAccess("verify", "draft-result", "read"),
+            TaskContextAccess("finalize", "draft-result", "read"),
+        ),
+    )
+    contract = TaskExecutionContract(
+        checkpoint=str(execute_config["checkpoint"]),  # type: ignore[arg-type]
+        reservation=str(execute_config["reservation"]),  # type: ignore[arg-type]
+        cancel_priorities=tuple(pressure["cancelPriorities"]),  # type: ignore[arg-type]
+        preserve_priorities=tuple(pressure["preserve"]),  # type: ignore[arg-type]
+    )
+    ledger = InMemoryBudgetLedger()
+    parent_amount = UsageAmount("model_total_tokens", Decimal("100"), "tokens")
+    child_amount = UsageAmount("model_total_tokens", Decimal("40"), "tokens")
+    ledger.allocate(
+        "budget-research",
+        PolicyResourceRef("run:research-1"),
+        [parent_amount],
+        policy_ref="policy:research",
+    )
+    reservation = ledger.reserve(
+        "budget-research",
+        PolicyResourceRef("task:coordinator"),
+        [parent_amount],
+        purpose="provider_call",
+        expires_at="2026-07-10T01:00:00Z",
+    )
+    parent_permit = ledger.issue_permit(
+        "permit-research-parent",
+        reservation_ids=[reservation.reservation_id],
+        owner=PolicyResourceRef("task:coordinator"),
+        atomic_unit=PolicyResourceRef("plan:research-plan-1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_task",
+        policy_snapshot_digest="sha256:research-policy",
+        expires_at="2026-07-10T01:00:00Z",
+    )
+    child_permit = ChildBudgetDelegation(
+        delegation_id="delegation-collect-optional",
+        parent_permit=parent_permit,
+        child_owner=PolicyResourceRef("task:collect-optional"),
+        amounts=[child_amount],
+        expires_at="2026-07-10T00:45:00Z",
+    ).create_child_permit("permit-collect-optional")
+    checkpoint = contract.checkpoint_completion(
+        plan,
+        "collect-optional",
+        child_permit,
+        result_digest="sha256:collect-optional-result",
+        completed_at="2026-07-10T00:30:00Z",
+    )
+    cancellations = contract.budget_pressure_cancellations(
+        plan,
+        active_step_ids=("collect-optional", "synthesize", "verify", "finalize"),
+    )
+    patch = TaskPlanPatch(
+        patch_id="research-gap-patch-1",
+        base_plan_id=plan.plan_id,
+        base_revision=plan.revision,
+        upsert_steps=(
+            TaskStep("collect-gap", "Collect missing source", metadata={"priority": "normal"}),
+            TaskStep(
+                "synthesize",
+                "Synthesize supported claims including gap evidence",
+                depends_on=("collect-optional", "collect-required", "collect-gap"),
+                metadata={"priority": "normal"},
+            ),
+        ),
+    )
+    patched = plan.apply_patch(patch)
+    stale_rejected = False
+    try:
+        patched.apply_patch(patch)
+    except TaskPlanPatchMismatchError:
+        stale_rejected = True
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "plan": {
+            "revision": plan.revision,
+            "layers": [list(layer) for layer in plan.execution_layers()],
+            "maxDepth": plan.limits.max_depth,
+            "maxParallelTasks": plan.limits.max_parallel_tasks,
+            "contextAccessCount": len(plan.context_access),
+            "digest": plan.content_digest(),
+        },
+        "budget": {
+            "parentPermitId": parent_permit.permit_id,
+            "childPermitId": child_permit.permit_id,
+            "childOwner": child_permit.owner.resource_id,
+            "childAmounts": [str(amount.amount) for amount in child_permit.authorized_amounts],
+            "childExpiresAt": child_permit.expires_at,
+            "checkpointStepId": checkpoint.step_id,
+            "checkpointPermitId": checkpoint.permit_id,
+            "cancellations": list(cancellations),
+        },
+        "patch": {
+            "baseRevision": patch.base_revision,
+            "updatedRevision": patched.revision,
+            "stepIds": [step.step_id for step in patched.steps],
+            "staleRejected": stale_rejected,
+        },
+    }
+
+
+def _bounded_task_plan_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_bounded_research_orchestrator(application, scenario_path)
+    plan = evidence["plan"]
+    if (
+        not isinstance(plan, Mapping)
+        or plan.get("layers")
+        != [
+            ["collect-optional", "collect-required"],
+            ["synthesize"],
+            ["verify"],
+            ["finalize"],
+        ]
+        or plan.get("maxDepth") != 4
+        or plan.get("maxParallelTasks") != 8
+        or plan.get("contextAccessCount") != 6
+    ):
+        raise RuntimeError("bounded task plan evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "bounded task plan check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "plan": plan,
+        }
+    )
+
+
+def _task_budget_delegation_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_bounded_research_orchestrator(application, scenario_path)
+    budget = evidence["budget"]
+    if not isinstance(budget, Mapping) or budget != {
+        "parentPermitId": "permit-research-parent",
+        "childPermitId": "permit-collect-optional",
+        "childOwner": "task:collect-optional",
+        "childAmounts": ["40"],
+        "childExpiresAt": "2026-07-10T00:45:00Z",
+        "checkpointStepId": "collect-optional",
+        "checkpointPermitId": "permit-collect-optional",
+        "cancellations": ["collect-optional", "synthesize"],
+    }:
+        raise RuntimeError("task budget delegation evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "task budget delegation check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "budget": budget,
+        }
+    )
+
+
+def _replan_patch_cas_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_bounded_research_orchestrator(application, scenario_path)
+    patch = evidence["patch"]
+    if (
+        not isinstance(patch, Mapping)
+        or patch.get("baseRevision") != 1
+        or patch.get("updatedRevision") != 2
+        or patch.get("staleRejected") is not True
+        or "collect-gap" not in patch.get("stepIds", [])
+    ):
+        raise RuntimeError("replan patch compare-and-swap evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "replan patch CAS check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "patch": patch,
+        }
+    )
+
+
+def _exercise_verified_rtl_workspace_trial(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "verified-rtl-workspace-trial":
+        raise RuntimeError("verified trial gate requires the verified-rtl-workspace-trial application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 2:
+        raise RuntimeError("verified RTL scenario must contain workspace and candidate trial graphs")
+    graph, trial_graph = documents
+    graph_spec = graph.get("spec")
+    trial_spec = trial_graph.get("spec")
+    if (
+        not isinstance(graph_spec, Mapping)
+        or not isinstance(graph_spec.get("nodes"), Mapping)
+        or not isinstance(trial_spec, Mapping)
+        or not isinstance(trial_spec.get("nodes"), Mapping)
+    ):
+        raise RuntimeError("verified RTL graph nodes must be mappings")
+    nodes = graph_spec["nodes"]
+    trial_nodes = trial_spec["nodes"]
+    review_node = nodes.get("review")
+    verify_node = nodes.get("verifyTrial")
+    commit_node = nodes.get("commit")
+    reserve_node = trial_nodes.get("reserve")
+    formal_node = trial_nodes.get("formal")
+    if any(
+        not isinstance(node, Mapping)
+        for node in (review_node, verify_node, commit_node, reserve_node, formal_node)
+    ):
+        raise RuntimeError("verified RTL governance nodes are missing")
+    assert isinstance(review_node, Mapping)
+    assert isinstance(verify_node, Mapping)
+    assert isinstance(commit_node, Mapping)
+    assert isinstance(reserve_node, Mapping)
+    assert isinstance(formal_node, Mapping)
+    review_config = review_node.get("config")
+    verify_config = verify_node.get("config")
+    reserve_config = reserve_node.get("config")
+    if (
+        review_node.get("block") != "review.request@1"
+        or review_node.get("inputs") != {"subject": "select.changeSet"}
+        or review_config != {"scope": "design_intent", "invalidateOnSubjectChange": True}
+    ):
+        raise RuntimeError("verified RTL review invalidation contract does not match")
+    if (
+        verify_node.get("block") != "trial.plan_commit@1"
+        or verify_node.get("inputs")
+        != {
+            "changeSet": "select.changeSet",
+            "checks": "select.checks",
+            "gate": "select.gate",
+            "leases": "select.leases",
+            "review": "review.record",
+        }
+        or verify_config
+        != {
+            "requiredChecks": ["lint", "compile", "regression", "formal"],
+            "requiredLeaseKinds": ["eda.formal"],
+            "requiredReviewScopes": ["design_intent"],
+        }
+    ):
+        raise RuntimeError("verified RTL trial commit requirements do not match")
+    if (
+        commit_node.get("block") != "workspace.commit_changeset@1"
+        or commit_node.get("when") != "verifyTrial.ready"
+        or commit_node.get("inputs")
+        != {
+            "workspace": "$input.workspace",
+            "base": "snapshot.value",
+            "request": "verifyTrial.commitRequest",
+        }
+        or commit_node.get("config") != {"concurrency": "compare_and_swap"}
+    ):
+        raise RuntimeError("verified RTL commit dataflow does not match")
+    reserve_limits = reserve_config.get("limits") if isinstance(reserve_config, Mapping) else None
+    if (
+        reserve_node.get("block") != "budget.reserve@1"
+        or reserve_limits
+        != [
+            {"kind": "cpu_seconds", "quantity": 3600, "unit": "second"},
+            {"kind": "licensed_resource_seconds", "quantity": 900, "unit": "second"},
+        ]
+        or formal_node.get("block") != "check.run_suite@1"
+        or formal_node.get("flow") != {"leasePool": "formal-license"}
+    ):
+        raise RuntimeError("verified RTL budget reservation and lease-pool contract does not match")
+
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-rtl",
+        snapshot_id="snapshot-base",
+        revision=7,
+        resources=(ResourceSnapshotRef("design.v", "sha256:base-design", resource_kind="file"),),
+        created_at="2026-07-10T00:00:00Z",
+    )
+    candidate_resources = (
+        ResourceSnapshotRef("design.v", "sha256:candidate-design", resource_kind="file"),
+    )
+    candidate = WorkspaceSnapshot(
+        workspace_id="workspace-rtl",
+        snapshot_id="snapshot-candidate",
+        revision=8,
+        resources=candidate_resources,
+        created_at="2026-07-10T00:30:00Z",
+        base_snapshot_id=base.snapshot_id,
+        base_snapshot_digest=base.content_digest(),
+    )
+    change_set = ChangeSet(
+        "changeset-rtl-1",
+        base=ResourceSnapshotRef("workspace-rtl", base.content_digest(), resource_kind="workspace"),
+        candidate=ResourceSnapshotRef(
+            "workspace-rtl",
+            candidate.content_digest(),
+            resource_kind="workspace",
+        ),
+        operations=(
+            {"op": "file.replace", "resource_id": "design.v", "resource_kind": "file"},
+        ),
+    )
+    required_checks = tuple(verify_config["requiredChecks"])  # type: ignore[index]
+    checks = tuple(CheckResult(check_id, change_set.candidate, "passed") for check_id in required_checks)
+    gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate,
+        checks=list(checks),
+        required_check_ids=list(required_checks),
+    )
+    mutation = WorkspaceMutationPolicy(
+        policy_id="rtl-trial-mutation",
+        allowed_resource_kinds=("file",),
+        required_review_scopes=("design_intent",),
+    ).evaluate(
+        change_set,
+        PrincipalRef("optimizer-1"),
+        review_scopes=("design_intent",),
+        base_resources=base.resources,
+        candidate_resources=candidate.resources,
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    review_workflow = ReviewWorkflow(
+        request=ReviewRequest(
+            request_id="review-request-rtl-1",
+            subject=change_set.candidate,
+            requested_by=PrincipalRef("optimizer-1"),
+            required_scopes=("design_intent",),
+            created_at="2026-07-10T00:15:00Z",
+        ),
+        credential_provider=InMemoryReviewerCredentialProvider(
+            (
+                ReviewerCredential(
+                    "credential-design-intent",
+                    reviewer,
+                    scopes=("design_intent",),
+                    issued_at="2026-07-10T00:00:00Z",
+                ),
+            )
+        ),
+    )
+    review = review_workflow.record_review(
+        review_id="review-rtl-1",
+        reviewer=reviewer,
+        scope="design_intent",
+        decision="accept",
+        created_at="2026-07-10T00:20:00Z",
+    )
+    completed_before_invalidation = review_workflow.completed_scopes()
+    invalidated_workflow = review_workflow.with_review(review.invalidate("2026-07-10T00:21:00Z"))
+    completed_after_invalidation = invalidated_workflow.completed_scopes()
+
+    ledger = InMemoryBudgetLedger()
+    licensed_amount = UsageAmount("licensed_resource_seconds", Decimal("900"), "second")
+    trial_owner = PolicyResourceRef("trial:rtl-1")
+    ledger.allocate(
+        "budget-rtl",
+        PolicyResourceRef("run:rtl-1"),
+        [licensed_amount],
+        policy_ref="policy:rtl",
+    )
+    reservation = ledger.reserve(
+        "budget-rtl",
+        trial_owner,
+        [licensed_amount],
+        purpose="provider_call",
+        expires_at="2026-07-10T00:40:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-rtl-formal",
+        reservation_ids=[reservation.reservation_id],
+        owner=trial_owner,
+        atomic_unit=trial_owner,
+        admission_epoch=1,
+        continuation_profile="finish_current_check",
+        policy_snapshot_digest="sha256:rtl-policy",
+        expires_at="2026-07-10T00:40:00Z",
+    )
+    leased_pool, lease = LeasePool("formal-license", "eda.formal", 1).acquire_with_budget_permit(
+        LeaseRequest("formal-check", trial_owner, "eda.formal"),
+        permit,
+        [UsageAmount("licensed_resource_seconds", Decimal("300"), "second")],
+        lease_id="lease-rtl-formal",
+        acquired_at="2026-07-10T00:10:00Z",
+        expires_at="2026-07-10T00:35:00Z",
+    )
+    trial_plan = WorkspaceTrialPlan(
+        trial_id="rtl-1",
+        change_set=change_set,
+        expected_base_revision=base.revision,
+        required_check_ids=required_checks,
+        required_lease_kinds=tuple(verify_config["requiredLeaseKinds"]),  # type: ignore[index]
+        required_review_scopes=tuple(verify_config["requiredReviewScopes"]),  # type: ignore[index]
+        checks=checks,
+        gate=gate,
+        mutation_decision=mutation,
+        leases=(lease,),
+        reviews=(review,),
+    )
+    commit_request = trial_plan.to_commit_request(
+        "commit-rtl-1",
+        now="2026-07-10T00:25:00Z",
+    )
+    commit = InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
+        workspace_id="workspace-rtl",
+        request=commit_request,
+        new_snapshot_id="snapshot-candidate",
+        resources=candidate_resources,
+        committed_by=PrincipalRef("optimizer-1"),
+        committed_at="2026-07-10T00:30:00Z",
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "lease": {
+            "leaseId": lease.lease_id,
+            "permitId": lease.metadata.get("budget_permit_id"),
+            "reservationRefs": lease.metadata.get("budget_reservation_refs"),
+            "resourceKind": lease.resource_kind,
+            "holder": lease.holder.resource_id,
+            "fencingEpoch": lease.fencing_epoch,
+            "activeAtGate": lease.is_active_at("2026-07-10T00:25:00Z"),
+            "availableUnits": leased_pool.available_units,
+        },
+        "review": {
+            "subjectDigest": review.subject_digest,
+            "completedBeforeInvalidation": list(completed_before_invalidation),
+            "completedAfterInvalidation": list(completed_after_invalidation),
+            "invalidatedReviewValid": review.invalidate("2026-07-10T00:21:00Z").is_valid_for(
+                change_set.candidate
+            ),
+        },
+        "commit": {
+            "ready": True,
+            "changeSetDigest": commit_request.metadata.get("change_set_digest"),
+            "leaseIds": commit_request.metadata.get("lease_ids"),
+            "trialId": commit_request.metadata.get("trial_id"),
+            "gateDecision": commit_request.gate.decision,
+            "reviewIds": [item.review_id for item in commit_request.reviews],
+            "snapshotDigest": commit.snapshot.content_digest(),
+            "candidateDigest": change_set.candidate.digest,
+            "revision": commit.snapshot.revision,
+        },
+    }
+
+
+def _budget_lease_reservation_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_verified_rtl_workspace_trial(application, scenario_path)
+    lease = evidence["lease"]
+    if not isinstance(lease, Mapping) or lease != {
+        "leaseId": "lease-rtl-formal",
+        "permitId": "permit-rtl-formal",
+        "reservationRefs": ["reservation-000001"],
+        "resourceKind": "eda.formal",
+        "holder": "trial:rtl-1",
+        "fencingEpoch": 1,
+        "activeAtGate": True,
+        "availableUnits": 0,
+    }:
+        raise RuntimeError("budget-bound scarce-resource lease evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "budget lease reservation check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "lease": lease,
+        }
+    )
+
+
+def _review_invalidation_check(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_verified_rtl_workspace_trial(application, scenario_path)
+    review = evidence["review"]
+    if not isinstance(review, Mapping) or review != {
+        "subjectDigest": evidence["commit"]["candidateDigest"],  # type: ignore[index]
+        "completedBeforeInvalidation": ["design_intent"],
+        "completedAfterInvalidation": [],
+        "invalidatedReviewValid": False,
+    }:
+        raise RuntimeError("review subject invalidation evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "review invalidation check",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "review": review,
+        }
+    )
+
+
+def _governed_trial_commit_gate(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> tuple[int, str]:
+    evidence = _exercise_verified_rtl_workspace_trial(application, scenario_path)
+    commit = evidence["commit"]
+    if (
+        not isinstance(commit, Mapping)
+        or commit.get("ready") is not True
+        or commit.get("gateDecision") != "pass"
+        or commit.get("leaseIds") != ["lease-rtl-formal"]
+        or commit.get("reviewIds") != ["review-rtl-1"]
+        or commit.get("snapshotDigest") != commit.get("candidateDigest")
+        or commit.get("revision") != 8
+    ):
+        raise RuntimeError("governed trial commit evidence is incomplete")
+    return 0, canonical_dumps(
+        {
+            "gate": "governed trial commit gate",
+            "applicationDigest": evidence["applicationDigest"],
+            "scenarioDigest": evidence["scenarioDigest"],
+            "commit": commit,
+        }
+    )
+
+
 def _exercise_direct_file_analysis(
     application: AcceptanceApplication,
     scenario_path: Path,
@@ -4707,6 +5380,12 @@ class AcceptanceGateRunner:
         custom_handlers: Mapping[str, AcceptanceGateHandler] | None = None,
     ) -> None:
         self._builtin_semantic_handlers: dict[str, AcceptanceGateHandler] = {
+            "bounded task plan check": _bounded_task_plan_check,
+            "task budget delegation check": _task_budget_delegation_check,
+            "replan patch CAS check": _replan_patch_cas_check,
+            "budget lease reservation check": _budget_lease_reservation_check,
+            "review invalidation check": _review_invalidation_check,
+            "governed trial commit gate": _governed_trial_commit_gate,
             "source reference check": _source_reference_check,
             "generated artifact check": _generated_artifact_check,
             "parser fallback check": _parser_fallback_check,
@@ -15854,12 +16533,48 @@ class TckRunner:
                         )
                     )
                 decision = voice.InterruptionClassifier(
-                    str(raw_classifier.get("classifierId", raw_classifier.get("classifier_id", "")))
+                    str(raw_classifier.get("classifierId", raw_classifier.get("classifier_id", ""))),
+                    provider_authority_id=str(
+                        raw_classifier.get(
+                            "providerAuthorityId",
+                            raw_classifier.get("provider_authority_id", "provider"),
+                        )
+                    ),
                 ).classify(
                     session_id=str(raw_classifier.get("sessionId", raw_classifier.get("session_id", ""))),
                     vad_decision=decisions[-1],
                     playback=playback,
                     occurred_at_ms=int(raw_classifier.get("occurredAtMs", raw_classifier.get("occurred_at_ms", 0))),
+                    provider_decision=(
+                        voice.ProviderInterruptionDecision(
+                            authority_id=str(
+                                raw_classifier["providerDecision"].get(
+                                    "authorityId",
+                                    raw_classifier["providerDecision"].get("authority_id", ""),
+                                )
+                            ),
+                            session_id=str(
+                                raw_classifier["providerDecision"].get(
+                                    "sessionId",
+                                    raw_classifier["providerDecision"].get("session_id", ""),
+                                )
+                            ),
+                            kind=str(raw_classifier["providerDecision"].get("kind", "")),
+                            occurred_at_ms=int(
+                                raw_classifier["providerDecision"].get(
+                                    "occurredAtMs",
+                                    raw_classifier["providerDecision"].get("occurred_at_ms", 0),
+                                )
+                            ),
+                            reason=(
+                                str(raw_classifier["providerDecision"].get("reason"))
+                                if raw_classifier["providerDecision"].get("reason") is not None
+                                else None
+                            ),
+                        )
+                        if isinstance(raw_classifier.get("providerDecision"), Mapping)
+                        else None
+                    ),
                 )
                 observed = {
                     "decisionKinds": [decision.kind for decision in decisions],

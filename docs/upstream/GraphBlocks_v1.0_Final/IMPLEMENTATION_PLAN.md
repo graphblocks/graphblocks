@@ -3042,6 +3042,24 @@ sandbox
 - `WorkspaceTrialPlan` now materializes a commit request only after a verified trial has the
   required passing checks, passing gate, active trial-scoped leases, allowed mutation decision, and
   valid review scopes for the candidate digest.
+- Python `TaskPlanLimits` now enforces dependency depth and static parallel-layer width in addition
+  to step/dependency bounds, and exposes deterministic execution layers. `TaskExecutionContract`
+  binds each completed task checkpoint to an active task-owned budget permit and derives the
+  scenario-declared optional/normal cancellation order while preserving required, verification,
+  and finalization work under budget pressure. Child permits cannot outlive their parent permit.
+- Python scarce-resource acquisition can now require an active, holder-matched budget permit,
+  verify its authorized reservation amounts and expiry, and retain the permit/reservation binding
+  on the fenced lease grant. Python `WorkspaceTrialPlan` materializes a digest-bound commit request
+  only from passing candidate checks/gate, an allowed mutation decision, active trial-scoped lease
+  kinds, and valid candidate review scopes; `InMemoryWorkspaceStore` rechecks revision, base and
+  candidate digests, gate, mutation, and review evidence before compare-and-swap commit.
+- The six bounded-research and verified-workspace semantic gates are non-overridable
+  `AcceptanceGateRunner` built-ins. They execute bounded plan layering and explicit context access,
+  per-task delegation/checkpoint/budget-pressure behavior, stale replan CAS rejection,
+  budget-bound formal-license acquisition, review invalidation, and the governed workspace commit.
+  Each probe first binds the relevant graph blocks, dataflow, limits, lease pool, review policy, and
+  commit requirements from the scenario; weakened contracts fail closed and repeated evidence is
+  digest-stable.
 - Python workspace snapshots, commits, mutation decisions, and mutation policies now reject
   whitespace-wrapped workspace/snapshot/commit/change-set ids, metadata keys, reason codes, and
   policy selector values before CAS commits or protected-resource checks can depend on normalized
@@ -3103,6 +3121,11 @@ DuplexSession, transport, VAD authority, interruption classifier, playback ledge
   runtime-core. Python voice and WebRTC contract objects reject boolean and non-integer
   timing/sequence/index fields before stream ordering, ICE candidate ordering, playback
   interruption, or provider realtime requests can persist them.
+- Python voice interruption now treats local VAD as advisory and requires a session- and
+  authority-matched provider decision before interrupting playback. The playback ledger enforces
+  ordered, idempotent queued/started/completed/interrupted transitions and explicit
+  acknowledgement. The shared voice TCK supplies the provider confirmation explicitly, so it no
+  longer treats a local speech threshold as cancellation authority.
 
 ### Durable unbounded stream (`GB-X3-DURABLE-STREAM`)
 

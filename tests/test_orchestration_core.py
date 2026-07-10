@@ -7,6 +7,8 @@ import pytest
 from graphblocks.budget import BudgetPermit, UsageAmount
 from graphblocks.orchestration import (
     ChildBudgetDelegation,
+    ChildBudgetDelegationError,
+    LeaseBudgetPermitError,
     LeaseEpochMismatchError,
     LeasePool,
     LeasePoolExhaustedError,
@@ -18,6 +20,8 @@ from graphblocks.orchestration import (
     ModelSensitivityAboveCeilingError,
     ModelToolNotAllowedError,
     TaskContextAccess,
+    TaskExecutionContract,
+    TaskExecutionContractError,
     TaskPlanCycleError,
     TaskPlanContextAccessError,
     TaskPlanDependencyError,
@@ -124,6 +128,47 @@ def test_task_plan_limits_bound_steps_and_dependencies() -> None:
     assert dependency_error.value.limit_name == "max_dependencies_per_step"
     assert dependency_error.value.limit == 1
     assert dependency_error.value.actual == 2
+
+
+def test_task_plan_limits_bound_dependency_depth_and_parallel_width() -> None:
+    bounded = TaskPlan(
+        plan_id="plan-bounded",
+        objective="research with bounded fan-out",
+        steps=(
+            TaskStep("collect-a", "Collect source A"),
+            TaskStep("collect-b", "Collect source B"),
+            TaskStep("synthesize", "Synthesize", depends_on=("collect-a", "collect-b")),
+        ),
+        limits=TaskPlanLimits(max_depth=2, max_parallel_tasks=2),
+    )
+
+    assert bounded.execution_layers() == (("collect-a", "collect-b"), ("synthesize",))
+
+    with pytest.raises(TaskPlanLimitError) as depth_error:
+        TaskPlan(
+            plan_id="plan-too-deep",
+            objective="reject recursive expansion",
+            steps=(
+                TaskStep("one", "One"),
+                TaskStep("two", "Two", depends_on=("one",)),
+                TaskStep("three", "Three", depends_on=("two",)),
+            ),
+            limits=TaskPlanLimits(max_depth=2),
+        )
+
+    assert depth_error.value.limit_name == "max_depth"
+    assert depth_error.value.actual == 3
+
+    with pytest.raises(TaskPlanLimitError) as parallel_error:
+        TaskPlan(
+            plan_id="plan-too-wide",
+            objective="reject excess fan-out",
+            steps=(TaskStep("a", "A"), TaskStep("b", "B")),
+            limits=TaskPlanLimits(max_parallel_tasks=1),
+        )
+
+    assert parallel_error.value.limit_name == "max_parallel_tasks"
+    assert parallel_error.value.actual == 2
 
 
 def test_task_plan_context_access_graph_is_validated_and_digest_stable() -> None:
@@ -372,6 +417,86 @@ def test_child_budget_delegation_builds_scoped_permit_from_parent_permit() -> No
     assert parent.allows(permit.authorized_amounts)
 
 
+def test_child_budget_delegation_cannot_outlive_parent_permit() -> None:
+    parent = BudgetPermit(
+        permit_id="permit-parent",
+        reservation_refs=("reservation-parent",),
+        owner=ResourceRef("task:parent"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=3,
+        authorized_amounts=[UsageAmount("tokens", Decimal("100"), "tokens")],
+        continuation_profile="default",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-24T01:00:00Z",
+        fencing_tokens={"reservation-parent": 11},
+    )
+
+    with pytest.raises(ChildBudgetDelegationError, match="outlives parent permit"):
+        ChildBudgetDelegation(
+            delegation_id="delegation-late",
+            parent_permit=parent,
+            child_owner=ResourceRef("task:child"),
+            amounts=[UsageAmount("tokens", Decimal("40"), "tokens")],
+            expires_at="2026-06-24T01:00:01Z",
+        ).create_child_permit("permit-child")
+
+
+def test_task_execution_contract_checkpoints_per_task_and_cancels_budget_pressure_priorities() -> None:
+    plan = TaskPlan(
+        plan_id="plan-research",
+        objective="bounded research",
+        steps=(
+            TaskStep("optional", "Optional source", metadata={"priority": "optional"}),
+            TaskStep("normal", "Normal source", metadata={"priority": "normal"}),
+            TaskStep("required", "Required source", metadata={"priority": "required"}),
+            TaskStep("verify", "Verify", metadata={"priority": "verification"}),
+        ),
+    )
+    permit = BudgetPermit(
+        permit_id="permit-optional",
+        reservation_refs=("reservation-optional",),
+        owner=ResourceRef("task:optional"),
+        atomic_unit=ResourceRef("task:optional"),
+        admission_epoch=1,
+        authorized_amounts=[UsageAmount("tokens", Decimal("20"), "tokens")],
+        continuation_profile="default",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-24T01:00:00Z",
+        fencing_tokens={"reservation-optional": 1},
+    )
+    contract = TaskExecutionContract(
+        checkpoint="each_task",
+        reservation="per_task",
+        cancel_priorities=("optional", "normal"),
+        preserve_priorities=("required", "verification", "finalization"),
+    )
+
+    checkpoint = contract.checkpoint_completion(
+        plan,
+        "optional",
+        permit,
+        result_digest="sha256:optional-result",
+        completed_at="2026-06-24T00:30:00Z",
+    )
+
+    assert checkpoint.step_id == "optional"
+    assert checkpoint.plan_revision == 1
+    assert checkpoint.permit_id == "permit-optional"
+    assert contract.budget_pressure_cancellations(
+        plan,
+        active_step_ids=("verify", "required", "normal", "optional"),
+    ) == ("optional", "normal")
+
+    with pytest.raises(TaskExecutionContractError, match="task-specific budget permit"):
+        contract.checkpoint_completion(
+            plan,
+            "normal",
+            permit,
+            result_digest="sha256:normal-result",
+            completed_at="2026-06-24T00:30:00Z",
+        )
+
+
 def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     pool = LeasePool("formal-license", "eda.formal", capacity_units=2)
     request = LeaseRequest(
@@ -415,6 +540,59 @@ def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     assert reaped.available_units == 2
     assert renewed.available_units == 1
     assert renewed_grant.fencing_epoch == 2
+
+
+def test_lease_pool_acquisition_is_bound_to_active_budget_permit() -> None:
+    pool = LeasePool("formal-license", "eda.formal", capacity_units=1)
+    holder = ResourceRef("trial:rtl-1")
+    permit = BudgetPermit(
+        permit_id="permit-formal",
+        reservation_refs=("reservation-formal",),
+        owner=holder,
+        atomic_unit=holder,
+        admission_epoch=1,
+        authorized_amounts=[
+            UsageAmount("licensed_resource_seconds", Decimal("900"), "second")
+        ],
+        continuation_profile="default",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-24T00:15:00Z",
+        fencing_tokens={"reservation-formal": 7},
+    )
+    amounts = [UsageAmount("licensed_resource_seconds", Decimal("300"), "second")]
+
+    leased, grant = pool.acquire_with_budget_permit(
+        LeaseRequest("formal-check", holder, "eda.formal"),
+        permit,
+        amounts,
+        lease_id="lease-formal",
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+
+    assert leased.available_units == 0
+    assert grant.metadata["budget_permit_id"] == "permit-formal"
+    assert grant.metadata["budget_reservation_refs"] == ["reservation-formal"]
+
+    with pytest.raises(LeaseBudgetPermitError, match="holder"):
+        pool.acquire_with_budget_permit(
+            LeaseRequest("wrong-holder", ResourceRef("trial:other"), "eda.formal"),
+            permit,
+            amounts,
+            lease_id="lease-other",
+            acquired_at="2026-06-24T00:00:00Z",
+            expires_at="2026-06-24T00:05:00Z",
+        )
+
+    with pytest.raises(LeaseBudgetPermitError, match="expires after budget permit"):
+        pool.acquire_with_budget_permit(
+            LeaseRequest("formal-check", holder, "eda.formal"),
+            permit,
+            amounts,
+            lease_id="lease-late",
+            acquired_at="2026-06-24T00:00:00Z",
+            expires_at="2026-06-24T00:20:00Z",
+        )
 
 
 def test_lease_pool_reap_expired_compares_expiration_as_datetime() -> None:

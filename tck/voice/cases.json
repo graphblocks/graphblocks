@@ -81,8 +81,16 @@
     ],
     "classifier": {
       "classifierId": "barge-in",
+      "providerAuthorityId": "provider-realtime",
       "sessionId": "session-1",
-      "occurredAtMs": 25
+      "occurredAtMs": 25,
+      "providerDecision": {
+        "authorityId": "provider-realtime",
+        "sessionId": "session-1",
+        "kind": "interrupt",
+        "occurredAtMs": 25,
+        "reason": "user_speech_during_playback"
+      }
     },
     "expected": {
       "decisionKinds": [

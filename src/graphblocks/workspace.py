@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from .canonical import canonical_hash
-from .evaluation import ChangeSet, ResourceSnapshotRef
+from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
+from .orchestration import LeaseGrant
 from .policy import PrincipalRef
 
 
@@ -270,6 +271,176 @@ class WorkspaceMutationDeniedError(WorkspaceError):
         super().__init__(f"workspace mutation denied: {', '.join(self.reason_codes)}")
 
 
+class WorkspaceTrialError(WorkspaceError):
+    """Raised when trial evidence cannot authorize a workspace commit."""
+
+
+class WorkspaceCommitAuthorizationError(WorkspaceError):
+    """Raised when a commit request is stale or no longer matches the workspace head."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceCommitRequest:
+    commit_id: str
+    change_set: ChangeSet
+    expected_base_revision: int
+    mutation_decision: WorkspaceMutationDecision
+    gate: GateResult
+    reviews: tuple[ReviewRecord, ...] = field(default_factory=tuple)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("workspace commit request", "commit_id", self.commit_id)
+        if not isinstance(self.change_set, ChangeSet):
+            raise ValueError("workspace commit request change_set must be a ChangeSet")
+        if (
+            not isinstance(self.expected_base_revision, int)
+            or isinstance(self.expected_base_revision, bool)
+            or self.expected_base_revision <= 0
+        ):
+            raise ValueError("workspace commit request expected_base_revision must be positive")
+        if not isinstance(self.mutation_decision, WorkspaceMutationDecision):
+            raise ValueError("workspace commit request mutation_decision must be a WorkspaceMutationDecision")
+        if not isinstance(self.gate, GateResult):
+            raise ValueError("workspace commit request gate must be a GateResult")
+        reviews = tuple(self.reviews)
+        if not all(isinstance(review, ReviewRecord) for review in reviews):
+            raise ValueError("workspace commit request reviews must contain ReviewRecord values")
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("workspace commit request metadata must be a mapping")
+        object.__setattr__(self, "reviews", reviews)
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceTrialPlan:
+    trial_id: str
+    change_set: ChangeSet
+    expected_base_revision: int
+    required_check_ids: tuple[str, ...] = field(default_factory=tuple)
+    required_lease_kinds: tuple[str, ...] = field(default_factory=tuple)
+    required_review_scopes: tuple[str, ...] = field(default_factory=tuple)
+    checks: tuple[CheckResult, ...] = field(default_factory=tuple)
+    gate: GateResult | None = None
+    mutation_decision: WorkspaceMutationDecision | None = None
+    leases: tuple[LeaseGrant, ...] = field(default_factory=tuple)
+    reviews: tuple[ReviewRecord, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("workspace trial plan", "trial_id", self.trial_id)
+        if not isinstance(self.change_set, ChangeSet):
+            raise ValueError("workspace trial plan change_set must be a ChangeSet")
+        if (
+            not isinstance(self.expected_base_revision, int)
+            or isinstance(self.expected_base_revision, bool)
+            or self.expected_base_revision <= 0
+        ):
+            raise ValueError("workspace trial plan expected_base_revision must be positive")
+        object.__setattr__(
+            self,
+            "required_check_ids",
+            _validate_string_tuple("workspace trial plan", "required_check_ids", self.required_check_ids),
+        )
+        object.__setattr__(
+            self,
+            "required_lease_kinds",
+            _validate_string_tuple("workspace trial plan", "required_lease_kinds", self.required_lease_kinds),
+        )
+        object.__setattr__(
+            self,
+            "required_review_scopes",
+            _validate_string_tuple("workspace trial plan", "required_review_scopes", self.required_review_scopes),
+        )
+        checks = tuple(self.checks)
+        leases = tuple(self.leases)
+        reviews = tuple(self.reviews)
+        if not all(isinstance(check, CheckResult) for check in checks):
+            raise ValueError("workspace trial plan checks must contain CheckResult values")
+        if len({check.check_id for check in checks}) != len(checks):
+            raise ValueError("workspace trial plan checks must not contain duplicate check ids")
+        if self.gate is not None and not isinstance(self.gate, GateResult):
+            raise ValueError("workspace trial plan gate must be a GateResult")
+        if self.mutation_decision is not None and not isinstance(
+            self.mutation_decision,
+            WorkspaceMutationDecision,
+        ):
+            raise ValueError("workspace trial plan mutation_decision must be a WorkspaceMutationDecision")
+        if not all(isinstance(lease, LeaseGrant) for lease in leases):
+            raise ValueError("workspace trial plan leases must contain LeaseGrant values")
+        if not all(isinstance(review, ReviewRecord) for review in reviews):
+            raise ValueError("workspace trial plan reviews must contain ReviewRecord values")
+        object.__setattr__(self, "checks", checks)
+        object.__setattr__(self, "leases", leases)
+        object.__setattr__(self, "reviews", reviews)
+
+    def to_commit_request(self, commit_id: str, *, now: str) -> WorkspaceCommitRequest:
+        checks_by_id = {check.check_id: check for check in self.checks}
+        for check_id in self.required_check_ids:
+            check = checks_by_id.get(check_id)
+            if check is None:
+                raise WorkspaceTrialError(f"workspace trial is missing required check {check_id!r}")
+            if check.subject != self.change_set.candidate:
+                raise WorkspaceTrialError(f"workspace trial check {check_id!r} has a stale subject")
+            if check.status != "passed":
+                raise WorkspaceTrialError(f"workspace trial check {check_id!r} did not pass")
+        if self.gate is None:
+            raise WorkspaceTrialError("workspace trial is missing a required gate")
+        if self.gate.subject != self.change_set.candidate:
+            raise WorkspaceTrialError("workspace trial gate has a stale subject")
+        if self.gate.decision != "pass":
+            raise WorkspaceTrialError("workspace trial gate did not pass")
+        if not set(self.required_check_ids).issubset(self.gate.check_ids):
+            raise WorkspaceTrialError("workspace trial gate does not bind every required check")
+        if self.mutation_decision is None:
+            raise WorkspaceTrialError("workspace trial is missing a required mutation decision")
+        if not self.mutation_decision.allowed:
+            raise WorkspaceTrialError("workspace trial mutation decision denied the candidate")
+        for resource_kind in self.required_lease_kinds:
+            if not any(
+                lease.resource_kind == resource_kind
+                and lease.holder.resource_id == f"trial:{self.trial_id}"
+                and lease.is_active_at(now)
+                for lease in self.leases
+            ):
+                raise WorkspaceTrialError(
+                    f"workspace trial is missing active lease kind {resource_kind!r}"
+                )
+        selected_reviews: list[ReviewRecord] = []
+        for scope in self.required_review_scopes:
+            matching = tuple(
+                review
+                for review in self.reviews
+                if review.scope == scope
+                and review.decision in {"accept", "accept_with_conditions"}
+                and review.is_valid_for(self.change_set.candidate)
+            )
+            if not matching:
+                raise WorkspaceTrialError(
+                    f"workspace trial is missing valid review scope {scope!r}"
+                )
+            selected_reviews.extend(matching)
+        active_lease_ids = sorted(
+            {
+                lease.lease_id
+                for lease in self.leases
+                if lease.holder.resource_id == f"trial:{self.trial_id}" and lease.is_active_at(now)
+            }
+        )
+        return WorkspaceCommitRequest(
+            commit_id=commit_id,
+            change_set=self.change_set,
+            expected_base_revision=self.expected_base_revision,
+            mutation_decision=self.mutation_decision,
+            gate=self.gate,
+            reviews=tuple(sorted(selected_reviews, key=lambda review: review.review_id)),
+            metadata={
+                "change_set_digest": self.change_set.content_digest(),
+                "lease_ids": active_lease_ids,
+                "trial_id": self.trial_id,
+            },
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceCommit:
     commit_id: str
@@ -376,10 +547,72 @@ class InMemoryWorkspaceStore:
         self._commits.append(_copy_workspace_commit(commit))
         return _copy_workspace_commit(commit)
 
+    def compare_and_swap_commit_request(
+        self,
+        *,
+        workspace_id: str,
+        request: WorkspaceCommitRequest,
+        new_snapshot_id: str,
+        resources: tuple[ResourceSnapshotRef, ...],
+        committed_by: PrincipalRef,
+        committed_at: str,
+    ) -> WorkspaceCommit:
+        if not isinstance(request, WorkspaceCommitRequest):
+            raise WorkspaceCommitAuthorizationError("workspace commit requires an authorized request")
+        current = self.current(workspace_id)
+        if current.revision != request.expected_base_revision:
+            raise WorkspaceCommitAuthorizationError(
+                "workspace commit base revision no longer matches the authorized request"
+            )
+        if (
+            request.change_set.base.resource_id != workspace_id
+            or request.change_set.base.digest != current.content_digest()
+        ):
+            raise WorkspaceCommitAuthorizationError(
+                "workspace commit base digest no longer matches the authorized request"
+            )
+        if request.change_set.candidate.resource_id != workspace_id:
+            raise WorkspaceCommitAuthorizationError("workspace commit candidate targets another workspace")
+        if not request.mutation_decision.allowed:
+            raise WorkspaceCommitAuthorizationError("workspace commit mutation decision is denied")
+        if request.gate.decision != "pass" or request.gate.subject != request.change_set.candidate:
+            raise WorkspaceCommitAuthorizationError("workspace commit gate is not valid for the candidate")
+        if any(
+            review.decision not in {"accept", "accept_with_conditions"}
+            or not review.is_valid_for(request.change_set.candidate)
+            for review in request.reviews
+        ):
+            raise WorkspaceCommitAuthorizationError("workspace commit contains an invalid review")
+        candidate = WorkspaceSnapshot(
+            workspace_id=workspace_id,
+            snapshot_id=new_snapshot_id,
+            revision=current.revision + 1,
+            resources=resources,
+            created_at=committed_at,
+            base_snapshot_id=current.snapshot_id,
+            base_snapshot_digest=current.content_digest(),
+            metadata=current.metadata,
+        )
+        if candidate.content_digest() != request.change_set.candidate.digest:
+            raise WorkspaceCommitAuthorizationError(
+                "workspace commit candidate digest does not match the authorized request"
+            )
+        return self.compare_and_swap_commit(
+            workspace_id=workspace_id,
+            expected_snapshot_id=current.snapshot_id,
+            new_snapshot_id=new_snapshot_id,
+            resources=resources,
+            committed_by=committed_by,
+            committed_at=committed_at,
+            change_set_id=request.change_set.change_set_id,
+        )
+
 
 __all__ = [
     "InMemoryWorkspaceStore",
     "WorkspaceCommit",
+    "WorkspaceCommitAuthorizationError",
+    "WorkspaceCommitRequest",
     "WorkspaceError",
     "WorkspaceMutationDecision",
     "WorkspaceMutationDeniedError",
@@ -387,4 +620,6 @@ __all__ = [
     "WorkspaceNotFoundError",
     "WorkspaceSnapshot",
     "WorkspaceSnapshotConflictError",
+    "WorkspaceTrialError",
+    "WorkspaceTrialPlan",
 ]

@@ -12,6 +12,8 @@ from .worker import WorkerAdvertisement, select_worker_for_block
 
 ContextAccessMode = Literal["read", "write", "read_write"]
 VALID_CONTEXT_ACCESS_MODES = {"read", "write", "read_write"}
+TaskPriority = Literal["optional", "normal", "required", "verification", "finalization"]
+VALID_TASK_PRIORITIES = {"optional", "normal", "required", "verification", "finalization"}
 
 
 class TaskPlanError(ValueError):
@@ -117,6 +119,20 @@ class TaskPlanLimits:
     max_steps: int = 128
     max_dependencies_per_step: int = 16
     max_description_chars: int = 4096
+    max_depth: int = 16
+    max_parallel_tasks: int = 32
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "max_steps",
+            "max_dependencies_per_step",
+            "max_description_chars",
+            "max_depth",
+            "max_parallel_tasks",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"task plan limit {field_name} must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +284,17 @@ class TaskPlan:
         for step_id in steps_by_id:
             visit(step_id)
 
+        execution_layers = self.execution_layers()
+        if len(execution_layers) > self.limits.max_depth:
+            raise TaskPlanLimitError("max_depth", self.limits.max_depth, len(execution_layers))
+        widest_layer = max((len(layer) for layer in execution_layers), default=0)
+        if widest_layer > self.limits.max_parallel_tasks:
+            raise TaskPlanLimitError(
+                "max_parallel_tasks",
+                self.limits.max_parallel_tasks,
+                widest_layer,
+            )
+
         context_resource_ids = set(self.context_resources)
         for access in self.context_access:
             if access.mode not in VALID_CONTEXT_ACCESS_MODES:
@@ -298,6 +325,30 @@ class TaskPlan:
                 return step
         raise TaskStepNotFoundError(step_id)
 
+    def execution_layers(self) -> tuple[tuple[str, ...], ...]:
+        remaining = {
+            step.step_id: set(step.depends_on)
+            for step in self.steps
+        }
+        completed: set[str] = set()
+        layers: list[tuple[str, ...]] = []
+        while remaining:
+            ready = tuple(
+                sorted(
+                    step_id
+                    for step_id, dependencies in remaining.items()
+                    if dependencies.issubset(completed)
+                )
+            )
+            if not ready:
+                cycle = tuple(sorted(remaining))
+                raise TaskPlanCycleError(cycle + (cycle[0],))
+            layers.append(ready)
+            completed.update(ready)
+            for step_id in ready:
+                del remaining[step_id]
+        return tuple(layers)
+
     def apply_patch(self, patch: TaskPlanPatch) -> TaskPlan:
         if patch.base_plan_id != self.plan_id or patch.base_revision != self.revision:
             raise TaskPlanPatchMismatchError(self.plan_id, patch.base_plan_id, self.revision, patch.base_revision)
@@ -324,11 +375,109 @@ class TaskPlan:
                     "max_steps": self.limits.max_steps,
                     "max_dependencies_per_step": self.limits.max_dependencies_per_step,
                     "max_description_chars": self.limits.max_description_chars,
+                    "max_depth": self.limits.max_depth,
+                    "max_parallel_tasks": self.limits.max_parallel_tasks,
                 },
                 "context_resources": self.context_resources,
                 "context_access": [access.canonical_value() for access in self.context_access],
             }
         )
+
+
+class TaskExecutionContractError(ValueError):
+    """Raised when bounded task execution evidence violates its declared contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class TaskExecutionCheckpoint:
+    plan_id: str
+    plan_revision: int
+    step_id: str
+    permit_id: str
+    result_digest: str
+    completed_at: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("plan_id", "step_id", "permit_id", "result_digest", "completed_at"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise TaskExecutionContractError(f"task execution checkpoint {field_name} must not be empty")
+        if not isinstance(self.plan_revision, int) or isinstance(self.plan_revision, bool) or self.plan_revision <= 0:
+            raise TaskExecutionContractError("task execution checkpoint plan_revision must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class TaskExecutionContract:
+    checkpoint: Literal["each_task"] = "each_task"
+    reservation: Literal["per_task"] = "per_task"
+    cancel_priorities: tuple[TaskPriority, ...] = ("optional", "normal")
+    preserve_priorities: tuple[TaskPriority, ...] = ("required", "verification", "finalization")
+
+    def __post_init__(self) -> None:
+        if self.checkpoint != "each_task":
+            raise TaskExecutionContractError("task execution checkpoint must be each_task")
+        if self.reservation != "per_task":
+            raise TaskExecutionContractError("task execution reservation must be per_task")
+        cancel_priorities = tuple(self.cancel_priorities)
+        preserve_priorities = tuple(self.preserve_priorities)
+        if len(set(cancel_priorities)) != len(cancel_priorities):
+            raise TaskExecutionContractError("task execution cancel priorities must not contain duplicates")
+        if len(set(preserve_priorities)) != len(preserve_priorities):
+            raise TaskExecutionContractError("task execution preserve priorities must not contain duplicates")
+        if any(priority not in VALID_TASK_PRIORITIES for priority in cancel_priorities + preserve_priorities):
+            raise TaskExecutionContractError("task execution priorities contain an unknown priority")
+        if set(cancel_priorities) & set(preserve_priorities):
+            raise TaskExecutionContractError("task execution cancel and preserve priorities must not overlap")
+        object.__setattr__(self, "cancel_priorities", cancel_priorities)
+        object.__setattr__(self, "preserve_priorities", preserve_priorities)
+
+    def checkpoint_completion(
+        self,
+        plan: TaskPlan,
+        step_id: str,
+        permit: BudgetPermit,
+        *,
+        result_digest: str,
+        completed_at: str,
+    ) -> TaskExecutionCheckpoint:
+        plan.step(step_id)
+        if permit.owner.resource_id != f"task:{step_id}":
+            raise TaskExecutionContractError(
+                f"task {step_id!r} completion requires a task-specific budget permit"
+            )
+        if not permit.authorized_amounts:
+            raise TaskExecutionContractError(f"task {step_id!r} budget permit has no reservation")
+        if not permit.is_active_at(completed_at):
+            raise TaskExecutionContractError(f"task {step_id!r} budget permit is expired")
+        return TaskExecutionCheckpoint(
+            plan_id=plan.plan_id,
+            plan_revision=plan.revision,
+            step_id=step_id,
+            permit_id=permit.permit_id,
+            result_digest=result_digest,
+            completed_at=completed_at,
+        )
+
+    def budget_pressure_cancellations(
+        self,
+        plan: TaskPlan,
+        *,
+        active_step_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        candidates: list[tuple[int, str]] = []
+        for step_id in active_step_ids:
+            step = plan.step(step_id)
+            priority = step.metadata.get("priority", "normal")
+            if not isinstance(priority, str) or priority not in VALID_TASK_PRIORITIES:
+                raise TaskExecutionContractError(f"task {step_id!r} has an unknown priority")
+            if priority in self.preserve_priorities:
+                continue
+            if priority not in self.cancel_priorities:
+                raise TaskExecutionContractError(
+                    f"task {step_id!r} priority is neither cancellable nor preserved"
+                )
+            candidates.append((self.cancel_priorities.index(priority), step_id))
+        return tuple(step_id for _, step_id in sorted(candidates))
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +691,10 @@ class LeaseResourceKindMismatchError(LeasePoolError):
         super().__init__(f"lease resource kind mismatch: expected {expected!r}, got {actual!r}")
 
 
+class LeaseBudgetPermitError(LeasePoolError):
+    """Raised when a scarce-resource lease is not covered by an active budget permit."""
+
+
 class LeaseAlreadyExistsError(LeasePoolError):
     def __init__(self, lease_id: str) -> None:
         self.lease_id = lease_id
@@ -693,6 +846,42 @@ class LeasePool:
             next_fencing_epoch=current.next_fencing_epoch + 1,
         ), grant
 
+    def acquire_with_budget_permit(
+        self,
+        request: LeaseRequest,
+        permit: BudgetPermit,
+        reservation_amounts: list[UsageAmount],
+        *,
+        lease_id: str,
+        acquired_at: str,
+        expires_at: str,
+    ) -> tuple[LeasePool, LeaseGrant]:
+        if not isinstance(permit, BudgetPermit):
+            raise LeaseBudgetPermitError("lease budget permit must be a BudgetPermit")
+        if request.holder != permit.owner:
+            raise LeaseBudgetPermitError("lease request holder must match budget permit owner")
+        if not permit.is_active_at(acquired_at):
+            raise LeaseBudgetPermitError("lease budget permit is not active at acquisition")
+        if not reservation_amounts or not all(isinstance(amount, UsageAmount) for amount in reservation_amounts):
+            raise LeaseBudgetPermitError("lease reservation amounts must contain UsageAmount records")
+        if not permit.allows(reservation_amounts):
+            raise LeaseBudgetPermitError("lease reservation exceeds budget permit authorization")
+        if expires_at != permit.expires_at and not permit.is_active_at(expires_at):
+            raise LeaseBudgetPermitError("lease expires after budget permit")
+        metadata = dict(request.metadata)
+        metadata.update(
+            {
+                "budget_permit_id": permit.permit_id,
+                "budget_reservation_refs": list(permit.reservation_refs),
+            }
+        )
+        return self.acquire(
+            replace(request, metadata=metadata),
+            lease_id=lease_id,
+            acquired_at=acquired_at,
+            expires_at=expires_at,
+        )
+
     def release(self, lease_id: str, *, fencing_epoch: int) -> LeasePool:
         active_leases = list(self.active_leases)
         for index, lease in enumerate(active_leases):
@@ -720,7 +909,7 @@ class ChildBudgetDelegation:
     def create_child_permit(self, permit_id: str) -> BudgetPermit:
         if not self.parent_permit.allows(self.amounts):
             raise ChildBudgetDelegationError(f"parent permit {self.parent_permit.permit_id!r} does not cover delegation")
-        return BudgetPermit(
+        child_permit = BudgetPermit(
             permit_id=permit_id,
             reservation_refs=self.parent_permit.reservation_refs,
             owner=self.child_owner,
@@ -733,12 +922,21 @@ class ChildBudgetDelegation:
             low_watermark=[],
             fencing_tokens=dict(self.parent_permit.fencing_tokens),
         )
+        if (
+            child_permit.expires_at != self.parent_permit.expires_at
+            and not self.parent_permit.is_active_at(child_permit.expires_at)
+        ):
+            raise ChildBudgetDelegationError(
+                f"delegation {self.delegation_id!r} outlives parent permit {self.parent_permit.permit_id!r}"
+            )
+        return child_permit
 
 
 __all__ = [
     "ChildBudgetDelegation",
     "ChildBudgetDelegationError",
     "LeaseAlreadyExistsError",
+    "LeaseBudgetPermitError",
     "LeaseEpochMismatchError",
     "LeaseGrant",
     "LeaseNotFoundError",
@@ -757,6 +955,9 @@ __all__ = [
     "ModelToolNotAllowedError",
     "NoEligibleModelError",
     "TaskContextAccess",
+    "TaskExecutionCheckpoint",
+    "TaskExecutionContract",
+    "TaskExecutionContractError",
     "TaskPlan",
     "TaskPlanContextAccessError",
     "TaskPlanCycleError",
