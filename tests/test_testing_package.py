@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).parents[1]
@@ -7872,6 +7873,64 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert "main" in graphblocks_testing.__all__
 
 
+def test_testing_package_cli_runs_acceptance_manifest_without_shell(
+    monkeypatch,
+    capsys,
+    tmp_path,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    scenario = tmp_path / "scenario.yaml"
+    manifest = tmp_path / "applications.yaml"
+    scenario.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "acceptance-cli"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/acceptance/v1alpha1",
+                "kind": "AcceptanceApplicationSet",
+                "spec": {
+                    "applications": [
+                        {
+                            "id": "cli-smoke",
+                            "profiles": ["GB-C0-SCHEMA"],
+                            "scenarioPath": "scenario.yaml",
+                            "gates": ["graphblocks validate"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = graphblocks_testing.main(
+        [
+            "run-acceptance",
+            str(manifest),
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["applications"][0]["application_id"] == "cli-smoke"
+    assert payload["applications"][0]["results"][0]["status"] == "passed"
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -8928,6 +8987,13 @@ def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> No
             "code": "ReleaseCandidatePerformanceFailed",
             "message": "performance benchmark did not pass",
             "path": "$.performance",
+        }
+    ]
+    assert failing["acceptance_applications"]["diagnostics"] == [
+        {
+            "code": "ReleaseCandidateAcceptanceReportMissing",
+            "message": "acceptance applications have no execution report",
+            "path": "$.acceptance_report",
         }
     ]
     assert report.content_digest().startswith("sha256:")

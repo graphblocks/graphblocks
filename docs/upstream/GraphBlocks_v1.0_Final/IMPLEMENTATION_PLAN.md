@@ -2657,6 +2657,12 @@ truth.
   context packing, citation tracing, fusion, or reranking can depend on normalized identifiers.
 - Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
   turn lifecycle, draft/retract semantics, and deterministic conflict handling.
+- Acceptance applications now produce immutable manifest-, scenario-, and output-digest-backed gate
+  reports. Exact built-in `graphblocks validate` and `graphblocks plan --expand` handlers invoke the
+  CLI without shell evaluation, while unknown semantic gates fail closed until a trusted handler is
+  registered.
+- Conformance claims and release-candidate gates now require current passing acceptance execution
+  reports; manifest path/profile coverage alone can no longer satisfy acceptance evidence.
 - `ContentPart` JSON data and metadata now recursively validate strict JSON values at construction
   time, rejecting arbitrary Python objects, tuples, and non-finite numbers before conversation
   state, tool output, callback output, or policy-reviewed content can persist them.

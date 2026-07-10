@@ -25,6 +25,39 @@ def _load_yaml_documents(path: Path) -> list[dict[str, object]]:
         return [document for document in yaml.safe_load_all(stream) if document is not None]
 
 
+def _passing_acceptance_report(graphblocks_testing, manifest, application_ids):
+    application_reports = []
+    for application_id in application_ids:
+        application = manifest.by_id(application_id)
+        application_reports.append(
+            graphblocks_testing.AcceptanceApplicationReport(
+                application_id=application_id,
+                scenario_path=application.scenario_path,
+                application_digest=graphblocks_testing.canonical_hash(
+                    application.application_contract()
+                ),
+                scenario_digest=graphblocks_testing.canonical_hash(
+                    _load_yaml_documents(ROOT / application.scenario_path)
+                ),
+                results=tuple(
+                    graphblocks_testing.AcceptanceGateResult(
+                        application_id=application_id,
+                        gate=gate,
+                        status="passed",
+                        output_digest=graphblocks_testing.canonical_hash(
+                            {"gate": gate, "ok": True}
+                        ),
+                    )
+                    for gate in application.gates
+                ),
+            )
+        )
+    return graphblocks_testing.AcceptanceRunReport(
+        manifest_digest=manifest.content_digest(),
+        applications=tuple(application_reports),
+    )
+
+
 def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     manifest = graphblocks_testing.AcceptanceManifest.from_document(
@@ -94,6 +127,210 @@ def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
         "description": "Federated enterprise RAG with dense and keyword retrieval, fusion, rerank, budgeted context, abstention, and citation checks.",
     }
     assert manifest.content_digest().startswith("sha256:")
+
+
+def test_acceptance_gate_runner_executes_exact_builtin_and_custom_handlers(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "acceptance-runner"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = graphblocks_testing.AcceptanceManifest(
+        (
+            graphblocks_testing.AcceptanceApplication(
+                application_id="runner-smoke",
+                profiles=("GB-C0-SCHEMA",),
+                scenario_path="scenario.yaml",
+                gates=(
+                    "graphblocks validate",
+                    "graphblocks plan --expand",
+                    "semantic check",
+                ),
+            ),
+        )
+    )
+    custom_calls = []
+
+    def semantic_check(application, scenario_path):
+        custom_calls.append((application.application_id, scenario_path))
+        return 0, "semantic evidence passed"
+
+    report = graphblocks_testing.AcceptanceGateRunner(
+        custom_handlers={"semantic check": semantic_check}
+    ).run_manifest(manifest, root=tmp_path)
+
+    assert report.ok
+    assert custom_calls == [("runner-smoke", scenario)]
+    application_report = report.by_id("runner-smoke")
+    assert [result.status for result in application_report.results] == [
+        "passed",
+        "passed",
+        "passed",
+    ]
+    assert application_report.results[0].command == (
+        "graphblocks",
+        "validate",
+        "scenario.yaml",
+    )
+    assert application_report.results[1].command == (
+        "graphblocks",
+        "plan",
+        "scenario.yaml",
+        "--expand",
+    )
+    assert report.content_digest().startswith("sha256:")
+
+
+def test_acceptance_gate_runner_never_evaluates_unknown_shell_text(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "acceptance-no-shell"},
+                "spec": {"nodes": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    marker = tmp_path / "must-not-exist"
+    manifest = graphblocks_testing.AcceptanceManifest(
+        (
+            graphblocks_testing.AcceptanceApplication(
+                application_id="no-shell",
+                profiles=("GB-C0-SCHEMA",),
+                scenario_path="scenario.yaml",
+                gates=(f"graphblocks validate; touch {marker}",),
+            ),
+        )
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_manifest(
+        manifest,
+        root=tmp_path,
+    )
+
+    assert not report.ok
+    assert not marker.exists()
+    assert report.by_id("no-shell").results[0].diagnostic_contracts() == [
+        {
+            "code": "AcceptanceGateHandlerMissing",
+            "message": "acceptance gate has no registered exact handler",
+            "path": "$.applications.no-shell.gates[0]",
+        }
+    ]
+
+
+def test_acceptance_failure_report_digest_is_stable_across_roots(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest(
+        (
+            graphblocks_testing.AcceptanceApplication(
+                application_id="missing-scenario",
+                profiles=("GB-C0-SCHEMA",),
+                scenario_path="missing.yaml",
+                gates=("graphblocks validate", "root failure"),
+            ),
+        )
+    )
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    def root_failure(application, scenario_path):
+        return 1, f"failure under {scenario_path.parent}"
+
+    runner = graphblocks_testing.AcceptanceGateRunner(
+        custom_handlers={"root failure": root_failure}
+    )
+    first = runner.run_manifest(
+        manifest,
+        root=first_root,
+    )
+    second = runner.run_manifest(
+        manifest,
+        root=second_root,
+    )
+
+    assert not first.ok
+    assert first.report_contract() == second.report_contract()
+    assert first.content_digest() == second.content_digest()
+
+
+def test_acceptance_coverage_without_root_cannot_satisfy_evidence(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest(
+        (
+            graphblocks_testing.AcceptanceApplication(
+                application_id="unrooted",
+                profiles=("GB-C0-SCHEMA",),
+                scenario_path="scenario.yaml",
+                gates=("graphblocks validate",),
+            ),
+        )
+    )
+
+    coverage = manifest.coverage_for_conformance(
+        {
+            "spec": {
+                "profiles": [
+                    {
+                        "id": "GB-C0-SCHEMA",
+                        "acceptanceApplications": ["unrooted"],
+                    }
+                ]
+            }
+        }
+    )
+
+    assert not coverage.ok
+    assert coverage.issue_contracts() == [
+        {
+            "code": "AcceptanceScenarioDigestMissing",
+            "application_id": "unrooted",
+            "profile_id": "",
+            "path": "$.spec.applications[unrooted].scenarioPath",
+            "message": "acceptance evidence requires a root to digest the scenario",
+        }
+    ]
+
+
+def test_acceptance_reports_reject_noncanonical_digests_and_empty_runs(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+
+    with pytest.raises(ValueError, match="acceptance gate output_digest must be a canonical sha256 digest"):
+        graphblocks_testing.AcceptanceGateResult(
+            application_id="invalid-digest",
+            gate="semantic check",
+            status="passed",
+            output_digest="not-a-digest",
+        )
+
+    empty = graphblocks_testing.AcceptanceRunReport(
+        manifest_digest="sha256:" + ("0" * 64),
+        applications=(),
+    )
+    assert not empty.ok
 
 
 def test_coding_agent_background_callback_example_matches_async_contract() -> None:
@@ -448,6 +685,16 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
         _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
         root=ROOT,
     )
+    acceptance_report = _passing_acceptance_report(
+        graphblocks_testing,
+        manifest,
+        (
+            "direct-file-analysis",
+            "document-ingestion",
+            "enterprise-rag",
+            "multi-turn-chat",
+        ),
+    )
     passing_reports = {
         suite: graphblocks_testing.TckReport(
             profile=suite,
@@ -474,11 +721,163 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
         ("GB-C2-AI-APPLICATION",),
         tck_reports=passing_reports,
         acceptance_coverage=acceptance_coverage,
+        acceptance_report=acceptance_report,
     )
 
     assert validation.ok
     assert validation.issue_contracts() == []
     assert validation.claim.profile_ids == ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME", "GB-C2-AI-APPLICATION")
+
+
+def test_conformance_profile_claim_rejects_coverage_without_execution_report(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    acceptance_coverage = manifest.coverage_for_conformance(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
+        root=ROOT,
+    )
+    passing_reports = {
+        suite: graphblocks_testing.TckReport(
+            profile=suite,
+            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
+        )
+        for suite in profile_set.claim_requirements(
+            ("GB-C2-AI-APPLICATION",)
+        ).tck_suites
+    }
+
+    validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports=passing_reports,
+        acceptance_coverage=acceptance_coverage,
+    )
+
+    assert not validation.ok
+    assert validation.issue_contracts() == [
+        {
+            "code": "ConformanceAcceptanceReportMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "acceptance",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.acceptance",
+            "message": "claimed conformance profile requires executed acceptance reports",
+        }
+    ]
+
+
+def test_conformance_profile_claim_rejects_failed_and_stale_acceptance_reports(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    coverage = manifest.coverage_for_conformance(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
+        root=ROOT,
+    )
+    claim = profile_set.claim_requirements(("GB-C2-AI-APPLICATION",))
+    tck_reports = {
+        suite: graphblocks_testing.TckReport(
+            profile=suite,
+            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
+        )
+        for suite in claim.tck_suites
+    }
+    passing = _passing_acceptance_report(
+        graphblocks_testing,
+        manifest,
+        claim.acceptance_applications,
+    )
+    failed_application = passing.by_id("enterprise-rag")
+    failed_report = graphblocks_testing.AcceptanceRunReport(
+        manifest_digest=passing.manifest_digest,
+        applications=tuple(
+            graphblocks_testing.AcceptanceApplicationReport(
+                application_id=application.application_id,
+                scenario_path=application.scenario_path,
+                application_digest=application.application_digest,
+                scenario_digest=application.scenario_digest,
+                results=tuple(
+                    graphblocks_testing.AcceptanceGateResult(
+                        application_id=application.application_id,
+                        gate=result.gate,
+                        status="failed" if result_index == 0 else result.status,
+                        command=result.command,
+                        output_digest=graphblocks_testing.canonical_hash(
+                            {"gate": result.gate, "ok": result_index != 0}
+                        ),
+                        diagnostics=result.diagnostics,
+                    )
+                    for result_index, result in enumerate(application.results)
+                ),
+            )
+            if application.application_id == failed_application.application_id
+            else application
+            for application in passing.applications
+        ),
+    )
+    stale_report = graphblocks_testing.AcceptanceRunReport(
+        manifest_digest="sha256:" + ("0" * 64),
+        applications=passing.applications,
+    )
+    forged_application = passing.by_id("enterprise-rag")
+    forged_report = graphblocks_testing.AcceptanceRunReport(
+        manifest_digest=passing.manifest_digest,
+        applications=tuple(
+            graphblocks_testing.AcceptanceApplicationReport(
+                application_id=application.application_id,
+                scenario_path="wrong.yaml",
+                application_digest="sha256:" + ("9" * 64),
+                scenario_digest="sha256:" + ("8" * 64),
+                results=(
+                    graphblocks_testing.AcceptanceGateResult(
+                        application_id=application.application_id,
+                        gate="not declared",
+                        status="passed",
+                        output_digest=graphblocks_testing.canonical_hash({"forged": True}),
+                    ),
+                ),
+            )
+            if application.application_id == forged_application.application_id
+            else application
+            for application in passing.applications
+        ),
+    )
+
+    failed_validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports=tck_reports,
+        acceptance_coverage=coverage,
+        acceptance_report=failed_report,
+    )
+    stale_validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports=tck_reports,
+        acceptance_coverage=coverage,
+        acceptance_report=stale_report,
+    )
+    forged_validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports=tck_reports,
+        acceptance_coverage=coverage,
+        acceptance_report=forged_report,
+    )
+
+    assert [issue["code"] for issue in failed_validation.issue_contracts()] == [
+        "ConformanceAcceptanceReportFailed"
+    ]
+    assert [issue["code"] for issue in stale_validation.issue_contracts()] == [
+        "ConformanceAcceptanceReportStale"
+    ]
+    assert [issue["code"] for issue in forged_validation.issue_contracts()] == [
+        "ConformanceAcceptanceReportStale"
+    ]
 
 
 def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) -> None:
@@ -583,5 +982,12 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
             "suite": "tool-result",
             "path": "$.profiles.GB-C2-AI-APPLICATION.tck.tool-result",
             "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceAcceptanceReportMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "acceptance",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.acceptance",
+            "message": "claimed conformance profile requires executed acceptance reports",
         },
     ]

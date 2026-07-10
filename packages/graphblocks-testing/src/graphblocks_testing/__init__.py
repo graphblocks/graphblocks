@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import importlib
+import io
 import json
 import math
 from pathlib import Path
@@ -26,6 +28,7 @@ from graphblocks.application_event import (
     ApplicationProtocolStreamState,
 )
 from graphblocks.canonical import canonical_hash
+from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import (
     BranchRequest,
@@ -1271,6 +1274,7 @@ class ReleaseCandidateGateReport:
         performance: PerformanceBenchmarkReport,
         wheel_matrix: object,
         migration: MigrationCompatibilityReport,
+        acceptance_report: AcceptanceRunReport | None = None,
         oci_image_build: object | None = None,
         supply_chain: Mapping[str, str] | None = None,
     ) -> ReleaseCandidateGateReport:
@@ -1308,7 +1312,7 @@ class ReleaseCandidateGateReport:
             )
         )
 
-        acceptance_diagnostics = ()
+        acceptance_diagnostics: tuple[dict[str, str], ...] = ()
         if not acceptance_coverage.ok:
             acceptance_diagnostics = (
                 {
@@ -1317,11 +1321,71 @@ class ReleaseCandidateGateReport:
                     "path": "$.acceptance_coverage",
                 },
             )
+        elif acceptance_report is None:
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceReportMissing",
+                    "message": "acceptance applications have no execution report",
+                    "path": "$.acceptance_report",
+                },
+            )
+        elif (
+            acceptance_coverage.manifest_digest is not None
+            and acceptance_report.manifest_digest != acceptance_coverage.manifest_digest
+        ):
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceReportStale",
+                    "message": "acceptance execution report does not match the covered manifest",
+                    "path": "$.acceptance_report.manifest_digest",
+                },
+            )
+        elif set(acceptance_report.application_ids()) != set(
+            acceptance_coverage.application_ids
+        ):
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceReportFailed",
+                    "message": "acceptance execution report does not cover every application",
+                    "path": "$.acceptance_report.applications",
+                },
+            )
+        elif any(
+            not _acceptance_report_matches_expectation(
+                acceptance_report.by_id(expectation.application_id),
+                expectation,
+            )
+            for expectation in acceptance_coverage.expectations
+        ):
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceReportStale",
+                    "message": "acceptance application report does not match manifest evidence",
+                    "path": "$.acceptance_report.applications",
+                },
+            )
+        elif not acceptance_report.ok:
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceReportFailed",
+                    "message": "acceptance application execution did not pass",
+                    "path": "$.acceptance_report.applications",
+                },
+            )
         gates.append(
             ReleaseCandidateGateResult(
                 gate="acceptance_applications",
                 status="passed" if not acceptance_diagnostics else "failed",
-                evidence_digest=canonical_hash(acceptance_coverage.issue_contracts()),
+                evidence_digest=canonical_hash(
+                    {
+                        "coverage": acceptance_coverage.coverage_contract(),
+                        "report": (
+                            acceptance_report.report_contract()
+                            if acceptance_report is not None
+                            else None
+                        ),
+                    }
+                ),
                 diagnostics=acceptance_diagnostics,
             )
         )
@@ -2368,8 +2432,41 @@ def main(argv: list[str] | None = None) -> int:
     run_all_parser.add_argument("--profile", default="local", help="profile label for the generated reports")
     run_all_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
     run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
+    acceptance_parser = subparsers.add_parser(
+        "run-acceptance",
+        help="run exact registered gates from an acceptance application manifest",
+    )
+    acceptance_parser.add_argument("manifest", type=Path, help="acceptance application manifest")
+    acceptance_parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="root used to resolve scenario paths",
+    )
+    acceptance_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
+    if args.command == "run-acceptance":
+        documents = load_documents(args.manifest)
+        if not documents:
+            raise ValueError("acceptance application manifest must not be empty")
+        report = AcceptanceGateRunner().run_manifest(
+            AcceptanceManifest.from_document(documents[0]),
+            root=args.root,
+        )
+        payload = report.report_contract()
+        payload["contentDigest"] = report.content_digest()
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                f"{'OK' if report.ok else 'FAILED'} "
+                f"{len(report.applications)} acceptance applications"
+            )
+            for application in report.applications:
+                if not application.ok:
+                    print(f"{application.application_id} failed")
+        return 0 if report.ok else 1
     if args.command == "list":
         manifests = load_tck_suite_manifests(args.root)
         payload = {
@@ -2520,9 +2617,82 @@ class AcceptanceCoverageIssue:
         }
 
 
+def _validate_acceptance_digest(owner: str, value: object) -> str:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ValueError(f"{owner} must be a canonical sha256 digest")
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError(f"{owner} must be a canonical sha256 digest")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceApplicationExpectation:
+    application_id: str
+    scenario_path: str
+    application_digest: str
+    scenario_digest: str | None
+    gates: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.application_id.strip():
+            raise ValueError("acceptance expectation application_id must not be empty")
+        if not self.scenario_path.strip():
+            raise ValueError("acceptance expectation scenario_path must not be empty")
+        _validate_acceptance_digest(
+            "acceptance expectation application_digest",
+            self.application_digest,
+        )
+        if self.scenario_digest is not None:
+            _validate_acceptance_digest(
+                "acceptance expectation scenario_digest",
+                self.scenario_digest,
+            )
+        object.__setattr__(self, "gates", tuple(str(gate) for gate in self.gates))
+
+    def expectation_contract(self) -> dict[str, object]:
+        return {
+            "application_id": self.application_id,
+            "scenario_path": self.scenario_path,
+            "application_digest": self.application_digest,
+            "scenario_digest": self.scenario_digest,
+            "gates": list(self.gates),
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceCoverageResult:
     issues: tuple[AcceptanceCoverageIssue, ...] = field(default_factory=tuple)
+    application_ids: tuple[str, ...] = field(default_factory=tuple)
+    manifest_digest: str | None = None
+    expectations: tuple[AcceptanceApplicationExpectation, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "issues", tuple(self.issues))
+        expectations = tuple(
+            sorted(self.expectations, key=lambda expectation: expectation.application_id)
+        )
+        expectation_ids = tuple(
+            expectation.application_id for expectation in expectations
+        )
+        if len(expectation_ids) != len(set(expectation_ids)):
+            raise ValueError("acceptance coverage expectation ids must be unique")
+        object.__setattr__(self, "expectations", expectations)
+        application_ids = tuple(
+            sorted(str(application_id) for application_id in self.application_ids)
+        )
+        if expectations and application_ids and application_ids != expectation_ids:
+            raise ValueError("acceptance coverage application ids must match expectations")
+        object.__setattr__(
+            self,
+            "application_ids",
+            expectation_ids if expectations else application_ids,
+        )
+        if self.manifest_digest is not None:
+            _validate_acceptance_digest(
+                "acceptance coverage manifest_digest",
+                self.manifest_digest,
+            )
 
     @property
     def ok(self) -> bool:
@@ -2530,6 +2700,187 @@ class AcceptanceCoverageResult:
 
     def issue_contracts(self) -> list[dict[str, str]]:
         return [issue.issue_contract() for issue in self.issues]
+
+    def coverage_contract(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "application_ids": list(self.application_ids),
+            "manifest_digest": self.manifest_digest,
+            "expectations": [
+                expectation.expectation_contract()
+                for expectation in self.expectations
+            ],
+            "issues": self.issue_contracts(),
+        }
+
+    def expectation_by_id(
+        self,
+        application_id: str,
+    ) -> AcceptanceApplicationExpectation:
+        for expectation in self.expectations:
+            if expectation.application_id == application_id:
+                return expectation
+        raise KeyError(application_id)
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceGateDiagnostic:
+    code: str
+    message: str
+    path: str
+
+    def diagnostic_contract(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "path": self.path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceGateResult:
+    application_id: str
+    gate: str
+    status: Literal["passed", "failed"]
+    command: tuple[str, ...] = field(default_factory=tuple)
+    output_digest: str | None = None
+    diagnostics: tuple[AcceptanceGateDiagnostic, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.application_id.strip():
+            raise ValueError("acceptance gate application_id must not be empty")
+        if not self.gate.strip():
+            raise ValueError("acceptance gate must not be empty")
+        if self.status not in {"passed", "failed"}:
+            raise ValueError(f"invalid acceptance gate status {self.status!r}")
+        _validate_acceptance_digest(
+            "acceptance gate output_digest",
+            self.output_digest,
+        )
+        object.__setattr__(self, "command", tuple(str(argument) for argument in self.command))
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics))
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "passed"
+
+    def diagnostic_contracts(self) -> list[dict[str, str]]:
+        return [diagnostic.diagnostic_contract() for diagnostic in self.diagnostics]
+
+    def result_contract(self) -> dict[str, object]:
+        return {
+            "application_id": self.application_id,
+            "gate": self.gate,
+            "status": self.status,
+            "command": list(self.command),
+            "output_digest": self.output_digest,
+            "diagnostics": self.diagnostic_contracts(),
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.result_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceApplicationReport:
+    application_id: str
+    scenario_path: str
+    application_digest: str
+    scenario_digest: str
+    results: tuple[AcceptanceGateResult, ...]
+
+    def __post_init__(self) -> None:
+        if not self.application_id.strip():
+            raise ValueError("acceptance application report id must not be empty")
+        if not self.scenario_path.strip():
+            raise ValueError("acceptance application report scenario_path must not be empty")
+        _validate_acceptance_digest(
+            "acceptance application report application_digest",
+            self.application_digest,
+        )
+        _validate_acceptance_digest(
+            "acceptance application report scenario_digest",
+            self.scenario_digest,
+        )
+        results = tuple(self.results)
+        if any(result.application_id != self.application_id for result in results):
+            raise ValueError("acceptance application report result application_id must match")
+        object.__setattr__(self, "results", results)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.results) and all(result.ok for result in self.results)
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "application_id": self.application_id,
+            "scenario_path": self.scenario_path,
+            "application_digest": self.application_digest,
+            "scenario_digest": self.scenario_digest,
+            "ok": self.ok,
+            "results": [result.result_contract() for result in self.results],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceRunReport:
+    manifest_digest: str
+    applications: tuple[AcceptanceApplicationReport, ...]
+
+    def __post_init__(self) -> None:
+        _validate_acceptance_digest(
+            "acceptance run report manifest_digest",
+            self.manifest_digest,
+        )
+        applications = tuple(sorted(self.applications, key=lambda report: report.application_id))
+        application_ids = tuple(report.application_id for report in applications)
+        if len(application_ids) != len(set(application_ids)):
+            raise ValueError("acceptance run report application ids must be unique")
+        object.__setattr__(self, "applications", applications)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.applications) and all(
+            application.ok for application in self.applications
+        )
+
+    def application_ids(self) -> tuple[str, ...]:
+        return tuple(application.application_id for application in self.applications)
+
+    def by_id(self, application_id: str) -> AcceptanceApplicationReport:
+        for application in self.applications:
+            if application.application_id == application_id:
+                return application
+        raise KeyError(application_id)
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "manifest_digest": self.manifest_digest,
+            "ok": self.ok,
+            "applications": [application.report_contract() for application in self.applications],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
+
+
+def _acceptance_report_matches_expectation(
+    report: AcceptanceApplicationReport,
+    expectation: AcceptanceApplicationExpectation,
+) -> bool:
+    return (
+        report.application_id == expectation.application_id
+        and report.scenario_path == expectation.scenario_path
+        and report.application_digest == expectation.application_digest
+        and (
+            expectation.scenario_digest is None
+            or report.scenario_digest == expectation.scenario_digest
+        )
+        and tuple(result.gate for result in report.results) == expectation.gates
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2763,6 +3114,7 @@ class ConformanceProfileSet:
         *,
         tck_reports: Mapping[str, TckReport],
         acceptance_coverage: AcceptanceCoverageResult,
+        acceptance_report: AcceptanceRunReport | None = None,
     ) -> ConformanceClaimValidation:
         claim = self.claim_requirements(profile_ids)
         issues: list[ConformanceClaimIssue] = []
@@ -2800,6 +3152,95 @@ class ConformanceProfileSet:
                         message=coverage_issue.message,
                     )
                 )
+        if claim.acceptance_applications:
+            if acceptance_report is None:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceAcceptanceReportMissing",
+                        profile_id=claimed_profile,
+                        suite="acceptance",
+                        path=f"$.profiles.{claimed_profile}.acceptance",
+                        message="claimed conformance profile requires executed acceptance reports",
+                    )
+                )
+            elif (
+                acceptance_coverage.manifest_digest is not None
+                and acceptance_report.manifest_digest != acceptance_coverage.manifest_digest
+            ):
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceAcceptanceReportStale",
+                        profile_id=claimed_profile,
+                        suite="acceptance",
+                        path=f"$.profiles.{claimed_profile}.acceptance.manifest_digest",
+                        message="acceptance report does not match the covered manifest",
+                    )
+                )
+            else:
+                for application_id in claim.acceptance_applications:
+                    try:
+                        application_report = acceptance_report.by_id(application_id)
+                    except KeyError:
+                        issues.append(
+                            ConformanceClaimIssue(
+                                code="ConformanceAcceptanceReportMissing",
+                                profile_id=claimed_profile,
+                                suite="acceptance",
+                                path=(
+                                    f"$.profiles.{claimed_profile}.acceptance."
+                                    f"{application_id}"
+                                ),
+                                message="required acceptance application has no execution report",
+                            )
+                        )
+                        continue
+                    try:
+                        expectation = acceptance_coverage.expectation_by_id(
+                            application_id
+                        )
+                    except KeyError:
+                        issues.append(
+                            ConformanceClaimIssue(
+                                code="ConformanceAcceptanceReportStale",
+                                profile_id=claimed_profile,
+                                suite="acceptance",
+                                path=(
+                                    f"$.profiles.{claimed_profile}.acceptance."
+                                    f"{application_id}"
+                                ),
+                                message="acceptance coverage has no immutable application expectation",
+                            )
+                        )
+                        continue
+                    if not _acceptance_report_matches_expectation(
+                        application_report,
+                        expectation,
+                    ):
+                        issues.append(
+                            ConformanceClaimIssue(
+                                code="ConformanceAcceptanceReportStale",
+                                profile_id=claimed_profile,
+                                suite="acceptance",
+                                path=(
+                                    f"$.profiles.{claimed_profile}.acceptance."
+                                    f"{application_id}"
+                                ),
+                                message="acceptance application report does not match manifest evidence",
+                            )
+                        )
+                    elif not application_report.ok:
+                        issues.append(
+                            ConformanceClaimIssue(
+                                code="ConformanceAcceptanceReportFailed",
+                                profile_id=claimed_profile,
+                                suite="acceptance",
+                                path=(
+                                    f"$.profiles.{claimed_profile}.acceptance."
+                                    f"{application_id}"
+                                ),
+                                message="required acceptance application did not pass",
+                            )
+                        )
         return ConformanceClaimValidation(claim=claim, issues=tuple(issues))
 
 
@@ -2878,6 +3319,7 @@ class AcceptanceManifest:
     ) -> AcceptanceCoverageResult:
         applications_by_id = {application.application_id: application for application in self.applications}
         issues: list[AcceptanceCoverageIssue] = []
+        expectations: list[AcceptanceApplicationExpectation] = []
         spec = conformance_document.get("spec", {})
         profiles = spec.get("profiles", ()) if isinstance(spec, Mapping) else ()
         for profile_index, profile in enumerate(profiles):
@@ -2910,7 +3352,22 @@ class AcceptanceManifest:
                         )
                     )
         for application in self.applications:
-            if root is not None and not (root / application.scenario_path).exists():
+            scenario_digest: str | None = None
+            scenario_path = root / application.scenario_path if root is not None else None
+            if scenario_path is None:
+                issues.append(
+                    AcceptanceCoverageIssue(
+                        code="AcceptanceScenarioDigestMissing",
+                        application_id=application.application_id,
+                        profile_id="",
+                        path=(
+                            f"$.spec.applications[{application.application_id}]."
+                            "scenarioPath"
+                        ),
+                        message="acceptance evidence requires a root to digest the scenario",
+                    )
+                )
+            elif not scenario_path.exists():
                 issues.append(
                     AcceptanceCoverageIssue(
                         code="AcceptanceFixtureMissing",
@@ -2920,6 +3377,22 @@ class AcceptanceManifest:
                         message="acceptance application scenario path does not exist",
                     )
                 )
+            elif scenario_path is not None:
+                try:
+                    scenario_digest = canonical_hash(load_documents(scenario_path))
+                except (OSError, TypeError, ValueError):
+                    issues.append(
+                        AcceptanceCoverageIssue(
+                            code="AcceptanceFixtureInvalid",
+                            application_id=application.application_id,
+                            profile_id="",
+                            path=(
+                                f"$.spec.applications[{application.application_id}]."
+                                "scenarioPath"
+                            ),
+                            message="acceptance application scenario could not be loaded",
+                        )
+                    )
             if not application.gates:
                 issues.append(
                     AcceptanceCoverageIssue(
@@ -2930,7 +3403,23 @@ class AcceptanceManifest:
                         message="acceptance application must declare at least one verification gate",
                     )
                 )
-        return AcceptanceCoverageResult(tuple(issues))
+            expectations.append(
+                AcceptanceApplicationExpectation(
+                    application_id=application.application_id,
+                    scenario_path=application.scenario_path,
+                    application_digest=canonical_hash(
+                        application.application_contract()
+                    ),
+                    scenario_digest=scenario_digest,
+                    gates=application.gates,
+                )
+            )
+        return AcceptanceCoverageResult(
+            issues=tuple(issues),
+            application_ids=self.application_ids(),
+            manifest_digest=self.content_digest(),
+            expectations=tuple(expectations),
+        )
 
     def manifest_contract(self) -> dict[str, object]:
         return {
@@ -2939,6 +3428,156 @@ class AcceptanceManifest:
 
     def content_digest(self) -> str:
         return canonical_hash(self.manifest_contract())
+
+
+AcceptanceGateHandler = Callable[[AcceptanceApplication, Path], tuple[int, str]]
+
+
+class AcceptanceGateRunner:
+    def __init__(
+        self,
+        *,
+        custom_handlers: Mapping[str, AcceptanceGateHandler] | None = None,
+    ) -> None:
+        self._custom_handlers = dict(custom_handlers or {})
+
+    def run_manifest(
+        self,
+        manifest: AcceptanceManifest,
+        *,
+        root: Path,
+    ) -> AcceptanceRunReport:
+        return AcceptanceRunReport(
+            manifest_digest=manifest.content_digest(),
+            applications=tuple(
+                self.run_application(application, root=root)
+                for application in manifest.applications
+            ),
+        )
+
+    def run_application(
+        self,
+        application: AcceptanceApplication,
+        *,
+        root: Path,
+    ) -> AcceptanceApplicationReport:
+        scenario_path = root / application.scenario_path
+        try:
+            scenario_digest = canonical_hash(load_documents(scenario_path))
+        except (OSError, TypeError, ValueError) as error:
+            scenario_digest = canonical_hash(
+                {
+                    "scenario_path": application.scenario_path,
+                    "error": type(error).__name__,
+                }
+            )
+        results: list[AcceptanceGateResult] = []
+        for gate_index, gate in enumerate(application.gates):
+            command: tuple[str, ...] = ()
+            output = ""
+            exit_code: int | None = None
+            diagnostic: AcceptanceGateDiagnostic | None = None
+            if gate == "graphblocks validate":
+                command = ("graphblocks", "validate", application.scenario_path)
+                arguments = ["validate", str(scenario_path)]
+                output_buffer = io.StringIO()
+                try:
+                    with redirect_stdout(output_buffer):
+                        exit_code = graphblocks_cli_main(arguments)
+                    output = output_buffer.getvalue()
+                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                    output = output_buffer.getvalue()
+                    diagnostic = AcceptanceGateDiagnostic(
+                        code="AcceptanceGateExecutionFailed",
+                        message=(
+                            str(error)
+                            .replace(str(scenario_path), application.scenario_path)
+                            .replace(str(root), ".")
+                        ),
+                        path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                    )
+            elif gate == "graphblocks plan --expand":
+                command = (
+                    "graphblocks",
+                    "plan",
+                    application.scenario_path,
+                    "--expand",
+                )
+                arguments = ["plan", str(scenario_path), "--expand"]
+                output_buffer = io.StringIO()
+                try:
+                    with redirect_stdout(output_buffer):
+                        exit_code = graphblocks_cli_main(arguments)
+                    output = output_buffer.getvalue()
+                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                    output = output_buffer.getvalue()
+                    diagnostic = AcceptanceGateDiagnostic(
+                        code="AcceptanceGateExecutionFailed",
+                        message=(
+                            str(error)
+                            .replace(str(scenario_path), application.scenario_path)
+                            .replace(str(root), ".")
+                        ),
+                        path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                    )
+            elif gate in self._custom_handlers:
+                try:
+                    exit_code, output = self._custom_handlers[gate](
+                        application,
+                        scenario_path,
+                    )
+                    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+                        raise TypeError("acceptance gate handler exit code must be an integer")
+                    if not isinstance(output, str):
+                        raise TypeError("acceptance gate handler output must be a string")
+                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                    diagnostic = AcceptanceGateDiagnostic(
+                        code="AcceptanceGateExecutionFailed",
+                        message=(
+                            str(error)
+                            .replace(str(scenario_path), application.scenario_path)
+                            .replace(str(root), ".")
+                        ),
+                        path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                    )
+            else:
+                diagnostic = AcceptanceGateDiagnostic(
+                    code="AcceptanceGateHandlerMissing",
+                    message="acceptance gate has no registered exact handler",
+                    path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                )
+            if diagnostic is None and exit_code != 0:
+                diagnostic = AcceptanceGateDiagnostic(
+                    code="AcceptanceGateFailed",
+                    message=f"acceptance gate exited with status {exit_code}",
+                    path=f"$.applications.{application.application_id}.gates[{gate_index}]",
+                )
+            normalized_output = (
+                output.replace(str(scenario_path), application.scenario_path)
+                .replace(str(root), ".")
+            )
+            results.append(
+                AcceptanceGateResult(
+                    application_id=application.application_id,
+                    gate=gate,
+                    status="passed" if diagnostic is None else "failed",
+                    command=command,
+                    output_digest=canonical_hash(
+                        {
+                            "exit_code": exit_code,
+                            "output": normalized_output,
+                        }
+                    ),
+                    diagnostics=(() if diagnostic is None else (diagnostic,)),
+                )
+            )
+        return AcceptanceApplicationReport(
+            application_id=application.application_id,
+            scenario_path=application.scenario_path,
+            application_digest=canonical_hash(application.application_contract()),
+            scenario_digest=scenario_digest,
+            results=tuple(results),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -14621,9 +15260,15 @@ class TckRunner:
 
 __all__ = [
     "AcceptanceApplication",
+    "AcceptanceApplicationExpectation",
+    "AcceptanceApplicationReport",
     "AcceptanceCoverageIssue",
     "AcceptanceCoverageResult",
+    "AcceptanceGateDiagnostic",
+    "AcceptanceGateResult",
+    "AcceptanceGateRunner",
     "AcceptanceManifest",
+    "AcceptanceRunReport",
     "CancellationToken",
     "ConformanceClaimIssue",
     "ConformanceClaimRequirements",

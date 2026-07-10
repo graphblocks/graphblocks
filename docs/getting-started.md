@@ -43,6 +43,15 @@ graphblocks-tck run schema tck/schema/cases.json
 graphblocks-tck run-all tck
 ```
 
+Inspect executable acceptance evidence with:
+
+```bash
+graphblocks-tck run-acceptance acceptance/applications.yaml --root . --json
+```
+
+This command fails closed for unknown or unregistered semantic gates and reports
+manifest-, scenario-, and command-output-bound evidence digests.
+
 For focused profile work, run the profile check first:
 
 ```bash

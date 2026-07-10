@@ -62,6 +62,20 @@ Profile claims can also require acceptance applications. The manifest in
 example, profile, and gate list. Examples that serve as profile evidence should
 be declared there instead of remaining only illustrative YAML.
 
+Run the manifest to produce immutable, digest-backed gate evidence:
+
+```bash
+graphblocks-tck run-acceptance acceptance/applications.yaml --root . --json
+```
+
+The runner dispatches only exact registered gate names. The built-in
+`graphblocks validate` and `graphblocks plan --expand` gates invoke the Python
+CLI directly with a fixed argument vector; manifest text is never evaluated by
+a shell. Semantic gates require an explicitly registered handler and fail closed
+when none exists. Structural manifest coverage alone is not sufficient for a
+conformance claim or release-candidate gate: every required application needs a
+current passing execution report bound to the manifest digest.
+
 ## Claiming Support
 
 When adding a feature, update or add the narrowest applicable TCK fixture. A
