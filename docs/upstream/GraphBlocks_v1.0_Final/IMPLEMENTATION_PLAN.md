@@ -1634,8 +1634,28 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Once a resume control is projected, stale callback wait reasons are no longer exposed in
   `waitingOn`, although active operation ids remain visible for reconciliation.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
-  returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
-  cursor while retaining authoritative run events for later attach/replay from that cursor.
+  returning a run handle with event stream, `/ws` websocket, cancel route, and initial cursor while
+  retaining authoritative run events for later attach/replay from that cursor.
+  `GraphBlocksServerApp(defer_accepted_runs=True)` separates admission from execution for these
+  modes: ingress validates and compiles the graph, records only `RunStarted`, and returns the handle
+  while the run remains `running`. Supplying an `accepted_run_executor` dispatches the retained
+  immutable graph and inputs to a process-local worker without relying on the client connection.
+  Executor dispatch is preflighted as asynchronous, and provisional run state remains invisible
+  until submission succeeds, so rejected or inline executors cannot expose a ghost run;
+  without an executor, test harnesses and external coordinators can call `advance_accepted_run(...)`
+  explicitly. A detach therefore records the current cursor without cancelling pending work, and a
+  later attach from that cursor replays the missed terminal event.
+  Worker pickup is single-winner within the server process: concurrent advancement waits for the
+  claimed execution and returns its stored result instead of executing the graph twice. Terminal
+  events use the next retained sequence, completion replay remains stable after later diagnostic
+  events, queued work respects pause/resume controls, and cancel/expire writes an authoritative
+  terminal event and cooperatively signals in-flight execution. Runtime exceptions are projected as
+  `RunFailed` instead of leaving a pending run with only `RunStarted`. Completion and terminal-control
+  timestamps before the retained start event are rejected without consuming the pending run.
+  Inline behavior remains the default for compatibility and synchronous invocations always complete
+  before returning. This `GraphBlocksServerApp` storage is intentionally process-local and does not
+  claim restart durability; production restart recovery, ownership fencing, and coordinator failover
+  remain the responsibility of `graphblocks-runtime-durable`.
   Incoming `responseMode`, `runId`, `responseId`, `releaseId`, `policySnapshotId`, and optional
   `turnId` values are exact non-empty fields; the server rejects surrounding whitespace instead of
   trimming identities before creating the authoritative event stream.

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import Executor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
+from threading import Condition, get_ident
+from time import monotonic
 from types import MappingProxyType
 from typing import Literal, Protocol
 from urllib.parse import quote, unquote, urlparse
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_dumps, canonical_hash
+from .compiler import compile_graph
 from .policy import PrincipalRef
-from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
+from .runtime import CancellationToken, InProcessRuntime, RuntimeRegistry, stdlib_registry
 from .url_validation import validate_webhook_url
 
 
@@ -1774,6 +1778,8 @@ class GraphBlocksServerApp:
     max_async_callback_payload_bytes: int = 262144
     require_async_callback_authentication: bool = False
     anti_enumerate_async_callbacks: bool = False
+    defer_accepted_runs: bool = False
+    accepted_run_executor: Executor | None = None
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1820,6 +1826,31 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _pending_accepted_runs_by_run_id: dict[str, Mapping[str, object]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _admitting_accepted_run_ids: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
+    _accepted_run_condition: Condition = field(
+        default_factory=Condition,
+        init=False,
+        repr=False,
+    )
+    _advancing_accepted_runs_by_run_id: dict[str, CancellationToken] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _accepted_run_results_by_run_id: dict[str, Mapping[str, object]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -1832,6 +1863,8 @@ class GraphBlocksServerApp:
             raise ValueError("server require_async_callback_authentication must be a boolean")
         if not isinstance(self.anti_enumerate_async_callbacks, bool):
             raise ValueError("server anti_enumerate_async_callbacks must be a boolean")
+        if not isinstance(self.defer_accepted_runs, bool):
+            raise ValueError("server defer_accepted_runs must be a boolean")
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -1911,14 +1944,15 @@ class GraphBlocksServerApp:
                 payload = _server_request_json_body(request, "run control request")
                 if not isinstance(payload, Mapping):
                     raise ValueError("run control request body must be a JSON object")
-                return self._run_control_response(
-                    run_id,
-                    route.operation,
-                    events,
-                    payload,
-                    request.requested_at or _utc_now_iso(),
-                    auth_decision.principal,
-                )
+                with self._accepted_run_condition:
+                    return self._run_control_response(
+                        run_id,
+                        route.operation,
+                        events,
+                        payload,
+                        request.requested_at or _utc_now_iso(),
+                        auth_decision.principal,
+                    )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -2308,6 +2342,7 @@ class GraphBlocksServerApp:
                         "reasonCodes": ["auth.callback_authentication_required"],
                     },
                 )
+            callback_state_locked = False
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
                     operation_id=route_match.path_params.get("operation_id", ""),
@@ -2425,6 +2460,93 @@ class GraphBlocksServerApp:
                                 "runId": submission.run_id,
                                 "status": state,
                                 "error": "async callback run is terminal and cannot be resumed",
+                            },
+                        )
+                self._accepted_run_condition.acquire()
+                callback_state_locked = True
+                if submission.run_id is not None:
+                    current_events = self._events_by_run_id.get(submission.run_id)
+                    if current_events is None:
+                        rejection = ServerAsyncCallbackRejection.unknown_run(
+                            submission
+                        )
+                        self._async_callback_rejections_by_operation_id[
+                            submission.operation_id
+                        ] = (
+                            *self._async_callback_rejections_by_operation_id.get(
+                                submission.operation_id,
+                                (),
+                            ),
+                            rejection,
+                        )
+                        if self.anti_enumerate_async_callbacks:
+                            return ServerResponse.json(
+                                202,
+                                {
+                                    "ok": True,
+                                    "status": "accepted",
+                                },
+                            )
+                        return ServerResponse.json(
+                            404,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "error": (
+                                    f"async callback run {submission.run_id!r} "
+                                    "not found"
+                                ),
+                            },
+                        )
+                    current_status = self._run_status_payload(
+                        submission.run_id,
+                        current_events,
+                        include_ok=False,
+                    )
+                    current_state = current_status.get("state")
+                    if current_state in {
+                        "completed",
+                        "succeeded",
+                        "failed",
+                        "cancelled",
+                        "expired",
+                        "policy_stopped",
+                    }:
+                        rejection = ServerAsyncCallbackRejection.terminal_run(
+                            submission,
+                            current_state,
+                        )
+                        self._async_callback_rejections_by_operation_id[
+                            submission.operation_id
+                        ] = (
+                            *self._async_callback_rejections_by_operation_id.get(
+                                submission.operation_id,
+                                (),
+                            ),
+                            rejection,
+                        )
+                        self._append_async_callback_diagnostic_event(
+                            "LateExternalCallbackReceived",
+                            submission,
+                            "terminal_run",
+                            status=(
+                                current_state
+                                if isinstance(current_state, str)
+                                else None
+                            ),
+                        )
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "status": current_state,
+                                "error": (
+                                    "async callback run is terminal and cannot "
+                                    "be resumed"
+                                ),
                             },
                         )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
@@ -2665,6 +2787,9 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
+            finally:
+                if callback_state_locked:
+                    self._accepted_run_condition.release()
         if route.operation == "application_events":
             run_id = route_match.path_params.get("run_id", "")
             events = self._events_by_run_id.get(run_id)
@@ -2871,100 +2996,210 @@ class GraphBlocksServerApp:
                     else None
                 )
 
-                result = InProcessRuntime(self.registry).run(graph, inputs, run_id=run_id)
-                start_payload = result.journal.records[0].payload if result.journal.records else {}
+                plan = compile_graph(graph)
+                plan_errors = [
+                    item
+                    for item in plan.diagnostics.diagnostics
+                    if item.severity == "error"
+                ]
+                if plan_errors:
+                    raise ValueError(
+                        "; ".join(
+                            f"{item.code} {item.path}: {item.message}"
+                            for item in plan_errors
+                        )
+                    )
                 start_event = ApplicationEvent.new(
                     "RunStarted",
                     ApplicationEventMetadata(
-                        event_id=f"{result.run_id}:run-started",
-                        run_id=result.run_id,
+                        event_id=f"{run_id}:run-started",
+                        run_id=run_id,
                         response_id=response_id,
                         turn_id=turn_id,
                         sequence=1,
                         release_id=release_id,
                         policy_snapshot_id=policy_snapshot_id,
                         occurred_at=occurred_at,
-                        cursor=f"{result.run_id}:1",
+                        cursor=f"{run_id}:1",
                     ),
                     payload={
                         "status": "running",
-                        "graph_hash": str(start_payload.get("graphHash", "")),
+                        "graph_hash": plan.graph_hash,
                     },
                 )
-                terminal_kind = {
-                    "succeeded": "RunSucceeded",
-                    "failed": "RunFailed",
-                    "cancelled": "RunCancelled",
-                }[result.status]
-                terminal_payload: dict[str, object] = {"status": result.status, "outputs": dict(result.outputs)}
-                if result.status == "cancelled":
-                    terminal_payload = {"status": result.status, "reason": "cancelled"}
-                elif result.status == "failed" and result.journal.records:
-                    terminal_payload.update(dict(result.journal.records[-1].payload))
-                terminal_event = ApplicationEvent.new(
-                    terminal_kind,
-                    ApplicationEventMetadata(
-                        event_id=f"{result.run_id}:run-terminal",
-                        run_id=result.run_id,
-                        response_id=response_id,
-                        turn_id=turn_id,
-                        sequence=2,
-                        release_id=release_id,
-                        policy_snapshot_id=policy_snapshot_id,
-                        occurred_at=occurred_at,
-                        cursor=f"{result.run_id}:2",
-                    ),
-                    payload=terminal_payload,
+                start_event_payload: dict[str, object] = {
+                    "kind": start_event.kind,
+                    "metadata": {
+                        "eventId": start_event.metadata.event_id,
+                        "runId": start_event.metadata.run_id,
+                        "responseId": start_event.metadata.response_id,
+                        "turnId": start_event.metadata.turn_id,
+                        "sequence": start_event.metadata.sequence,
+                        "cursor": start_event.metadata.cursor,
+                        "releaseId": start_event.metadata.release_id,
+                        "policySnapshotId": start_event.metadata.policy_snapshot_id,
+                        "occurredAt": start_event.metadata.occurred_at,
+                        "graphId": start_event.metadata.graph_id,
+                        "nodeId": start_event.metadata.node_id,
+                        "operationId": start_event.metadata.operation_id,
+                        "visibility": start_event.metadata.visibility,
+                    },
+                    "payload": dict(start_event.payload),
+                }
+                frozen_start_event = _freeze_json_value(
+                    "application event stream",
+                    "event",
+                    start_event_payload,
                 )
-                events = []
-                for event in (start_event, terminal_event):
-                    event_payload: dict[str, object] = {
-                        "kind": event.kind,
-                        "metadata": {
-                            "eventId": event.metadata.event_id,
-                            "runId": event.metadata.run_id,
-                            "responseId": event.metadata.response_id,
-                            "turnId": event.metadata.turn_id,
-                            "sequence": event.metadata.sequence,
-                            "cursor": event.metadata.cursor,
-                            "releaseId": event.metadata.release_id,
-                            "policySnapshotId": event.metadata.policy_snapshot_id,
-                            "occurredAt": event.metadata.occurred_at,
-                            "graphId": event.metadata.graph_id,
-                            "nodeId": event.metadata.node_id,
-                            "operationId": event.metadata.operation_id,
-                            "visibility": event.metadata.visibility,
-                        },
-                        "payload": dict(event.payload),
-                    }
-                    if event.tool_call_id is not None:
-                        event_payload["toolCallId"] = event.tool_call_id
-                    events.append(event_payload)
-                self._events_by_run_id[result.run_id] = tuple(
-                    _freeze_json_value("application event stream", "event", event)
-                    for event in events
+                assert isinstance(frozen_start_event, Mapping)
+                pending_run = _freeze_json_value(
+                    "server pending accepted run",
+                    "run",
+                    {
+                        "graph": graph,
+                        "inputs": inputs,
+                        "runId": run_id,
+                        "responseId": response_id,
+                        "releaseId": release_id,
+                        "policySnapshotId": policy_snapshot_id,
+                        "turnId": turn_id,
+                    },
                 )
+                assert isinstance(pending_run, Mapping)
+                deferred = (
+                    self.defer_accepted_runs
+                    and response_mode in {"accepted", "background"}
+                )
+                completion = None
+                if deferred and self.accepted_run_executor is not None:
+                    try:
+                        executor_probe = self.accepted_run_executor.submit(
+                            get_ident
+                        )
+                    except RuntimeError as error:
+                        return ServerResponse.json(
+                            503,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "error": (
+                                    "accepted run executor rejected work: "
+                                    f"{error}"
+                                ),
+                            },
+                        )
+                    if executor_probe.done():
+                        try:
+                            executor_thread_id = executor_probe.result()
+                        except Exception as error:
+                            return ServerResponse.json(
+                                503,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": (
+                                        "accepted run executor rejected work: "
+                                        f"{error}"
+                                    ),
+                                },
+                            )
+                        if executor_thread_id == get_ident():
+                            return ServerResponse.json(
+                                503,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": (
+                                        "accepted run executor must execute work "
+                                        "asynchronously"
+                                    ),
+                                },
+                            )
+                    with self._accepted_run_condition:
+                        if (
+                            run_id in self._events_by_run_id
+                            or run_id in self._admitting_accepted_run_ids
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": f"run {run_id!r} already exists",
+                                },
+                            )
+                        self._admitting_accepted_run_ids.add(run_id)
+                    try:
+                        self.accepted_run_executor.submit(
+                            self.advance_accepted_run,
+                            run_id,
+                        )
+                    except RuntimeError as error:
+                        with self._accepted_run_condition:
+                            self._admitting_accepted_run_ids.discard(run_id)
+                            self._accepted_run_condition.notify_all()
+                        return ServerResponse.json(
+                            503,
+                            {
+                                "ok": False,
+                                "runId": run_id,
+                                "error": (
+                                    "accepted run executor rejected work: "
+                                    f"{error}"
+                                ),
+                            },
+                        )
+                    with self._accepted_run_condition:
+                        self._events_by_run_id[run_id] = (frozen_start_event,)
+                        self._pending_accepted_runs_by_run_id[run_id] = pending_run
+                        self._admitting_accepted_run_ids.discard(run_id)
+                        self._accepted_run_condition.notify_all()
+                else:
+                    with self._accepted_run_condition:
+                        if (
+                            run_id in self._events_by_run_id
+                            or run_id in self._admitting_accepted_run_ids
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "runId": run_id,
+                                    "error": f"run {run_id!r} already exists",
+                                },
+                            )
+                        self._events_by_run_id[run_id] = (frozen_start_event,)
+                        self._pending_accepted_runs_by_run_id[run_id] = pending_run
+                if not deferred:
+                    completion = self.advance_accepted_run(
+                        run_id,
+                        completed_at=occurred_at,
+                    )
                 if response_mode in {"accepted", "background"}:
-                    route_run_id = quote(result.run_id, safe="")
+                    route_run_id = quote(run_id, safe="")
                     return ServerResponse.json(
                         202,
                         {
                             "ok": True,
-                            "runId": result.run_id,
+                            "runId": run_id,
                             "status": response_mode,
                             "eventStream": f"/runs/{route_run_id}/events",
                             "websocket": f"/runs/{route_run_id}/ws",
                             "cancel": f"/runs/{route_run_id}/cancel",
-                            "initialCursor": f"{result.run_id}:0",
+                            "initialCursor": f"{run_id}:0",
                         },
                     )
+                assert completion is not None
                 return ServerResponse.json(
                     200,
                     {
-                        "runId": result.run_id,
-                        "status": result.status,
-                        "outputs": dict(result.outputs),
-                        "events": events,
+                        "runId": run_id,
+                        "status": completion["status"],
+                        "outputs": completion["outputs"],
+                        "events": [
+                            _response_json_object(event)
+                            for event in self._events_by_run_id[run_id]
+                        ],
                     },
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -2982,6 +3217,333 @@ class GraphBlocksServerApp:
                 "error": f"server operation {route.operation!r} is not implemented",
             },
         )
+
+    def pending_accepted_run_ids(self) -> tuple[str, ...]:
+        with self._accepted_run_condition:
+            return tuple(sorted(self._pending_accepted_runs_by_run_id))
+
+    def wait_for_accepted_run(
+        self,
+        run_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, object]:
+        run_id = _validate_exact_non_empty_string(
+            "server accepted run worker",
+            "run_id",
+            run_id,
+        )
+        deadline = None if timeout is None else monotonic() + timeout
+        with self._accepted_run_condition:
+            while True:
+                stored_result = self._accepted_run_results_by_run_id.get(run_id)
+                if stored_result is not None:
+                    result = _thaw_json_value(stored_result)
+                    assert isinstance(result, dict)
+                    return result
+                controls = self._run_controls_by_run_id.get(run_id, ())
+                latest_status = controls[-1].get("status") if controls else None
+                if latest_status in {
+                    "paused_operator",
+                    "paused_budget",
+                    "paused_policy",
+                    "paused_callback_delivery",
+                }:
+                    events = self._events_by_run_id[run_id]
+                    return {
+                        "runId": run_id,
+                        "status": latest_status,
+                        "outputs": {},
+                        "lastCursor": (
+                            f"{run_id}:{self._last_event_sequence(events)}"
+                        ),
+                        "duplicate": False,
+                    }
+                if (
+                    run_id not in self._pending_accepted_runs_by_run_id
+                    and run_id not in self._advancing_accepted_runs_by_run_id
+                ):
+                    raise ValueError(f"accepted run worker {run_id!r} not found")
+                remaining = (
+                    None if deadline is None else max(0.0, deadline - monotonic())
+                )
+                if remaining == 0.0:
+                    raise TimeoutError()
+                self._accepted_run_condition.wait(remaining)
+
+    def advance_accepted_run(
+        self,
+        run_id: str,
+        *,
+        completed_at: str | None = None,
+    ) -> dict[str, object]:
+        run_id = _validate_exact_non_empty_string(
+            "server pending accepted run",
+            "run_id",
+            run_id,
+        )
+        if completed_at is not None:
+            completed_at = _validate_iso_datetime(
+                "server pending accepted run",
+                "completed_at",
+                completed_at,
+            )
+        with self._accepted_run_condition:
+            while run_id in self._admitting_accepted_run_ids:
+                self._accepted_run_condition.wait()
+            while run_id in self._advancing_accepted_runs_by_run_id:
+                stored_result = self._accepted_run_results_by_run_id.get(run_id)
+                if stored_result is not None:
+                    duplicate_result = _thaw_json_value(stored_result)
+                    assert isinstance(duplicate_result, dict)
+                    duplicate_result["duplicate"] = True
+                    return duplicate_result
+                self._accepted_run_condition.wait()
+
+            stored_result = self._accepted_run_results_by_run_id.get(run_id)
+            if stored_result is not None:
+                duplicate_result = _thaw_json_value(stored_result)
+                assert isinstance(duplicate_result, dict)
+                duplicate_result["duplicate"] = True
+                return duplicate_result
+
+            pending = self._pending_accepted_runs_by_run_id.get(run_id)
+            if pending is None:
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    raise ValueError(f"pending accepted run {run_id!r} not found")
+                terminal_states = {
+                    "RunSucceeded": "succeeded",
+                    "RunCompleted": "completed",
+                    "RunFailed": "failed",
+                    "RunCancelled": "cancelled",
+                    "RunExpired": "expired",
+                    "RunPolicyStopped": "policy_stopped",
+                }
+                terminal_event = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event.get("kind") in terminal_states
+                    ),
+                    None,
+                )
+                if terminal_event is None:
+                    raise ValueError(f"run {run_id!r} is not pending or terminal")
+                terminal_payload = terminal_event.get("payload", {})
+                terminal_metadata = terminal_event.get("metadata", {})
+                outputs = (
+                    terminal_payload.get("outputs", {})
+                    if isinstance(terminal_payload, Mapping)
+                    else {}
+                )
+                cursor = (
+                    terminal_metadata.get("cursor")
+                    if isinstance(terminal_metadata, Mapping)
+                    else None
+                )
+                return {
+                    "runId": run_id,
+                    "status": terminal_states[str(terminal_event["kind"])],
+                    "outputs": _thaw_json_value(outputs),
+                    "lastCursor": cursor,
+                    "duplicate": True,
+                }
+
+            start_events = self._events_by_run_id.get(run_id, ())
+            start_metadata = (
+                start_events[0].get("metadata", {}) if start_events else {}
+            )
+            started_at = (
+                start_metadata.get("occurredAt")
+                if isinstance(start_metadata, Mapping)
+                else None
+            )
+            started_at = _validate_iso_datetime(
+                "server pending accepted run",
+                "started_at",
+                started_at,
+            )
+            started_datetime = datetime.fromisoformat(
+                f"{started_at[:-1]}+00:00"
+                if started_at.endswith("Z")
+                else started_at
+            ).astimezone(timezone.utc)
+            if completed_at is not None:
+                completed_datetime = datetime.fromisoformat(
+                    f"{completed_at[:-1]}+00:00"
+                    if completed_at.endswith("Z")
+                    else completed_at
+                ).astimezone(timezone.utc)
+                if completed_datetime < started_datetime:
+                    raise ValueError(
+                        "pending accepted run completed_at must not be before run start"
+                    )
+
+            controls = self._run_controls_by_run_id.get(run_id, ())
+            if controls:
+                latest_status = controls[-1].get("status")
+                if latest_status in {
+                    "paused_operator",
+                    "paused_budget",
+                    "paused_policy",
+                    "paused_callback_delivery",
+                }:
+                    events = self._events_by_run_id[run_id]
+                    return {
+                        "runId": run_id,
+                        "status": latest_status,
+                        "outputs": {},
+                        "lastCursor": (
+                            f"{run_id}:{self._last_event_sequence(events)}"
+                        ),
+                        "duplicate": False,
+                    }
+
+            graph = _thaw_json_value(pending.get("graph"))
+            inputs = _thaw_json_value(pending.get("inputs"))
+            if not isinstance(graph, dict) or not isinstance(inputs, dict):
+                raise ValueError(
+                    "pending accepted run graph and inputs must be JSON objects"
+                )
+            response_id = pending.get("responseId")
+            release_id = pending.get("releaseId")
+            policy_snapshot_id = pending.get("policySnapshotId")
+            turn_id = pending.get("turnId")
+            if not isinstance(response_id, str):
+                raise ValueError("pending accepted run responseId must be a string")
+            if not isinstance(release_id, str):
+                raise ValueError("pending accepted run releaseId must be a string")
+            if not isinstance(policy_snapshot_id, str):
+                raise ValueError(
+                    "pending accepted run policySnapshotId must be a string"
+                )
+            if turn_id is not None and not isinstance(turn_id, str):
+                raise ValueError(
+                    "pending accepted run turnId must be a string or null"
+                )
+            cancellation_token = CancellationToken()
+            self._advancing_accepted_runs_by_run_id[run_id] = cancellation_token
+
+        try:
+            try:
+                result = InProcessRuntime(
+                    self.registry,
+                    cancellation_token=cancellation_token,
+                ).run(graph, inputs, run_id=run_id)
+                result_status = result.status
+                frozen_result_outputs = _freeze_json_value(
+                    "server accepted run completion",
+                    "outputs",
+                    dict(result.outputs),
+                )
+                assert isinstance(frozen_result_outputs, Mapping)
+                result_outputs = _thaw_json_value(frozen_result_outputs)
+                assert isinstance(result_outputs, dict)
+                terminal_payload: dict[str, object] = {
+                    "status": result.status,
+                    "outputs": result_outputs,
+                }
+                if result.status == "cancelled":
+                    terminal_payload = {
+                        "status": result.status,
+                        "reason": cancellation_token.reason or "cancelled",
+                    }
+                elif result.status == "failed" and result.journal.records:
+                    terminal_payload.update(dict(result.journal.records[-1].payload))
+            except Exception as error:
+                result_status = "failed"
+                result_outputs = {}
+                terminal_payload = {
+                    "status": "failed",
+                    "outputs": {},
+                    "error": str(error),
+                }
+
+            terminal_at = completed_at or _utc_now_iso()
+            terminal_datetime = datetime.fromisoformat(
+                f"{terminal_at[:-1]}+00:00"
+                if terminal_at.endswith("Z")
+                else terminal_at
+            ).astimezone(timezone.utc)
+            if terminal_datetime < started_datetime:
+                terminal_at = started_at
+
+            with self._accepted_run_condition:
+                stored_result = self._accepted_run_results_by_run_id.get(run_id)
+                if stored_result is not None:
+                    duplicate_result = _thaw_json_value(stored_result)
+                    assert isinstance(duplicate_result, dict)
+                    duplicate_result["duplicate"] = True
+                    return duplicate_result
+
+                events = self._events_by_run_id[run_id]
+                sequence = self._last_event_sequence(events) + 1
+                terminal_event = ApplicationEvent.new(
+                    {
+                        "succeeded": "RunSucceeded",
+                        "failed": "RunFailed",
+                        "cancelled": "RunCancelled",
+                    }[result_status],
+                    ApplicationEventMetadata(
+                        event_id=f"{run_id}:run-terminal",
+                        run_id=run_id,
+                        response_id=response_id,
+                        turn_id=turn_id,
+                        sequence=sequence,
+                        release_id=release_id,
+                        policy_snapshot_id=policy_snapshot_id,
+                        occurred_at=terminal_at,
+                        cursor=f"{run_id}:{sequence}",
+                    ),
+                    payload=terminal_payload,
+                )
+                terminal_event_payload: dict[str, object] = {
+                    "kind": terminal_event.kind,
+                    "metadata": {
+                        "eventId": terminal_event.metadata.event_id,
+                        "runId": terminal_event.metadata.run_id,
+                        "responseId": terminal_event.metadata.response_id,
+                        "turnId": terminal_event.metadata.turn_id,
+                        "sequence": terminal_event.metadata.sequence,
+                        "cursor": terminal_event.metadata.cursor,
+                        "releaseId": terminal_event.metadata.release_id,
+                        "policySnapshotId": terminal_event.metadata.policy_snapshot_id,
+                        "occurredAt": terminal_event.metadata.occurred_at,
+                        "graphId": terminal_event.metadata.graph_id,
+                        "nodeId": terminal_event.metadata.node_id,
+                        "operationId": terminal_event.metadata.operation_id,
+                        "visibility": terminal_event.metadata.visibility,
+                    },
+                    "payload": dict(terminal_event.payload),
+                }
+                frozen_terminal_event = _freeze_json_value(
+                    "application event stream",
+                    "event",
+                    terminal_event_payload,
+                )
+                assert isinstance(frozen_terminal_event, Mapping)
+                self._events_by_run_id[run_id] = (*events, frozen_terminal_event)
+                self._pending_accepted_runs_by_run_id.pop(run_id, None)
+                completion: dict[str, object] = {
+                    "runId": run_id,
+                    "status": result_status,
+                    "outputs": result_outputs,
+                    "lastCursor": f"{run_id}:{sequence}",
+                    "duplicate": False,
+                }
+                frozen_completion = _freeze_json_value(
+                    "server accepted run completion",
+                    "result",
+                    completion,
+                )
+                assert isinstance(frozen_completion, Mapping)
+                self._accepted_run_results_by_run_id[run_id] = frozen_completion
+                return completion
+        finally:
+            with self._accepted_run_condition:
+                self._advancing_accepted_runs_by_run_id.pop(run_id, None)
+                self._accepted_run_condition.notify_all()
 
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
         operation_id = _validate_exact_non_empty_string("server async callback", "operation_id", operation_id)
@@ -3204,16 +3766,6 @@ class GraphBlocksServerApp:
                 event_terminal_state = "policy_stopped"
             elif event_kind == "RunExpired":
                 event_terminal_state = "expired"
-        if event_terminal_state is not None:
-            return ServerResponse.json(
-                409,
-                {
-                    "ok": False,
-                    "runId": run_id,
-                    "state": event_terminal_state,
-                    "error": f"run {run_id} is terminal with state {event_terminal_state}",
-                },
-            )
         status = control_states[operation]
         if operation == "pause_run":
             pause_kind = payload.get("pauseKind", "operator")
@@ -3273,6 +3825,16 @@ class GraphBlocksServerApp:
                         "error": f"run {run_id} is terminal with state {current_status}",
                     },
                 )
+        if event_terminal_state is not None:
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "state": event_terminal_state,
+                    "error": f"run {run_id} is terminal with state {event_terminal_state}",
+                },
+            )
         if operation == "resume_run":
             current_run_state = "running"
             if existing:
@@ -3303,6 +3865,134 @@ class GraphBlocksServerApp:
                         "error": f"run {run_id} is not paused or waiting and cannot be resumed",
                     },
                 )
+        pending_run = self._pending_accepted_runs_by_run_id.get(run_id)
+        if status in {"cancelled", "expired"} and pending_run is not None:
+            start_metadata = events[0].get("metadata", {}) if events else {}
+            started_at = (
+                start_metadata.get("occurredAt")
+                if isinstance(start_metadata, Mapping)
+                else None
+            )
+            started_at = _validate_iso_datetime(
+                "run control request",
+                "started_at",
+                started_at,
+            )
+            controlled_datetime = datetime.fromisoformat(
+                f"{occurred_at[:-1]}+00:00"
+                if occurred_at.endswith("Z")
+                else occurred_at
+            ).astimezone(timezone.utc)
+            started_datetime = datetime.fromisoformat(
+                f"{started_at[:-1]}+00:00"
+                if started_at.endswith("Z")
+                else started_at
+            ).astimezone(timezone.utc)
+            if controlled_datetime < started_datetime:
+                raise ValueError(
+                    "run control request occurred_at must not be before run start"
+                )
+
+            response_id = pending_run.get("responseId")
+            release_id = pending_run.get("releaseId")
+            policy_snapshot_id = pending_run.get("policySnapshotId")
+            turn_id = pending_run.get("turnId")
+            if not isinstance(response_id, str):
+                raise ValueError("pending accepted run responseId must be a string")
+            if not isinstance(release_id, str):
+                raise ValueError("pending accepted run releaseId must be a string")
+            if not isinstance(policy_snapshot_id, str):
+                raise ValueError(
+                    "pending accepted run policySnapshotId must be a string"
+                )
+            if turn_id is not None and not isinstance(turn_id, str):
+                raise ValueError("pending accepted run turnId must be a string or null")
+            sequence = self._last_event_sequence(events) + 1
+            terminal_event = ApplicationEvent.new(
+                {
+                    "cancelled": "RunCancelled",
+                    "expired": "RunExpired",
+                }[status],
+                ApplicationEventMetadata(
+                    event_id=f"{run_id}:run-terminal",
+                    run_id=run_id,
+                    response_id=response_id,
+                    turn_id=turn_id,
+                    sequence=sequence,
+                    release_id=release_id,
+                    policy_snapshot_id=policy_snapshot_id,
+                    occurred_at=occurred_at,
+                    cursor=f"{run_id}:{sequence}",
+                ),
+                payload={"status": status, "reason": reason},
+            )
+            terminal_event_payload: dict[str, object] = {
+                "kind": terminal_event.kind,
+                "metadata": {
+                    "eventId": terminal_event.metadata.event_id,
+                    "runId": terminal_event.metadata.run_id,
+                    "responseId": terminal_event.metadata.response_id,
+                    "turnId": terminal_event.metadata.turn_id,
+                    "sequence": terminal_event.metadata.sequence,
+                    "cursor": terminal_event.metadata.cursor,
+                    "releaseId": terminal_event.metadata.release_id,
+                    "policySnapshotId": terminal_event.metadata.policy_snapshot_id,
+                    "occurredAt": terminal_event.metadata.occurred_at,
+                    "graphId": terminal_event.metadata.graph_id,
+                    "nodeId": terminal_event.metadata.node_id,
+                    "operationId": terminal_event.metadata.operation_id,
+                    "visibility": terminal_event.metadata.visibility,
+                },
+                "payload": dict(terminal_event.payload),
+            }
+            frozen_terminal_event = _freeze_json_value(
+                "application event stream",
+                "event",
+                terminal_event_payload,
+            )
+            assert isinstance(frozen_terminal_event, Mapping)
+            events = (*events, frozen_terminal_event)
+            self._events_by_run_id[run_id] = events
+            self._pending_accepted_runs_by_run_id.pop(run_id, None)
+            active_token = self._advancing_accepted_runs_by_run_id.get(run_id)
+            if active_token is not None:
+                active_token.cancel(reason or status)
+            completion = _freeze_json_value(
+                "server accepted run completion",
+                "result",
+                {
+                    "runId": run_id,
+                    "status": status,
+                    "outputs": {},
+                    "lastCursor": f"{run_id}:{sequence}",
+                    "duplicate": False,
+                },
+            )
+            assert isinstance(completion, Mapping)
+            self._accepted_run_results_by_run_id[run_id] = completion
+            self._accepted_run_condition.notify_all()
+        if (
+            operation == "resume_run"
+            and pending_run is not None
+            and self.accepted_run_executor is not None
+        ):
+            try:
+                self.accepted_run_executor.submit(
+                    self.advance_accepted_run,
+                    run_id,
+                )
+            except RuntimeError as error:
+                return ServerResponse.json(
+                    503,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "error": (
+                            "accepted run executor rejected resumed work: "
+                            f"{error}"
+                        ),
+                    },
+                )
         record_payload: dict[str, object] = {
             "operation": operation,
             "status": status,
@@ -3314,6 +4004,7 @@ class GraphBlocksServerApp:
             record_payload["actor"] = _principal_response_payload(actor)
         record = _freeze_json_value("run control record", "record", record_payload)
         self._run_controls_by_run_id[run_id] = (*existing, record)
+        self._accepted_run_condition.notify_all()
         return ServerResponse.json(
             202,
             {
@@ -3633,10 +4324,35 @@ class GraphBlocksServerApp:
             },
             "payload": dict(event.payload),
         }
-        self._events_by_run_id[submission.run_id] = (
-            *events,
-            _freeze_json_value("application event stream", "event", event_payload),
-        )
+        with self._accepted_run_condition:
+            current_events = self._events_by_run_id.get(submission.run_id)
+            if current_events is None:
+                return
+            current_sequence = (
+                self._last_event_sequence(
+                    current_events,
+                    owner="async callback diagnostic event",
+                )
+                + 1
+            )
+            if current_sequence != sequence:
+                metadata_payload = event_payload["metadata"]
+                assert isinstance(metadata_payload, dict)
+                metadata_payload["eventId"] = (
+                    f"{submission.run_id}:callback-diagnostic:{current_sequence}"
+                )
+                metadata_payload["sequence"] = current_sequence
+                metadata_payload["cursor"] = (
+                    f"{submission.run_id}:{current_sequence}"
+                )
+            self._events_by_run_id[submission.run_id] = (
+                *current_events,
+                _freeze_json_value(
+                    "application event stream",
+                    "event",
+                    event_payload,
+                ),
+            )
 
     def _subscription_replay(
         self,

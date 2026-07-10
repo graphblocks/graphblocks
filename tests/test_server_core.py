@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import Executor, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from itertools import permutations
 import json
 import math
+from threading import Barrier, Event, Lock, Thread
 
 import graphblocks
 import pytest
 
 from graphblocks.policy import PrincipalRef
+from graphblocks.runtime import RuntimeRegistry
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
@@ -614,6 +617,1394 @@ def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     assert attach_payload["events"][1]["metadata"]["cursor"] == "run-accepted-1:2"
     assert attach_payload["events"][1]["metadata"]["visibility"] == "client"
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
+
+
+def test_server_app_deferred_accepted_run_outlives_detach_and_replays_completion() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}),
+        defer_accepted_runs=True,
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-deferred-accepted-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Deferred {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-deferred-accepted-1",
+                    "responseId": "response-deferred-accepted-1",
+                    "releaseId": "release-deferred-accepted-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    status_before_detach = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-deferred-accepted-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    detached = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-accepted-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"client_id": "client-1", "reason": "network_disconnect"}
+            ).encode("utf-8"),
+            requested_at="2026-07-10T00:00:01Z",
+        )
+    )
+    attached_while_running = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-accepted-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"last_cursor": "run-deferred-accepted-1:1"}
+            ).encode("utf-8"),
+        )
+    )
+
+    accepted_payload = json.loads(accepted.body.decode("utf-8"))
+    status_before_payload = json.loads(status_before_detach.body.decode("utf-8"))
+    detached_payload = json.loads(detached.body.decode("utf-8"))
+    attached_while_running_payload = json.loads(attached_while_running.body.decode("utf-8"))
+    assert accepted.status_code == 202
+    assert accepted_payload["initialCursor"] == "run-deferred-accepted-1:0"
+    assert app.pending_accepted_run_ids() == ("run-deferred-accepted-1",)
+    assert status_before_payload["state"] == "running"
+    assert status_before_payload["lastCursor"] == "run-deferred-accepted-1:1"
+    assert detached.status_code == 202
+    assert detached_payload["lastCursor"] == "run-deferred-accepted-1:1"
+    assert attached_while_running.status_code == 200
+    assert attached_while_running_payload["events"] == []
+    assert attached_while_running_payload["liveCursor"] == "run-deferred-accepted-1:1"
+
+    completed = app.advance_accepted_run(
+        "run-deferred-accepted-1",
+        completed_at="2026-07-10T00:00:02Z",
+    )
+    attached_after_completion = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-accepted-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"last_cursor": "run-deferred-accepted-1:1"}
+            ).encode("utf-8"),
+        )
+    )
+    status_after_completion = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-deferred-accepted-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    attached_after_payload = json.loads(attached_after_completion.body.decode("utf-8"))
+    status_after_payload = json.loads(status_after_completion.body.decode("utf-8"))
+    assert completed == {
+        "runId": "run-deferred-accepted-1",
+        "status": "succeeded",
+        "outputs": {"prompt": "Deferred ok"},
+        "lastCursor": "run-deferred-accepted-1:2",
+        "duplicate": False,
+    }
+    assert app.pending_accepted_run_ids() == ()
+    assert attached_after_completion.status_code == 200
+    assert [event["kind"] for event in attached_after_payload["events"]] == [
+        "RunSucceeded"
+    ]
+    assert attached_after_payload["events"][0]["payload"]["outputs"] == {
+        "prompt": "Deferred ok"
+    }
+    assert status_after_payload["state"] == "succeeded"
+    assert status_after_payload["lastCursor"] == "run-deferred-accepted-1:2"
+
+
+def test_server_app_executor_advances_accepted_run_after_client_detach() -> None:
+    started = Event()
+    release = Event()
+
+    def wait_block(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        started.set()
+        assert release.wait(timeout=5)
+        return {"value": "done"}
+
+    registry = RuntimeRegistry()
+    registry.register("test.background@1", wait_block)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        app = GraphBlocksServerApp(
+            registry=registry,
+            defer_accepted_runs=True,
+            accepted_run_executor=executor,
+        )
+        accepted = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": {
+                            "apiVersion": "graphblocks.ai/v1alpha3",
+                            "kind": "Graph",
+                            "metadata": {"name": "server-executor-background"},
+                            "spec": {
+                                "nodes": {
+                                    "wait": {
+                                        "block": "test.background@1",
+                                        "outputs": {"value": "$output.value"},
+                                    }
+                                }
+                            },
+                        },
+                        "runId": "run-executor-background-1",
+                        "responseMode": "background",
+                        "occurredAt": "2026-07-10T00:00:00Z",
+                    }
+                ).encode("utf-8"),
+            )
+        )
+        assert started.wait(timeout=5)
+        detached = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-executor-background-1/detach",
+                headers={},
+                query={},
+                cookies={},
+                body=json.dumps({"clientId": "client-1"}).encode("utf-8"),
+                requested_at="2026-07-10T00:00:01Z",
+            )
+        )
+        release.set()
+        completed = app.wait_for_accepted_run(
+            "run-executor-background-1",
+            timeout=5,
+        )
+
+    replayed = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-executor-background-1/attach",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {"lastCursor": "run-executor-background-1:1"}
+            ).encode("utf-8"),
+        )
+    )
+
+    assert accepted.status_code == 202
+    assert detached.status_code == 202
+    assert completed["status"] == "succeeded"
+    assert completed["outputs"] == {"value": "done"}
+    replayed_events = json.loads(replayed.body.decode("utf-8"))["events"]
+    assert [event["kind"] for event in replayed_events] == ["RunSucceeded"]
+    assert replayed_events[0]["metadata"]["occurredAt"] != "2026-07-10T00:00:00Z"
+    assert not hasattr(app, "_accepted_run_futures_by_run_id")
+
+
+def test_server_app_executor_rejection_does_not_leave_ghost_run() -> None:
+    class RejectingExecutor(Executor):
+        def submit(self, fn: object, /, *args: object, **kwargs: object) -> Future[object]:
+            raise RuntimeError("worker pool is shut down")
+
+    app = GraphBlocksServerApp(
+        defer_accepted_runs=True,
+        accepted_run_executor=RejectingExecutor(),
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-rejected-background"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-rejected-background-1",
+                    "responseMode": "background",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-rejected-background-1",
+        "error": "accepted run executor rejected work: worker pool is shut down",
+    }
+    assert app.pending_accepted_run_ids() == ()
+    assert "run-rejected-background-1" not in app._events_by_run_id
+
+
+def test_server_app_executor_rejection_never_exposes_provisional_run() -> None:
+    submitting = Event()
+    release_submission = Event()
+
+    class BlockingRejector(Executor):
+        def submit(self, fn: object, /, *args: object, **kwargs: object) -> Future[object]:
+            submitting.set()
+            assert release_submission.wait(timeout=5)
+            raise RuntimeError("worker pool rejected work")
+
+    app = GraphBlocksServerApp(
+        defer_accepted_runs=True,
+        accepted_run_executor=BlockingRejector(),
+    )
+    request = ServerRequest(
+        method="POST",
+        path="/runs",
+        headers={},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "graph": {
+                    "apiVersion": "graphblocks.ai/v1alpha3",
+                    "kind": "Graph",
+                    "metadata": {"name": "server-provisional-background"},
+                    "spec": {"nodes": {}},
+                },
+                "runId": "run-provisional-background-1",
+                "responseMode": "background",
+                "occurredAt": "2026-07-10T00:00:00Z",
+            }
+        ).encode("utf-8"),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        admission = executor.submit(app.handle, request)
+        assert submitting.wait(timeout=5)
+        during_submission = app.handle(
+            ServerRequest(
+                method="GET",
+                path="/runs/run-provisional-background-1",
+                headers={},
+                query={},
+                cookies={},
+            )
+        )
+        release_submission.set()
+        rejected = admission.result(timeout=5)
+
+    after_rejection = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-provisional-background-1",
+            headers={},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert during_submission.status_code == 404
+    assert rejected.status_code == 503
+    assert after_rejection.status_code == 404
+
+
+def test_server_app_rejects_inline_executor_without_deadlocking_admission() -> None:
+    class InlineExecutor(Executor):
+        def submit(self, fn: object, /, *args: object, **kwargs: object) -> Future[object]:
+            future: Future[object] = Future()
+            try:
+                future.set_result(fn(*args, **kwargs))  # type: ignore[operator]
+            except BaseException as error:
+                future.set_exception(error)
+            return future
+
+    app = GraphBlocksServerApp(
+        defer_accepted_runs=True,
+        accepted_run_executor=InlineExecutor(),
+    )
+    finished = Event()
+    responses: list[ServerResponse] = []
+
+    def invoke() -> None:
+        responses.append(
+            app.handle(
+                ServerRequest(
+                    method="POST",
+                    path="/runs",
+                    headers={},
+                    query={},
+                    cookies={},
+                    body=json.dumps(
+                        {
+                            "graph": {
+                                "apiVersion": "graphblocks.ai/v1alpha3",
+                                "kind": "Graph",
+                                "metadata": {"name": "server-inline-executor"},
+                                "spec": {"nodes": {}},
+                            },
+                            "runId": "run-inline-executor-1",
+                            "responseMode": "background",
+                            "occurredAt": "2026-07-10T00:00:00Z",
+                        }
+                    ).encode("utf-8"),
+                )
+            )
+        )
+        finished.set()
+
+    Thread(target=invoke, daemon=True).start()
+
+    assert finished.wait(timeout=1), "inline executor deadlocked run admission"
+    assert responses[0].status_code == 503
+    assert app.pending_accepted_run_ids() == ()
+    assert "run-inline-executor-1" not in app._events_by_run_id
+
+
+def test_server_app_executor_resubmits_pending_run_after_resume() -> None:
+    worker_occupied = Event()
+    release_worker = Event()
+
+    def occupy_worker() -> None:
+        worker_occupied.set()
+        assert release_worker.wait(timeout=5)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        occupied = executor.submit(occupy_worker)
+        assert worker_occupied.wait(timeout=5)
+        app = GraphBlocksServerApp(
+            defer_accepted_runs=True,
+            accepted_run_executor=executor,
+        )
+        app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": {
+                            "apiVersion": "graphblocks.ai/v1alpha3",
+                            "kind": "Graph",
+                            "metadata": {"name": "server-resubmit-background"},
+                            "spec": {"nodes": {}},
+                        },
+                        "runId": "run-resubmit-background-1",
+                        "responseMode": "background",
+                        "occurredAt": "2026-07-10T00:00:00Z",
+                    }
+                ).encode("utf-8"),
+            )
+        )
+        paused = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-resubmit-background-1/pause",
+                headers={},
+                query={},
+                cookies={},
+                requested_at="2026-07-10T00:00:01Z",
+            )
+        )
+        release_worker.set()
+        occupied.result(timeout=5)
+        held = app.wait_for_accepted_run(
+            "run-resubmit-background-1",
+            timeout=5,
+        )
+        resumed = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-resubmit-background-1/resume",
+                headers={},
+                query={},
+                cookies={},
+                requested_at="2026-07-10T00:00:02Z",
+            )
+        )
+        completed = app.wait_for_accepted_run(
+            "run-resubmit-background-1",
+            timeout=5,
+        )
+
+    assert paused.status_code == 202
+    assert held["status"] == "paused_operator"
+    assert resumed.status_code == 202
+    assert completed["status"] == "succeeded"
+    assert app.pending_accepted_run_ids() == ()
+
+
+def test_server_app_deferred_accepted_completion_is_idempotent() -> None:
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-deferred-idempotent"},
+        "spec": {"nodes": {}},
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "runId": "run-deferred-idempotent-1",
+                    "responseMode": "background",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    first = app.advance_accepted_run(
+        "run-deferred-idempotent-1",
+        completed_at="2026-07-10T00:00:01Z",
+    )
+    duplicate = app.advance_accepted_run(
+        "run-deferred-idempotent-1",
+        completed_at="2026-07-10T00:00:02Z",
+    )
+
+    assert first["duplicate"] is False
+    assert duplicate == {**first, "duplicate": True}
+
+
+@pytest.mark.parametrize(
+    ("operation", "terminal_kind", "terminal_state"),
+    (
+        ("cancel", "RunCancelled", "cancelled"),
+        ("expire", "RunExpired", "expired"),
+    ),
+)
+def test_server_app_terminal_control_stops_deferred_run_before_execution(
+    operation: str,
+    terminal_kind: str,
+    terminal_state: str,
+) -> None:
+    run_id = f"run-deferred-{operation}-1"
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": f"server-deferred-{operation}"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": run_id,
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    controlled = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/{operation}",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator stop"}).encode("utf-8"),
+            requested_at="2026-07-10T00:00:01Z",
+        )
+    )
+    repeated = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/{operation}",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator stop"}).encode("utf-8"),
+            requested_at="2026-07-10T00:00:02Z",
+        )
+    )
+    conflicting = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/{operation}",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "different reason"}).encode("utf-8"),
+            requested_at="2026-07-10T00:00:03Z",
+        )
+    )
+    replayed = app.handle(
+        ServerRequest(
+            method="POST",
+            path=f"/runs/{run_id}/attach",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": f"{run_id}:1"}).encode("utf-8"),
+        )
+    )
+    duplicate = app.advance_accepted_run(
+        run_id,
+        completed_at="2026-07-10T00:00:02Z",
+    )
+
+    assert controlled.status_code == 202
+    assert json.loads(controlled.body.decode("utf-8"))["lastCursor"] == f"{run_id}:2"
+    assert repeated.status_code == 200
+    assert json.loads(repeated.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": run_id,
+        "status": terminal_state,
+        "reason": "operator stop",
+        "lastCursor": f"{run_id}:2",
+        "duplicate": True,
+    }
+    assert conflicting.status_code == 409
+    assert (
+        json.loads(conflicting.body.decode("utf-8"))["error"]
+        == "run control duplicate command conflicts with existing reason"
+    )
+    assert app.pending_accepted_run_ids() == ()
+    replayed_payload = json.loads(replayed.body.decode("utf-8"))
+    assert [event["kind"] for event in replayed_payload["events"]] == [terminal_kind]
+    assert replayed_payload["events"][0]["payload"] == {
+        "status": terminal_state,
+        "reason": "operator stop",
+    }
+    assert duplicate == {
+        "runId": run_id,
+        "status": terminal_state,
+        "outputs": {},
+        "lastCursor": f"{run_id}:2",
+        "duplicate": True,
+    }
+
+
+def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() -> None:
+    started = Event()
+    release = Event()
+    calls_lock = Lock()
+    calls = 0
+
+    def wait_block(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        started.set()
+        assert release.wait(timeout=5)
+        return {"value": "done"}
+
+    registry = RuntimeRegistry()
+    registry.register("test.wait@1", wait_block)
+    app = GraphBlocksServerApp(
+        registry=registry,
+        defer_accepted_runs=True,
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-concurrent"},
+                        "spec": {
+                            "nodes": {
+                                "wait": {
+                                    "block": "test.wait@1",
+                                    "outputs": {"value": "$output.value"},
+                                }
+                            }
+                        },
+                    },
+                    "runId": "run-deferred-concurrent-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            app.advance_accepted_run,
+            "run-deferred-concurrent-1",
+            completed_at="2026-07-10T00:00:01Z",
+        )
+        assert started.wait(timeout=5)
+        second_future = executor.submit(
+            app.advance_accepted_run,
+            "run-deferred-concurrent-1",
+            completed_at="2026-07-10T00:00:02Z",
+        )
+        release.set()
+        first = first_future.result(timeout=5)
+        second = second_future.result(timeout=5)
+
+    assert calls == 1
+    assert {first["duplicate"], second["duplicate"]} == {False, True}
+    assert first["outputs"] == second["outputs"] == {"value": "done"}
+    events = app._events_by_run_id["run-deferred-concurrent-1"]
+    assert [event["kind"] for event in events] == ["RunStarted", "RunSucceeded"]
+
+
+def test_server_app_deferred_completion_uses_monotonic_cursor_and_stable_result() -> None:
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-monotonic"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-deferred-monotonic-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app._events_by_run_id["run-deferred-monotonic-1"] = (
+        *app._events_by_run_id["run-deferred-monotonic-1"],
+        {
+            "kind": "ExternalCallbackReceived",
+            "metadata": {
+                "runId": "run-deferred-monotonic-1",
+                "sequence": 2,
+                "cursor": "run-deferred-monotonic-1:2",
+                "releaseId": "local",
+                "occurredAt": "2026-07-10T00:00:01Z",
+                "visibility": "operator",
+            },
+            "payload": {},
+        },
+    )
+
+    completed = app.advance_accepted_run(
+        "run-deferred-monotonic-1",
+        completed_at="2026-07-10T00:00:02Z",
+    )
+    app._events_by_run_id["run-deferred-monotonic-1"] = (
+        *app._events_by_run_id["run-deferred-monotonic-1"],
+        {
+            "kind": "LateExternalCallbackReceived",
+            "metadata": {
+                "runId": "run-deferred-monotonic-1",
+                "sequence": 4,
+                "cursor": "run-deferred-monotonic-1:4",
+                "releaseId": "local",
+                "occurredAt": "2026-07-10T00:00:03Z",
+                "visibility": "operator",
+            },
+            "payload": {},
+        },
+    )
+    duplicate = app.advance_accepted_run(
+        "run-deferred-monotonic-1",
+        completed_at="2026-07-10T00:00:04Z",
+    )
+
+    assert completed["lastCursor"] == "run-deferred-monotonic-1:3"
+    assert duplicate == {**completed, "duplicate": True}
+    assert [
+        event["metadata"]["sequence"]
+        for event in app._events_by_run_id["run-deferred-monotonic-1"]
+    ] == [1, 2, 3, 4]
+
+
+def test_server_app_serializes_callback_and_terminal_event_append() -> None:
+    class BarrierServerApp(GraphBlocksServerApp):
+        sequence_barrier: Barrier | None = None
+
+        def _last_event_sequence(
+            self,
+            events: tuple[dict[str, object], ...],
+            *,
+            owner: str = "server event",
+        ) -> int:
+            barrier = self.sequence_barrier
+            if barrier is not None and owner in {
+                "server event",
+                "async callback diagnostic event",
+            }:
+                barrier.wait(timeout=5)
+                self.sequence_barrier = None
+            return super()._last_event_sequence(events, owner=owner)
+
+    registry = RuntimeRegistry()
+    registry.register(
+        "test.callback-race@1",
+        lambda inputs, config, context: {"value": "ok"},
+    )
+    app = BarrierServerApp(
+        registry=registry,
+        defer_accepted_runs=True,
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-callback-terminal-race"},
+                        "spec": {
+                            "nodes": {
+                                "run": {
+                                    "block": "test.callback-race@1",
+                                    "outputs": {"value": "$output.value"},
+                                }
+                            }
+                        },
+                    },
+                    "runId": "run-callback-terminal-race-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.sequence_barrier = Barrier(2)
+    submission = ServerAsyncCallbackSubmission(
+        operation_id="operation-callback-terminal-race-1",
+        callback_id="callback-terminal-race-1",
+        idempotency_key="idem-callback-terminal-race-1",
+        payload={},
+        run_id="run-callback-terminal-race-1",
+        node_id="run",
+        attempt_id="attempt-1",
+        received_at="2026-07-10T00:00:01Z",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        completion = executor.submit(
+            app.advance_accepted_run,
+            "run-callback-terminal-race-1",
+            completed_at="2026-07-10T00:00:02Z",
+        )
+        callback = executor.submit(
+            app._append_async_callback_diagnostic_event,
+            "ExternalCallbackReceived",
+            submission,
+            None,
+        )
+        completion.result(timeout=5)
+        callback.result(timeout=5)
+
+    events = app._events_by_run_id["run-callback-terminal-race-1"]
+    assert events[0]["kind"] == "RunStarted"
+    assert {event["kind"] for event in events[1:]} == {
+        "ExternalCallbackReceived",
+        "RunSucceeded",
+    }
+    assert [event["metadata"]["sequence"] for event in events] == [1, 2, 3]
+
+
+def test_server_app_rechecks_terminal_state_before_accepting_callback() -> None:
+    snapshot_ready = Event()
+    release_callback = Event()
+
+    class SnapshotBlockingServerApp(GraphBlocksServerApp):
+        block_running_snapshot = False
+
+        def _run_status_payload(
+            self,
+            run_id: str,
+            events: tuple[dict[str, object], ...],
+            *,
+            include_ok: bool = True,
+        ) -> dict[str, object]:
+            payload = super()._run_status_payload(
+                run_id,
+                events,
+                include_ok=include_ok,
+            )
+            if self.block_running_snapshot and payload.get("state") == "running":
+                self.block_running_snapshot = False
+                snapshot_ready.set()
+                assert release_callback.wait(timeout=5)
+            return payload
+
+    app = SnapshotBlockingServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-callback-terminal-classification"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-callback-terminal-classification-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.block_running_snapshot = True
+    callback_request = ServerRequest(
+        method="POST",
+        path="/callbacks/operation-terminal-classification-1",
+        headers={"GraphBlocks-Idempotency-Key": "idem-terminal-classification-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callbackId": "callback-terminal-classification-1",
+                "runId": "run-callback-terminal-classification-1",
+                "nodeId": "wait",
+                "attemptId": "attempt-1",
+                "payload": {"status": "completed"},
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-10T00:00:03Z",
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        callback = executor.submit(app.handle, callback_request)
+        assert snapshot_ready.wait(timeout=5)
+        app.advance_accepted_run(
+            "run-callback-terminal-classification-1",
+            completed_at="2026-07-10T00:00:02Z",
+        )
+        release_callback.set()
+        callback_response = callback.result(timeout=5)
+
+    assert callback_response.status_code == 409
+    assert app.callback_submissions("operation-terminal-classification-1") == ()
+    assert [
+        event["kind"]
+        for event in app._events_by_run_id[
+            "run-callback-terminal-classification-1"
+        ]
+    ] == ["RunStarted", "RunSucceeded", "LateExternalCallbackReceived"]
+
+
+def test_server_app_deferred_advance_waits_for_resume_after_pause() -> None:
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-pause"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-deferred-pause-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    paused = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-pause-1/pause",
+            headers={},
+            query={},
+            cookies={},
+            requested_at="2026-07-10T00:00:01Z",
+        )
+    )
+
+    held = app.advance_accepted_run(
+        "run-deferred-pause-1",
+        completed_at="2026-07-10T00:00:02Z",
+    )
+    resumed = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-pause-1/resume",
+            headers={},
+            query={},
+            cookies={},
+            requested_at="2026-07-10T00:00:03Z",
+        )
+    )
+    completed = app.advance_accepted_run(
+        "run-deferred-pause-1",
+        completed_at="2026-07-10T00:00:04Z",
+    )
+
+    assert paused.status_code == 202
+    assert held == {
+        "runId": "run-deferred-pause-1",
+        "status": "paused_operator",
+        "outputs": {},
+        "lastCursor": "run-deferred-pause-1:1",
+        "duplicate": False,
+    }
+    assert app.pending_accepted_run_ids() == ()
+    assert resumed.status_code == 202
+    assert completed["status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("response_mode", "expected_status_code"),
+    (("sync", 200), ("accepted", 202)),
+)
+def test_server_app_records_runtime_exception_as_terminal_failure(
+    response_mode: str,
+    expected_status_code: int,
+) -> None:
+    run_id = f"run-runtime-exception-{response_mode}"
+    app = GraphBlocksServerApp()
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": f"runtime-exception-{response_mode}"},
+                        "spec": {
+                            "nodes": {
+                                "first": {
+                                    "block": "prompt.render@1",
+                                    "config": {"template": "first"},
+                                    "outputs": {"prompt": "$output.x"},
+                                },
+                                "second": {
+                                    "block": "prompt.render@1",
+                                    "config": {"template": "second"},
+                                    "outputs": {"prompt": "$output.x.y"},
+                                },
+                            }
+                        },
+                    },
+                    "runId": run_id,
+                    "responseMode": response_mode,
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == expected_status_code
+    assert app.pending_accepted_run_ids() == ()
+    assert [event["kind"] for event in app._events_by_run_id[run_id]] == [
+        "RunStarted",
+        "RunFailed",
+    ]
+    assert (
+        app._events_by_run_id[run_id][-1]["payload"]["error"]
+        == "output path conflict at $output.x.y"
+    )
+
+
+def test_server_app_records_non_json_runtime_output_without_reexecution() -> None:
+    calls = 0
+
+    def non_json_block(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"value": object()}
+
+    registry = RuntimeRegistry()
+    registry.register("test.non-json@1", non_json_block)
+    app = GraphBlocksServerApp(
+        registry=registry,
+        defer_accepted_runs=True,
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-non-json-output"},
+                        "spec": {
+                            "nodes": {
+                                "run": {
+                                    "block": "test.non-json@1",
+                                    "outputs": {"value": "$output.value"},
+                                }
+                            }
+                        },
+                    },
+                    "runId": "run-non-json-output-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    first = app.advance_accepted_run(
+        "run-non-json-output-1",
+        completed_at="2026-07-10T00:00:01Z",
+    )
+    duplicate = app.advance_accepted_run(
+        "run-non-json-output-1",
+        completed_at="2026-07-10T00:00:02Z",
+    )
+
+    assert calls == 1
+    assert first["status"] == "failed"
+    assert duplicate == {**first, "duplicate": True}
+    assert [
+        event["kind"] for event in app._events_by_run_id["run-non-json-output-1"]
+    ] == ["RunStarted", "RunFailed"]
+
+
+def test_server_app_cancel_during_deferred_execution_remains_authoritative() -> None:
+    started = Event()
+    release = Event()
+
+    def wait_block(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        started.set()
+        assert release.wait(timeout=5)
+        return {"value": "done"}
+
+    registry = RuntimeRegistry()
+    registry.register("test.wait@1", wait_block)
+    app = GraphBlocksServerApp(
+        registry=registry,
+        defer_accepted_runs=True,
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-cancel-race"},
+                        "spec": {
+                            "nodes": {
+                                "wait": {
+                                    "block": "test.wait@1",
+                                    "outputs": {"value": "$output.value"},
+                                }
+                            }
+                        },
+                    },
+                    "runId": "run-deferred-cancel-race-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        advance_future = executor.submit(
+            app.advance_accepted_run,
+            "run-deferred-cancel-race-1",
+            completed_at="2026-07-10T00:00:02Z",
+        )
+        assert started.wait(timeout=5)
+        cancelled = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-deferred-cancel-race-1/cancel",
+                headers={},
+                query={},
+                cookies={},
+                body=json.dumps({"reason": "operator stop"}).encode("utf-8"),
+                requested_at="2026-07-10T00:00:01Z",
+            )
+        )
+        release.set()
+        advanced = advance_future.result(timeout=5)
+
+    assert cancelled.status_code == 202
+    assert advanced["status"] == "cancelled"
+    assert [
+        event["kind"]
+        for event in app._events_by_run_id["run-deferred-cancel-race-1"]
+    ] == ["RunStarted", "RunCancelled"]
+
+
+def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None:
+    started = Event()
+    release = Event()
+
+    def wait_block(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        started.set()
+        assert release.wait(timeout=5)
+        return {"value": "done"}
+
+    registry = RuntimeRegistry()
+    registry.register("test.cancel-waiter@1", wait_block)
+    app = GraphBlocksServerApp(
+        registry=registry,
+        defer_accepted_runs=True,
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-cancel-waiter"},
+                        "spec": {
+                            "nodes": {
+                                "wait": {
+                                    "block": "test.cancel-waiter@1",
+                                    "outputs": {"value": "$output.value"},
+                                }
+                            }
+                        },
+                    },
+                    "runId": "run-cancel-waiter-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        worker = executor.submit(
+            app.advance_accepted_run,
+            "run-cancel-waiter-1",
+            completed_at="2026-07-10T00:00:02Z",
+        )
+        assert started.wait(timeout=5)
+        duplicate = executor.submit(
+            app.advance_accepted_run,
+            "run-cancel-waiter-1",
+            completed_at="2026-07-10T00:00:03Z",
+        )
+        app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs/run-cancel-waiter-1/cancel",
+                headers={},
+                query={},
+                cookies={},
+                requested_at="2026-07-10T00:00:01Z",
+            )
+        )
+        try:
+            duplicate_result = duplicate.result(timeout=1)
+        except FutureTimeoutError:
+            pytest.fail("duplicate advancement did not observe authoritative cancellation")
+        finally:
+            release.set()
+        worker.result(timeout=5)
+
+    assert duplicate_result["status"] == "cancelled"
+    assert duplicate_result["duplicate"] is True
+
+
+def test_server_app_terminal_control_rejects_timestamp_before_deferred_run_start() -> None:
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-control-timestamp"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-deferred-control-timestamp-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:01Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    controlled = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-deferred-control-timestamp-1/cancel",
+            headers={},
+            query={},
+            cookies={},
+            requested_at="2026-07-10T00:00:00Z",
+        )
+    )
+
+    assert controlled.status_code == 400
+    assert json.loads(controlled.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run control request occurred_at must not be before run start",
+    }
+    assert app.pending_accepted_run_ids() == (
+        "run-deferred-control-timestamp-1",
+    )
+
+
+def test_server_app_deferred_accepted_run_rejects_completion_before_start() -> None:
+    app = GraphBlocksServerApp(defer_accepted_runs=True)
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "server-deferred-timestamp"},
+                        "spec": {"nodes": {}},
+                    },
+                    "runId": "run-deferred-timestamp-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-10T00:00:01Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="pending accepted run completed_at must not be before run start",
+    ):
+        app.advance_accepted_run(
+            "run-deferred-timestamp-1",
+            completed_at="2026-07-10T00:00:00Z",
+        )
+
+    assert app.pending_accepted_run_ids() == ("run-deferred-timestamp-1",)
+
+
+def test_server_app_validates_deferred_accepted_runs_flag() -> None:
+    with pytest.raises(ValueError, match="server defer_accepted_runs must be a boolean"):
+        GraphBlocksServerApp(defer_accepted_runs="yes")  # type: ignore[arg-type]
 
 
 def test_server_app_accepted_invoke_encodes_run_handle_route_links() -> None:
