@@ -1,0 +1,23 @@
+# Language Support
+
+This matrix describes the current source-tree implementation. It is not a
+release compatibility promise.
+
+| Contract area | Python | Rust |
+| --- | --- | --- |
+| Canonical schema/compiler | Implemented and TCK-backed | Implemented and TCK-backed |
+| Local runtime, cancellation, tools, budget core | Implemented | Implemented |
+| Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
+| Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
+| Registered-secret signed webhook dispatch | Implemented in optional callback package | Not implemented |
+| Bounded orchestration | Full acceptance contract, including depth/parallel limits and budget-bound leases | Core task-plan/lease contracts; not full Python parity |
+| Workspace governed commit | Implemented | Evaluation primitives only; not full commit contract |
+| Release attestation, canary, rollback/drain evidence | Implemented | Deployment primitives; not full named reference contract |
+| Telemetry correctness outbox | Implemented in optional telemetry package | Observability primitives; not full outbox contract |
+| Voice interruption/playback authority | Implemented in optional voice package | Voice foundation; provider-authority parity remains open |
+| Durable stream extension | Implemented reference contracts | Implemented reference contracts |
+
+Profile claims are determined by applicable fixtures and acceptance evidence,
+not this summary alone. In particular, the current Rust voice TCK does not yet
+exercise every provider-authoritative interruption and playback acknowledgement
+invariant implemented by Python.

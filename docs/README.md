@@ -1,46 +1,53 @@
 # GraphBlocks Documentation
 
-Don't reinvent wheel.
+This is the documentation entry point for the living GraphBlocks project. The
+old mutable architecture bundle has been retired; active documents are
+organized by audience and authority.
 
-GraphBlocks is a contract toolkit for AI applications that already depend on
-real providers, parsers, retrievers, databases, runtimes, and deployment
-systems. It does not try to replace those tools. It defines the portable
-contracts around them: graph shape, typed values, bindings, package metadata,
-runtime behavior, policy, usage, budget, observability, and conformance.
+## Learn and use
 
-## Start Here
+- [Installation](getting-started/installation.md)
+- [Quickstart](getting-started/quickstart.md)
+- [Architecture](concepts/architecture.md)
+- [Graphs and bindings](concepts/graphs-and-bindings.md)
+- [Runtime](concepts/runtime.md)
+- [Packages](concepts/packages.md)
+- [Async runs and callbacks guide](guides/async-runs-and-callbacks.md)
+- [Deployment guide](guides/deployment.md)
 
-- [Getting started](getting-started.md): install the development package and run
-  the first validation commands.
-- [Core concepts](concepts.md): understand graphs, bindings, applications,
-  releases, deployments, policies, and packages.
-- [Runtime model](runtime.md): see how GraphBlocks separates authoring,
-  compilation, execution, journaling, cancellation, and callbacks.
-- [Package model](packages.md): learn how the default package stays small while
-  integrations remain optional.
-- [Conformance and TCK](conformance.md): understand profile claims and the test
-  fixtures that back them.
+## Implement and verify
 
-## Repository Map
+- [Specification index](specification/README.md)
+- [Conformance and TCK](development/conformance.md)
+- [Testing](development/testing.md)
+- [Language support](specification/conformance/language-support.md)
+- [Implementation status](project/status.md)
+- [Roadmap](project/roadmap.md)
+
+## Document authority
+
+When sources disagree, use this order:
+
+1. `schemas/` defines normative wire shapes.
+2. `docs/specification/` defines normative semantics.
+3. `tck/` and `acceptance/` define executable conformance.
+4. `src/graphblocks/data/` defines the shipped catalogs.
+5. Guides and examples are non-normative.
+
+The implementation may support only part of a normative contract. Conformance
+claims must cite a profile and passing evidence; see
+[language support](specification/conformance/language-support.md).
+
+## Repository map
 
 ```text
-crates/      Rust compiler, runtime, protocol, telemetry, and native binding crates
-packages/    Python distributions for foundation packages and optional adapters
-schemas/     Versioned schema contracts
-tck/         Shared conformance fixtures
-acceptance/  Acceptance application inventory
+acceptance/  Executable application manifest and scenarios
+crates/      Rust schemas, compiler, runtimes, protocols, and bindings
 deployment/  Deployment target contracts
-docs/        User and maintainer documentation
+docs/        Guides, specification, development, and project status
+packages/    Foundation and optional Python distributions
+profiles/    Project-level policy profile assets
+schemas/     Versioned wire-shape contracts
+src/         Python authoring and reference implementation
+tck/         Shared conformance fixtures
 ```
-
-The original v1.0 architecture bundle is kept unchanged in
-`docs/upstream/GraphBlocks_v1.0_Final`. Treat it as the reference design record,
-not as the day-to-day documentation entry point.
-
-## Project Status
-
-GraphBlocks is alpha software. The repository contains broad contract coverage
-and many focused runtime slices, but compatibility should be claimed by
-conformance profile, not by repository presence alone. See
-[Conformance and TCK](conformance.md) before describing a package as compatible
-with a given profile.

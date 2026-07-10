@@ -37,14 +37,7 @@ ROOT = Path(__file__).parents[1]
 
 def test_standard_policy_profiles_include_assistant_output_streaming_profile() -> None:
     profile_set = yaml.safe_load(
-        (
-            ROOT
-            / "docs"
-            / "upstream"
-            / "GraphBlocks_v1.0_Final"
-            / "profiles"
-            / "policy-profiles.yaml"
-        ).read_text(encoding="utf-8")
+        (ROOT / "profiles" / "policy-profiles.yaml").read_text(encoding="utf-8")
     )
     profile = profile_set["spec"]["profiles"]["assistant-output-standard"]
 

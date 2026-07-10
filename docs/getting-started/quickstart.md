@@ -1,0 +1,31 @@
+# Quickstart
+
+Install the [root development package](installation.md), then validate and plan
+one of the checked-in application contracts:
+
+```bash
+python -m graphblocks validate docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
+python -m graphblocks plan docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml --expand
+```
+
+Inspect project assets:
+
+```bash
+python -m graphblocks plugins list
+python -m graphblocks packages doctor --root .
+python -m graphblocks schemas manifest schemas
+```
+
+Run the reference runtime against a locally compilable graph:
+
+```bash
+python -m graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
+```
+
+The separate `graphblocks-testing` workspace package provides the TCK command
+and acceptance runner. Contributors working on conformance can invoke its module
+from the workspace or install that package explicitly; see
+[testing](../development/testing.md).
+
+Next read [graphs and bindings](../concepts/graphs-and-bindings.md) and
+[conformance](../development/conformance.md).

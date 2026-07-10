@@ -1,0 +1,37 @@
+# Installation
+
+GraphBlocks is currently developed from source. The monorepo contains multiple
+Python distributions at different stages of packaging, so this page documents
+the verified contributor setup rather than promising a unified published
+installation.
+
+## Requirements
+
+- Python 3.11 or newer
+- `pip`
+- the Rust toolchain selected by `rust-toolchain.toml` for Rust work
+
+## Root authoring package
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[test]'
+python -m graphblocks --help
+```
+
+This installs `graphblocks-core`, PyYAML, and pytest in the activated virtual
+environment. Use `python -m graphblocks`; the root distribution intentionally does not install a
+`graphblocks` console script.
+
+## Optional workspace packages
+
+Provider, parser, server, callback, deployment, telemetry, voice, and durable
+stream adapters live under `packages/`. Install only the package and optional
+extras required for the integration you are developing. Internal versions and
+dependency ranges are still being reconciled for publication, so do not assume
+the entire monorepo is installable from a public package index.
+
+Continue with the [quickstart](quickstart.md).

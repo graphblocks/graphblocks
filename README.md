@@ -1,110 +1,56 @@
 # GraphBlocks
 
-Don't reinvent wheel.
+GraphBlocks is a provider-neutral contract toolkit for portable, testable, and
+governable AI applications. It defines typed graphs, runtime behavior,
+application protocols, policy and budget boundaries, package metadata, and
+conformance profiles without requiring a particular model provider, database,
+parser, server framework, or deployment platform.
 
-GraphBlocks is a provider-neutral contract layer for AI applications. It gives
-teams a shared way to describe graphs, bindings, packages, policies, runtime
-behavior, and conformance without forcing one model provider, vector database,
-document parser, server framework, or deployment platform.
+The project is alpha software. Compatibility is claimed by conformance profile
+and executable evidence, not by package or directory presence.
 
-Use the tools you already trust. Use GraphBlocks to make their contracts
-portable, testable, and governable.
+## What is here
 
-This repository starts from the upstream v1.0 architecture bundle in
-`docs/upstream/GraphBlocks_v1.0_Final`. The implementation follows the
-conformance-profile order in that bundle: schema/compiler contracts first,
-then local runtime, governed runtime, application contracts, and optional
-adapter packages.
+- A Python authoring, validation, and reference-runtime implementation.
+- Rust schema, compiler, protocol, and runtime crates.
+- Versioned schemas and provider-neutral package catalogs.
+- Shared TCK fixtures and executable acceptance applications.
+- Optional adapter packages for existing provider, storage, policy,
+  observability, deployment, voice, and durable-stream ecosystems.
 
-The Rust workspace owns the normative compiler/runtime mechanics:
-`graphblocks-schema`, `graphblocks-compiler`, `graphblocks-runtime-core`,
-`graphblocks-runtime-seq`, `graphblocks-runtime-durable`, and the single PyO3
-binding crate `graphblocks-python`. Python `graphblocks-core` is the
-authoring/schema facade and must match the Rust compiler TCK results and
-canonical hashes.
+## Development quickstart
+
+Requirements are Python 3.11 or newer and the Rust toolchain selected by
+`rust-toolchain.toml`.
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[test]'
+python -m graphblocks validate docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
+python -m pytest
+cargo test --workspace --all-targets
+```
+
+After virtual-environment activation, the root editable install provides
+`python -m graphblocks`. The separately
+packaged command-line and testing distributions are developed under `packages/`;
+they are not installed by the root test extra.
 
 ## Documentation
 
-- [Documentation overview](docs/README.md)
-- [Getting started](docs/getting-started.md)
-- [Core concepts](docs/concepts.md)
-- [Runtime model](docs/runtime.md)
-- [Package model](docs/packages.md)
-- [Conformance and TCK](docs/conformance.md)
+- [Documentation map](docs/README.md)
+- [Installation](docs/getting-started/installation.md)
+- [Quickstart](docs/getting-started/quickstart.md)
+- [Architecture](docs/concepts/architecture.md)
+- [Living specification](docs/specification/README.md)
+- [Conformance](docs/development/conformance.md)
+- [Implementation status](docs/project/status.md)
+- [Examples](docs/upstream/GraphBlocks_v1.0_Final/examples/README.md)
 
-The upstream architecture bundle is preserved under
-`docs/upstream/GraphBlocks_v1.0_Final` as a reference source. The top-level
-documentation is the maintainer-facing and user-facing guide for this
-implementation.
+## Project and community
 
-## Install for development
-
-```bash
-python -m pip install -e '.[test]'
-```
-
-## CLI
-
-```bash
-graphblocks validate docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
-graphblocks plan docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml --expand
-graphblocks plugins list
-graphblocks packages doctor --root .
-graphblocks schemas manifest schemas
-```
-
-`graphblocks-testing` also installs a focused TCK inventory helper:
-
-```bash
-graphblocks-tck list tck
-graphblocks-tck check tck --profiles src/graphblocks/data/conformance-profiles.yaml --profile GB-C3-GOVERNED-RUNTIME
-graphblocks-tck run policy tck/policy/cases.json
-graphblocks-tck run-all tck
-```
-
-## Runtime
-
-The package includes a deterministic in-process Python runtime and Rust runtime
-crates for scheduler, lifecycle, cancellation, bounded sequence, output policy,
-tool lifecycle, usage, budget, and exhaustion semantics. The Python runtime
-wheel delegates native behavior to `crates/graphblocks-python`.
-
-```bash
-graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
-graphblocks run graph.yaml --runtime native --input-json '{"message":{"text":"Hello"}}'
-```
-
-Optional provider, parser, database, cloud, server, TUI, Kubernetes,
-Terraform, voice, and durable stream packages are present as lightweight
-contract/adaptor packages. They avoid large default SDK dependencies unless an
-integration package explicitly declares an optional extra.
-
-## Conformance
-
-Shared TCK fixtures live under `tck/`:
-
-- `application-events`
-- `application-protocol`
-- `approval-review`
-- `budget-race`
-- `compiler`
-- `conversation`
-- `deployment`
-- `documents`
-- `durable`
-- `exhaustion`
-- `orchestration`
-- `policy`
-- `rag`
-- `retry`
-- `runtime`
-- `schema`
-- `sequence`
-- `tool-execution`
-- `tool-lifecycle`
-- `tool-result`
-- `usage`
-- `voice`
-
-Rust and Python harnesses consume these fixtures where the suite is applicable.
-The implemented profile catalog is in `src/graphblocks/data/conformance-profiles.yaml`.
+GraphBlocks is licensed under [Apache License 2.0](LICENSE). Contributions are
+welcome; see [CONTRIBUTING.md](CONTRIBUTING.md),
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), and
+[GOVERNANCE.md](GOVERNANCE.md).
