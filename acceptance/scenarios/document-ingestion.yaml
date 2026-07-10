@@ -111,6 +111,9 @@ spec:
         artifacts: document-artifacts
         manifests: document-manifests
         index: knowledge-index-staging
+      config:
+        requireAclRevision: true
+        propagateAclTo: [document, chunks, index]
     commit:
       block: ingestion.commit_revision@1
       inputs:

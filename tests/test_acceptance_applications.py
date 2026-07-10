@@ -97,10 +97,10 @@ def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) ->
     assert scenario_paths >= {
         "acceptance/scenarios/bounded-research-orchestrator.yaml",
         "acceptance/scenarios/coding-agent-background-callbacks.yaml",
+        "acceptance/scenarios/direct-file-analysis.yaml",
         "acceptance/scenarios/document-ingestion.yaml",
         "acceptance/scenarios/multi-turn-chat.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/05-authority-backed-advisory.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml",
@@ -247,6 +247,83 @@ def test_acceptance_gate_runner_executes_authenticated_coding_agent_semantic_gat
     ]
     assert all(result.output_digest.startswith("sha256:") for result in report.results)
     assert repeated.report_contract() == report.report_contract()
+
+
+def test_default_runner_executes_all_c2_semantic_gates(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    runner = graphblocks_testing.AcceptanceGateRunner()
+
+    reports = tuple(
+        runner.run_application(manifest.by_id(application_id), root=ROOT)
+        for application_id in (
+            "direct-file-analysis",
+            "document-ingestion",
+            "enterprise-rag",
+            "multi-turn-chat",
+        )
+    )
+
+    assert all(report.ok for report in reports), {
+        report.application_id: [result.gate for result in report.results if not result.ok]
+        for report in reports
+        if not report.ok
+    }
+
+
+@pytest.mark.parametrize(
+    ("application_id", "gate"),
+    (
+        ("direct-file-analysis", "generated artifact check"),
+        ("document-ingestion", "ACL propagation check"),
+        ("enterprise-rag", "rag citation validation"),
+        ("multi-turn-chat", "conversation CAS check"),
+    ),
+)
+def test_c2_semantic_gates_reject_weakened_scenario_dataflow(
+    monkeypatch,
+    tmp_path,
+    application_id,
+    gate,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id(application_id)
+    documents = _load_yaml_documents(ROOT / original.scenario_path)
+    graph = next(document for document in documents if document.get("kind") == "Graph")
+    if application_id == "direct-file-analysis":
+        graph["spec"]["nodes"]["generateArtifact"]["block"] = "control.identity@1"
+    elif application_id == "document-ingestion":
+        item_graph = next(
+            document
+            for document in documents
+            if document.get("metadata", {}).get("name") == "process-single-asset"
+        )
+        item_graph["spec"]["nodes"]["persist"]["config"] = {"requireAclRevision": False}
+    elif application_id == "enterprise-rag":
+        graph["spec"]["nodes"]["validate"]["block"] = "control.identity@1"
+    else:
+        graph["spec"]["nodes"]["commitTurn"]["inputs"]["response"] = "beginTurn.message"
+    scenario = tmp_path / f"{application_id}.yaml"
+    scenario.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id=application_id,
+        profiles=original.profiles,
+        scenario_path=scenario.name,
+        gates=(gate,),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=tmp_path,
+    )
+
+    assert not report.ok, report.report_contract()
 
 
 def test_callback_acceptance_gate_rejects_scenario_with_weakened_resume_fence(

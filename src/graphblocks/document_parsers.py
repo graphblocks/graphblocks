@@ -177,6 +177,35 @@ class ParserSelectionLock:
         object.__setattr__(self, "metadata", _freeze_metadata("parser selection lock", self.metadata))
 
 
+@dataclass(frozen=True, slots=True)
+class ParserCandidateParseResult:
+    document: ParsedDocument
+    selected_lock: ParserSelectionLock
+    failed_locks: tuple[ParserSelectionLock, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.document, ParsedDocument):
+            raise ValueError("parser candidate result document must be a ParsedDocument")
+        if not isinstance(self.selected_lock, ParserSelectionLock):
+            raise ValueError("parser candidate result selected_lock must be a ParserSelectionLock")
+        failed_locks = tuple(self.failed_locks)
+        if any(not isinstance(lock, ParserSelectionLock) for lock in failed_locks):
+            raise ValueError("parser candidate result failed_locks must be ParserSelectionLock records")
+        selected_identity = (
+            self.selected_lock.processor_id,
+            self.selected_lock.processor_version,
+        )
+        failed_identities = [
+            (lock.processor_id, lock.processor_version)
+            for lock in failed_locks
+        ]
+        if selected_identity in failed_identities:
+            raise ValueError("parser candidate result selected parser must not also be failed")
+        if len(failed_identities) != len(set(failed_identities)):
+            raise ValueError("parser candidate result failed_locks must not contain duplicates")
+        object.__setattr__(self, "failed_locks", failed_locks)
+
+
 @dataclass(slots=True)
 class DocumentParserRegistry:
     _descriptors: dict[tuple[str, str], ParserDescriptor] = field(default_factory=dict)
@@ -258,6 +287,74 @@ class DocumentParserRegistry:
                 f"locked parser {lock.processor_id!r}@{lock.processor_version!r} has no local implementation"
             )
         return descriptor.parse(asset, revision, body)
+
+    def parse_with_candidates(
+        self,
+        asset: SourceAsset,
+        revision: AssetRevision,
+        body: bytes,
+        candidates: object,
+    ) -> ParserCandidateParseResult:
+        if isinstance(candidates, (str, bytes)):
+            raise ValueError("parser candidate chain must be a collection")
+        try:
+            candidate_records = tuple(candidates)  # type: ignore[arg-type]
+        except TypeError as error:
+            raise ValueError("parser candidate chain must be a collection") from error
+        if not candidate_records:
+            raise ValueError("parser candidate chain must not be empty")
+        normalized_candidates: list[tuple[str, str]] = []
+        for candidate in candidate_records:
+            if isinstance(candidate, (str, bytes)):
+                raise ValueError("parser candidate must contain processor_id and version")
+            try:
+                processor_id, version = candidate
+            except (TypeError, ValueError) as error:
+                raise ValueError("parser candidate must contain processor_id and version") from error
+            identity = (
+                _validate_exact_non_empty_string("parser candidate", "processor_id", processor_id),
+                _validate_exact_non_empty_string("parser candidate", "version", version),
+            )
+            if identity in normalized_candidates:
+                raise ValueError("parser candidate chain must not contain duplicates")
+            normalized_candidates.append(identity)
+
+        failed_locks: list[ParserSelectionLock] = []
+        for index, (processor_id, version) in enumerate(normalized_candidates):
+            lock = ParserSelectionLock(
+                processor_id=processor_id,
+                processor_version=version,
+                reason="candidate_primary" if index == 0 else "candidate_fallback",
+                media_type=(
+                    revision.artifact.media_type.strip().lower()
+                    if revision.artifact.media_type is not None
+                    else None
+                ),
+                filename=(
+                    revision.artifact.filename
+                    or PurePosixPath(revision.artifact.uri).name
+                    or None
+                ),
+                artifact_checksum=revision.artifact.checksum,
+                metadata={"candidate_index": index},
+            )
+            try:
+                document = self.parse_locked(asset, revision, body, lock)
+            except DocumentParserError:
+                failed_locks.append(lock)
+                continue
+            return ParserCandidateParseResult(
+                document=document,
+                selected_lock=lock,
+                failed_locks=tuple(failed_locks),
+            )
+        attempted = ", ".join(
+            f"{processor_id}@{version}"
+            for processor_id, version in normalized_candidates
+        )
+        raise DocumentParserError(
+            f"document parser candidates exhausted after {attempted}"
+        )
 
 
 def plain_text_parser_descriptor() -> ParserDescriptor:

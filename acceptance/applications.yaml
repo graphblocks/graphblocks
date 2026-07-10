@@ -30,7 +30,7 @@ spec:
   - id: direct-file-analysis
     profiles:
     - GB-C2-AI-APPLICATION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/05-authority-backed-advisory.yaml
+    scenarioPath: acceptance/scenarios/direct-file-analysis.yaml
     gates:
     - graphblocks validate
     - graphblocks plan --expand

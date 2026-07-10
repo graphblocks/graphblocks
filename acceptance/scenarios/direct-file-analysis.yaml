@@ -1,0 +1,43 @@
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: direct-file-analysis
+spec:
+  interface:
+    inputs:
+      files: graphblocks.core/ArtifactRefList@1
+      question: graphblocks.core/Text@1
+    outputs:
+      result: graphblocks.core/ResultBundle@1
+  nodes:
+    snapshot:
+      block: resource.snapshot@1
+      inputs:
+        resources: $input.files
+    analyze:
+      block: document.analyze_direct@1
+      inputs:
+        files: $input.files
+        question: $input.question
+        snapshot: snapshot.value
+      config:
+        requireSourceRef: true
+        preserveDocumentSpan: true
+    generateArtifact:
+      block: artifact.generate@1
+      inputs:
+        analysis: analyze.result
+      config:
+        mediaType: text/markdown
+        filename: analysis.md
+        requireChecksum: true
+    bundle:
+      block: result.bundle@1
+      inputs:
+        outputs:
+          - analyze.result
+        evidence: analyze.sourceRefs
+        artifacts:
+          - generateArtifact.artifact
+      config:
+        requireGeneratedArtifact: true

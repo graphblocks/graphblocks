@@ -13,6 +13,7 @@ import io
 import json
 import math
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 from graphblocks.application_event import (
@@ -61,19 +62,24 @@ from graphblocks.deployment import (
     SupplyChainLock,
     UpgradePolicy,
 )
+from graphblocks.blob_store import BlobKey, LocalBlobStore, PutOptions
 from graphblocks.document_parsers import (
+    DocumentParserError,
     DocumentParserRegistry,
     ParserDescriptor,
     plain_text_parser_descriptor,
 )
 from graphblocks.documents import (
     ArtifactRef,
+    AssetRevision,
+    ParsedDocument,
     SourceRef,
+    SourceAsset,
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
 )
-from graphblocks.evaluation import ModelVisibleToolRef, ResourceSnapshotRef, SloReport
+from graphblocks.evaluation import ModelVisibleToolRef, ResourceSnapshotRef, ResultBundle, SloReport
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -121,16 +127,21 @@ from graphblocks.policy import PolicyDecision, PrincipalRef, ResourceRef as Poli
 from graphblocks.plugins import BlockCatalog
 from graphblocks.rag import (
     Answer,
+    AuthContext,
     Citation,
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
+    InMemoryKnowledgeIndex,
     KnowledgeItemRef,
     RetrievalResult,
     SearchHit,
     SearchRequest,
+    authorize_search_hits,
     build_context_pack,
     evaluate_retrieval_metrics,
+    resolve_citation_source_trace,
+    validate_answer_citations,
     validate_answer_grounding,
 )
 from graphblocks.review import (
@@ -3440,6 +3451,592 @@ class AcceptanceManifest:
 AcceptanceGateHandler = Callable[[AcceptanceApplication, Path], tuple[int, str]]
 
 
+def _exercise_direct_file_analysis(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "direct-file-analysis":
+        raise RuntimeError("direct-file semantic gate requires the direct-file acceptance application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 1 or documents[0].get("kind") != "Graph":
+        raise RuntimeError("direct-file acceptance scenario must contain one graph")
+    graph = documents[0]
+    spec = graph.get("spec")
+    if not isinstance(spec, Mapping):
+        raise RuntimeError("direct-file acceptance graph spec must be a mapping")
+    nodes = spec.get("nodes")
+    if not isinstance(nodes, Mapping):
+        raise RuntimeError("direct-file acceptance graph nodes must be a mapping")
+    analyze = nodes.get("analyze")
+    generated = nodes.get("generateArtifact")
+    bundle_node = nodes.get("bundle")
+    if not isinstance(analyze, Mapping) or not isinstance(generated, Mapping) or not isinstance(bundle_node, Mapping):
+        raise RuntimeError("direct-file scenario must declare analysis, artifact, and result bundle nodes")
+    analyze_config = analyze.get("config")
+    generated_config = generated.get("config")
+    bundle_config = bundle_node.get("config")
+    analyze_inputs = analyze.get("inputs")
+    generated_inputs = generated.get("inputs")
+    bundle_inputs = bundle_node.get("inputs")
+    if (
+        analyze.get("block") != "document.analyze_direct@1"
+        or generated.get("block") != "artifact.generate@1"
+        or bundle_node.get("block") != "result.bundle@1"
+        or analyze_inputs != {
+            "files": "$input.files",
+            "question": "$input.question",
+            "snapshot": "snapshot.value",
+        }
+        or generated_inputs != {"analysis": "analyze.result"}
+        or bundle_inputs != {
+            "outputs": ["analyze.result"],
+            "evidence": "analyze.sourceRefs",
+            "artifacts": ["generateArtifact.artifact"],
+        }
+    ):
+        raise RuntimeError("direct-file analysis and generated artifact dataflow does not match")
+    if (
+        not isinstance(analyze_config, Mapping)
+        or analyze_config.get("requireSourceRef") is not True
+        or analyze_config.get("preserveDocumentSpan") is not True
+    ):
+        raise RuntimeError("direct-file analysis must require source refs with document spans")
+    if (
+        not isinstance(generated_config, Mapping)
+        or generated_config.get("mediaType") != "text/markdown"
+        or generated_config.get("filename") != "analysis.md"
+        or generated_config.get("requireChecksum") is not True
+        or not isinstance(bundle_config, Mapping)
+        or bundle_config.get("requireGeneratedArtifact") is not True
+    ):
+        raise RuntimeError("direct-file scenario must require a checksummed generated artifact")
+
+    source_text = "Alpha policy requires audit logs.\n"
+    asset, revision = create_local_text_revision(
+        "file:///acceptance/source.txt",
+        source_text,
+        observed_at="2026-07-10T00:00:00Z",
+        filename="source.txt",
+    )
+    document = parse_plain_text_document(asset, revision, source_text)
+    chunks = chunk_document_by_lines(document, revision, max_elements=1)
+    if len(chunks) != 1 or len(chunks[0].source_refs) != 1:
+        raise RuntimeError("direct-file source lineage did not produce one source reference")
+    source_ref = chunks[0].source_refs[0]
+    if source_ref.locator is None:
+        raise RuntimeError("direct-file source reference did not retain a document span")
+    artifact_body = b"# Analysis\n\nAlpha policy requires audit logs.\n"
+    with TemporaryDirectory(prefix="graphblocks-direct-file-") as directory:
+        store = LocalBlobStore(directory)
+        artifact = store.put(
+            BlobKey("outputs/analysis.md"),
+            artifact_body,
+            PutOptions(media_type="text/markdown", filename="analysis.md"),
+        )
+        persisted_body_matches = store.get(BlobKey("outputs/analysis.md")) == artifact_body
+        persisted_metadata = store.head(BlobKey("outputs/analysis.md"))
+    bundle = ResultBundle(
+        bundle_id="bundle-direct-file-1",
+        run_id="run-direct-file-1",
+        release_id="release-direct-file-1",
+        inputs=[],
+        outputs=[],
+        artifacts=[artifact],
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "source": {
+            "sourceId": source_ref.source_id,
+            "digest": source_ref.digest,
+            "assetId": source_ref.locator.asset_id,
+            "revisionId": source_ref.locator.revision_id,
+            "documentId": source_ref.locator.document_id,
+            "chunkId": source_ref.locator.chunk_id,
+            "elementId": source_ref.locator.element_id,
+        },
+        "artifact": {
+            "artifactId": artifact.artifact_id,
+            "checksum": artifact.checksum,
+            "mediaType": artifact.media_type,
+            "filename": artifact.filename,
+            "sizeBytes": artifact.size_bytes,
+            "persistedBodyMatches": persisted_body_matches,
+            "metadataChecksumMatches": persisted_metadata.artifact.checksum == artifact.checksum,
+            "bundleArtifactIds": [item.artifact_id for item in bundle.artifacts],
+        },
+    }
+
+
+def _exercise_document_ingestion(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "document-ingestion":
+        raise RuntimeError("document semantic gate requires the document-ingestion application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 2:
+        raise RuntimeError("document-ingestion scenario must contain job and item graphs")
+    item_graph = next(
+        (
+            document
+            for document in documents
+            if isinstance(document.get("metadata"), Mapping)
+            and document["metadata"].get("name") == "process-single-asset"
+        ),
+        None,
+    )
+    if not isinstance(item_graph, Mapping):
+        raise RuntimeError("document-ingestion item graph is missing")
+    item_spec = item_graph.get("spec")
+    if not isinstance(item_spec, Mapping) or not isinstance(item_spec.get("nodes"), Mapping):
+        raise RuntimeError("document-ingestion item graph nodes must be a mapping")
+    item_nodes = item_spec["nodes"]
+    convert = item_nodes.get("convert")
+    persist = item_nodes.get("persist")
+    commit = item_nodes.get("commit")
+    if not isinstance(convert, Mapping) or not isinstance(persist, Mapping) or not isinstance(commit, Mapping):
+        raise RuntimeError("document-ingestion conversion, persistence, and commit nodes are missing")
+    convert_config = convert.get("config")
+    persist_bindings = persist.get("bindings")
+    persist_config = persist.get("config")
+    if (
+        convert.get("block") != "document.convert@1"
+        or persist.get("block") != "ingestion.persist_staging@1"
+        or commit.get("block") != "ingestion.commit_revision@1"
+        or convert.get("inputs") != {"asset": "load.value"}
+        or persist.get("inputs") != {
+            "transaction": "begin.transaction",
+            "document": "redact.document",
+            "chunks": "split.chunks",
+        }
+        or commit.get("inputs") != {
+            "transaction": "begin.transaction",
+            "staged": "persist.result",
+        }
+    ):
+        raise RuntimeError("document-ingestion conversion and commit dataflow does not match")
+    if not isinstance(convert_config, Mapping) or convert_config.get("strategy") != "locked_auto":
+        raise RuntimeError("document-ingestion parser strategy must remain locked_auto")
+    candidates_by_media_type = convert_config.get("candidates")
+    if not isinstance(candidates_by_media_type, Mapping):
+        raise RuntimeError("document-ingestion parser candidates must be a mapping")
+    pdf_candidates = candidates_by_media_type.get("application/pdf")
+    if not isinstance(pdf_candidates, list) or len(pdf_candidates) < 2:
+        raise RuntimeError("document-ingestion PDF parser chain requires primary and fallback candidates")
+    candidate_pairs: list[tuple[str, str]] = []
+    for candidate in pdf_candidates:
+        if not isinstance(candidate, Mapping):
+            raise RuntimeError("document-ingestion parser candidate must be a mapping")
+        implementation = candidate.get("implementation")
+        version = candidate.get("version")
+        if not isinstance(implementation, str) or not isinstance(version, str):
+            raise RuntimeError("document-ingestion parser candidate identity is incomplete")
+        candidate_pairs.append((implementation, version))
+    if not isinstance(persist_bindings, Mapping) or persist_bindings.get("index") != "knowledge-index-staging":
+        raise RuntimeError("document-ingestion persistence must use the staging knowledge index")
+    if not isinstance(persist_config, Mapping) or persist_config != {
+        "requireAclRevision": True,
+        "propagateAclTo": ["document", "chunks", "index"],
+    }:
+        raise RuntimeError("document-ingestion ACL propagation contract does not match")
+
+    parser_attempts: list[str] = []
+
+    def primary(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+        parser_attempts.append(candidate_pairs[0][0])
+        raise DocumentParserError("primary parser quality gate failed")
+
+    def fallback(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+        parser_attempts.append(candidate_pairs[1][0])
+        parsed = parse_plain_text_document(asset, revision, body.decode("utf-8"))
+        return replace(
+            parsed,
+            parser={"processor_id": candidate_pairs[1][0], "version": candidate_pairs[1][1]},
+        )
+
+    registry = DocumentParserRegistry()
+    registry.register(ParserDescriptor(*candidate_pairs[0], parse=primary))
+    registry.register(ParserDescriptor(*candidate_pairs[1], parse=fallback))
+    source_text = "Restricted policy requires approval.\n"
+    asset, base_revision = create_local_text_revision(
+        "file:///acceptance/restricted.pdf",
+        source_text,
+        observed_at="2026-07-10T00:00:00Z",
+        filename="restricted.pdf",
+    )
+    revision = replace(
+        base_revision,
+        artifact=replace(base_revision.artifact, media_type="application/pdf"),
+        acl={"tenant_id": "acme", "groups": ["compliance"]},
+    )
+    parsed = registry.parse_with_candidates(
+        asset,
+        revision,
+        source_text.encode("utf-8"),
+        tuple(candidate_pairs),
+    )
+    chunks = chunk_document_by_lines(parsed.document, revision, max_elements=1)
+    index = InMemoryKnowledgeIndex("knowledge-index-staging")
+    index.upsert_chunks(chunks)
+    published = index.publish_revision(asset.asset_id, revision.revision_id)
+    hits = index.retriever("knowledge-index-read").search("approval", top_k=1)
+    authorized = authorize_search_hits(
+        hits,
+        AuthContext(
+            tenant_id="acme",
+            principal_id="user-1",
+            groups={"compliance"},
+            roles=set(),
+        ),
+    )
+    unauthorized = authorize_search_hits(
+        hits,
+        AuthContext(
+            tenant_id="acme",
+            principal_id="user-2",
+            groups=set(),
+            roles=set(),
+        ),
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "parser": {
+            "attempts": parser_attempts,
+            "failed": [lock.processor_id for lock in parsed.failed_locks],
+            "selected": parsed.selected_lock.processor_id,
+            "reason": parsed.selected_lock.reason,
+        },
+        "acl": {
+            "revision": revision.acl,
+            "chunk": chunks[0].acl,
+            "retrieval": hits[0].item.acl,
+            "authorizedHitIds": [hit.hit_id for hit in authorized],
+            "unauthorizedHitIds": [hit.hit_id for hit in unauthorized],
+            "publishedChunkIds": list(published.published_chunk_ids),
+        },
+    }
+
+
+def _exercise_enterprise_rag(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "enterprise-rag":
+        raise RuntimeError("RAG semantic gate requires the enterprise-rag application")
+    documents = load_documents(scenario_path)
+    graph = next((document for document in documents if document.get("kind") == "Graph"), None)
+    if not isinstance(graph, Mapping) or not isinstance(graph.get("spec"), Mapping):
+        raise RuntimeError("enterprise RAG graph is missing")
+    nodes = graph["spec"].get("nodes")
+    if not isinstance(nodes, Mapping):
+        raise RuntimeError("enterprise RAG graph nodes must be a mapping")
+    validate_node = nodes.get("validate")
+    retrieve_node = nodes.get("retrieve")
+    fuse_node = nodes.get("fuse")
+    if not isinstance(validate_node, Mapping) or not isinstance(retrieve_node, Mapping) or not isinstance(fuse_node, Mapping):
+        raise RuntimeError("enterprise RAG retrieval, fusion, and validation nodes are required")
+    validate_config = validate_node.get("config")
+    fuse_config = fuse_node.get("config")
+    if (
+        retrieve_node.get("block") != "retrieve.execute_plan@1"
+        or fuse_node.get("block") != "retrieve.fuse@1"
+        or validate_node.get("block") != "answer.validate_grounding@1"
+        or validate_node.get("inputs") != {
+            "response": "generate.response",
+            "context": "context.pack",
+        }
+    ):
+        raise RuntimeError("enterprise RAG retrieval and validation dataflow does not match")
+    if (
+        not isinstance(validate_config, Mapping)
+        or validate_config.get("requireCitation") is not True
+        or validate_config.get("onInsufficientEvidence") != "abstain"
+        or not isinstance(fuse_config, Mapping)
+        or fuse_config.get("deduplicateBy") != "canonical_source"
+    ):
+        raise RuntimeError("enterprise RAG citation and abstention contract does not match")
+
+    source_text = "Alpha policy requires audit logs.\n"
+    asset, revision = create_local_text_revision(
+        "file:///acceptance/rag-policy.txt",
+        source_text,
+        observed_at="2026-07-10T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, source_text)
+    chunks = chunk_document_by_lines(document, revision, max_elements=1)
+    hits = InMemoryChunkRetriever(chunks, retriever_id="acceptance-local").search("audit", top_k=1)
+    context = ContextPack(context_id="context-enterprise-rag-1", hits=hits)
+    citation = Citation(
+        citation_id="citation-1",
+        source=hits[0].item.source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-enterprise-rag-1",
+        text="Alpha policy requires audit logs.",
+        claims=[
+            Claim(
+                claim_id="claim-1",
+                text="Alpha policy requires audit logs.",
+                citation_ids=["citation-1"],
+            )
+        ],
+        citations=[citation],
+    )
+    citation_result = validate_answer_citations(answer, context)
+    grounding_result = validate_answer_grounding(answer, context)
+    trace = resolve_citation_source_trace(answer, context, "citation-1")
+    empty_result = validate_answer_grounding(
+        answer,
+        ContextPack(context_id="context-empty", hits=[]),
+    )
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "citation": {
+            "valid": citation_result.ok,
+            "grounded": grounding_result.ok,
+            "issueCodes": [issue.code for issue in citation_result.issues],
+            "sourceId": trace.source.source_id,
+            "hitId": trace.hit_id,
+            "chunkId": None if trace.locator is None else trace.locator.chunk_id,
+            "documentId": None if trace.locator is None else trace.locator.document_id,
+        },
+        "abstention": {
+            "valid": empty_result.ok,
+            "issueCodes": [issue.code for issue in empty_result.issues],
+            "reason": None if empty_result.abstention is None else empty_result.abstention.reason,
+        },
+    }
+
+
+def _exercise_multi_turn_chat(
+    application: AcceptanceApplication,
+    scenario_path: Path,
+) -> dict[str, object]:
+    if application.application_id != "multi-turn-chat":
+        raise RuntimeError("conversation semantic gate requires the multi-turn-chat application")
+    documents = load_documents(scenario_path)
+    if len(documents) != 3:
+        raise RuntimeError("multi-turn chat scenario must contain two policy profiles and one graph")
+    graph = next((document for document in documents if document.get("kind") == "Graph"), None)
+    hard_stop = next(
+        (
+            document
+            for document in documents
+            if document.get("kind") == "PolicyProfile"
+            and isinstance(document.get("metadata"), Mapping)
+            and document["metadata"].get("name") == "interactive-hard-stop"
+        ),
+        None,
+    )
+    if not isinstance(graph, Mapping) or not isinstance(hard_stop, Mapping):
+        raise RuntimeError("multi-turn chat graph and hard-stop profile are required")
+    graph_spec = graph.get("spec")
+    hard_stop_spec = hard_stop.get("spec")
+    if not isinstance(graph_spec, Mapping) or not isinstance(hard_stop_spec, Mapping):
+        raise RuntimeError("multi-turn chat graph and policy specs must be mappings")
+    nodes = graph_spec.get("nodes")
+    exhaustion = hard_stop_spec.get("exhaustion")
+    if not isinstance(nodes, Mapping) or not isinstance(exhaustion, Mapping):
+        raise RuntimeError("multi-turn chat nodes and exhaustion policy are required")
+    commit_turn = nodes.get("commitTurn")
+    commit_config = commit_turn.get("config") if isinstance(commit_turn, Mapping) else None
+    if (
+        not isinstance(commit_turn, Mapping)
+        or commit_turn.get("block") != "conversation.commit_turn@1"
+        or commit_turn.get("inputs") != {
+            "turn": "beginTurn.turn",
+            "response": "respond.message",
+        }
+    ):
+        raise RuntimeError("multi-turn conversation commit dataflow does not match")
+    output_policy = exhaustion.get("output")
+    if not isinstance(commit_config, Mapping) or commit_config.get("concurrency") != "compare_and_swap":
+        raise RuntimeError("multi-turn chat commit must use compare-and-swap")
+    if (
+        exhaustion.get("preset") != "hard_stop"
+        or exhaustion.get("inFlight") != "cancel_immediately"
+        or not isinstance(output_policy, Mapping)
+        or output_policy.get("durableResult") != "retract"
+    ):
+        raise RuntimeError("multi-turn chat hard-stop policy must retract drafts")
+
+    commit_store = InMemoryConversationStore()
+    commit_store.create(Conversation(conversation_id="conversation-commit-1"))
+    commit_store.begin_turn("conversation-commit-1", expected_revision=0, turn_id="turn-commit-1")
+    draft = commit_store.append_turn_message(
+        "turn-commit-1",
+        Message(
+            message_id="message-commit-1",
+            role="assistant",
+            parts=(ContentPart(kind="text", text="committed answer"),),
+        ),
+    )
+    invisible_before_commit = commit_store.get("conversation-commit-1").conversation.messages == ()
+    committed = commit_store.commit_turn("turn-commit-1")
+    stale_conflict = False
+    try:
+        commit_store.append_messages(
+            "conversation-commit-1",
+            expected_revision=0,
+            messages=[Message(message_id="message-stale-1", role="user")],
+        )
+    except ConversationConflictError:
+        stale_conflict = True
+
+    abort_store = InMemoryConversationStore()
+    abort_store.create(Conversation(conversation_id="conversation-abort-1"))
+    abort_store.begin_turn("conversation-abort-1", expected_revision=0, turn_id="turn-abort-1")
+    abort_store.append_turn_message(
+        "turn-abort-1",
+        Message(message_id="message-abort-1", role="assistant"),
+    )
+    aborted = abort_store.abort_turn("turn-abort-1")
+    policy_store = InMemoryConversationStore()
+    policy_store.create(Conversation(conversation_id="conversation-policy-1"))
+    policy_store.begin_turn("conversation-policy-1", expected_revision=0, turn_id="turn-policy-1")
+    policy_store.append_turn_message(
+        "turn-policy-1",
+        Message(message_id="message-policy-1", role="assistant"),
+    )
+    policy_stopped = policy_store.policy_stop_turn("turn-policy-1")
+    return {
+        "applicationDigest": canonical_hash(application.application_contract()),
+        "scenarioDigest": canonical_hash(documents),
+        "cas": {
+            "draftStatus": draft.messages[0].status,
+            "invisibleBeforeCommit": invisible_before_commit,
+            "commitStatus": committed.status,
+            "committedRevision": committed.committed_revision,
+            "storedRevision": commit_store.get("conversation-commit-1").revision,
+            "staleConflict": stale_conflict,
+        },
+        "draftLifecycle": {
+            "abortedStatus": aborted.status,
+            "abortedMessageStatuses": [message.status for message in aborted.messages],
+            "abortStoredMessageCount": len(abort_store.get("conversation-abort-1").conversation.messages),
+            "policyStatus": policy_stopped.status,
+            "policyMessageStatuses": [message.status for message in policy_stopped.messages],
+            "policyStoredMessageCount": len(policy_store.get("conversation-policy-1").conversation.messages),
+        },
+    }
+
+
+def _source_reference_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_direct_file_analysis(application, scenario_path)
+    source = evidence["source"]
+    if not isinstance(source, Mapping) or any(source.get(key) is None for key in (
+        "sourceId", "digest", "assetId", "revisionId", "documentId", "chunkId"
+    )):
+        raise RuntimeError("direct-file source reference lineage is incomplete")
+    return 0, canonical_dumps({"gate": "source reference check", **evidence})
+
+
+def _generated_artifact_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_direct_file_analysis(application, scenario_path)
+    artifact = evidence["artifact"]
+    if (
+        not isinstance(artifact, Mapping)
+        or artifact.get("artifactId") != "blob:outputs/analysis.md"
+        or artifact.get("mediaType") != "text/markdown"
+        or artifact.get("filename") != "analysis.md"
+        or not isinstance(artifact.get("checksum"), str)
+        or artifact.get("persistedBodyMatches") is not True
+        or artifact.get("metadataChecksumMatches") is not True
+        or artifact.get("bundleArtifactIds") != ["blob:outputs/analysis.md"]
+    ):
+        raise RuntimeError("direct-file generated artifact evidence is incomplete")
+    return 0, canonical_dumps({"gate": "generated artifact check", **evidence})
+
+
+def _parser_fallback_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_document_ingestion(application, scenario_path)
+    parser = evidence["parser"]
+    if not isinstance(parser, Mapping) or parser != {
+        "attempts": ["parser.pdf.primary", "parser.pdf.fallback"],
+        "failed": ["parser.pdf.primary"],
+        "selected": "parser.pdf.fallback",
+        "reason": "candidate_fallback",
+    }:
+        raise RuntimeError("document-ingestion parser fallback evidence is incomplete")
+    return 0, canonical_dumps({"gate": "parser fallback check", **evidence})
+
+
+def _acl_propagation_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_document_ingestion(application, scenario_path)
+    acl = evidence["acl"]
+    if (
+        not isinstance(acl, Mapping)
+        or acl.get("revision") != {"tenant_id": "acme", "groups": ["compliance"]}
+        or acl.get("chunk") != acl.get("revision")
+        or acl.get("retrieval") != acl.get("revision")
+        or len(acl.get("authorizedHitIds", [])) != 1
+        or acl.get("unauthorizedHitIds") != []
+        or len(acl.get("publishedChunkIds", [])) != 1
+    ):
+        raise RuntimeError("document-ingestion ACL propagation evidence is incomplete")
+    return 0, canonical_dumps({"gate": "ACL propagation check", **evidence})
+
+
+def _rag_citation_validation(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_enterprise_rag(application, scenario_path)
+    citation = evidence["citation"]
+    if (
+        not isinstance(citation, Mapping)
+        or citation.get("valid") is not True
+        or citation.get("grounded") is not True
+        or citation.get("issueCodes") != []
+        or any(citation.get(key) is None for key in ("sourceId", "hitId", "chunkId", "documentId"))
+    ):
+        raise RuntimeError("enterprise RAG citation evidence is incomplete")
+    return 0, canonical_dumps({"gate": "rag citation validation", **evidence})
+
+
+def _abstention_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_enterprise_rag(application, scenario_path)
+    abstention = evidence["abstention"]
+    if not isinstance(abstention, Mapping) or abstention != {
+        "valid": False,
+        "issueCodes": ["grounding.insufficient_context"],
+        "reason": "insufficient_context",
+    }:
+        raise RuntimeError("enterprise RAG abstention evidence is incomplete")
+    return 0, canonical_dumps({"gate": "abstention check", **evidence})
+
+
+def _conversation_cas_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_multi_turn_chat(application, scenario_path)
+    cas = evidence["cas"]
+    if not isinstance(cas, Mapping) or cas != {
+        "draftStatus": "draft",
+        "invisibleBeforeCommit": True,
+        "commitStatus": "completed",
+        "committedRevision": 1,
+        "storedRevision": 1,
+        "staleConflict": True,
+    }:
+        raise RuntimeError("multi-turn conversation CAS evidence is incomplete")
+    return 0, canonical_dumps({"gate": "conversation CAS check", **evidence})
+
+
+def _draft_retract_commit_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
+    evidence = _exercise_multi_turn_chat(application, scenario_path)
+    lifecycle = evidence["draftLifecycle"]
+    if not isinstance(lifecycle, Mapping) or lifecycle != {
+        "abortedStatus": "cancelled",
+        "abortedMessageStatuses": ["retracted"],
+        "abortStoredMessageCount": 0,
+        "policyStatus": "policy_stopped",
+        "policyMessageStatuses": ["retracted"],
+        "policyStoredMessageCount": 0,
+    }:
+        raise RuntimeError("multi-turn draft retract evidence is incomplete")
+    return 0, canonical_dumps({"gate": "draft retract commit check", **evidence})
+
+
 def _exercise_coding_agent_background_callback(
     application: AcceptanceApplication,
     scenario_path: Path,
@@ -4110,6 +4707,14 @@ class AcceptanceGateRunner:
         custom_handlers: Mapping[str, AcceptanceGateHandler] | None = None,
     ) -> None:
         self._builtin_semantic_handlers: dict[str, AcceptanceGateHandler] = {
+            "source reference check": _source_reference_check,
+            "generated artifact check": _generated_artifact_check,
+            "parser fallback check": _parser_fallback_check,
+            "ACL propagation check": _acl_propagation_check,
+            "rag citation validation": _rag_citation_validation,
+            "abstention check": _abstention_check,
+            "conversation CAS check": _conversation_cas_check,
+            "draft retract commit check": _draft_retract_commit_check,
             "accepted invocation handle check": _accepted_invocation_handle_check,
             "cursor replay after detach": _cursor_replay_after_detach_check,
             "callback journal-before-resume check": _callback_journal_before_resume_check,

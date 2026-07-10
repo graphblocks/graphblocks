@@ -10,7 +10,7 @@ from graphblocks.document_parsers import (
     ParserSelectionLock,
     plain_text_parser_descriptor,
 )
-from graphblocks.documents import ArtifactRef, AssetRevision, SourceAsset
+from graphblocks.documents import ArtifactRef, AssetRevision, ParsedDocument, SourceAsset
 
 
 def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None:
@@ -256,6 +256,110 @@ def test_parser_registry_parse_locked_uses_locked_parser_version() -> None:
 
     assert document.parser == {"processor_id": "plain-text", "version": "1"}
     assert [element.content for element in document.elements] == ["Alpha", "Beta"]
+
+
+def test_parser_registry_falls_back_through_ordered_candidate_chain() -> None:
+    attempts: list[str] = []
+
+    def primary(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+        attempts.append("parser.pdf.primary")
+        raise DocumentParserError("primary quality gate failed")
+
+    def fallback(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+        attempts.append("parser.pdf.fallback")
+        return ParsedDocument(
+            document_id="doc-1",
+            asset_id=asset.asset_id,
+            revision_id=revision.revision_id,
+            parser={"processor_id": "parser.pdf.fallback", "version": "1"},
+        )
+
+    registry = DocumentParserRegistry()
+    registry.register(ParserDescriptor("parser.pdf.primary", "1", parse=primary))
+    registry.register(ParserDescriptor("parser.pdf.fallback", "1", parse=fallback))
+    asset = SourceAsset("asset-1", "file:///tmp/source.pdf", "local", current_revision_id="rev-1")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:content",
+        "2026-07-10T00:00:00Z",
+        ArtifactRef(
+            "artifact-1",
+            "file:///tmp/source.pdf",
+            media_type="application/pdf",
+            checksum="sha256:content",
+            filename="source.pdf",
+        ),
+    )
+
+    result = registry.parse_with_candidates(
+        asset,
+        revision,
+        b"%PDF fixture",
+        (("parser.pdf.primary", "1"), ("parser.pdf.fallback", "1")),
+    )
+
+    assert attempts == ["parser.pdf.primary", "parser.pdf.fallback"]
+    assert result.document.parser == {"processor_id": "parser.pdf.fallback", "version": "1"}
+    assert result.selected_lock.processor_id == "parser.pdf.fallback"
+    assert result.selected_lock.reason == "candidate_fallback"
+    assert [lock.processor_id for lock in result.failed_locks] == ["parser.pdf.primary"]
+    assert result.failed_locks[0].reason == "candidate_primary"
+
+
+def test_parser_registry_candidate_fallback_fails_when_every_candidate_fails() -> None:
+    def fail(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+        raise DocumentParserError("parser failed")
+
+    registry = DocumentParserRegistry()
+    registry.register(ParserDescriptor("parser.pdf.primary", "1", parse=fail))
+    registry.register(ParserDescriptor("parser.pdf.fallback", "1", parse=fail))
+    asset = SourceAsset("asset-1", "file:///tmp/source.pdf", "local", current_revision_id="rev-1")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:content",
+        "2026-07-10T00:00:00Z",
+        ArtifactRef("artifact-1", "file:///tmp/source.pdf", checksum="sha256:content"),
+    )
+
+    with pytest.raises(
+        DocumentParserError,
+        match=(
+            "document parser candidates exhausted after "
+            "parser.pdf.primary@1, parser.pdf.fallback@1"
+        ),
+    ):
+        registry.parse_with_candidates(
+            asset,
+            revision,
+            b"%PDF fixture",
+            (("parser.pdf.primary", "1"), ("parser.pdf.fallback", "1")),
+        )
+
+
+def test_parser_registry_candidate_fallback_rejects_malformed_or_duplicate_candidates() -> None:
+    registry = DocumentParserRegistry()
+    asset = SourceAsset("asset-1", "file:///tmp/source.pdf", "local", current_revision_id="rev-1")
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:content",
+        "2026-07-10T00:00:00Z",
+        ArtifactRef("artifact-1", "file:///tmp/source.pdf"),
+    )
+
+    with pytest.raises(ValueError, match="parser candidate chain must not be empty"):
+        registry.parse_with_candidates(asset, revision, b"", ())
+    with pytest.raises(ValueError, match="parser candidate must contain processor_id and version"):
+        registry.parse_with_candidates(asset, revision, b"", (("parser.pdf.primary",),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="parser candidate chain must not contain duplicates"):
+        registry.parse_with_candidates(
+            asset,
+            revision,
+            b"",
+            (("parser.pdf.primary", "1"), ("parser.pdf.primary", "1")),
+        )
 
 
 def test_parser_registry_rejects_lock_for_different_artifact_checksum() -> None:

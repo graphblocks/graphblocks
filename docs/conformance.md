@@ -93,6 +93,18 @@ alone is not sufficient for a conformance claim or release-candidate gate: every
 required application needs a current passing execution report bound to the
 manifest digest.
 
+The default runner also executes the shipped AI-application semantic gates for
+direct-file analysis, document ingestion, enterprise RAG, and multi-turn chat.
+Those probes use real lineage/chunking, local blob persistence, ordered parser
+fallback, ACL-filtered retrieval, citation/grounding validation, abstention,
+conversation CAS, and draft commit/retraction APIs. The direct-file application
+uses `acceptance/scenarios/direct-file-analysis.yaml`; the prior authority-backed
+advisory design reference did not declare the generated artifact required by the
+gate. Parser candidate fallback records failed locks and the selected fallback
+instead of treating a configured candidate list as execution evidence. Each
+probe also validates the relevant block identities and dataflow edges; ingestion
+declares required ACL propagation through document, chunk, and index stages.
+
 ## Claiming Support
 
 When adding a feature, update or add the narrowest applicable TCK fixture. A

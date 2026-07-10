@@ -2734,6 +2734,21 @@ truth.
   timestamps are excluded from canonical evidence, keeping repeated reports stable without
   expiration-sensitive constants. The gates do not claim that every provider/application block in
   the full coding-agent design graph executes locally.
+- The eight AI-application semantic gates for direct-file analysis, document ingestion,
+  enterprise RAG, and multi-turn chat are now runner-owned executable checks. Direct-file evidence
+  creates local document/chunk/source-span lineage, persists a checksummed Markdown artifact, and
+  binds it into a `ResultBundle`; its acceptance manifest now points to a local scenario that
+  actually declares both required source refs and generated artifact output. Document ingestion
+  uses the new ordered `DocumentParserRegistry.parse_with_candidates` contract, which records
+  failed parser locks and the selected fallback, then proves revision ACL propagation through
+  chunks, a published knowledge index, and authorized versus unauthorized retrieval. RAG gates
+  execute citation, grounding, source-trace, and empty-context abstention behavior. Conversation
+  gates execute expected-revision CAS, invisible drafts, atomic commit, abort retraction, and policy
+  stop retraction. All evidence is scenario-digest-bound and contains stable identities and
+  outcomes rather than temporary filesystem paths. The handlers validate the scenario's relevant
+  block identities and input/output edges before executing their probes, and the ingestion scenario
+  explicitly requires its ACL revision to propagate through document, chunk, and index stages;
+  weakening any of those dataflow contracts fails closed.
 - Conformance claims and release-candidate gates now require current passing acceptance execution
   reports; manifest path/profile coverage alone can no longer satisfy acceptance evidence.
 - Local acceptance scenarios now preserve the upstream design examples while adding the implemented
