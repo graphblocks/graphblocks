@@ -5,19 +5,20 @@ use graphblocks_runtime_core::application_event::{
 };
 use graphblocks_runtime_core::callback_delivery::{
     CallbackAuthoritativeUse, CallbackConfigurationDiagnostic, CallbackDeadLetter,
-    CallbackDeliveryError, CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
-    CallbackDeliveryStatus, CallbackDeliveryTarget, CallbackFailurePolicy, CallbackRetryPolicy,
-    CallbackSubscription, CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState,
-    SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt,
-    WebhookDeliveryTarget, WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError,
-    WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError, WebhookSigningConfig,
+    CallbackDeliveryError, CallbackDeliveryResponse, CallbackDeliveryRunAction,
+    CallbackDeliveryScheduler, CallbackDeliveryStatus, CallbackDeliveryTarget,
+    CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription, CallbackSubscriptionStatus,
+    EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue,
+    WebhookDeliveryAttempt, WebhookDeliveryTarget, WebhookDeliveryWorker, WebhookEgressPolicy,
+    WebhookEndpointError, WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError,
+    WebhookSigningConfig,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn sqlite_callback_dead_letter_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -135,17 +136,25 @@ fn subscription_filter_excludes_terminal_events_when_disabled() {
         ApplicationProtocolEventKind::RunPolicyStopped,
         5,
     );
-    let expired = protocol_event(
-        "event-expired",
-        ApplicationProtocolEventKind::RunExpired,
-        6,
-    );
+    let expired = protocol_event("event-expired", ApplicationProtocolEventKind::RunExpired, 6);
 
     assert!(scheduler.schedule_event(&subscription, &started).is_some());
-    assert!(scheduler.schedule_event(&subscription, &completed).is_none());
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &completed)
+            .is_none()
+    );
     assert!(scheduler.schedule_event(&subscription, &failed).is_none());
-    assert!(scheduler.schedule_event(&subscription, &cancelled).is_none());
-    assert!(scheduler.schedule_event(&subscription, &policy_stopped).is_none());
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &cancelled)
+            .is_none()
+    );
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &policy_stopped)
+            .is_none()
+    );
     assert!(scheduler.schedule_event(&subscription, &expired).is_none());
 }
 
@@ -315,7 +324,11 @@ fn subscription_filter_matches_operation_metadata_without_payload_duplication() 
         .expect("operation metadata should match the subscription");
 
     assert_eq!(delivery.event_id, "event-callback-1");
-    assert!(scheduler.schedule_event(&subscription, &wrong_operation).is_none());
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &wrong_operation)
+            .is_none()
+    );
 }
 
 #[test]
@@ -680,20 +693,26 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
 
     assert_eq!(retry_once.status, CallbackDeliveryStatus::Pending);
     assert_eq!(retry_once.attempt, 2);
-    assert!(retry_once
-        .next_retry_at_unix_ms
-        .is_some_and(|retry_at| { retry_at > 1_100 && retry_at <= 1_200 }));
+    assert!(
+        retry_once
+            .next_retry_at_unix_ms
+            .is_some_and(|retry_at| { retry_at > 1_100 && retry_at <= 1_200 })
+    );
     assert_eq!(retry_twice.status, CallbackDeliveryStatus::Pending);
     assert_eq!(retry_twice.attempt, 3);
-    assert!(retry_twice
-        .next_retry_at_unix_ms
-        .is_some_and(|retry_at| { retry_at > 1_300 && retry_at <= 1_350 }));
+    assert!(
+        retry_twice
+            .next_retry_at_unix_ms
+            .is_some_and(|retry_at| { retry_at > 1_300 && retry_at <= 1_350 })
+    );
     assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
     assert_eq!(dead_lettered.attempt, 3);
-    assert!(dead_lettered
-        .last_error
-        .as_deref()
-        .is_some_and(|error| { error.contains("server_error:503") }));
+    assert!(
+        dead_lettered
+            .last_error
+            .as_deref()
+            .is_some_and(|error| { error.contains("server_error:503") })
+    );
 }
 
 #[test]
@@ -974,9 +993,11 @@ fn dead_letter_rejects_blank_source_delivery_identity_fields() {
 
         assert_eq!(
             CallbackDeadLetter::from_delivery(malformed, 1_001),
-            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
-                field: format!("callback_delivery.{field}"),
-            }),
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                    field: format!("callback_delivery.{field}"),
+                }
+            ),
             "{field} should be required before building a dead-letter"
         );
     }
@@ -1114,12 +1135,16 @@ fn redrive_rejects_empty_operator_or_reason() {
     let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
         .expect("dead-letter record is valid");
 
-    assert!(scheduler
-        .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
-        .is_err());
-    assert!(scheduler
-        .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
-        .is_err());
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
+            .is_err()
+    );
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
+            .is_err()
+    );
 }
 
 #[test]
@@ -1139,24 +1164,16 @@ fn redrive_rejects_zero_or_regressed_timestamp() {
         .expect("dead-letter record is valid");
 
     assert_eq!(
-        scheduler.redrive_dead_letter(
-            &dead_letter,
-            "operator:alice",
-            "receiver recovered",
-            0,
-        ),
-        Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
-            field: "redriven_at_unix_ms".to_owned(),
-        })
+        scheduler.redrive_dead_letter(&dead_letter, "operator:alice", "receiver recovered", 0,),
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: "redriven_at_unix_ms".to_owned(),
+            }
+        )
     );
 
     let error = scheduler
-        .redrive_dead_letter(
-            &dead_letter,
-            "operator:alice",
-            "receiver recovered",
-            1_000,
-        )
+        .redrive_dead_letter(&dead_letter, "operator:alice", "receiver recovered", 1_000)
         .expect_err("redrive timestamp cannot precede dead-letter timestamp");
 
     assert!(matches!(
@@ -1241,9 +1258,11 @@ fn sqlite_callback_dead_letter_store_rejects_blank_identity_fields() {
 
         assert_eq!(
             store.insert_dead_letter(malformed),
-            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
-                field: format!("callback_dead_letter.{field}"),
-            }),
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                    field: format!("callback_dead_letter.{field}"),
+                }
+            ),
             "{field} should be required"
         );
     }
@@ -1271,10 +1290,12 @@ fn sqlite_callback_dead_letter_store_rejects_nonconsecutive_attempt_history() {
 
         assert_eq!(
             store.insert_dead_letter(dead_letter.clone()),
-            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
-                message: "callback dead letter attempt history must be consecutive from 1"
-                    .to_owned(),
-            }),
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
+                    message: "callback dead letter attempt history must be consecutive from 1"
+                        .to_owned(),
+                }
+            ),
             "{malformed_history:?} should be rejected"
         );
     }
@@ -1300,9 +1321,11 @@ fn sqlite_callback_dead_letter_store_rejects_missing_error_reason() {
 
     assert_eq!(
         store.insert_dead_letter(dead_letter),
-        Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
-            message: "callback dead letter has no error reason".to_owned(),
-        })
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
+                message: "callback dead letter has no error reason".to_owned(),
+            }
+        )
     );
 }
 
@@ -1326,9 +1349,11 @@ fn sqlite_callback_dead_letter_store_rejects_blank_error_reason() {
 
     assert_eq!(
         store.insert_dead_letter(dead_letter),
-        Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
-            message: "callback dead letter has no error reason".to_owned(),
-        })
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::Storage {
+                message: "callback dead letter has no error reason".to_owned(),
+            }
+        )
     );
 }
 
@@ -1392,7 +1417,13 @@ fn sqlite_callback_dead_letter_store_rejects_redrive_history_regression() {
         .insert_dead_letter(dead_letter.clone())
         .expect("original dead letter persists");
     let redriven = store
-        .redrive_dead_letter(&scheduler, "del_sub-1_event-1", "operator:alice", "retry", 1_500)
+        .redrive_dead_letter(
+            &scheduler,
+            "del_sub-1_event-1",
+            "operator:alice",
+            "retry",
+            1_500,
+        )
         .expect("redrive updates history");
     assert_eq!(redriven.redrive_count, 1);
 
@@ -1608,6 +1639,247 @@ fn sqlite_callback_delivery_queue_persists_pending_delivery_across_reopen() {
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_claims_due_delivery_once_across_workers() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let path = sqlite_callback_delivery_queue_path("atomic-claim");
+    SqliteCallbackDeliveryQueue::open(&path)
+        .expect("queue opens")
+        .upsert_delivery(delivery)
+        .expect("delivery persists");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut workers = Vec::new();
+    for _ in 0..2 {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("worker queue opens");
+        let barrier = barrier.clone();
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            queue.claim_due_deliveries(2_000, 5_000, 1)
+        }));
+    }
+
+    barrier.wait();
+    let claimed = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("worker joins"))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("workers claim without storage errors");
+
+    assert_eq!(claimed.iter().map(Vec::len).sum::<usize>(), 1);
+    assert_eq!(
+        claimed
+            .iter()
+            .flatten()
+            .next()
+            .expect("one delivery is claimed")
+            .delivery
+            .status,
+        CallbackDeliveryStatus::Delivering
+    );
+}
+
+#[test]
+fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let path = sqlite_callback_delivery_queue_path("claim-generation-fence");
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+    let event = protocol_event(
+        "event-live-claim",
+        ApplicationProtocolEventKind::ReviewRequested,
+        1,
+    );
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue
+        .upsert_delivery(delivery)
+        .expect("pending delivery persists");
+    let claim = queue
+        .claim_due_deliveries(1_000, 1_000, 1)
+        .expect("delivery claims")
+        .into_iter()
+        .next()
+        .expect("one delivery claims");
+    let completed = scheduler.record_response(
+        claim.delivery.clone(),
+        CallbackDeliveryResponse::Success,
+        1_500,
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let recovery_barrier = barrier.clone();
+    let recovery_path = path.clone();
+    let recovery = std::thread::spawn(move || {
+        let queue = SqliteCallbackDeliveryQueue::open(recovery_path).expect("recovery queue opens");
+        recovery_barrier.wait();
+        queue.recover_in_flight_deliveries(1_999)
+    });
+    let completion_barrier = barrier.clone();
+    let completion_path = path.clone();
+    let completion = std::thread::spawn(move || {
+        let queue =
+            SqliteCallbackDeliveryQueue::open(completion_path).expect("completion queue opens");
+        completion_barrier.wait();
+        queue.complete_claimed_delivery(&claim, completed)
+    });
+
+    barrier.wait();
+    assert_eq!(
+        recovery
+            .join()
+            .expect("recovery worker joins")
+            .expect("recovery succeeds"),
+        0,
+        "an unexpired claim belongs to a live worker",
+    );
+    completion
+        .join()
+        .expect("completion worker joins")
+        .expect("live claim completes");
+    assert_eq!(
+        queue
+            .get_delivery("del_sub-1_event-live-claim")
+            .expect("delivery loads")
+            .expect("delivery exists")
+            .status,
+        CallbackDeliveryStatus::Delivered,
+    );
+
+    let event = protocol_event(
+        "event-stale-claim",
+        ApplicationProtocolEventKind::ReviewRequested,
+        2,
+    );
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue
+        .upsert_delivery(delivery)
+        .expect("pending delivery persists");
+    let stale_claim = queue
+        .claim_due_deliveries(3_000, 1_000, 1)
+        .expect("first generation claims")
+        .into_iter()
+        .next()
+        .expect("first generation exists");
+    assert_eq!(
+        queue
+            .recover_in_flight_deliveries(4_000)
+            .expect("expired claim recovers"),
+        1,
+    );
+    let current_claim = queue
+        .claim_due_deliveries(4_000, 1_000, 1)
+        .expect("second generation claims")
+        .into_iter()
+        .next()
+        .expect("second generation exists");
+    assert!(current_claim.claim_generation > stale_claim.claim_generation);
+    let stale_completion = scheduler.record_response(
+        stale_claim.delivery.clone(),
+        CallbackDeliveryResponse::Success,
+        3_500,
+    );
+    assert!(
+        queue
+            .complete_claimed_delivery(&stale_claim, stale_completion)
+            .is_err(),
+        "a recovered generation must be fenced from completion",
+    );
+    let current_completion = scheduler.record_response(
+        current_claim.delivery.clone(),
+        CallbackDeliveryResponse::Success,
+        4_500,
+    );
+    queue
+        .complete_claimed_delivery(&current_claim, current_completion)
+        .expect("current generation completes");
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_rejects_stale_terminal_overwrite() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let pending = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let delivered =
+        scheduler.record_response(pending.clone(), CallbackDeliveryResponse::Success, 2_000);
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(delivered.clone())
+        .expect("terminal delivery persists");
+
+    let error = queue
+        .upsert_delivery(pending)
+        .expect_err("stale pending state must not replace terminal delivery");
+
+    assert!(matches!(
+        error,
+        CallbackDeliveryError::Storage { message }
+            if message.contains("terminal callback delivery state cannot be overwritten")
+    ));
+    assert_eq!(
+        queue
+            .get_delivery(&delivered.delivery_id)
+            .expect("delivery loads"),
+        Some(delivered)
+    );
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_requires_claim_before_state_transition() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let pending = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let retry = scheduler.record_response(
+        pending.clone(),
+        CallbackDeliveryResponse::ServerError(503),
+        2_000,
+    );
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(pending.clone())
+        .expect("pending delivery persists");
+
+    let error = queue
+        .upsert_delivery(retry)
+        .expect_err("worker must claim pending delivery before changing its state");
+
+    assert!(matches!(
+        error,
+        CallbackDeliveryError::Storage { message }
+            if message.contains("callback delivery state transition requires an active claim")
+    ));
+    assert_eq!(
+        queue
+            .get_delivery(&pending.delivery_id)
+            .expect("delivery loads"),
+        Some(pending)
+    );
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_rejects_delivery_row_identity_mismatch_on_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(
@@ -1622,9 +1894,7 @@ fn sqlite_callback_delivery_queue_rejects_delivery_row_identity_mismatch_on_reop
 
     {
         let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
-        queue
-            .upsert_delivery(delivery)
-            .expect("delivery persists");
+        queue.upsert_delivery(delivery).expect("delivery persists");
     }
 
     {
@@ -1834,9 +2104,11 @@ fn sqlite_callback_delivery_queue_rejects_blank_delivery_identity_fields() {
 
         assert_eq!(
             queue.upsert_delivery(malformed),
-            Err(graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
-                field: format!("callback_delivery.{field}"),
-            }),
+            Err(
+                graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                    field: format!("callback_delivery.{field}"),
+                }
+            ),
             "{field} should be required"
         );
     }
@@ -2081,8 +2353,8 @@ fn sqlite_callback_delivery_queue_rejects_redrive_without_audit_fields() {
         .expect("delivery schedules");
     let dead_lettered =
         scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
-    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
-        .expect("dead letter is created");
+    let dead_letter =
+        CallbackDeadLetter::from_delivery(dead_lettered, 1_001).expect("dead letter is created");
     let redriven = scheduler
         .redrive_dead_letter(&dead_letter, "operator:alice", "receiver recovered", 2_000)
         .expect("redrive creates a delivery");
@@ -2119,17 +2391,19 @@ fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_resta
         CallbackFailurePolicy::RetryThenDeadLetter,
     );
     let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
-    let mut delivery = scheduler
+    let delivery = scheduler
         .schedule_event(&subscription, &event)
         .expect("delivery schedules");
-    delivery.status = CallbackDeliveryStatus::Delivering;
     let path = sqlite_callback_delivery_queue_path("recover-in-flight");
 
     {
         let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
         queue
             .upsert_delivery(delivery.clone())
-            .expect("in-flight delivery persists");
+            .expect("pending delivery persists");
+        queue
+            .claim_due_deliveries(1_000, 500, 1)
+            .expect("delivery claims before simulated restart");
     }
 
     let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
@@ -2152,6 +2426,80 @@ fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_resta
 }
 
 #[test]
+fn sqlite_callback_delivery_recovery_does_not_overwrite_concurrent_terminal_updates() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let path = sqlite_callback_delivery_queue_path("recover-terminal-race");
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+    for sequence in 1..=512 {
+        let event = protocol_event(
+            &format!("event-recover-{sequence}"),
+            ApplicationProtocolEventKind::ReviewRequested,
+            sequence,
+        );
+        let delivery = scheduler
+            .schedule_event(&subscription, &event)
+            .expect("delivery schedules");
+        queue
+            .upsert_delivery(delivery)
+            .expect("pending delivery persists");
+    }
+    let claims = queue
+        .claim_due_deliveries(1_000, 1_000, 512)
+        .expect("deliveries claim before simulated worker restart");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let recovery_barrier = barrier.clone();
+    let recovery_path = path.clone();
+    let recovery = std::thread::spawn(move || {
+        let queue = SqliteCallbackDeliveryQueue::open(recovery_path).expect("recovery queue opens");
+        recovery_barrier.wait();
+        queue.recover_in_flight_deliveries(3_000)
+    });
+    let update_barrier = barrier.clone();
+    let update_path = path.clone();
+    let updates = std::thread::spawn(move || {
+        let queue = SqliteCallbackDeliveryQueue::open(update_path).expect("worker queue opens");
+        update_barrier.wait();
+        std::thread::sleep(Duration::from_millis(1));
+        let mut committed = Vec::new();
+        for claim in claims {
+            let mut delivery = claim.delivery.clone();
+            delivery.status = CallbackDeliveryStatus::Delivered;
+            delivery.delivered_at_unix_ms = Some(2_500);
+            if queue
+                .complete_claimed_delivery(&claim, delivery.clone())
+                .is_ok()
+            {
+                committed.push(delivery.delivery_id);
+            }
+        }
+        committed
+    });
+
+    barrier.wait();
+    recovery
+        .join()
+        .expect("recovery worker joins")
+        .expect("recovery succeeds");
+    let committed = updates.join().expect("delivery worker joins");
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    for delivery_id in committed {
+        assert_eq!(
+            queue
+                .get_delivery(&delivery_id)
+                .expect("delivery loads")
+                .expect("delivery exists")
+                .status,
+            CallbackDeliveryStatus::Delivered,
+            "recovery must not overwrite a concurrent terminal commit",
+        );
+    }
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_cancels_pending_subscription_deliveries() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(
@@ -2163,17 +2511,19 @@ fn sqlite_callback_delivery_queue_cancels_pending_subscription_deliveries() {
     let pending = scheduler
         .schedule_event(&subscription, &first)
         .expect("first delivery schedules");
-    let mut in_flight = scheduler
+    let in_flight = scheduler
         .schedule_event(&subscription, &second)
         .expect("second delivery schedules");
-    in_flight.status = CallbackDeliveryStatus::Delivering;
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(in_flight)
+        .expect("second pending delivery persists");
+    queue
+        .claim_due_deliveries(1_000, 5_000, 1)
+        .expect("second delivery claims");
     queue
         .upsert_delivery(pending)
         .expect("pending delivery persists");
-    queue
-        .upsert_delivery(in_flight)
-        .expect("in-flight delivery persists");
 
     let cancelled = queue
         .cancel_pending_for_subscription("sub-1", "subscription_revoked")
@@ -2191,6 +2541,81 @@ fn sqlite_callback_delivery_queue_cancels_pending_subscription_deliveries() {
     assert_eq!(pending.status, CallbackDeliveryStatus::Cancelled);
     assert_eq!(pending.last_error.as_deref(), Some("subscription_revoked"));
     assert_eq!(in_flight.status, CallbackDeliveryStatus::Delivering);
+}
+
+#[test]
+fn sqlite_callback_delivery_cancellation_does_not_overwrite_concurrent_terminal_updates() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let path = sqlite_callback_delivery_queue_path("cancel-terminal-race");
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+    for sequence in 1..=512 {
+        let event = protocol_event(
+            &format!("event-cancel-{sequence}"),
+            ApplicationProtocolEventKind::ReviewRequested,
+            sequence,
+        );
+        let delivery = scheduler
+            .schedule_event(&subscription, &event)
+            .expect("delivery schedules");
+        queue
+            .upsert_delivery(delivery)
+            .expect("pending delivery persists");
+    }
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let cancellation_barrier = barrier.clone();
+    let cancellation_path = path.clone();
+    let cancellation = std::thread::spawn(move || {
+        let queue =
+            SqliteCallbackDeliveryQueue::open(cancellation_path).expect("cancellation queue opens");
+        cancellation_barrier.wait();
+        queue.cancel_pending_for_subscription("sub-1", "subscription_revoked")
+    });
+    let update_barrier = barrier.clone();
+    let update_path = path.clone();
+    let updates = std::thread::spawn(move || {
+        let queue = SqliteCallbackDeliveryQueue::open(update_path).expect("worker queue opens");
+        update_barrier.wait();
+        std::thread::sleep(Duration::from_millis(1));
+        let claimed = queue
+            .claim_due_deliveries(2_000, 5_000, 512)
+            .expect("deliveries claim");
+        let mut committed = Vec::new();
+        for claim in claimed {
+            let mut delivery = claim.delivery.clone();
+            delivery.status = CallbackDeliveryStatus::Delivered;
+            delivery.delivered_at_unix_ms = Some(2_500);
+            if queue
+                .complete_claimed_delivery(&claim, delivery.clone())
+                .is_ok()
+            {
+                committed.push(delivery.delivery_id);
+            }
+        }
+        committed
+    });
+
+    barrier.wait();
+    cancellation
+        .join()
+        .expect("cancellation worker joins")
+        .expect("cancellation succeeds");
+    let committed = updates.join().expect("delivery worker joins");
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    for delivery_id in committed {
+        assert_eq!(
+            queue
+                .get_delivery(&delivery_id)
+                .expect("delivery loads")
+                .expect("delivery exists")
+                .status,
+            CallbackDeliveryStatus::Delivered,
+            "cancellation must not overwrite a concurrent terminal commit",
+        );
+    }
 }
 
 #[test]
@@ -2331,20 +2756,23 @@ fn webhook_delivery_worker_persists_retry_after_server_error() {
     assert_eq!(attempts, 1);
     assert_eq!(stored.status, CallbackDeliveryStatus::Pending);
     assert_eq!(stored.attempt, 2);
-    assert!(stored
-        .next_retry_at_unix_ms
-        .is_some_and(|retry_at| { retry_at > 2_100 && retry_at <= 2_200 }));
+    assert!(
+        stored
+            .next_retry_at_unix_ms
+            .is_some_and(|retry_at| { retry_at > 2_100 && retry_at <= 2_200 })
+    );
     assert_eq!(stored.last_error.as_deref(), Some("server_error:503"));
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "the transport callback must remain unreachable for rejected oversized payloads"
+)]
 fn webhook_delivery_worker_returns_mandatory_terminal_run_actions() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
-    let subscription = subscription(
-        EventFilter::new(),
-        CallbackFailurePolicy::PauseRunOnFailure,
-    );
+    let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::PauseRunOnFailure);
     let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
     let delivery = scheduler
         .schedule_event(&subscription, &event)
@@ -2468,7 +2896,7 @@ fn webhook_http_transport_blocks_delivery_when_dns_resolution_is_unsafe() {
     let response = transport.deliver_with(
         &attempt,
         |_| Ok::<Vec<IpAddr>, ()>(vec![IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))]),
-        |_| {
+        |_, _| {
             sent = true;
             Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse::new(200))
         },
@@ -2476,6 +2904,48 @@ fn webhook_http_transport_blocks_delivery_when_dns_resolution_is_unsafe() {
 
     assert_eq!(response, CallbackDeliveryResponse::ClientError(403));
     assert!(!sent, "unsafe DNS resolution must stop before send");
+}
+
+#[test]
+fn webhook_http_transport_passes_validated_addresses_to_sender() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let signed = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect("delivery signs");
+    let attempt = WebhookDeliveryAttempt {
+        target,
+        delivery,
+        signed,
+    };
+    let transport = WebhookHttpTransport::new(WebhookEgressPolicy::default_deny_internal());
+    let resolved = vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))];
+
+    let response = transport.deliver_with(
+        &attempt,
+        |_| Ok::<Vec<IpAddr>, ()>(resolved.clone()),
+        |_, addresses| {
+            assert_eq!(addresses, resolved.as_slice());
+            Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse::new(200))
+        },
+    );
+
+    assert_eq!(response, CallbackDeliveryResponse::Success);
 }
 
 #[test]
@@ -2511,7 +2981,7 @@ fn webhook_http_transport_retries_when_dns_resolution_returns_no_addresses() {
     let response = transport.deliver_with(
         &attempt,
         |_| Ok::<Vec<IpAddr>, ()>(Vec::new()),
-        |_| {
+        |_, _| {
             sent = true;
             Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse::new(200))
         },
@@ -2571,8 +3041,9 @@ fn webhook_http_transport_maps_receiver_status_codes_to_delivery_responses() {
     ] {
         let response = transport.deliver_with(
             &attempt,
-            |_| Ok::<Vec<IpAddr>, ()>(vec![IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))]),
-            |request| {
+            |_| Ok::<Vec<IpAddr>, ()>(vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]),
+            |request, addresses| {
+                assert_eq!(addresses, [IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]);
                 assert_eq!(request.method, "POST");
                 assert_eq!(request.url, "https://hooks.example.com/graphblocks/events");
                 assert_eq!(
@@ -2799,6 +3270,10 @@ fn webhook_target_rejects_oversized_signed_payload_before_delivery() {
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "the transport callback must remain unreachable for rejected oversized payloads"
+)]
 fn webhook_delivery_worker_persists_oversized_payload_failure() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
@@ -3047,9 +3522,11 @@ fn subscription_replay_respects_limit_and_inactive_subscriptions() {
     assert_eq!(scheduler.schedule_replay(&subscription, &log, 2).len(), 2);
 
     subscription.status = CallbackSubscriptionStatus::Revoked;
-    assert!(scheduler
-        .schedule_replay(&subscription, &log, 10)
-        .is_empty());
+    assert!(
+        scheduler
+            .schedule_replay(&subscription, &log, 10)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -3100,10 +3577,7 @@ fn webhook_target_rejects_reserved_ipv4_destinations_by_default() {
 fn webhook_target_rejects_alternate_numeric_loopback_literals() {
     let policy = WebhookEgressPolicy::default_deny_internal();
 
-    for url in [
-        "http://2130706433/callback",
-        "http://0x7f000001/callback",
-    ] {
+    for url in ["http://2130706433/callback", "http://0x7f000001/callback"] {
         assert_eq!(
             WebhookDeliveryTarget::new(url, &policy),
             Err(WebhookEndpointError::UnsafeEndpoint {
@@ -3159,10 +3633,7 @@ fn webhook_target_rejects_ipv4_compatible_ipv6_internal_literals() {
 fn webhook_target_rejects_ipv6_multicast_destinations_by_default() {
     let policy = WebhookEgressPolicy::default_deny_internal();
 
-    for url in [
-        "https://[ff02::1]/callback",
-        "https://[ff05::2]/callback",
-    ] {
+    for url in ["https://[ff02::1]/callback", "https://[ff05::2]/callback"] {
         assert!(
             matches!(
                 WebhookDeliveryTarget::new(url, &policy),
@@ -3220,7 +3691,7 @@ fn webhook_egress_policy_rejects_public_hostname_resolving_to_internal_addresses
         policy.validate_resolved_addresses(
             &target,
             [
-                IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
                 IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
             ],
         ),
@@ -3236,6 +3707,51 @@ fn webhook_egress_policy_rejects_public_hostname_resolving_to_internal_addresses
             address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
         })
     );
+}
+
+#[test]
+fn webhook_target_rejects_non_global_special_addresses_by_default() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "https://100.64.0.1/callback",
+        "https://198.18.0.1/callback",
+        "https://192.0.2.1/callback",
+        "https://[2001:db8::1]/callback",
+        "https://[64:ff9b:1::1]/callback",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+            ),
+            "{url} should be rejected before delivery",
+        );
+    }
+}
+
+#[test]
+fn webhook_egress_policy_rejects_non_global_special_resolved_addresses() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+
+    for address in [
+        IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
+        IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)),
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)),
+        IpAddr::V6(Ipv6Addr::new(0x0064, 0xff9b, 1, 0, 0, 0, 0, 1)),
+    ] {
+        assert_eq!(
+            policy.validate_resolved_addresses(&target, [address]),
+            Err(WebhookEndpointError::UnsafeResolvedAddress {
+                host: "hooks.example.com".to_owned(),
+                address,
+            })
+        );
+    }
 }
 
 #[test]
@@ -3321,8 +3837,8 @@ fn webhook_egress_policy_allows_safe_resolved_addresses_and_explicit_host_allowl
         .validate_resolved_addresses(
             &target,
             [
-                IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
-                IpAddr::V4(Ipv4Addr::new(198, 51, 100, 8)),
+                IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+                IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
             ],
         )
         .expect("public resolved addresses are allowed");

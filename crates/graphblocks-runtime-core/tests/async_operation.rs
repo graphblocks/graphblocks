@@ -1,3 +1,8 @@
+#![allow(
+    clippy::panic,
+    reason = "seeded concurrency tests include seed and index in unexpected-error panics"
+)]
+
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -3779,6 +3784,157 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
         1
     );
     Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_preserves_concurrent_registers_across_handles() {
+    let path = sqlite_async_operation_path("concurrent-register");
+    SqliteAsyncOperationStore::open(&path).expect("database initializes");
+    let barrier = Arc::new(Barrier::new(17));
+    let mut workers = Vec::new();
+    for index in 0..16 {
+        let store = SqliteAsyncOperationStore::open(&path).expect("worker store opens");
+        let barrier = barrier.clone();
+        workers.push(thread::spawn(move || {
+            let mut operation = waiting_operation();
+            operation.operation_id = format!("op-{index}");
+            operation.idempotency_key = format!("idem-op-{index}");
+            barrier.wait();
+            store.register(operation)
+        }));
+    }
+
+    barrier.wait();
+    for worker in workers {
+        worker
+            .join()
+            .expect("worker joins")
+            .expect("concurrent registration succeeds");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("store reopens");
+    for index in 0..16 {
+        assert_eq!(
+            store.operation_state(&format!("op-{index}")),
+            Some(AsyncOperationState::WaitingCallback),
+            "operation from worker {index} must not be lost",
+        );
+    }
+}
+
+#[test]
+fn sqlite_async_operation_reads_one_coherent_database_snapshot() {
+    let path = sqlite_async_operation_path("coherent-read-snapshot");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("target store opens");
+        store
+            .register(waiting_operation())
+            .expect("anchor operation registers");
+    }
+    {
+        let mut connection = Connection::open(&path).expect("target sqlite connection opens");
+        connection
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")
+            .expect("WAL mode enables concurrent reader and writer");
+        let anchor_json: String = connection
+            .query_row(
+                "SELECT operation_json FROM async_operations WHERE operation_id = ?1",
+                params!["op-1"],
+                |row| row.get(0),
+            )
+            .expect("anchor operation row exists");
+        let mut anchor: serde_json::Value =
+            serde_json::from_str(&anchor_json).expect("anchor operation parses");
+        let transaction = connection.transaction().expect("filler transaction starts");
+        for index in 0..5_000 {
+            let operation_id = format!("op-filler-{index:05}");
+            anchor["operation_id"] = json!(operation_id);
+            anchor["idempotency_key"] = json!(format!("idem-filler-{index:05}"));
+            transaction
+                .execute(
+                    "INSERT INTO async_operations (operation_id, operation_json) VALUES (?1, ?2)",
+                    params![
+                        anchor["operation_id"]
+                            .as_str()
+                            .expect("operation id is a string"),
+                        serde_json::to_string(&anchor).expect("filler operation serializes"),
+                    ],
+                )
+                .expect("filler operation inserts");
+        }
+        transaction.commit().expect("filler transaction commits");
+    }
+
+    let source_path = sqlite_async_operation_path("coherent-read-source");
+    {
+        let store = SqliteAsyncOperationStore::open(&source_path).expect("source store opens");
+        let mut operation = waiting_operation();
+        operation.operation_id = "op-concurrent".to_owned();
+        operation.idempotency_key = "idem-op-concurrent".to_owned();
+        store
+            .register(operation)
+            .expect("source operation registers");
+        let mut submission = valid_submission("cb-concurrent", "idem-cb-concurrent");
+        submission.operation_id = "op-concurrent".to_owned();
+        store
+            .accept_callback(submission, &callback_schema_registry())
+            .expect("source callback commits");
+    }
+    let source = Connection::open(&source_path).expect("source sqlite connection opens");
+    let operation_json: String = source
+        .query_row(
+            "SELECT operation_json FROM async_operations WHERE operation_id = ?1",
+            params!["op-concurrent"],
+            |row| row.get(0),
+        )
+        .expect("concurrent operation row exists");
+    let receipt_json: String = source
+        .query_row(
+            "SELECT receipt_json FROM async_callback_receipts WHERE operation_id = ?1",
+            params!["op-concurrent"],
+            |row| row.get(0),
+        )
+        .expect("concurrent receipt row exists");
+
+    let reader = SqliteAsyncOperationStore::open(&path).expect("reader store opens");
+    let barrier = Arc::new(Barrier::new(3));
+    let reader_barrier = barrier.clone();
+    let read = thread::spawn(move || {
+        reader_barrier.wait();
+        reader.operation_state("op-1")
+    });
+    let writer_barrier = barrier.clone();
+    let writer_path = path.clone();
+    let write = thread::spawn(move || {
+        let mut connection = Connection::open(writer_path).expect("writer connection opens");
+        connection
+            .execute_batch("PRAGMA busy_timeout = 5000;")
+            .expect("writer timeout configures");
+        writer_barrier.wait();
+        thread::sleep(std::time::Duration::from_millis(2));
+        let transaction = connection.transaction().expect("writer transaction starts");
+        transaction
+            .execute(
+                "INSERT INTO async_operations (operation_id, operation_json) VALUES (?1, ?2)",
+                params!["op-concurrent", operation_json],
+            )
+            .expect("concurrent operation inserts");
+        transaction
+            .execute(
+                "INSERT INTO async_callback_receipts (operation_id, idempotency_key, receipt_json) VALUES (?1, ?2, ?3)",
+                params!["op-concurrent", "idem-cb-concurrent", receipt_json],
+            )
+            .expect("concurrent receipt inserts");
+        transaction.commit().expect("writer transaction commits");
+    });
+
+    barrier.wait();
+    write.join().expect("writer joins");
+    assert_eq!(
+        read.join().expect("reader joins"),
+        Some(AsyncOperationState::WaitingCallback),
+        "a read must not combine pre-commit operations with post-commit receipts",
+    );
 }
 
 #[test]

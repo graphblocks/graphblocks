@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::thread;
 use std::time::Duration;
 
 use graphblocks_runtime_core::callback_delivery::WebhookHttpRequest;
 use graphblocksd::{StdWebhookHttpClient, WebhookHttpClient, WebhookHttpClientError};
 use serde_json::json;
+
+const VALIDATED_TEST_ADDRESSES: [IpAddr; 1] = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {
     let mut received = Vec::new();
@@ -38,10 +40,8 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> String {
 #[test]
 fn std_webhook_http_client_posts_canonical_json_and_parses_retry_after() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
-    let url = format!(
-        "http://{}/callbacks/deliveries",
-        listener.local_addr().expect("listener has address")
-    );
+    let listener_address = listener.local_addr().expect("listener has address");
+    let url = format!("http://{}/callbacks/deliveries", listener_address);
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("client connects");
         let request = read_http_request(&mut stream);
@@ -66,10 +66,47 @@ fn std_webhook_http_client_posts_canonical_json_and_parses_retry_after() {
     };
     let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
 
-    let response = client.send(request).expect("request succeeds");
+    let response = client
+        .send(request, &[listener_address.ip()])
+        .expect("request succeeds");
 
     assert_eq!(response.status, 429);
     assert_eq!(response.retry_after_ms, Some(2_000));
+    server.join().expect("server joins");
+}
+
+#[test]
+fn std_webhook_http_client_connects_only_to_validated_address() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let address = listener.local_addr().expect("listener has address");
+    let url = format!(
+        "http://does-not-resolve.invalid:{}/callbacks/deliveries",
+        address.port()
+    );
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("client connects");
+        let request = read_http_request(&mut stream);
+        assert!(request.contains(&format!(
+            "\r\nHost: does-not-resolve.invalid:{}\r\n",
+            address.port()
+        )));
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+            .expect("response writes");
+    });
+    let request = WebhookHttpRequest {
+        url,
+        method: "POST".to_owned(),
+        headers: BTreeMap::new(),
+        body: json!({}),
+    };
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+
+    let response = client
+        .send(request, &[address.ip()])
+        .expect("request uses validated address without resolving the URL host");
+
+    assert_eq!(response.status, 204);
     server.join().expect("server joins");
 }
 
@@ -84,7 +121,7 @@ fn std_webhook_http_client_rejects_unsupported_scheme_before_network_io() {
     let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
 
     assert_eq!(
-        client.send(request),
+        client.send(request, &VALIDATED_TEST_ADDRESSES),
         Err(WebhookHttpClientError::UnsupportedScheme(
             "https".to_owned()
         )),
@@ -107,7 +144,7 @@ fn std_webhook_http_client_rejects_header_injection_before_network_io() {
     let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
 
     assert_eq!(
-        client.send(request),
+        client.send(request, &VALIDATED_TEST_ADDRESSES),
         Err(WebhookHttpClientError::InvalidHeader)
     );
 }
@@ -131,7 +168,7 @@ fn std_webhook_http_client_rejects_malformed_authority_before_network_io() {
         };
 
         assert_eq!(
-            client.send(request),
+            client.send(request, &VALIDATED_TEST_ADDRESSES),
             Err(WebhookHttpClientError::MalformedUrl),
             "{url} should be rejected before connect"
         );
@@ -155,7 +192,7 @@ fn std_webhook_http_client_rejects_malformed_request_target_before_network_io() 
         };
 
         assert_eq!(
-            client.send(request),
+            client.send(request, &VALIDATED_TEST_ADDRESSES),
             Err(WebhookHttpClientError::MalformedUrl),
             "{url:?} should be rejected before connect"
         );

@@ -35,6 +35,9 @@ class FrozenDict(dict[str, Any]):
     def update(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("frozen mapping does not support mutation")
 
+    def __ior__(self, other: object) -> FrozenDict:
+        raise TypeError("frozen mapping does not support mutation")
+
     def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
         return dict(self)
 

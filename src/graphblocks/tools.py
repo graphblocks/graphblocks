@@ -204,6 +204,7 @@ class FrozenJsonDict(dict):
     popitem = __readonly
     setdefault = __readonly
     update = __readonly
+    __ior__ = __readonly
 
 
 class FrozenJsonList(tuple):

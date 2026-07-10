@@ -2631,6 +2631,9 @@ def test_tool_call_arguments_are_immutable_after_digesting() -> None:
         call.arguments["env"]["SAFE"] = "0"  # type: ignore[index]
     with pytest.raises(AttributeError):
         call.arguments["cmd"].append("world")  # type: ignore[index,union-attr]
+    environment = call.arguments["env"]
+    with pytest.raises(TypeError):
+        environment |= {"SAFE": "0"}  # type: ignore[operator]
 
     assert call.arguments_digest == canonical_hash({"cmd": ["echo", "hello"], "env": {"SAFE": "1"}})
 

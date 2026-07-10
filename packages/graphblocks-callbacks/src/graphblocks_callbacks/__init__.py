@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 import hmac
 import json
 import math
+import socket
 from typing import Protocol
+from urllib.parse import urlparse
 
 from graphblocks import ArtifactRef, canonical_dumps, canonical_hash
 from graphblocks.server import ServerCallbackDeliveryResult, ServerCallbackRegistration
@@ -76,6 +78,9 @@ class _FrozenJsonObject(dict[str, object]):
         raise TypeError("frozen JSON object cannot be mutated")
 
     def update(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen JSON object cannot be mutated")
+
+    def __ior__(self, other: object) -> _FrozenJsonObject:
         raise TypeError("frozen JSON object cannot be mutated")
 
 
@@ -1238,6 +1243,7 @@ class CallbackWebhookTransport(Protocol):
         *,
         body: bytes,
         headers: dict[str, str],
+        resolved_addresses: tuple[str, ...],
     ) -> WebhookTransportResponse:
         ...
 
@@ -1247,6 +1253,7 @@ class RegisteredSecretWebhookDispatcher:
     secret_resolver: CallbackSecretResolver
     transport: CallbackWebhookTransport
     delivered_at_factory: Callable[[], str] = _utc_now_iso
+    hostname_resolver: Callable[[str, int], tuple[str, ...]] | None = None
 
     def deliver(
         self,
@@ -1301,6 +1308,46 @@ class RegisteredSecretWebhookDispatcher:
                 encoded_event_id += f"%{byte:02X}"
         delivery_id = f"del_{encoded_subscription_id}_{encoded_event_id}"
         idempotency_key = f"{encoded_subscription_id}:{encoded_event_id}"
+        delivery_url = str(delivery["url"])
+        initial_url_validation = validate_webhook_url(delivery_url)
+        try:
+            parsed_delivery_url = urlparse(delivery_url)
+            delivery_host = initial_url_validation.host
+            delivery_port = parsed_delivery_url.port or (443 if parsed_delivery_url.scheme == "https" else 80)
+            if not initial_url_validation.allowed or delivery_host is None:
+                raise ValueError("unsafe webhook URL")
+            if self.hostname_resolver is None:
+                resolved_addresses = tuple(
+                    dict.fromkeys(
+                        str(address[4][0])
+                        for address in socket.getaddrinfo(
+                            delivery_host,
+                            delivery_port,
+                            type=socket.SOCK_STREAM,
+                        )
+                    )
+                )
+            else:
+                resolved_addresses = self.hostname_resolver(delivery_host, delivery_port)
+            resolved_url_validation = validate_webhook_url(
+                delivery_url,
+                resolved_addresses=resolved_addresses,
+            )
+            if not resolved_url_validation.allowed or not resolved_url_validation.resolved_addresses:
+                raise ValueError("unsafe resolved webhook URL")
+        except Exception:
+            return ServerCallbackDeliveryResult(
+                delivery_id=delivery_id,
+                subscription_id=registration.subscription_id,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                cursor=cursor,
+                attempt=1,
+                idempotency_key=idempotency_key,
+                status="failed",
+                last_error="unsafe_webhook_target",
+            )
         signing = delivery.get("signing")
         if not isinstance(signing, Mapping):
             raise ValueError("webhook delivery signing must be a mapping")
@@ -1397,9 +1444,10 @@ class RegisteredSecretWebhookDispatcher:
         headers["Content-Type"] = "application/json"
         try:
             response = self.transport.post(
-                str(delivery["url"]),
+                delivery_url,
                 body=envelope.canonical_body(),
                 headers=headers,
+                resolved_addresses=resolved_url_validation.resolved_addresses,
             )
         except Exception:
             return ServerCallbackDeliveryResult(

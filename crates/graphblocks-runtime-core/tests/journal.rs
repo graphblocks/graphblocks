@@ -161,8 +161,7 @@ fn sqlite_journal_rejects_invalid_record_metadata_on_replay() -> Result<(), Stri
             .map_err(|error| format!("{error:?}"))?;
     }
     {
-        let connection =
-            rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
+        let connection = rusqlite::Connection::open(&path).map_err(|error| format!("{error:?}"))?;
         connection
             .execute(
                 "UPDATE journal_records SET kind = ?1 WHERE record_id = ?2",

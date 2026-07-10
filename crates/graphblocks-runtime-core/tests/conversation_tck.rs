@@ -5,7 +5,7 @@ use graphblocks_runtime_core::conversation::{
     TurnStatus,
 };
 use graphblocks_runtime_core::documents::ArtifactRef;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value

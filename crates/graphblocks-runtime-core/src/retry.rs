@@ -233,10 +233,22 @@ impl RetryPolicy {
                 }
             }
         }
-        if request.effect.is_some() && request.idempotency_key.is_none() {
-            return RetryDecision::Stop {
-                reason: "missing_idempotency_key",
-            };
+        if request.effect.is_some() {
+            match request.idempotency_key.as_deref() {
+                None => {
+                    return RetryDecision::Stop {
+                        reason: "missing_idempotency_key",
+                    };
+                }
+                Some(idempotency_key)
+                    if idempotency_key.is_empty() || idempotency_key != idempotency_key.trim() =>
+                {
+                    return RetryDecision::Stop {
+                        reason: "invalid_idempotency_key",
+                    };
+                }
+                Some(_) => {}
+            }
         }
 
         let delay_ms = match self.backoff {

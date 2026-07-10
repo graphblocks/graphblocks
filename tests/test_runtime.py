@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from copy import deepcopy
+from decimal import Decimal
 import graphblocks
 import pytest
 
@@ -926,6 +927,48 @@ def test_runtime_ignores_malformed_retry_attempts_without_crashing() -> None:
     ]
 
 
+@pytest.mark.parametrize("idempotency_key", (None, "", " ", " idem-1", {"path": "$input.request_id"}))
+def test_runtime_does_not_retry_state_changes_with_invalid_idempotency_key(
+    idempotency_key: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = {"count": 0}
+    registry = RuntimeRegistry()
+
+    def failing_write(inputs, config, context):
+        attempts["count"] += 1
+        raise RuntimeError("write failed")
+
+    registry.register("test.write@1", failing_write)
+    retry = {"maxAttempts": 2}
+    if idempotency_key is not None:
+        retry["idempotencyKey"] = idempotency_key
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-invalid-idempotency-key-runtime"},
+        "spec": {
+            "nodes": {
+                "write": {
+                    "block": "test.write@1",
+                    "effects": ["external_write"],
+                    "flow": {"retry": retry},
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        "graphblocks.runtime.compile_graph",
+        lambda document: graphblocks.Plan(document, "sha256:test", graphblocks.DiagnosticSet(())),
+    )
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert attempts["count"] == 1
+    assert result.status == "failed"
+    assert "node_retry" not in [record.kind for record in result.journal.records]
+
+
 def test_runtime_updates_supplied_run_store_status() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -1104,6 +1147,15 @@ def test_runtime_can_persist_execution_journal_with_factory(tmp_path) -> None:
         "node_succeeded",
         "run_succeeded",
     ]
+
+
+def test_runtime_journal_preserves_arbitrary_precision_numbers(tmp_path) -> None:
+    journal = SQLiteExecutionJournal(tmp_path / "journal.sqlite3", "run-decimal")
+    journal.append("run_started", {"huge": Decimal("1e400")})
+
+    persisted = SQLiteExecutionJournal(tmp_path / "journal.sqlite3", "run-decimal")
+
+    assert persisted.records[0].payload["huge"] == Decimal("1e400")
 
 
 def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:

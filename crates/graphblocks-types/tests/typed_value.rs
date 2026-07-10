@@ -1,7 +1,7 @@
 use graphblocks_schema::SchemaIdError;
 use graphblocks_types::TypedValue;
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 
 #[test]
 fn typed_value_preserves_schema_id_and_round_trips_json() -> Result<(), Box<dyn std::error::Error>>

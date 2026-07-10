@@ -2474,11 +2474,11 @@ fn required_async_operation_input<'a>(
         ("idempotency_key", "idempotencyKey", "idempotency_key"),
         ("expected_schema", "expectedSchema", "expected_schema"),
     ] {
-        if !operation_object
+        if operation_object
             .get(primary)
             .or_else(|| operation_object.get(alternate))
             .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
+            .is_none_or(|value| value.trim().is_empty())
         {
             return Err(BlockError::new(
                 format!("{block_label}.invalid_operation"),
@@ -2543,14 +2543,14 @@ fn parse_async_external_effects(
                 effect,
                 "effectId",
                 "effect_id",
-                &format!("{block_label}.invalid_config"),
+                format!("{block_label}.invalid_config"),
             )?,
-            required_object_str(effect, "target", &format!("{block_label}.invalid_config"))?,
-            required_object_str(effect, "operation", &format!("{block_label}.invalid_config"))?,
+            required_object_str(effect, "target", format!("{block_label}.invalid_config"))?,
+            required_object_str(effect, "operation", format!("{block_label}.invalid_config"))?,
             parse_tool_effect_outcome(required_object_str(
                 effect,
                 "outcome",
-                &format!("{block_label}.invalid_config"),
+                format!("{block_label}.invalid_config"),
             )?)
             .map_err(|outcome| {
                 BlockError::new(

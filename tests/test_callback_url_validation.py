@@ -86,6 +86,71 @@ def test_webhook_url_validation_can_require_https() -> None:
     assert uppercase.reason == "unsupported_scheme"
 
 
+def test_webhook_url_validation_rejects_private_resolved_hostname_addresses() -> None:
+    result = validate_webhook_url(
+        "https://callbacks.example.com/events",
+        resolved_addresses=("93.184.216.34", "127.0.0.1"),
+    )
+
+    assert result.allowed is False
+    assert result.reason == "forbidden_resolved_ip"
+
+
+@pytest.mark.parametrize(
+    "address",
+    (
+        "100.64.0.1",  # shared address space (CGNAT)
+        "198.18.0.1",  # benchmark network
+        "192.0.2.1",  # documentation network
+        "2001:db8::1",  # IPv6 documentation network
+        "64:ff9b:1::1",  # local-use IPv4/IPv6 translation prefix
+    ),
+)
+def test_webhook_url_validation_rejects_non_global_literal_addresses(address: str) -> None:
+    authority = f"[{address}]" if ":" in address else address
+
+    result = validate_webhook_url(f"https://{authority}/callback")
+
+    assert result.allowed is False
+    assert result.reason == "forbidden_ip"
+
+
+@pytest.mark.parametrize(
+    "address",
+    (
+        "100.64.0.1",
+        "198.18.0.1",
+        "192.0.2.1",
+        "2001:db8::1",
+        "64:ff9b:1::1",
+    ),
+)
+def test_webhook_url_validation_rejects_non_global_resolved_addresses(address: str) -> None:
+    result = validate_webhook_url(
+        "https://callbacks.example.com/events",
+        resolved_addresses=(address,),
+    )
+
+    assert result.allowed is False
+    assert result.reason == "forbidden_resolved_ip"
+
+
+def test_webhook_url_validation_explicit_override_allows_non_global_addresses() -> None:
+    literal = validate_webhook_url(
+        "https://100.64.0.1/callback",
+        allow_private=True,
+    )
+    resolved = validate_webhook_url(
+        "https://callbacks.example.com/events",
+        allow_private=True,
+        resolved_addresses=("100.64.0.1",),
+    )
+
+    assert literal.allowed is True
+    assert resolved.allowed is True
+    assert resolved.resolved_addresses == ("100.64.0.1",)
+
+
 def test_callback_endpoint_ref_uses_shared_authority_validation() -> None:
     for url in (
         "https://hooks example.com/v1/callbacks/op_ci_001",

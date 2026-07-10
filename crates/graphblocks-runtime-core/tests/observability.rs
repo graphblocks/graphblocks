@@ -3,10 +3,9 @@ use graphblocks_runtime_core::observability::{
     DiagnosticBundleRedaction, DiagnosticExcerpt, DiagnosticExcerptKind, GenerationObservation,
     MetricLabelError, MetricLabelSet, ObservabilityEventName, ObservabilityObservation,
     RedactionRule, SpanTiming, TelemetryBuffer, TelemetryBufferError, TelemetryEnqueueOutcome,
-    TelemetryExporterKind, TelemetryExporterReliability, TelemetryExporterRoute,
-    TelemetryExporterRouteError, TelemetryExportOutcome, TelemetryExportOutcomeError,
-    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord,
-    TelemetryRecordKind,
+    TelemetryExportOutcome, TelemetryExportOutcomeError, TelemetryExporterKind,
+    TelemetryExporterReliability, TelemetryExporterRoute, TelemetryExporterRouteError,
+    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
 };
 use serde_json::json;
 

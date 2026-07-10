@@ -844,9 +844,7 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         } else {
             None
         };
-        return numeric_ipv4
-            .map(Ipv4Addr::from)
-            .is_some_and(forbidden_ipv4);
+        return numeric_ipv4.map(Ipv4Addr::from).is_some_and(forbidden_ipv4);
     };
     match address {
         IpAddr::V4(address) => forbidden_ipv4(address),
@@ -1252,12 +1250,18 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 Some(Value::Number(retry)) => retry.as_i64().unwrap_or(1),
                 _ => 1,
             };
-            let idempotency_key = retry.and_then(Value::as_object).and_then(|retry| {
-                retry
-                    .get("idempotencyKey")
-                    .or_else(|| retry.get("idempotency_key"))
-            });
-            if effect_retry_requires_key && max_attempts > 1 && idempotency_key.is_none() {
+            let has_valid_idempotency_key = retry
+                .and_then(Value::as_object)
+                .and_then(|retry| {
+                    retry
+                        .get("idempotencyKey")
+                        .or_else(|| retry.get("idempotency_key"))
+                })
+                .and_then(Value::as_str)
+                .is_some_and(|idempotency_key| {
+                    !idempotency_key.is_empty() && idempotency_key == idempotency_key.trim()
+                });
+            if effect_retry_requires_key && max_attempts > 1 && !has_valid_idempotency_key {
                 diagnostics.push(Diagnostic::error(
                     "GB1011",
                     "retrying effectful nodes requires an idempotency key",

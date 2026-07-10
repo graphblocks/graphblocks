@@ -134,6 +134,9 @@ def test_callback_envelope_freezes_internal_payload_snapshot() -> None:
         envelope.payload["summary"]["files"] = ["mutated"]  # type: ignore[index]
     with pytest.raises(AttributeError):
         envelope.payload["summary"]["files"].append("mutated")  # type: ignore[index, union-attr]
+    summary = envelope.payload["summary"]
+    with pytest.raises(TypeError):
+        summary |= {"files": ["mutated"]}  # type: ignore[operator]
     assert envelope.to_payload()["payload"] == {"summary": {"files": ["a.py"]}}
 
 

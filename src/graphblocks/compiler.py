@@ -800,7 +800,12 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         elif isinstance(retry, int) and not isinstance(retry, bool):
             max_attempts = retry
         effect_retry_requires_key = bool(effect_set & STATE_CHANGING_TOOL_EFFECTS)
-        if effect_retry_requires_key and max_attempts > 1 and not idempotency_key:
+        valid_idempotency_key = (
+            isinstance(idempotency_key, str)
+            and bool(idempotency_key.strip())
+            and idempotency_key == idempotency_key.strip()
+        )
+        if effect_retry_requires_key and max_attempts > 1 and not valid_idempotency_key:
             diagnostics.append(
                 Diagnostic(
                     "GB1011",

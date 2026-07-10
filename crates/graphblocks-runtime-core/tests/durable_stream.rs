@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::durable_stream::{
-    CheckpointBarrier, DeliveryGuarantee, DurableStreamError, SourceCursor, SourceRecord,
-    StreamWatermark, SinkCommitError, SinkCommitLog, SinkCommitRecord,
+    CheckpointBarrier, DeliveryGuarantee, DurableStreamError, SinkCommitError, SinkCommitLog,
+    SinkCommitRecord, SourceCursor, SourceRecord, StreamWatermark,
 };
 use serde_json::json;
 
@@ -101,8 +101,8 @@ fn checkpoint_barrier_rejects_zero_schema_version() {
 
 #[test]
 fn sink_commit_log_is_idempotent_and_rejects_mutated_replay() {
-    let log = SinkCommitLog::new("warehouse", DeliveryGuarantee::AtLeastOnce)
-        .expect("sink log is valid");
+    let log =
+        SinkCommitLog::new("warehouse", DeliveryGuarantee::AtLeastOnce).expect("sink log is valid");
     let record = SinkCommitRecord::new(
         "commit-1",
         "warehouse",
@@ -150,8 +150,6 @@ fn sink_commit_record_rejects_non_object_metadata() {
             "orders:partition-0:12",
             json!("committed"),
         ),
-        Err(SinkCommitError::InvalidMetadata {
-            field: "metadata",
-        })
+        Err(SinkCommitError::InvalidMetadata { field: "metadata" })
     );
 }

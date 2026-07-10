@@ -50,7 +50,12 @@ def test_budget_package_exposes_reservation_settlement_and_permit_contract(monke
         policy_snapshot_digest="sha256:policy",
         expires_at="2026-06-23T00:00:00Z",
     )
-    settlement = ledger.commit_with_permit(permit.permit_id, reservation.reservation_id, [actual])
+    settlement = ledger.commit_with_permit(
+        permit.permit_id,
+        reservation.reservation_id,
+        [actual],
+        now="2026-06-22T00:30:00Z",
+    )
 
     assert reservation.status == "reserved"
     assert permit.allows([actual])

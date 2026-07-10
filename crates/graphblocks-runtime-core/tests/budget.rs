@@ -89,11 +89,13 @@ fn budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), BudgetE
         "2026-06-22T01:00:00Z",
         Vec::new(),
     )?;
-    assert!(!BudgetPermit {
-        authorized_amounts: vec![invalid_key.clone()],
-        ..permit
-    }
-    .allows([tokens(1)]));
+    assert!(
+        !BudgetPermit {
+            authorized_amounts: vec![invalid_key.clone()],
+            ..permit
+        }
+        .allows([tokens(1)])
+    );
     assert_eq!(
         ledger.issue_permit(
             "permit-invalid",
@@ -207,7 +209,8 @@ fn sqlite_budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), 
 }
 
 #[test]
-fn budget_ledger_rejects_invalid_permit_authority_and_completion_spenders() -> Result<(), BudgetError> {
+fn budget_ledger_rejects_invalid_permit_authority_and_completion_spenders()
+-> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
     let reservation = ledger.reserve(
@@ -301,7 +304,8 @@ fn budget_ledger_rejects_invalid_permit_authority_and_completion_spenders() -> R
 }
 
 #[test]
-fn sqlite_budget_ledger_rejects_invalid_permit_authority_and_completion_spenders() -> Result<(), BudgetError> {
+fn sqlite_budget_ledger_rejects_invalid_permit_authority_and_completion_spenders()
+-> Result<(), BudgetError> {
     let mut ledger = SqliteBudgetLedger::open_in_memory()?;
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
     let reservation = ledger.reserve(
@@ -861,8 +865,7 @@ fn sqlite_budget_ledger_permit_survives_reopen() -> Result<(), BudgetError> {
 }
 
 #[test]
-fn sqlite_budget_ledger_rejects_invalid_permit_metadata_on_reopen()
--> Result<(), BudgetError> {
+fn sqlite_budget_ledger_rejects_invalid_permit_metadata_on_reopen() -> Result<(), BudgetError> {
     let path = sqlite_budget_path("permit-invalid-reopen");
     let reservation_id;
 

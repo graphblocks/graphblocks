@@ -1792,7 +1792,8 @@ impl WorkerDrainPlan {
         affinity_key: impl Into<String>,
         worker_id: impl Into<String>,
     ) -> Self {
-        self.affinities.insert(affinity_key.into(), worker_id.into());
+        self.affinities
+            .insert(affinity_key.into(), worker_id.into());
         self
     }
 

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use graphblocks_compiler::canonical::canonical_hash;
 use hmac::{Hmac, Mac};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
@@ -192,6 +192,7 @@ impl AsyncOperationConfigurationDiagnostic {
 }
 
 impl AsyncOperation {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         operation_id: impl Into<String>,
         run_id: impl Into<String>,
@@ -487,6 +488,7 @@ pub struct AsyncCallbackSubmission {
 }
 
 impl AsyncCallbackSubmission {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         callback_id: impl Into<String>,
         operation_id: impl Into<String>,
@@ -2690,6 +2692,7 @@ impl SqliteAsyncOperationStore {
         connection
             .execute_batch(
                 "
+                PRAGMA busy_timeout = 5000;
                 CREATE TABLE IF NOT EXISTS async_operations (
                     operation_id TEXT PRIMARY KEY,
                     operation_json TEXT NOT NULL
@@ -2721,9 +2724,11 @@ impl SqliteAsyncOperationStore {
     }
 
     pub fn register(&self, operation: AsyncOperation) -> Result<(), AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        memory.register(operation)?;
-        self.replace_with_memory_store(&memory)
+        self.mutate_memory_store(|memory| {
+            let result = memory.register(operation);
+            let persist = result.is_ok();
+            (result, persist)
+        })
     }
 
     pub fn accept_callback(
@@ -2773,19 +2778,13 @@ impl SqliteAsyncOperationStore {
         limits: AsyncCallbackIngestionLimits,
         artifact: CallbackArtifactRef,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        let accepted = memory
-            .accept_callback_with_artifact_on_payload_limit(submission, registry, limits, artifact);
-        match &accepted {
-            Ok(accepted) if !accepted.duplicate => {
-                self.replace_with_memory_store(&memory)?;
-            }
-            Err(_) => {
-                self.replace_with_memory_store(&memory)?;
-            }
-            _ => {}
-        }
-        accepted
+        self.mutate_memory_store(|memory| {
+            let accepted = memory.accept_callback_with_artifact_on_payload_limit(
+                submission, registry, limits, artifact,
+            );
+            let persist = !matches!(&accepted, Ok(accepted) if accepted.duplicate);
+            (accepted, persist)
+        })
     }
 
     pub fn quarantine_callback_before_operation_commit(
@@ -2793,19 +2792,12 @@ impl SqliteAsyncOperationStore {
         submission: AsyncCallbackSubmission,
         expires_at_unix_ms: u64,
     ) -> Result<QuarantinedCallback, AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        let quarantined =
-            memory.quarantine_callback_before_operation_commit(submission, expires_at_unix_ms);
-        match &quarantined {
-            Ok(callback) if !callback.duplicate => {
-                self.replace_with_memory_store(&memory)?;
-            }
-            Err(_) => {
-                self.replace_with_memory_store(&memory)?;
-            }
-            _ => {}
-        }
-        quarantined
+        self.mutate_memory_store(|memory| {
+            let quarantined =
+                memory.quarantine_callback_before_operation_commit(submission, expires_at_unix_ms);
+            let persist = !matches!(&quarantined, Ok(callback) if callback.duplicate);
+            (quarantined, persist)
+        })
     }
 
     pub fn quarantined_callback_count(&self, operation_id: &str) -> usize {
@@ -2819,17 +2811,10 @@ impl SqliteAsyncOperationStore {
         operation_id: &str,
         registry: &ToolSchemaRegistry,
     ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        let accepted = memory.accept_quarantined_callbacks(operation_id, registry);
-        match &accepted {
-            Ok(_) => {
-                self.replace_with_memory_store(&memory)?;
-            }
-            Err(_) => {
-                self.replace_with_memory_store(&memory)?;
-            }
-        }
-        accepted
+        self.mutate_memory_store(|memory| {
+            let accepted = memory.accept_quarantined_callbacks(operation_id, registry);
+            (accepted, true)
+        })
     }
 
     fn accept_callback_with_limits_and_resume_decision(
@@ -2839,27 +2824,16 @@ impl SqliteAsyncOperationStore {
         limits: AsyncCallbackIngestionLimits,
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
-        let memory = Self::load_memory_store_from_connection(&connection)?;
-        let accepted = memory.accept_callback_with_limits_and_resume_decision(
-            submission,
-            registry,
-            limits,
-            resume_decision,
-        );
-        match &accepted {
-            Ok(accepted) if !accepted.duplicate => {
-                Self::replace_with_memory_store_on_connection(&mut connection, &memory)?;
-            }
-            Err(_) => {
-                Self::replace_with_memory_store_on_connection(&mut connection, &memory)?;
-            }
-            _ => {}
-        }
-        accepted
+        self.mutate_memory_store(|memory| {
+            let accepted = memory.accept_callback_with_limits_and_resume_decision(
+                submission,
+                registry,
+                limits,
+                resume_decision,
+            );
+            let persist = !matches!(&accepted, Ok(accepted) if accepted.duplicate);
+            (accepted, persist)
+        })
     }
 
     pub fn cancel_operation(
@@ -2867,9 +2841,11 @@ impl SqliteAsyncOperationStore {
         operation_id: &str,
         cancelled_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        memory.cancel_operation(operation_id, cancelled_at_unix_ms)?;
-        self.replace_with_memory_store(&memory)
+        self.mutate_memory_store(|memory| {
+            let result = memory.cancel_operation(operation_id, cancelled_at_unix_ms);
+            let persist = result.is_ok();
+            (result, persist)
+        })
     }
 
     pub fn expire_operation(
@@ -2877,9 +2853,11 @@ impl SqliteAsyncOperationStore {
         operation_id: &str,
         expired_at_unix_ms: u64,
     ) -> Result<(), AsyncOperationError> {
-        let memory = self.load_memory_store()?;
-        memory.expire_operation(operation_id, expired_at_unix_ms)?;
-        self.replace_with_memory_store(&memory)
+        self.mutate_memory_store(|memory| {
+            let result = memory.expire_operation(operation_id, expired_at_unix_ms);
+            let persist = result.is_ok();
+            (result, persist)
+        })
     }
 
     pub fn events_for_operation(&self, operation_id: &str) -> Vec<AsyncOperationEvent> {
@@ -2895,11 +2873,131 @@ impl SqliteAsyncOperationStore {
     }
 
     fn load_memory_store(&self) -> Result<AsyncOperationStore, AsyncOperationError> {
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite async operation store lock poisoned");
-        Self::load_memory_store_from_connection(&connection)
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(storage_error)?;
+        let memory = Self::load_memory_store_from_connection(&transaction)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(memory)
+    }
+
+    fn mutate_memory_store<T>(
+        &self,
+        mutation: impl FnOnce(&AsyncOperationStore) -> (Result<T, AsyncOperationError>, bool),
+    ) -> Result<T, AsyncOperationError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let memory = Self::load_memory_store_from_connection(&transaction)?;
+        let (result, persist) = mutation(&memory);
+        if persist {
+            transaction
+                .execute("DELETE FROM async_operation_events", [])
+                .map_err(storage_error)?;
+            transaction
+                .execute("DELETE FROM async_callback_quarantine", [])
+                .map_err(storage_error)?;
+            transaction
+                .execute("DELETE FROM async_callback_receipts", [])
+                .map_err(storage_error)?;
+            transaction
+                .execute("DELETE FROM async_operations", [])
+                .map_err(storage_error)?;
+
+            let inner = memory
+                .inner
+                .lock()
+                .expect("async operation store lock poisoned");
+            for operation in inner.operations.values() {
+                transaction
+                    .execute(
+                        "
+                        INSERT INTO async_operations (operation_id, operation_json)
+                        VALUES (?, ?)
+                        ",
+                        params![
+                            &operation.operation_id,
+                            storage_json(&operation_to_value(operation))?,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+            }
+            for receipt in inner.receipts_by_operation_and_idempotency.values() {
+                transaction
+                    .execute(
+                        "
+                        INSERT INTO async_callback_receipts (
+                            idempotency_key,
+                            operation_id,
+                            receipt_json
+                        )
+                        VALUES (?, ?, ?)
+                        ",
+                        params![
+                            &receipt.idempotency_key,
+                            &receipt.operation_id,
+                            storage_json(&receipt_to_value(receipt))?,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+            }
+            for record in inner.quarantined_callbacks.values() {
+                transaction
+                    .execute(
+                        "
+                        INSERT INTO async_callback_quarantine (
+                            operation_id,
+                            idempotency_key,
+                            submission_json,
+                            expires_at_unix_ms
+                        )
+                        VALUES (?, ?, ?, ?)
+                        ",
+                        params![
+                            &record.submission.operation_id,
+                            &record.submission.idempotency_key,
+                            storage_json(&callback_submission_to_value(&record.submission))?,
+                            u64_to_i64(
+                                record.expires_at_unix_ms,
+                                "quarantined callback expiration",
+                            )?,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+            }
+            for (operation_id, events) in &inner.events_by_operation {
+                for (index, event) in events.iter().enumerate() {
+                    transaction
+                        .execute(
+                            "
+                            INSERT INTO async_operation_events (
+                                operation_id,
+                                event_index,
+                                event_json
+                            )
+                            VALUES (?, ?, ?)
+                            ",
+                            params![
+                                operation_id,
+                                sqlite_usize_to_i64(index, "async operation event index")?,
+                                storage_json(&event_to_value(event))?,
+                            ],
+                        )
+                        .map_err(storage_error)?;
+                }
+            }
+            drop(inner);
+        }
+        transaction.commit().map_err(storage_error)?;
+        result
     }
 
     fn load_memory_store_from_connection(
@@ -3098,119 +3196,6 @@ impl SqliteAsyncOperationStore {
         }
         drop(inner);
         Ok(store)
-    }
-
-    fn replace_with_memory_store(
-        &self,
-        store: &AsyncOperationStore,
-    ) -> Result<(), AsyncOperationError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("sqlite async operation store lock poisoned");
-        Self::replace_with_memory_store_on_connection(&mut connection, store)
-    }
-
-    fn replace_with_memory_store_on_connection(
-        connection: &mut Connection,
-        store: &AsyncOperationStore,
-    ) -> Result<(), AsyncOperationError> {
-        let transaction = connection.transaction().map_err(storage_error)?;
-        transaction
-            .execute("DELETE FROM async_operation_events", [])
-            .map_err(storage_error)?;
-        transaction
-            .execute("DELETE FROM async_callback_quarantine", [])
-            .map_err(storage_error)?;
-        transaction
-            .execute("DELETE FROM async_callback_receipts", [])
-            .map_err(storage_error)?;
-        transaction
-            .execute("DELETE FROM async_operations", [])
-            .map_err(storage_error)?;
-
-        let inner = store
-            .inner
-            .lock()
-            .expect("async operation store lock poisoned");
-        for operation in inner.operations.values() {
-            transaction
-                .execute(
-                    "
-                    INSERT INTO async_operations (operation_id, operation_json)
-                    VALUES (?, ?)
-                    ",
-                    params![
-                        &operation.operation_id,
-                        storage_json(&operation_to_value(operation))?,
-                    ],
-                )
-                .map_err(storage_error)?;
-        }
-        for receipt in inner.receipts_by_operation_and_idempotency.values() {
-            transaction
-                .execute(
-                    "
-                    INSERT INTO async_callback_receipts (
-                        idempotency_key,
-                        operation_id,
-                        receipt_json
-                    )
-                    VALUES (?, ?, ?)
-                    ",
-                    params![
-                        &receipt.idempotency_key,
-                        &receipt.operation_id,
-                        storage_json(&receipt_to_value(receipt))?,
-                    ],
-                )
-                .map_err(storage_error)?;
-        }
-        for record in inner.quarantined_callbacks.values() {
-            transaction
-                .execute(
-                    "
-                    INSERT INTO async_callback_quarantine (
-                        operation_id,
-                        idempotency_key,
-                        submission_json,
-                        expires_at_unix_ms
-                    )
-                    VALUES (?, ?, ?, ?)
-                    ",
-                    params![
-                        &record.submission.operation_id,
-                        &record.submission.idempotency_key,
-                        storage_json(&callback_submission_to_value(&record.submission))?,
-                        u64_to_i64(record.expires_at_unix_ms, "quarantined callback expiration",)?,
-                    ],
-                )
-                .map_err(storage_error)?;
-        }
-        for (operation_id, events) in &inner.events_by_operation {
-            for (index, event) in events.iter().enumerate() {
-                transaction
-                    .execute(
-                        "
-                        INSERT INTO async_operation_events (
-                            operation_id,
-                            event_index,
-                            event_json
-                        )
-                        VALUES (?, ?, ?)
-                        ",
-                        params![
-                            operation_id,
-                            sqlite_usize_to_i64(index, "async operation event index")?,
-                            storage_json(&event_to_value(event))?,
-                        ],
-                    )
-                    .map_err(storage_error)?;
-            }
-        }
-        drop(inner);
-        transaction.commit().map_err(storage_error)?;
-        Ok(())
     }
 }
 

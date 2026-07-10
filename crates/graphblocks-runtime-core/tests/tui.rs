@@ -129,7 +129,9 @@ fn tui_view_records_cursor_expiry_without_losing_status_context() {
     assert_eq!(view.last_sequence(), Some(30));
     assert_eq!(view.active_operations(), ["op-ci-2"]);
     assert_eq!(
-        view.cursor_expired().unwrap().requested_cursor,
+        view.cursor_expired()
+            .expect("cursor-expired replay must populate projection")
+            .requested_cursor,
         "cursor-old"
     );
     assert_eq!(view.rows().len(), 0);

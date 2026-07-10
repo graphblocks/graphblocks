@@ -378,6 +378,9 @@ class _FrozenPayloadMapping(dict[str, object]):
     def update(self, *args: object, **kwargs: object) -> None:
         raise TypeError("frozen payload mapping cannot be mutated")
 
+    def __ior__(self, other: object) -> _FrozenPayloadMapping:
+        raise TypeError("frozen payload mapping cannot be mutated")
+
 
 class _FrozenPayloadList(list[object]):
     def __setitem__(self, index: object, value: object) -> None:

@@ -198,7 +198,11 @@ impl ResourceRef {
 
     pub fn validate(&self) -> Result<(), PolicyValidationError> {
         validate_non_empty_field("resource", "resource_id", &self.resource_id)?;
-        validate_optional_non_empty_field("resource", "resource_kind", self.resource_kind.as_ref())?;
+        validate_optional_non_empty_field(
+            "resource",
+            "resource_kind",
+            self.resource_kind.as_ref(),
+        )?;
         validate_optional_non_empty_field("resource", "tenant_id", self.tenant_id.as_ref())?;
         validate_mapping_keys("resource", "attributes", &self.attributes)?;
         Ok(())
@@ -292,7 +296,11 @@ impl PolicyObligation {
 
     pub fn validate(&self) -> Result<(), PolicyValidationError> {
         validate_non_empty_field("policy obligation", "obligation_id", &self.obligation_id)?;
-        validate_non_empty_field("policy obligation", "obligation_type", &self.obligation_type)?;
+        validate_non_empty_field(
+            "policy obligation",
+            "obligation_type",
+            &self.obligation_type,
+        )?;
         validate_mapping_keys("policy obligation", "parameters", &self.parameters)?;
         Ok(())
     }
@@ -360,9 +368,7 @@ impl PolicyRule {
         validate_non_empty_field("policy rule", "rule_id", &self.rule_id)?;
         validate_string_collection("policy rule", "actions", &self.actions)?;
         if self.actions.is_empty() {
-            return Err(PolicyValidationError::EmptyPolicyRuleCollection {
-                field: "actions",
-            });
+            return Err(PolicyValidationError::EmptyPolicyRuleCollection { field: "actions" });
         }
         validate_string_collection(
             "policy rule",
@@ -486,7 +492,11 @@ impl PolicyBundle {
             "obligation_schema_versions",
             &self.obligation_schema_versions,
         )?;
-        if self.default_fail_modes.keys().any(|key| key.trim().is_empty()) {
+        if self
+            .default_fail_modes
+            .keys()
+            .any(|key| key.trim().is_empty())
+        {
             return Err(PolicyValidationError::EmptyMappingKey {
                 owner: "policy bundle",
                 field: "default_fail_modes",
@@ -823,7 +833,11 @@ impl PolicyRequest {
         if let Some(tenant) = &self.tenant {
             tenant.validate()?;
         }
-        validate_optional_non_empty_field("policy request", "release_id", self.release_id.as_ref())?;
+        validate_optional_non_empty_field(
+            "policy request",
+            "release_id",
+            self.release_id.as_ref(),
+        )?;
         validate_optional_non_empty_field(
             "policy request",
             "deployment_revision_id",

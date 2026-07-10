@@ -2,10 +2,10 @@ use graphblocks_runtime_core::document_parsers::{
     DocumentParserError, DocumentParserRegistry, ParserDescriptor, plain_text_parser_descriptor,
 };
 use graphblocks_runtime_core::documents::{
-    chunk_document_by_lines, create_local_text_revision, parse_plain_text_document, ArtifactRef,
-    DocumentError,
+    ArtifactRef, DocumentError, chunk_document_by_lines, create_local_text_revision,
+    parse_plain_text_document,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value

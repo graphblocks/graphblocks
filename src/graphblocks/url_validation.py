@@ -13,6 +13,7 @@ class WebhookUrlValidation:
     allowed: bool
     reason: str
     host: str | None = None
+    resolved_addresses: tuple[str, ...] = ()
 
 
 def validate_webhook_url(
@@ -20,9 +21,16 @@ def validate_webhook_url(
     *,
     allowed_schemes: frozenset[str] = frozenset({"http", "https"}),
     allow_private: bool = False,
+    resolved_addresses: tuple[str, ...] | None = None,
 ) -> WebhookUrlValidation:
     if not isinstance(allow_private, bool):
         raise ValueError("allow_private must be a boolean")
+    if resolved_addresses is not None and (
+        not isinstance(resolved_addresses, tuple)
+        or not resolved_addresses
+        or any(not isinstance(item, str) or not item for item in resolved_addresses)
+    ):
+        raise ValueError("resolved_addresses must be a non-empty tuple of IP address strings")
     if not allowed_schemes or any(
         not isinstance(scheme, str) or not scheme or scheme != scheme.lower()
         for scheme in allowed_schemes
@@ -166,7 +174,8 @@ def validate_webhook_url(
         if host in FORBIDDEN_WEBHOOK_HOSTS or host.endswith(".localhost"):
             return WebhookUrlValidation(False, "forbidden_host", host)
         if address is not None and (
-            address.is_loopback
+            not address.is_global
+            or address.is_loopback
             or address.is_private
             or address.is_link_local
             or address.is_reserved
@@ -175,4 +184,29 @@ def validate_webhook_url(
         ):
             return WebhookUrlValidation(False, "forbidden_ip", host)
 
-    return WebhookUrlValidation(True, "allowed", host)
+    normalized_resolved_addresses: list[str] = []
+    for resolved_address in resolved_addresses or ():
+        try:
+            parsed_resolved_address = ipaddress.ip_address(resolved_address)
+        except ValueError:
+            return WebhookUrlValidation(False, "invalid_resolved_ip", host)
+        normalized_address = str(parsed_resolved_address)
+        if normalized_address not in normalized_resolved_addresses:
+            normalized_resolved_addresses.append(normalized_address)
+        if not allow_private and (
+            not parsed_resolved_address.is_global
+            or parsed_resolved_address.is_loopback
+            or parsed_resolved_address.is_private
+            or parsed_resolved_address.is_link_local
+            or parsed_resolved_address.is_reserved
+            or parsed_resolved_address.is_multicast
+            or parsed_resolved_address.is_unspecified
+        ):
+            return WebhookUrlValidation(
+                False,
+                "forbidden_resolved_ip",
+                host,
+                tuple(normalized_resolved_addresses),
+            )
+
+    return WebhookUrlValidation(True, "allowed", host, tuple(normalized_resolved_addresses))

@@ -185,7 +185,9 @@ pub enum MetricLabelError {
 impl fmt::Display for MetricLabelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyLabel { field } => write!(formatter, "{field} must not contain empty labels"),
+            Self::EmptyLabel { field } => {
+                write!(formatter, "{field} must not contain empty labels")
+            }
             Self::ForbiddenLabels { labels } => {
                 write!(
                     formatter,
@@ -554,7 +556,10 @@ impl TelemetryExportOutcome {
         if record_ids.is_empty() {
             return Err(TelemetryExportOutcomeError::MissingRecordIds);
         }
-        if record_ids.iter().any(|record_id| record_id.trim().is_empty()) {
+        if record_ids
+            .iter()
+            .any(|record_id| record_id.trim().is_empty())
+        {
             return Err(TelemetryExportOutcomeError::EmptyRecordId);
         }
         let run_impact = run_impact.into();

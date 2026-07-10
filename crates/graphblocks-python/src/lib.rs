@@ -1786,6 +1786,10 @@ fn record_tool_effect_precondition_json(
     idempotency_key=None,
     policy_decision_id=None
 ))]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the Python audit facade exposes the complete event contract as keyword arguments"
+)]
 fn record_tool_effect_audit_event_json(
     event_id: &str,
     occurred_at: &str,
@@ -8011,8 +8015,8 @@ fn evaluate_sequential_tool_queue_json(
             Ok(planned_call)
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let mut queue = SequentialToolQueue::new(plan_id, response_id, planned_calls)
-        .map_err(|error| queue_error_to_py(error))?;
+    let mut queue =
+        SequentialToolQueue::new(plan_id, response_id, planned_calls).map_err(queue_error_to_py)?;
     if let Some(failure_policy) =
         optional_nullable_alias_string(queue_object, "failurePolicy", "failure_policy", "queue")?
     {

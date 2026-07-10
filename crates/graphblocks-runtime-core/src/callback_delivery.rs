@@ -8,7 +8,7 @@ use crate::application_event::{
     ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
@@ -466,6 +466,7 @@ pub struct CallbackSubscription {
 }
 
 impl CallbackSubscription {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         subscription_id: impl Into<String>,
         owner: impl Into<String>,
@@ -488,6 +489,7 @@ impl CallbackSubscription {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_target(
         subscription_id: impl Into<String>,
         owner: impl Into<String>,
@@ -545,12 +547,12 @@ impl CallbackSubscription {
                 field: "created_at_unix_ms".to_owned(),
             });
         }
-        if let CallbackDeliveryTarget::Webhook { url } = &self.delivery_target {
-            if url.trim().is_empty() {
-                return Err(CallbackDeliveryError::EmptyField {
-                    field: "url".to_owned(),
-                });
-            }
+        if let CallbackDeliveryTarget::Webhook { url } = &self.delivery_target
+            && url.trim().is_empty()
+        {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "url".to_owned(),
+            });
         }
         if self
             .replay_from_cursor
@@ -695,6 +697,13 @@ pub struct CallbackDelivery {
     pub redrive_count: u32,
     pub last_redrive_operator: Option<String>,
     pub last_redrive_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimedCallbackDelivery {
+    pub delivery: CallbackDelivery,
+    pub claim_generation: u64,
+    pub claim_expires_at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -931,16 +940,66 @@ impl SqliteCallbackDeliveryQueue {
         connection
             .execute_batch(
                 "
+                PRAGMA busy_timeout = 5000;
                 CREATE TABLE IF NOT EXISTS callback_deliveries (
                     delivery_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
                     next_retry_at_unix_ms INTEGER,
                     sequence INTEGER NOT NULL,
-                    delivery_json TEXT NOT NULL
+                    delivery_json TEXT NOT NULL,
+                    claim_generation INTEGER NOT NULL DEFAULT 0,
+                    claim_expires_at_unix_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS callback_deliveries_due_idx
                 ON callback_deliveries(status, next_retry_at_unix_ms, sequence, delivery_id);
                 ",
+            )
+            .map_err(callback_storage_error)?;
+        let columns = {
+            let mut statement = connection
+                .prepare("PRAGMA table_info(callback_deliveries)")
+                .map_err(callback_storage_error)?;
+            statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(callback_storage_error)?
+                .collect::<Result<BTreeSet<_>, _>>()
+                .map_err(callback_storage_error)?
+        };
+        if !columns.contains("claim_generation") {
+            connection
+                .execute(
+                    "ALTER TABLE callback_deliveries ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
+                .map_err(callback_storage_error)?;
+        }
+        if !columns.contains("claim_expires_at_unix_ms") {
+            connection
+                .execute(
+                    "ALTER TABLE callback_deliveries ADD COLUMN claim_expires_at_unix_ms INTEGER",
+                    [],
+                )
+                .map_err(callback_storage_error)?;
+        }
+        connection
+            .execute(
+                "
+                UPDATE callback_deliveries
+                SET claim_expires_at_unix_ms = 0
+                WHERE status = ? AND claim_expires_at_unix_ms IS NULL
+                ",
+                params![callback_delivery_status_as_str(
+                    CallbackDeliveryStatus::Delivering
+                )],
+            )
+            .map_err(callback_storage_error)?;
+        connection
+            .execute(
+                "
+                CREATE INDEX IF NOT EXISTS callback_deliveries_claim_idx
+                ON callback_deliveries(status, claim_expires_at_unix_ms, sequence, delivery_id)
+                ",
+                [],
             )
             .map_err(callback_storage_error)?;
         Ok(())
@@ -948,39 +1007,135 @@ impl SqliteCallbackDeliveryQueue {
 
     pub fn upsert_delivery(&self, delivery: CallbackDelivery) -> Result<(), CallbackDeliveryError> {
         validate_callback_delivery(&delivery)?;
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite callback delivery queue lock poisoned");
-        connection
-            .execute(
-                "
-                INSERT INTO callback_deliveries (
-                    delivery_id,
-                    status,
-                    next_retry_at_unix_ms,
-                    sequence,
-                    delivery_json
-                )
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(delivery_id) DO UPDATE SET
-                    status = excluded.status,
-                    next_retry_at_unix_ms = excluded.next_retry_at_unix_ms,
-                    sequence = excluded.sequence,
-                    delivery_json = excluded.delivery_json
-                ",
-                params![
-                    &delivery.delivery_id,
-                    callback_delivery_status_as_str(delivery.status),
-                    optional_callback_u64_to_i64(
-                        delivery.next_retry_at_unix_ms,
-                        "callback delivery next retry",
-                    )?,
-                    callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
-                    callback_storage_json(&delivery_to_value(&delivery))?,
-                ],
-            )
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(callback_storage_error)?;
+        let existing_json = transaction
+            .query_row(
+                "SELECT delivery_json FROM callback_deliveries WHERE delivery_id = ?",
+                params![&delivery.delivery_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(callback_storage_error)?;
+        if let Some(existing_json) = existing_json {
+            let existing = delivery_from_value(callback_parse_json(&existing_json)?)?;
+            let valid_redrive = existing.status == CallbackDeliveryStatus::DeadLettered
+                && delivery.status == CallbackDeliveryStatus::Pending
+                && delivery.redrive_count > existing.redrive_count
+                && delivery.subscription_id == existing.subscription_id
+                && delivery.event_id == existing.event_id
+                && delivery.run_id == existing.run_id
+                && delivery.sequence == existing.sequence
+                && delivery.cursor == existing.cursor
+                && delivery.idempotency_key == existing.idempotency_key
+                && delivery.failure_policy == existing.failure_policy;
+            if delivery == existing {
+                transaction.commit().map_err(callback_storage_error)?;
+                return Ok(());
+            }
+            if callback_delivery_status_is_terminal(existing.status) && !valid_redrive {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "terminal callback delivery state cannot be overwritten".to_owned(),
+                });
+            }
+            if !valid_redrive && existing.status == CallbackDeliveryStatus::Delivering {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery completion requires a matching claim generation"
+                        .to_owned(),
+                });
+            }
+            if !valid_redrive
+                && (existing.status != CallbackDeliveryStatus::Delivering
+                    || delivery.status == CallbackDeliveryStatus::Delivering)
+            {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery state transition requires an active claim"
+                        .to_owned(),
+                });
+            }
+            if delivery.subscription_id != existing.subscription_id
+                || delivery.event_id != existing.event_id
+                || delivery.run_id != existing.run_id
+                || delivery.sequence != existing.sequence
+                || delivery.cursor != existing.cursor
+                || delivery.idempotency_key != existing.idempotency_key
+                || delivery.failure_policy != existing.failure_policy
+                || (!valid_redrive && delivery.redrive_count != existing.redrive_count)
+                || delivery.attempt < existing.attempt
+            {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery transition metadata conflict".to_owned(),
+                });
+            }
+            let updated = transaction
+                .execute(
+                    "
+                    UPDATE callback_deliveries
+                    SET status = ?,
+                        next_retry_at_unix_ms = ?,
+                        sequence = ?,
+                        delivery_json = ?,
+                        claim_expires_at_unix_ms = NULL
+                    WHERE delivery_id = ? AND status = ?
+                    ",
+                    params![
+                        callback_delivery_status_as_str(delivery.status),
+                        optional_callback_u64_to_i64(
+                            delivery.next_retry_at_unix_ms,
+                            "callback delivery next retry",
+                        )?,
+                        callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
+                        callback_storage_json(&delivery_to_value(&delivery))?,
+                        &delivery.delivery_id,
+                        callback_delivery_status_as_str(existing.status),
+                    ],
+                )
+                .map_err(callback_storage_error)?;
+            if updated != 1 {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery state changed before transition".to_owned(),
+                });
+            }
+        } else {
+            if delivery.status == CallbackDeliveryStatus::Delivering {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery must be claimed before entering delivering state"
+                        .to_owned(),
+                });
+            }
+            transaction
+                .execute(
+                    "
+                    INSERT INTO callback_deliveries (
+                        delivery_id,
+                        status,
+                        next_retry_at_unix_ms,
+                        sequence,
+                        delivery_json,
+                        claim_generation,
+                        claim_expires_at_unix_ms
+                    )
+                    VALUES (?, ?, ?, ?, ?, 0, NULL)
+                    ",
+                    params![
+                        &delivery.delivery_id,
+                        callback_delivery_status_as_str(delivery.status),
+                        optional_callback_u64_to_i64(
+                            delivery.next_retry_at_unix_ms,
+                            "callback delivery next retry",
+                        )?,
+                        callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
+                        callback_storage_json(&delivery_to_value(&delivery))?,
+                    ],
+                )
+                .map_err(callback_storage_error)?;
+        }
+        transaction.commit().map_err(callback_storage_error)?;
         Ok(())
     }
 
@@ -1086,31 +1241,56 @@ impl SqliteCallbackDeliveryQueue {
         .collect()
     }
 
-    pub fn recover_in_flight_deliveries(
+    pub fn claim_due_deliveries(
         &self,
         now_unix_ms: u64,
-    ) -> Result<usize, CallbackDeliveryError> {
-        let connection = self
+        claim_lease_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<ClaimedCallbackDelivery>, CallbackDeliveryError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        if claim_lease_ms == 0 {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim lease must be positive".to_owned(),
+            });
+        }
+        let claim_expires_at_unix_ms =
+            now_unix_ms.checked_add(claim_lease_ms).ok_or_else(|| {
+                CallbackDeliveryError::Storage {
+                    message: "callback delivery claim lease expiration overflow".to_owned(),
+                }
+            })?;
+
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite callback delivery queue lock poisoned");
-        let mut deliveries = Vec::new();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
+        let mut claimed = Vec::new();
         {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare(
                     "
-                    SELECT delivery_id, status, next_retry_at_unix_ms, sequence, delivery_json
+                    SELECT delivery_id, status, next_retry_at_unix_ms, sequence, delivery_json,
+                           claim_generation
                     FROM callback_deliveries
                     WHERE status = ?
+                      AND (next_retry_at_unix_ms IS NULL OR next_retry_at_unix_ms <= ?)
                     ORDER BY sequence, delivery_id
+                    LIMIT ?
                     ",
                 )
                 .map_err(callback_storage_error)?;
             let rows = statement
                 .query_map(
-                    params![callback_delivery_status_as_str(
-                        CallbackDeliveryStatus::Delivering
-                    )],
+                    params![
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Pending),
+                        callback_u64_to_i64(now_unix_ms, "callback delivery claim time")?,
+                        callback_usize_to_i64(limit, "callback delivery claim limit")?,
+                    ],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
@@ -1118,6 +1298,7 @@ impl SqliteCallbackDeliveryQueue {
                             row.get::<_, Option<i64>>(2)?,
                             row.get::<_, i64>(3)?,
                             row.get::<_, String>(4)?,
+                            row.get::<_, i64>(5)?,
                         ))
                     },
                 )
@@ -1129,6 +1310,207 @@ impl SqliteCallbackDeliveryQueue {
                     row_next_retry_at_unix_ms,
                     row_sequence,
                     delivery_json,
+                    claim_generation,
+                ) = row.map_err(callback_storage_error)?;
+                claimed.push((
+                    delivery_from_row_value(
+                        &row_delivery_id,
+                        &row_status,
+                        row_next_retry_at_unix_ms,
+                        row_sequence,
+                        callback_parse_json(&delivery_json)?,
+                    )?,
+                    callback_i64_to_u64(claim_generation, "callback delivery claim generation")?,
+                ));
+            }
+        }
+
+        let mut claims = Vec::with_capacity(claimed.len());
+        for (mut delivery, previous_generation) in claimed {
+            let claim_generation = previous_generation.checked_add(1).ok_or_else(|| {
+                CallbackDeliveryError::Storage {
+                    message: "callback delivery claim generation overflow".to_owned(),
+                }
+            })?;
+            delivery.status = CallbackDeliveryStatus::Delivering;
+            delivery.next_retry_at_unix_ms = None;
+            let updated = transaction
+                .execute(
+                    "
+                    UPDATE callback_deliveries
+                    SET status = ?,
+                        next_retry_at_unix_ms = NULL,
+                        delivery_json = ?,
+                        claim_generation = ?,
+                        claim_expires_at_unix_ms = ?
+                    WHERE delivery_id = ? AND status = ? AND claim_generation = ?
+                    ",
+                    params![
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Delivering),
+                        callback_storage_json(&delivery_to_value(&delivery))?,
+                        callback_u64_to_i64(
+                            claim_generation,
+                            "callback delivery claim generation",
+                        )?,
+                        callback_u64_to_i64(
+                            claim_expires_at_unix_ms,
+                            "callback delivery claim expiration",
+                        )?,
+                        &delivery.delivery_id,
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Pending),
+                        callback_u64_to_i64(
+                            previous_generation,
+                            "callback delivery previous claim generation",
+                        )?,
+                    ],
+                )
+                .map_err(callback_storage_error)?;
+            if updated != 1 {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery state changed during claim".to_owned(),
+                });
+            }
+            claims.push(ClaimedCallbackDelivery {
+                delivery,
+                claim_generation,
+                claim_expires_at_unix_ms,
+            });
+        }
+        transaction.commit().map_err(callback_storage_error)?;
+        Ok(claims)
+    }
+
+    pub fn complete_claimed_delivery(
+        &self,
+        claim: &ClaimedCallbackDelivery,
+        delivery: CallbackDelivery,
+    ) -> Result<(), CallbackDeliveryError> {
+        validate_callback_delivery(&delivery)?;
+        if claim.claim_generation == 0 || claim.claim_expires_at_unix_ms == 0 {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim fence is invalid".to_owned(),
+            });
+        }
+        if claim.delivery.status != CallbackDeliveryStatus::Delivering
+            || delivery.status == CallbackDeliveryStatus::Delivering
+            || delivery.delivery_id != claim.delivery.delivery_id
+            || delivery.subscription_id != claim.delivery.subscription_id
+            || delivery.event_id != claim.delivery.event_id
+            || delivery.run_id != claim.delivery.run_id
+            || delivery.sequence != claim.delivery.sequence
+            || delivery.cursor != claim.delivery.cursor
+            || delivery.idempotency_key != claim.delivery.idempotency_key
+            || delivery.failure_policy != claim.delivery.failure_policy
+            || delivery.redrive_count != claim.delivery.redrive_count
+            || delivery.attempt < claim.delivery.attempt
+        {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim completion metadata conflict".to_owned(),
+            });
+        }
+
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
+        let updated = transaction
+            .execute(
+                "
+                UPDATE callback_deliveries
+                SET status = ?,
+                    next_retry_at_unix_ms = ?,
+                    sequence = ?,
+                    delivery_json = ?,
+                    claim_expires_at_unix_ms = NULL
+                WHERE delivery_id = ?
+                  AND status = ?
+                  AND claim_generation = ?
+                  AND claim_expires_at_unix_ms = ?
+                ",
+                params![
+                    callback_delivery_status_as_str(delivery.status),
+                    optional_callback_u64_to_i64(
+                        delivery.next_retry_at_unix_ms,
+                        "callback delivery next retry",
+                    )?,
+                    callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
+                    callback_storage_json(&delivery_to_value(&delivery))?,
+                    &delivery.delivery_id,
+                    callback_delivery_status_as_str(CallbackDeliveryStatus::Delivering),
+                    callback_u64_to_i64(
+                        claim.claim_generation,
+                        "callback delivery claim generation",
+                    )?,
+                    callback_u64_to_i64(
+                        claim.claim_expires_at_unix_ms,
+                        "callback delivery claim expiration",
+                    )?,
+                ],
+            )
+            .map_err(callback_storage_error)?;
+        if updated != 1 {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim was lost or superseded".to_owned(),
+            });
+        }
+        transaction.commit().map_err(callback_storage_error)?;
+        Ok(())
+    }
+
+    pub fn recover_in_flight_deliveries(
+        &self,
+        now_unix_ms: u64,
+    ) -> Result<usize, CallbackDeliveryError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
+        let mut deliveries = Vec::new();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "
+                    SELECT delivery_id, status, next_retry_at_unix_ms, sequence, delivery_json,
+                           claim_generation
+                    FROM callback_deliveries
+                    WHERE status = ?
+                      AND claim_expires_at_unix_ms <= ?
+                    ORDER BY sequence, delivery_id
+                    ",
+                )
+                .map_err(callback_storage_error)?;
+            let rows = statement
+                .query_map(
+                    params![
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Delivering),
+                        callback_u64_to_i64(now_unix_ms, "callback delivery recovery time")?,
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ))
+                    },
+                )
+                .map_err(callback_storage_error)?;
+            for row in rows {
+                let (
+                    row_delivery_id,
+                    row_status,
+                    row_next_retry_at_unix_ms,
+                    row_sequence,
+                    delivery_json,
+                    claim_generation,
                 ) = row.map_err(callback_storage_error)?;
                 let mut delivery = delivery_from_row_value(
                     &row_delivery_id,
@@ -1140,20 +1522,24 @@ impl SqliteCallbackDeliveryQueue {
                 delivery.status = CallbackDeliveryStatus::Pending;
                 delivery.next_retry_at_unix_ms = Some(now_unix_ms);
                 delivery.last_error = Some("delivery_recovered_after_worker_restart".to_owned());
-                deliveries.push(delivery);
+                deliveries.push((
+                    delivery,
+                    callback_i64_to_u64(claim_generation, "callback delivery claim generation")?,
+                ));
             }
         }
 
-        for delivery in &deliveries {
-            connection
+        for (delivery, claim_generation) in &deliveries {
+            let updated = transaction
                 .execute(
                     "
                     UPDATE callback_deliveries
                     SET status = ?,
                         next_retry_at_unix_ms = ?,
                         sequence = ?,
-                        delivery_json = ?
-                    WHERE delivery_id = ?
+                        delivery_json = ?,
+                        claim_expires_at_unix_ms = NULL
+                    WHERE delivery_id = ? AND status = ? AND claim_generation = ?
                     ",
                     params![
                         callback_delivery_status_as_str(delivery.status),
@@ -1164,11 +1550,22 @@ impl SqliteCallbackDeliveryQueue {
                         callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
                         callback_storage_json(&delivery_to_value(delivery))?,
                         &delivery.delivery_id,
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Delivering),
+                        callback_u64_to_i64(
+                            *claim_generation,
+                            "callback delivery claim generation",
+                        )?,
                     ],
                 )
                 .map_err(callback_storage_error)?;
+            if updated != 1 {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery state changed during in-flight recovery".to_owned(),
+                });
+            }
         }
 
+        transaction.commit().map_err(callback_storage_error)?;
         Ok(deliveries.len())
     }
 
@@ -1189,13 +1586,16 @@ impl SqliteCallbackDeliveryQueue {
             });
         }
 
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite callback delivery queue lock poisoned");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
         let mut deliveries = Vec::new();
         {
-            let mut statement = connection
+            let mut statement = transaction
                 .prepare(
                     "
                     SELECT delivery_id, status, next_retry_at_unix_ms, sequence, delivery_json
@@ -1246,7 +1646,7 @@ impl SqliteCallbackDeliveryQueue {
         }
 
         for delivery in &deliveries {
-            connection
+            let updated = transaction
                 .execute(
                     "
                     UPDATE callback_deliveries
@@ -1254,7 +1654,7 @@ impl SqliteCallbackDeliveryQueue {
                         next_retry_at_unix_ms = ?,
                         sequence = ?,
                         delivery_json = ?
-                    WHERE delivery_id = ?
+                    WHERE delivery_id = ? AND status = ?
                     ",
                     params![
                         callback_delivery_status_as_str(delivery.status),
@@ -1265,11 +1665,19 @@ impl SqliteCallbackDeliveryQueue {
                         callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
                         callback_storage_json(&delivery_to_value(delivery))?,
                         &delivery.delivery_id,
+                        callback_delivery_status_as_str(CallbackDeliveryStatus::Pending),
                     ],
                 )
                 .map_err(callback_storage_error)?;
+            if updated != 1 {
+                return Err(CallbackDeliveryError::Storage {
+                    message: "callback delivery state changed during subscription cancellation"
+                        .to_owned(),
+                });
+            }
         }
 
+        transaction.commit().map_err(callback_storage_error)?;
         Ok(deliveries.len())
     }
 }
@@ -1777,13 +2185,13 @@ impl WebhookSigningConfig {
                 .insert("operation_id".to_owned(), json!(operation_id));
         }
         let body_size_bytes = canonical_body_size_bytes(&body);
-        if let Some(max_payload_bytes) = max_payload_bytes {
-            if body_size_bytes > max_payload_bytes {
-                return Err(WebhookSignatureError::PayloadTooLarge {
-                    max_payload_bytes,
-                    actual_payload_bytes: body_size_bytes,
-                });
-            }
+        if let Some(max_payload_bytes) = max_payload_bytes
+            && body_size_bytes > max_payload_bytes
+        {
+            return Err(WebhookSignatureError::PayloadTooLarge {
+                max_payload_bytes,
+                actual_payload_bytes: body_size_bytes,
+            });
         }
         let signature = self.compute_signature(delivered_at_unix_ms, &body)?;
         let mut headers = BTreeMap::new();
@@ -1952,7 +2360,7 @@ impl WebhookHttpTransport {
     ) -> CallbackDeliveryResponse
     where
         R: FnMut(&WebhookDeliveryTarget) -> Result<Vec<IpAddr>, ResolveError>,
-        S: FnMut(WebhookHttpRequest) -> Result<WebhookHttpResponse, SendError>,
+        S: FnMut(WebhookHttpRequest, &[IpAddr]) -> Result<WebhookHttpResponse, SendError>,
     {
         let addresses = match resolve(&attempt.target) {
             Ok(addresses) => addresses,
@@ -1963,7 +2371,7 @@ impl WebhookHttpTransport {
         }
         if self
             .egress_policy
-            .validate_resolved_addresses(&attempt.target, addresses)
+            .validate_resolved_addresses(&attempt.target, addresses.iter().copied())
             .is_err()
         {
             return CallbackDeliveryResponse::ClientError(403);
@@ -1975,7 +2383,7 @@ impl WebhookHttpTransport {
             headers: attempt.signed.headers.clone(),
             body: attempt.signed.body.clone(),
         };
-        match send(request) {
+        match send(request, &addresses) {
             Ok(response) => webhook_http_response_to_delivery_response(response),
             Err(_) => CallbackDeliveryResponse::ServerError(599),
         }
@@ -1987,6 +2395,7 @@ pub struct WebhookDeliveryWorker<'a> {
     queue: &'a SqliteCallbackDeliveryQueue,
     target: &'a WebhookDeliveryTarget,
     signing: &'a WebhookSigningConfig,
+    claim_lease_ms: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1996,6 +2405,8 @@ pub struct WebhookDeliveryWorkerOutcome {
 }
 
 impl<'a> WebhookDeliveryWorker<'a> {
+    pub const DEFAULT_CLAIM_LEASE_MS: u64 = 30_000;
+
     pub fn new(
         scheduler: &'a CallbackDeliveryScheduler,
         queue: &'a SqliteCallbackDeliveryQueue,
@@ -2007,7 +2418,21 @@ impl<'a> WebhookDeliveryWorker<'a> {
             queue,
             target,
             signing,
+            claim_lease_ms: Self::DEFAULT_CLAIM_LEASE_MS,
         }
+    }
+
+    pub fn with_claim_lease_ms(
+        mut self,
+        claim_lease_ms: u64,
+    ) -> Result<Self, CallbackDeliveryError> {
+        if claim_lease_ms == 0 {
+            return Err(CallbackDeliveryError::Storage {
+                message: "webhook delivery worker claim lease must be positive".to_owned(),
+            });
+        }
+        self.claim_lease_ms = claim_lease_ms;
+        Ok(self)
     }
 
     pub fn process_due<T, E>(
@@ -2036,9 +2461,12 @@ impl<'a> WebhookDeliveryWorker<'a> {
         T: FnMut(&WebhookDeliveryAttempt) -> CallbackDeliveryResponse,
         E: FnMut(&str) -> Option<ApplicationProtocolEvent>,
     {
-        let due = self.queue.due_deliveries(now_unix_ms, limit)?;
+        let due = self
+            .queue
+            .claim_due_deliveries(now_unix_ms, self.claim_lease_ms, limit)?;
         let mut outcome = WebhookDeliveryWorkerOutcome::default();
-        for delivery in due {
+        for claim in due {
+            let delivery = claim.delivery.clone();
             let event = event_lookup(&delivery.event_id).ok_or_else(|| {
                 CallbackDeliveryError::EventNotFound {
                     event_id: delivery.event_id.clone(),
@@ -2066,16 +2494,13 @@ impl<'a> WebhookDeliveryWorker<'a> {
                     {
                         outcome.run_actions.push(run_action);
                     }
-                    self.queue.upsert_delivery(updated)?;
+                    self.queue.complete_claimed_delivery(&claim, updated)?;
                     outcome.attempts += 1;
                     continue;
                 }
                 Err(error) => return Err(CallbackDeliveryError::WebhookSigning { error }),
             };
-            let mut in_flight = delivery;
-            in_flight.status = CallbackDeliveryStatus::Delivering;
-            in_flight.next_retry_at_unix_ms = None;
-            self.queue.upsert_delivery(in_flight.clone())?;
+            let in_flight = delivery;
             let attempt = WebhookDeliveryAttempt {
                 target: self.target.clone(),
                 delivery: in_flight.clone(),
@@ -2088,7 +2513,7 @@ impl<'a> WebhookDeliveryWorker<'a> {
             if let Some(run_action) = self.scheduler.run_action_for_terminal_failure(&updated) {
                 outcome.run_actions.push(run_action);
             }
-            self.queue.upsert_delivery(updated)?;
+            self.queue.complete_claimed_delivery(&claim, updated)?;
             outcome.attempts += 1;
         }
         Ok(outcome)
@@ -2284,12 +2709,23 @@ fn is_forbidden_webhook_host(host: &str) -> bool {
 }
 
 fn is_forbidden_ipv4(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    let shared_address_space = octets[0] == 100 && (64..=127).contains(&octets[1]);
+    let protocol_assignment = octets[..3] == [192, 0, 0] && !matches!(octets[3], 9 | 10);
+    let documentation =
+        octets[..3] == [192, 0, 2] || octets[..3] == [198, 51, 100] || octets[..3] == [203, 0, 113];
+    let benchmarking = octets[0] == 198 && matches!(octets[1], 18 | 19);
+
     address.is_private()
         || address.is_loopback()
         || address.is_link_local()
         || address.is_unspecified()
-        || address.octets()[0] == 0
-        || address.octets()[0] >= 224
+        || octets[0] == 0
+        || octets[0] >= 224
+        || shared_address_space
+        || protocol_assignment
+        || documentation
+        || benchmarking
 }
 
 fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
@@ -2308,11 +2744,28 @@ fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
         return is_forbidden_ipv4(compatible_address);
     }
 
+    let local_translation_prefix =
+        segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1;
+    let discard_only = segments[..4] == [0x0100, 0, 0, 0];
+    let ietf_protocol_assignment = segments[0] == 0x2001 && segments[1] < 0x0200;
+    let ietf_protocol_exception = segments == [0x2001, 1, 0, 0, 0, 0, 0, 1]
+        || segments == [0x2001, 1, 0, 0, 0, 0, 0, 2]
+        || (segments[0] == 0x2001 && segments[1] == 3)
+        || (segments[0] == 0x2001 && segments[1] == 4 && segments[2] == 0x0112)
+        || (segments[0] == 0x2001 && matches!(segments[1] & 0xfff0, 0x0020 | 0x0030));
+    let documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
+    let six_to_four = segments[0] == 0x2002;
+
     address.is_loopback()
         || address.is_unspecified()
         || address.is_multicast()
         || matches!(segments[0] & 0xfe00, 0xfc00)
         || matches!(segments[0] & 0xffc0, 0xfe80)
+        || local_translation_prefix
+        || discard_only
+        || (ietf_protocol_assignment && !ietf_protocol_exception)
+        || documentation
+        || six_to_four
 }
 
 fn webhook_http_response_to_delivery_response(

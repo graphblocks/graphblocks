@@ -1,9 +1,9 @@
 use graphblocks_runtime_core::evaluation::{
-    evaluate_gate, ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint,
-    GateDecision, MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle,
-    ReviewDecision, ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus,
-    TrialResult, WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead,
-    WorkspaceMutationPolicy, WorkspaceTrialError, WorkspaceTrialPlan,
+    ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision,
+    MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision,
+    ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult,
+    WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead, WorkspaceMutationPolicy,
+    WorkspaceTrialError, WorkspaceTrialPlan, evaluate_gate,
 };
 use graphblocks_runtime_core::orchestration::{LeasePool, LeaseRequest};
 use graphblocks_runtime_core::policy::PrincipalRef;
@@ -448,9 +448,11 @@ fn review_record_is_invalid_for_changed_subject_digest() {
 
     assert!(review.is_valid_for(&subject));
     assert!(!review.is_valid_for(&ResourceSnapshotRef::new("candidate-1", "sha256:new")));
-    assert!(!review
-        .invalidate("2026-06-22T00:05:00Z")
-        .is_valid_for(&subject));
+    assert!(
+        !review
+            .invalidate("2026-06-22T00:05:00Z")
+            .is_valid_for(&subject)
+    );
 }
 
 #[test]
@@ -737,7 +739,7 @@ fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
         .with_gate(evaluate_gate(
             "rtl-quality",
             change_set.candidate.clone(),
-            &[lint.clone()],
+            std::slice::from_ref(&lint),
             &[],
             Some(["lint"]),
             &[],

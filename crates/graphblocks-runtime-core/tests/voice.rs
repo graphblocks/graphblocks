@@ -151,7 +151,10 @@ fn realtime_provider_adapter_builds_stable_provider_session_request() -> Result<
     assert_eq!(request.adapter_id, "openai-realtime");
     assert_eq!(request.auth_secret_ref, "secret://providers/openai");
     assert_eq!(envelope["provider"], "openai-realtime");
-    assert_eq!(envelope["endpoint"], "https://api.example.com/v1/realtime/sessions");
+    assert_eq!(
+        envelope["endpoint"],
+        "https://api.example.com/v1/realtime/sessions"
+    );
     assert_eq!(envelope["authSecretRef"], "secret://providers/openai");
     assert_eq!(envelope["request"]["model"], "gpt-realtime");
     assert_eq!(

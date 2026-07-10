@@ -105,6 +105,22 @@ fn effect_retry_requires_idempotency_key() {
 }
 
 #[test]
+fn effect_retry_rejects_blank_idempotency_key() {
+    let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
+    let request = RetryRequest::new(1, error(ErrorCategory::Transient, true))
+        .with_effect(EffectKind::ExternalWrite);
+
+    for idempotency_key in ["", " ", "\t\n", " request-1 "] {
+        assert_eq!(
+            policy.decide(&request.clone().with_idempotency_key(idempotency_key)),
+            RetryDecision::Stop {
+                reason: "invalid_idempotency_key",
+            },
+        );
+    }
+}
+
+#[test]
 fn provider_quota_retry_respects_retry_after() {
     let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Quota]);
     let request =

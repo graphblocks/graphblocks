@@ -2737,8 +2737,9 @@ fn sqlite_load_permit(
         .any(|(budget_id, token)| budget_id.trim().is_empty() || *token == 0)
     {
         return Err(BudgetError::InvalidPermit {
-            message: "budget permit fencing_tokens must contain non-empty budget ids and positive tokens"
-                .to_string(),
+            message:
+                "budget permit fencing_tokens must contain non-empty budget ids and positive tokens"
+                    .to_string(),
         });
     }
 

@@ -448,7 +448,10 @@ impl fmt::Display for WorkspaceCommitError {
                 )
             }
             Self::ReviewInvalid { review_id } => {
-                write!(formatter, "workspace review {review_id:?} is not valid for commit")
+                write!(
+                    formatter,
+                    "workspace review {review_id:?} is not valid for commit"
+                )
             }
         }
     }
@@ -1270,10 +1273,7 @@ impl WorkspaceTrialPlan {
             }
         }
 
-        let gate = self
-            .gate
-            .as_ref()
-            .ok_or(WorkspaceTrialError::MissingGate)?;
+        let gate = self.gate.as_ref().ok_or(WorkspaceTrialError::MissingGate)?;
         if gate.subject != self.change_set.candidate {
             return Err(WorkspaceTrialError::SubjectMismatch {
                 field: "gate".to_owned(),
@@ -1288,12 +1288,12 @@ impl WorkspaceTrialPlan {
             });
         }
 
-        if let Some(mutation_decision) = &self.mutation_decision {
-            if !mutation_decision.allowed {
-                return Err(WorkspaceTrialError::MutationDenied {
-                    reason_codes: mutation_decision.reason_codes.clone(),
-                });
-            }
+        if let Some(mutation_decision) = &self.mutation_decision
+            && !mutation_decision.allowed
+        {
+            return Err(WorkspaceTrialError::MutationDenied {
+                reason_codes: mutation_decision.reason_codes.clone(),
+            });
         }
 
         for resource_kind in &self.required_lease_kinds {
@@ -1309,10 +1309,11 @@ impl WorkspaceTrialPlan {
         }
 
         for scope in &self.required_review_scopes {
-            if !self.reviews.iter().any(|review| {
-                review.scope == *scope
-                    && self.review_satisfies_commit(review)
-            }) {
+            if !self
+                .reviews
+                .iter()
+                .any(|review| review.scope == *scope && self.review_satisfies_commit(review))
+            {
                 return Err(WorkspaceTrialError::MissingReviewScope {
                     scope: scope.clone(),
                 });
@@ -1380,23 +1381,41 @@ impl fmt::Display for WorkspaceTrialError {
         match self {
             Self::EmptyField { field } => write!(formatter, "{field} must not be empty"),
             Self::MissingCheck { check_id } => {
-                write!(formatter, "workspace trial is missing required check {check_id:?}")
+                write!(
+                    formatter,
+                    "workspace trial is missing required check {check_id:?}"
+                )
             }
             Self::CheckNotPassed { check_id, status } => {
-                write!(formatter, "workspace trial check {check_id:?} did not pass: {status:?}")
+                write!(
+                    formatter,
+                    "workspace trial check {check_id:?} did not pass: {status:?}"
+                )
             }
             Self::MissingGate => write!(formatter, "workspace trial is missing a gate result"),
             Self::GateNotPassed { gate_id, decision } => {
-                write!(formatter, "workspace trial gate {gate_id:?} did not pass: {decision:?}")
+                write!(
+                    formatter,
+                    "workspace trial gate {gate_id:?} did not pass: {decision:?}"
+                )
             }
             Self::MissingLeaseKind { resource_kind } => {
-                write!(formatter, "workspace trial is missing active lease kind {resource_kind:?}")
+                write!(
+                    formatter,
+                    "workspace trial is missing active lease kind {resource_kind:?}"
+                )
             }
             Self::MissingReviewScope { scope } => {
-                write!(formatter, "workspace trial is missing valid review scope {scope:?}")
+                write!(
+                    formatter,
+                    "workspace trial is missing valid review scope {scope:?}"
+                )
             }
             Self::MutationDenied { reason_codes } => {
-                write!(formatter, "workspace trial mutation denied: {reason_codes:?}")
+                write!(
+                    formatter,
+                    "workspace trial mutation denied: {reason_codes:?}"
+                )
             }
             Self::SubjectMismatch {
                 field,

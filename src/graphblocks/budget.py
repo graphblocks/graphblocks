@@ -831,9 +831,11 @@ class InMemoryBudgetLedger:
         reservation_id: str,
         actual_amounts: list[UsageAmount],
         *,
+        now: str,
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
         permit = self._permit_for_reservation(permit_id, reservation_id)
+        self._ensure_permit_not_expired(permit, now)
         return self._commit_with_permit(
             permit,
             reservation_id,
@@ -850,12 +852,11 @@ class InMemoryBudgetLedger:
         now: str,
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
-        permit = self._permit_for_reservation(permit_id, reservation_id)
-        self._ensure_permit_not_expired(permit, now)
-        return self._commit_with_permit(
-            permit,
+        return self.commit_with_permit(
+            permit_id,
             reservation_id,
             actual_amounts,
+            now=now,
             max_overdraft=max_overdraft,
         )
 
@@ -868,7 +869,7 @@ class InMemoryBudgetLedger:
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
         actual = _amounts_to_dict(actual_amounts)
-        self._ensure_permit_allows_additional(permit, actual, self._reservations[reservation_id].budget_id)
+        self._ensure_permit_allows_additional(permit, actual, reservation_id)
         settlement = self.commit(reservation_id, actual_amounts, max_overdraft=max_overdraft)
         spent = self._permit_spent.setdefault(permit.permit_id, {})
         for key, amount in actual.items():
@@ -1067,14 +1068,15 @@ class InMemoryBudgetLedger:
         self,
         permit: BudgetPermit,
         requested: dict[AmountKey, Decimal],
-        budget_id: str,
+        reservation_id: str,
     ) -> None:
-        authorized = _amounts_to_dict(permit.authorized_amounts)
-        spent = self._permit_spent.setdefault(permit.permit_id, {})
+        reservation = self._reservations[reservation_id]
+        authorized = _amounts_to_dict(reservation.amounts)
         for key, amount in requested.items():
-            if spent.get(key, Decimal("0")) + amount > authorized.get(key, Decimal("0")):
+            if amount > authorized.get(key, Decimal("0")):
                 raise BudgetExceededError(
-                    f"permit {permit.permit_id!r} exceeds authorized {key[0]} {key[1]} for budget {budget_id!r}"
+                    f"permit {permit.permit_id!r} exceeds authorized {key[0]} {key[1]} "
+                    f"for reservation {reservation_id!r}"
                 )
 
 
@@ -1463,6 +1465,7 @@ class SQLiteBudgetLedger:
         reservation_id: str,
         actual_amounts: list[UsageAmount],
         *,
+        now: str,
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
         return self._mutate(
@@ -1470,6 +1473,7 @@ class SQLiteBudgetLedger:
                 permit_id,
                 reservation_id,
                 actual_amounts,
+                now=now,
                 max_overdraft=max_overdraft,
             )
         )

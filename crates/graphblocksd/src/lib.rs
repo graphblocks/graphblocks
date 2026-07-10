@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::net::{Ipv6Addr, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
 use graphblocks_protocol::{
-    evaluate_worker_admission, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
+    WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
     WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerProtocolMessage,
-    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState, WORKER_PROTOCOL_VERSION,
+    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
+    evaluate_worker_admission,
 };
 use graphblocks_runtime_core::callback_delivery::{WebhookHttpRequest, WebhookHttpResponse};
 use serde_json::Value;
@@ -265,6 +266,7 @@ pub trait WebhookHttpClient {
     fn send(
         &mut self,
         request: WebhookHttpRequest,
+        validated_addresses: &[IpAddr],
     ) -> Result<WebhookHttpResponse, WebhookHttpClientError>;
 }
 
@@ -283,6 +285,7 @@ impl WebhookHttpClient for StdWebhookHttpClient {
     fn send(
         &mut self,
         request: WebhookHttpRequest,
+        validated_addresses: &[IpAddr],
     ) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
         if request.method != "POST" {
             return Err(WebhookHttpClientError::UnsupportedMethod(request.method));
@@ -303,8 +306,25 @@ impl WebhookHttpClient for StdWebhookHttpClient {
             }
         }
 
-        let mut stream = TcpStream::connect((endpoint.connect_host.as_str(), endpoint.port))
-            .map_err(|error| WebhookHttpClientError::Connect(error.to_string()))?;
+        let mut last_connect_error = None;
+        let mut connected_stream = None;
+        for address in validated_addresses {
+            match TcpStream::connect_timeout(
+                &SocketAddr::new(*address, endpoint.port),
+                self.timeout,
+            ) {
+                Ok(stream) => {
+                    connected_stream = Some(stream);
+                    break;
+                }
+                Err(error) => last_connect_error = Some(error.to_string()),
+            }
+        }
+        let mut stream = connected_stream.ok_or_else(|| {
+            last_connect_error.map_or(WebhookHttpClientError::MissingValidatedAddress, |error| {
+                WebhookHttpClientError::Connect(error)
+            })
+        })?;
         stream
             .set_read_timeout(Some(self.timeout))
             .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
@@ -363,6 +383,7 @@ pub enum WebhookHttpClientError {
     MalformedUrl,
     InvalidPort,
     InvalidHeader,
+    MissingValidatedAddress,
     Connect(String),
     Transport(String),
     MalformedResponse,
@@ -370,7 +391,6 @@ pub enum WebhookHttpClientError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedHttpEndpoint {
-    connect_host: String,
     host_header: String,
     port: u16,
     path_and_query: String,
@@ -399,9 +419,8 @@ fn parse_http_url(url: &str) -> Result<ParsedHttpEndpoint, WebhookHttpClientErro
     if authority.is_empty() || authority.contains('@') {
         return Err(WebhookHttpClientError::MalformedUrl);
     }
-    let (host, port) = parse_authority(authority)?;
+    let (_host, port) = parse_authority(authority)?;
     Ok(ParsedHttpEndpoint {
-        connect_host: host,
         host_header: authority.to_owned(),
         port,
         path_and_query,

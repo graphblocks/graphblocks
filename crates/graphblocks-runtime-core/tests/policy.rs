@@ -153,13 +153,17 @@ fn policy_rule_and_obligation_validate_before_digest_participation() {
 #[test]
 fn policy_bundle_rejects_invalid_rules_before_hashing() {
     let invalid_rule = PolicyRule::new("rule-1", RuleEffect::Allow, ["tool.run"], [" "]);
-    let invalid_fail_mode =
-        PolicyBundle::new("bundle-1", "1.0.0", "graphblocks.declarative@1", [])
-            .with_default_fail_mode("before_tool_or_effect", " ");
+    let invalid_fail_mode = PolicyBundle::new("bundle-1", "1.0.0", "graphblocks.declarative@1", [])
+        .with_default_fail_mode("before_tool_or_effect", " ");
 
     assert_eq!(
-        PolicyBundle::new("bundle-1", "1.0.0", "graphblocks.declarative@1", [invalid_rule])
-            .try_content_digest(),
+        PolicyBundle::new(
+            "bundle-1",
+            "1.0.0",
+            "graphblocks.declarative@1",
+            [invalid_rule]
+        )
+        .try_content_digest(),
         Err(PolicyValidationError::EmptyCollectionItem {
             owner: "policy rule",
             field: "resource_selectors",

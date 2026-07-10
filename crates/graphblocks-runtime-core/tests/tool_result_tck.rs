@@ -94,7 +94,7 @@ fn run_prepare_for_model_case(case_name: &str, case: &Value) -> Result<(), Strin
         .unwrap_or(Value::Object(Map::new()));
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", tool_name);
     draft
-        .append_argument_fragment(&arguments.to_string())
+        .append_argument_fragment(arguments.to_string())
         .map_err(|error| format!("tool-result TCK case {case_name} draft failed: {error:?}"))?;
     let call = draft
         .into_completed_tool_call(&resolved_tool.resolved_tool_id, 1_000)

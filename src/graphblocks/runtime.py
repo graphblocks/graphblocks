@@ -4,7 +4,6 @@ from collections.abc import Mapping
 import math
 import re
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import sqlite3
 from threading import Lock
@@ -13,8 +12,8 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
-from .canonical import canonical_dumps, canonical_hash
-from .compiler import compile_graph
+from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from .compiler import STATE_CHANGING_TOOL_EFFECTS, compile_graph
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
 from .run_store import InMemoryRunStore, RunDeploymentProvenance
@@ -120,10 +119,7 @@ def _mutable_json_like(value: Any) -> Any:
 
 def _loads_strict_json(owner: str, value: str) -> Any:
     try:
-        return json.loads(
-            value,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
+        return canonical_loads(value)
     except ValueError as error:
         raise ValueError(f"{owner} must be valid strict JSON") from error
 
@@ -382,9 +378,7 @@ class RuntimeCheckpoint:
                     f"runtime checkpoint {field_name} must be a JSON object"
                 )
             try:
-                snapshot = json.loads(
-                    canonical_dumps(_mutable_json_like(value))
-                )
+                snapshot = canonical_loads(canonical_dumps(_mutable_json_like(value)))
             except (TypeError, ValueError) as error:
                 raise ValueError(
                     f"runtime checkpoint {field_name} must contain only JSON values"
@@ -745,7 +739,7 @@ class InProcessRuntime:
                     "runtime callback_receipt payload must be a JSON object"
                 )
             try:
-                callback_payload = json.loads(canonical_dumps(callback_payload))
+                callback_payload = canonical_loads(canonical_dumps(callback_payload))
             except (TypeError, ValueError) as error:
                 raise ValueError(
                     "runtime callback_receipt payload must contain only JSON values"
@@ -949,6 +943,19 @@ class InProcessRuntime:
                     idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
                 else:
                     max_attempts = _configured_retry_attempts(retry)
+                if not (
+                    isinstance(idempotency_key, str)
+                    and bool(idempotency_key.strip())
+                    and idempotency_key == idempotency_key.strip()
+                ):
+                    idempotency_key = None
+                    effects = node.get("effects", [])
+                    if isinstance(effects, str):
+                        effects = [effects]
+                    if isinstance(effects, list) and STATE_CHANGING_TOOL_EFFECTS & {
+                        str(effect) for effect in effects
+                    }:
+                        max_attempts = 1
                 result: dict[str, Any] | None = None
                 for attempt in range(1, max_attempts + 1):
                     started_payload: dict[str, Any] = {"node": node_name, "block": block_id, "attempt": attempt}
@@ -1032,15 +1039,15 @@ class InProcessRuntime:
                     checkpoint_id = (
                         f"{run_id}:{node_name}:{checkpoint_sequence}"
                     )
-                    checkpoint_inputs = json.loads(canonical_dumps(inputs))
+                    checkpoint_inputs = canonical_loads(canonical_dumps(inputs))
                     checkpoint_remaining_nodes = tuple(sorted(remaining))
-                    checkpoint_node_outputs = json.loads(
+                    checkpoint_node_outputs = canonical_loads(
                         canonical_dumps(node_outputs)
                     )
-                    checkpoint_output_values = json.loads(
+                    checkpoint_output_values = canonical_loads(
                         canonical_dumps(output_values)
                     )
-                    checkpoint_operation = json.loads(
+                    checkpoint_operation = canonical_loads(
                         canonical_dumps(dict(operation))
                     )
                     checkpoint_state_digest = canonical_hash(

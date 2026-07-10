@@ -1227,9 +1227,11 @@ fn declarative_output_policy_evaluator_rejects_zero_evaluation_timestamp() {
             &GenerationChunk::text("stream-1", "response-1", 4, "unsafe secret"),
             0,
         ),
-        Err(DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
-            evaluated_at_unix_ms: 0,
-        })
+        Err(
+            DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
+                evaluated_at_unix_ms: 0,
+            }
+        )
     );
 }
 

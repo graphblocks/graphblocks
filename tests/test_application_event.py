@@ -1253,6 +1253,9 @@ def test_application_event_payloads_are_copied_and_read_only() -> None:
         event.payload["status"]["phase"] = "mutated"  # type: ignore[index]
     with pytest.raises(TypeError):
         event.payload["status"]["labels"].append("mutated")  # type: ignore[index, union-attr]
+    status = event.payload["status"]
+    with pytest.raises(TypeError):
+        status |= {"phase": "mutated"}  # type: ignore[operator]
     with pytest.raises(ApplicationEventError, match="application event metadata must be"):
         ApplicationEvent.new("RunStarted", object(), payload={})  # type: ignore[arg-type]
     with pytest.raises(ApplicationEventError, match="application event payload must be a mapping"):

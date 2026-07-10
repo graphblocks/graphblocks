@@ -1,3 +1,10 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::nonminimal_bool,
+    clippy::unnecessary_map_or,
+    reason = "the TCK evaluator mirrors nested fixture validation rules for traceable diagnostics"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
@@ -9,7 +16,7 @@ use graphblocks_runtime_durable::{
     SinkCommitError, SinkCommitRequest, SourceCursor, SourceEvent, ToolTerminalStoreError,
     Watermark, WindowAccumulator, WindowPolicy,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {

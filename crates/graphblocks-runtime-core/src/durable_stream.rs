@@ -205,15 +205,12 @@ impl CheckpointBarrier {
         sink_id: impl Into<String>,
         digest: impl Into<String>,
     ) -> Self {
-        self.sink_commit_digests.insert(sink_id.into(), digest.into());
+        self.sink_commit_digests
+            .insert(sink_id.into(), digest.into());
         self
     }
 
-    pub fn with_schema_version(
-        mut self,
-        schema_id: impl Into<String>,
-        version: u64,
-    ) -> Self {
+    pub fn with_schema_version(mut self, schema_id: impl Into<String>, version: u64) -> Self {
         self.schema_versions.insert(schema_id.into(), version);
         self
     }
@@ -393,7 +390,10 @@ impl fmt::Display for SinkCommitError {
         match self {
             Self::EmptyField { field } => write!(formatter, "{field} must not be empty"),
             Self::SinkMismatch { expected, actual } => {
-                write!(formatter, "sink mismatch: expected {expected:?}, got {actual:?}")
+                write!(
+                    formatter,
+                    "sink mismatch: expected {expected:?}, got {actual:?}"
+                )
             }
             Self::IdempotencyConflict {
                 sink_id,

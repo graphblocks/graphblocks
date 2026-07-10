@@ -360,19 +360,35 @@ pub struct OutputPolicyDecision {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutputPolicyDecisionError {
     MissingDecisionId,
-    MissingInputDigest { decision_id: String },
-    InvalidAcceptedThroughSequence { accepted_through_sequence: u64 },
-    InvalidEvaluatedAtUnixMs { evaluated_at_unix_ms: u64 },
+    MissingInputDigest {
+        decision_id: String,
+    },
+    InvalidAcceptedThroughSequence {
+        accepted_through_sequence: u64,
+    },
+    InvalidEvaluatedAtUnixMs {
+        evaluated_at_unix_ms: u64,
+    },
     InvalidDispositionContent {
         decision_id: String,
         disposition: OutputDisposition,
         field: &'static str,
     },
-    ReplacementContentMissing { decision_id: String },
-    InvalidReplacementChunk { source: GenerationChunkError },
-    InvalidRedactionInstruction { path: String },
-    InvalidReasonCode { reason_code: String },
-    InvalidPolicyRef { policy_ref: String },
+    ReplacementContentMissing {
+        decision_id: String,
+    },
+    InvalidReplacementChunk {
+        source: GenerationChunkError,
+    },
+    InvalidRedactionInstruction {
+        path: String,
+    },
+    InvalidReasonCode {
+        reason_code: String,
+    },
+    InvalidPolicyRef {
+        policy_ref: String,
+    },
 }
 
 impl OutputPolicyDecision {
@@ -795,9 +811,11 @@ impl DeclarativeOutputPolicyEvaluator {
         evaluated_at_unix_ms: u64,
     ) -> Result<OutputPolicyDecision, DeclarativeOutputPolicyRuleError> {
         if evaluated_at_unix_ms == 0 {
-            return Err(DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
-                evaluated_at_unix_ms,
-            });
+            return Err(
+                DeclarativeOutputPolicyRuleError::InvalidEvaluationTimestamp {
+                    evaluated_at_unix_ms,
+                },
+            );
         }
         self.validate()?;
         Ok(self.evaluate_chunk_unchecked(chunk, evaluated_at_unix_ms))
@@ -1639,8 +1657,7 @@ impl OutputDeliveryGate {
                         if chunk.sequence <= self.last_client_delivered_sequence {
                             return Err(OutputGateError::PendingChunkAlreadyDelivered {
                                 sequence: chunk.sequence,
-                                last_client_delivered_sequence: self
-                                    .last_client_delivered_sequence,
+                                last_client_delivered_sequence: self.last_client_delivered_sequence,
                             });
                         }
                         if chunk.sequence != expected_sequence {

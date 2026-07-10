@@ -115,6 +115,9 @@ def test_document_lineage_records_validate_identity_types_and_snapshots() -> Non
     assert artifact.metadata == {"owner": "docs"}
     with pytest.raises(TypeError):
         artifact.metadata["owner"] = "changed"
+    metadata = artifact.metadata
+    with pytest.raises(TypeError):
+        metadata |= {"owner": "changed"}
     with pytest.raises(ValueError, match="invalid source asset source_kind"):
         SourceAsset("asset-1", "file:///tmp/example.txt", "ftp")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="asset revision artifact must be ArtifactRef"):

@@ -1,4 +1,4 @@
-use graphblocks_compiler::compiler::{compile_graph, compile_graph_with_catalog, BlockCatalog};
+use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::Value;
 

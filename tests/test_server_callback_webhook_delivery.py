@@ -42,8 +42,22 @@ class RecordingWebhookTransport:
         self.status_code = status_code
         self.requests: list[dict[str, object]] = []
 
-    def post(self, url: str, *, body: bytes, headers: dict[str, str]) -> WebhookTransportResponse:
-        self.requests.append({"url": url, "body": body, "headers": dict(headers)})
+    def post(
+        self,
+        url: str,
+        *,
+        body: bytes,
+        headers: dict[str, str],
+        resolved_addresses: tuple[str, ...],
+    ) -> WebhookTransportResponse:
+        self.requests.append(
+            {
+                "url": url,
+                "body": body,
+                "headers": dict(headers),
+                "resolved_addresses": resolved_addresses,
+            }
+        )
         return WebhookTransportResponse(self.status_code)
 
 
@@ -55,6 +69,7 @@ def _app_with_terminal_event(
         secret_resolver=resolver,
         transport=transport,
         delivered_at_factory=lambda: "2026-07-10T01:00:00Z",
+        hostname_resolver=lambda host, port: ("93.184.216.34",),
     )
     app = GraphBlocksServerApp(
         auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1", tenant_id="tenant-1")}),
@@ -136,6 +151,7 @@ def test_server_registration_delivers_replayed_event_with_resolved_hmac_secret()
     assert len(transport.requests) == 1
     request = transport.requests[0]
     assert request["url"] == "https://relay.example/events"
+    assert request["resolved_addresses"] == ("93.184.216.34",)
     envelope_payload = json.loads(request["body"])
     envelope = CallbackEnvelope(**envelope_payload)
     assert envelope.to_payload() == {
@@ -182,6 +198,52 @@ def test_server_registration_delivers_replayed_event_with_resolved_hmac_secret()
     assert secret.decode("utf-8") not in serialized_evidence
     assert secret not in request["body"]
     assert all(secret.decode("utf-8") not in value for value in headers.values())
+
+
+def test_server_registration_rejects_webhook_hostname_resolving_to_private_address() -> None:
+    resolver = RecordingSecretResolver({"secret://callbacks/ide-relay": b"registered-secret-value"})
+    transport = RecordingWebhookTransport()
+    app = _app_with_terminal_event(resolver, transport)
+    app.callback_delivery_hook = RegisteredSecretWebhookDispatcher(
+        secret_resolver=resolver,
+        transport=transport,
+        delivered_at_factory=lambda: "2026-07-10T01:00:00Z",
+        hostname_resolver=lambda host, port: ("10.0.0.7",),
+    )
+
+    response = app.handle(_register_request("secret://callbacks/ide-relay"))
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert resolver.lookups == []
+    assert transport.requests == []
+    assert payload["deliveries"][0]["status"] == "failed"
+    assert payload["deliveries"][0]["lastError"] == "unsafe_webhook_target"
+
+
+def test_server_registration_fails_closed_when_webhook_hostname_resolution_errors() -> None:
+    resolver = RecordingSecretResolver({"secret://callbacks/ide-relay": b"registered-secret-value"})
+    transport = RecordingWebhookTransport()
+    app = _app_with_terminal_event(resolver, transport)
+
+    def unavailable_resolver(host: str, port: int) -> tuple[str, ...]:
+        raise RuntimeError("resolver unavailable")
+
+    app.callback_delivery_hook = RegisteredSecretWebhookDispatcher(
+        secret_resolver=resolver,
+        transport=transport,
+        delivered_at_factory=lambda: "2026-07-10T01:00:00Z",
+        hostname_resolver=unavailable_resolver,
+    )
+
+    response = app.handle(_register_request("secret://callbacks/ide-relay"))
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert resolver.lookups == []
+    assert transport.requests == []
+    assert payload["deliveries"][0]["status"] == "failed"
+    assert payload["deliveries"][0]["lastError"] == "unsafe_webhook_target"
 
 
 def test_server_registration_records_missing_secret_without_calling_transport() -> None:

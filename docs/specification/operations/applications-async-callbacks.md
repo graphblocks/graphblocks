@@ -29,6 +29,18 @@ tenant/principal scope. Webhook targets MUST declare timeout, retry limits,
 payload bound, and a signing method. Redirects, DNS resolution, and egress MUST
 obey deployment policy.
 
+For hostname targets, the dispatcher MUST resolve every candidate address and
+reject the delivery if any candidate violates the egress policy. The transport
+MUST connect to one of those validated addresses without resolving the hostname
+again; the original hostname remains the HTTP authority and TLS server name.
+A default-deny egress policy MUST reject literal and resolved addresses that are
+not globally routable, including private, loopback, link-local, shared (CGNAT),
+benchmarking, documentation, reserved, unspecified, and multicast ranges. A
+deployment MAY permit such a destination only through an explicit override.
+A redirect is a new target and MUST be rejected or independently resolved and
+validated before following it. Passing URL validation while later reconnecting
+by hostname is not a compliant SSRF control.
+
 Secrets MUST be registered by reference and resolved by a deployment-owned
 resolver. Protocol responses, journals, evidence, and dead letters MUST NOT
 contain raw secret bytes. The reference dispatcher signs a canonical envelope
