@@ -2663,6 +2663,10 @@ truth.
   registered.
 - Conformance claims and release-candidate gates now require current passing acceptance execution
   reports; manifest path/profile coverage alone can no longer satisfy acceptance evidence.
+- Local acceptance scenarios now preserve the upstream design examples while adding the implemented
+  replayable event-stream, canonical schema-id, async resume/fencing, bound signed callback
+  registration, and graph-plan contracts needed for every declared built-in validate/plan gate to
+  execute successfully.
 - `ContentPart` JSON data and metadata now recursively validate strict JSON values at construction
   time, rejecting arbitrary Python objects, tuples, and non-finite numbers before conversation
   state, tool output, callback output, or policy-reviewed content can persist them.

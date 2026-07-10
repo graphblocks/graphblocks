@@ -83,7 +83,7 @@ def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch
     )
 
 
-def test_profiled_examples_are_declared_acceptance_applications(monkeypatch) -> None:
+def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     manifest = graphblocks_testing.AcceptanceManifest.from_document(
         _load_yaml(ROOT / "acceptance" / "applications.yaml")
@@ -94,17 +94,43 @@ def test_profiled_examples_are_declared_acceptance_applications(monkeypatch) -> 
     }
 
     assert scenario_paths >= {
+        "acceptance/scenarios/bounded-research-orchestrator.yaml",
+        "acceptance/scenarios/coding-agent-background-callbacks.yaml",
+        "acceptance/scenarios/document-ingestion.yaml",
+        "acceptance/scenarios/multi-turn-chat.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/02-document-ingestion.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/03-policy-governed-chat.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/05-authority-backed-advisory.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/06-bounded-research-orchestrator.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml",
         "docs/upstream/GraphBlocks_v1.0_Final/examples/10-realtime-voice-extension.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/11-coding-agent-background-callbacks.yaml",
     }
+
+
+def test_local_acceptance_scenarios_pass_declared_builtin_gates(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    runner = graphblocks_testing.AcceptanceGateRunner()
+
+    for application in manifest.applications:
+        builtin_gates = tuple(
+            gate for gate in application.gates if gate.startswith("graphblocks ")
+        )
+        if not builtin_gates:
+            continue
+        builtin_application = graphblocks_testing.AcceptanceApplication(
+            application_id=application.application_id,
+            profiles=application.profiles,
+            scenario_path=application.scenario_path,
+            gates=builtin_gates,
+            description=application.description,
+        )
+
+        report = runner.run_application(builtin_application, root=ROOT)
+
+        assert report.ok, report.report_contract()
 
 
 def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
@@ -409,6 +435,22 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
     assert callback["delivery"]["kind"] == "webhook"
     assert callback["delivery"]["signing"]["algorithm"] == "hmac-sha256"
     assert callback["delivery"]["retry_policy_ref"] == "webhook-standard"
+
+
+def test_local_coding_agent_scenario_binds_callback_registration_evidence() -> None:
+    _, _, upstream_callback = _load_yaml_documents(
+        ROOT
+        / "docs"
+        / "upstream"
+        / "GraphBlocks_v1.0_Final"
+        / "examples"
+        / "11-coding-agent-background-callbacks.yaml"
+    )
+    local_application, _ = _load_yaml_documents(
+        ROOT / "acceptance" / "scenarios" / "coding-agent-background-callbacks.yaml"
+    )
+
+    assert local_application["spec"]["callbackRegistration"] == upstream_callback
 
 
 def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) -> None:

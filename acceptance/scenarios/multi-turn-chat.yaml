@@ -1,0 +1,97 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyProfile
+metadata:
+  name: interactive-finish-current-turn
+spec:
+  quotaAccounts:
+    userInteractive:
+      scope: principal
+      window: {kind: rolling, duration: 5h}
+      limits:
+        - {kind: model_input_tokens, hard: 200000, unit: token}
+        - {kind: model_output_tokens, hard: 40000, unit: token}
+  budgets:
+    turn:
+      inheritFrom: userInteractive
+      reservation: {required: true, safetyMargin: 0.15}
+      completionReserve:
+        - {kind: model_output_tokens, quantity: 2000, unit: token}
+  thresholds:
+    - {at: 0.80, actions: [notify]}
+    - {at: 0.90, actions: [prefer_economy_model, reduce_parallelism]}
+  exhaustion:
+    preset: finish_current_turn
+    denyNewWork: true
+    inFlight: finish_current_unit
+    unit: turn
+    continuation:
+      allowedWork: [already_admitted_child_work, declared_finalization, checkpoint, cleanup]
+      forbiddenWork: [new_turn, plan_expansion, optional_task, new_trial, state_changing_effect]
+      maxAdditionalUsage:
+        - {kind: model_output_tokens, quantity: 4000, unit: token}
+        - {kind: wall_time_ms, quantity: 600000, unit: ms}
+      maxAdditionalSteps: 2
+      deadline: 10m
+    output:
+      clientDelivery: continue_to_boundary
+      durableResult: commit_with_exhaustion_notice
+    effects: preserve_atomicity
+    afterUnit: reject
+---
+apiVersion: graphblocks.ai/v1alpha1
+kind: PolicyProfile
+metadata:
+  name: interactive-hard-stop
+spec:
+  quotaAccounts:
+    userInteractive:
+      scope: principal
+      window: {kind: rolling, duration: 5h}
+      limits:
+        - {kind: model_input_tokens, hard: 200000, unit: token}
+        - {kind: model_output_tokens, hard: 40000, unit: token}
+  exhaustion:
+    preset: hard_stop
+    denyNewWork: true
+    inFlight: cancel_immediately
+    unit: provider_call
+    continuation:
+      allowedWork: [cleanup]
+      forbiddenWork: [new_turn, plan_expansion, optional_task, state_changing_effect]
+    maxOverdraft: []
+    output:
+      clientDelivery: stop_immediately
+      durableResult: retract
+    effects: preserve_atomicity
+    afterUnit: reject
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: policy-governed-multi-turn-chat
+spec:
+  interface:
+    inputs:
+      conversation: graphblocks.conversation/ConversationRef@1
+      message: graphblocks.conversation/Message@1
+    outputs:
+      response: graphblocks.conversation/Message@1
+  nodes:
+    beginTurn:
+      block: conversation.begin_turn@1
+      inputs:
+        conversation: $input.conversation
+        message: $input.message
+    respond:
+      block: agent.run@1
+      inputs:
+        conversation: beginTurn.conversation
+      config:
+        policyProfile: interactive-finish-current-turn
+    commitTurn:
+      block: conversation.commit_turn@1
+      inputs:
+        turn: beginTurn.turn
+        response: respond.message
+      config:
+        concurrency: compare_and_swap

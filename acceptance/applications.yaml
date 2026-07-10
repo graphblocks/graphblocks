@@ -8,7 +8,7 @@ spec:
   - id: coding-agent-background-callbacks
     profiles:
     - GB-C4-PRODUCTION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/11-coding-agent-background-callbacks.yaml
+    scenarioPath: acceptance/scenarios/coding-agent-background-callbacks.yaml
     gates:
     - graphblocks validate
     - accepted invocation handle check
@@ -19,7 +19,7 @@ spec:
   - id: bounded-research-orchestrator
     profiles:
     - GB-X1-ORCHESTRATION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/06-bounded-research-orchestrator.yaml
+    scenarioPath: acceptance/scenarios/bounded-research-orchestrator.yaml
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -40,7 +40,7 @@ spec:
   - id: document-ingestion
     profiles:
     - GB-C2-AI-APPLICATION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/02-document-ingestion.yaml
+    scenarioPath: acceptance/scenarios/document-ingestion.yaml
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -70,7 +70,7 @@ spec:
   - id: multi-turn-chat
     profiles:
     - GB-C2-AI-APPLICATION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/03-policy-governed-chat.yaml
+    scenarioPath: acceptance/scenarios/multi-turn-chat.yaml
     gates:
     - graphblocks validate
     - graphblocks plan --expand

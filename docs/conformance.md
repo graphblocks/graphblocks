@@ -59,8 +59,9 @@ graphblocks-tck check tck --profiles src/graphblocks/data/conformance-profiles.y
 
 Profile claims can also require acceptance applications. The manifest in
 `acceptance/applications.yaml` maps each required application to a shipped
-example, profile, and gate list. Examples that serve as profile evidence should
-be declared there instead of remaining only illustrative YAML.
+runnable scenario, profile, and gate list. Implementation-specific runnable
+fixtures live under `acceptance/scenarios/`; the checksummed upstream examples
+remain design references and are not rewritten to satisfy local compiler rules.
 
 Run the manifest to produce immutable, digest-backed gate evidence:
 

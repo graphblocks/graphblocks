@@ -1,0 +1,190 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Application
+metadata:
+  name: workspace-coding-agent
+spec:
+  surface:
+    kind: ide
+    protocol: graphblocks.app.v1
+  capabilities:
+    - background_runs
+    - cursor_replay
+    - callback_subscription
+    - approval
+    - review
+    - artifact_preview
+    - patch_preview
+    - run_cancellation
+    - budget_extension
+    - reconnect_resume
+  routes:
+    - id: create-task
+      method: POST
+      path: /v1/coding/tasks
+      command: InvokeGraph
+      graph: graphs/coding-agent-task
+      responseMode: accepted
+    - id: run-events
+      method: GET
+      path: /v1/runs/{run_id}/events
+      transport: sse
+      cursorReplay: true
+    - id: run-websocket
+      method: GET
+      path: /v1/runs/{run_id}/ws
+      transport: websocket
+    - id: external-callback
+      method: POST
+      path: /v1/callbacks/{operation_id}
+      command: SubmitAsyncCallback
+  callbackRegistration:
+    type: RegisterCallback
+    scope: run
+    scope_id: run_coding_001
+    event_filter:
+      types:
+        - ReviewRequested
+        - ApprovalRequested
+        - BudgetExhausted
+        - RunCompleted
+        - RunFailed
+    delivery:
+      kind: webhook
+      url: https://ide-relay.example.com/graphblocks/events
+      signing:
+        algorithm: hmac-sha256
+        secret_ref: secret://callbacks/ide-relay
+      retry_policy_ref: webhook-standard
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: coding-agent-task
+spec:
+  execution:
+    lifetime: job
+    durability: checkpointed
+    interaction: incremental
+  eventStream:
+    replayable: true
+    retention: 14d
+    reconnectReplayGuarantee: 24h
+  interface:
+    inputs:
+      request: company.workspace/CodingTaskRequest@1
+    outputs:
+      result: company.workspace/CodingTaskResult@1
+    events:
+      - RunStarted
+      - AgentProgress
+      - FilePatchPreview
+      - CheckStarted
+      - CheckCompleted
+      - ReviewRequested
+      - ApprovalRequested
+      - ArtifactReady
+      - BudgetExhausted
+      - RunCompleted
+      - RunFailed
+  nodes:
+    begin:
+      block: task.begin@1
+      inputs:
+        request: $input.request
+    snapshot:
+      block: workspace.snapshot@1
+      inputs:
+        workspace: begin.workspace
+    plan:
+      block: orchestration.plan@1
+      inputs:
+        objective: begin.objective
+        workspace: snapshot.value
+      config:
+        maxTasks: 40
+        maxDepth: 4
+    executePlan:
+      block: orchestration.execute_task_plan@1
+      inputs:
+        plan: plan.task_plan
+      config:
+        checkpoint: each_task
+        maximumParallelism: 4
+        onTaskFailure: return_to_planner
+    proposePatch:
+      block: workspace.propose_changeset@1
+      inputs:
+        taskResults: executePlan.results
+        base: snapshot.value
+    preview:
+      block: workspace.preview_changeset@1
+      inputs:
+        changeset: proposePatch.changeset
+      projection:
+        event: FilePatchPreview
+    startCI:
+      block: async.start_operation@1
+      inputs:
+        changeset: proposePatch.changeset
+      config:
+        provider: github-actions
+        operation: workflow_dispatch
+        idempotencyKey: provider_delivery_id
+        attemptFencing: true
+        callback:
+          required: true
+          schema: schemas/CICallback@1
+          preCommitRace:
+            onEarlyCallback: quarantine
+            quarantineTtl: 5m
+            onQuarantineExpired: reject_without_resume
+            idempotencyKey: provider_delivery_id
+        resume:
+          requirePolicyReevaluation: true
+          requireBudgetReservation: true
+          requireReleaseCompatibility: true
+          requireOwnershipFence: true
+        timeout: 30m
+    waitCI:
+      block: async.await_callback@1
+      inputs:
+        operation: startCI.operation
+      config:
+        checkpoint: true
+        timeout: 30m
+        idempotencyKey: provider_delivery_id
+        attemptFencing: true
+        callback:
+          schema: schemas/CICallback@1
+        resume:
+          requirePolicyReevaluation: true
+          requireBudgetReservation: true
+          requireReleaseCompatibility: true
+          requireOwnershipFence: true
+        onTimeout: fail
+    parseCI:
+      block: check.parse_result@1
+      inputs:
+        callback: waitCI.callback
+    review:
+      block: review.request@1
+      when: parseCI.passed
+      inputs:
+        subject: proposePatch.changeset
+      config:
+        subjectDigestRequired: true
+        invalidateOnSubjectChange: true
+    commit:
+      block: workspace.commit_changeset@1
+      when: review.accepted
+      inputs:
+        changeset: proposePatch.changeset
+        review: review.record
+      config:
+        concurrency: compare_and_swap
+        requireCleanBase: true
+    finalize:
+      block: task.complete@1
+      inputs:
+        commit: commit.result
+        checks: parseCI.checks
