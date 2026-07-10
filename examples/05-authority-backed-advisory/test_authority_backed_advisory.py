@@ -11,4 +11,8 @@ from _test_support import assert_example_runner
 
 
 def test_authority_backed_advisory_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={"mock-graph:resolved-inputs", "mock-graph:final-output", "mock-graph:journal"},
+        expected_boundaries={"mock-authority-apis", "mock-reviewer", "scripted-llm"},
+    )

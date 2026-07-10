@@ -8,5 +8,5 @@ telemetry. Provider confirmation remains authoritative for interruption.
 python examples/10-realtime-voice-extension/run.py
 ```
 
-Validation opens no media session. The voice acceptance application executes
-duplex, provider-authority, and playback-ledger probes.
+The runner executes duplex, provider-authority, and playback-ledger probes with
+a fake realtime provider and playback transport; it opens no media session.

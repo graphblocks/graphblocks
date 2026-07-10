@@ -1,0 +1,8 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: policy-governed-chat-integration
+spec:
+  policyProfiles:
+    finishCurrentTurn: interactive-finish-current-turn
+    hardStop: interactive-hard-stop

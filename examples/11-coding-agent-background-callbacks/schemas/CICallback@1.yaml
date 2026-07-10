@@ -1,0 +1,18 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: schemas/CICallback@1
+title: Coding agent CI callback
+type: object
+additionalProperties: false
+required: [providerOperationId, conclusion, checks]
+properties:
+  providerOperationId: {type: string, minLength: 1}
+  conclusion: {enum: [success, failure, cancelled]}
+  checks:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [name, status]
+      properties:
+        name: {type: string, minLength: 1}
+        status: {enum: [passed, failed, skipped]}

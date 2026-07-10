@@ -23,7 +23,7 @@ spec:
       method: POST
       path: /v1/coding/tasks
       command: InvokeGraph
-      graph: graphs/coding-agent-task
+      graph: coding-agent-task
       responseMode: accepted
     - id: run-events
       method: GET
@@ -189,3 +189,5 @@ spec:
       inputs:
         commit: commit.result
         checks: parseCI.checks
+      outputs:
+        result: $output.result

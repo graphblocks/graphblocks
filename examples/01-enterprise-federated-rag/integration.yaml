@@ -1,0 +1,93 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: enterprise-federated-rag-integration
+spec:
+  acceptanceApplication: enterprise-rag
+  mockGraph:
+    graph: enterprise-rag-turn
+    inputs:
+      turn:
+        message: How do I rotate the production signing key?
+      auth:
+        tenantId: tenant-demo
+        principalId: user-demo
+    nodes:
+      begin:
+        service: conversation-store
+        outputs:
+          transaction: {conversationId: conversation-demo, turnId: turn-demo}
+          snapshot:
+            messages: [{role: user, text: Show the supported rotation procedure.}]
+      rewrite:
+        service: query-rewriter
+        expectedInputs:
+          message: How do I rotate the production signing key?
+        outputs:
+          query: production signing key rotation procedure
+      retrieve:
+        service: mock-retrievers
+        expectedInputs:
+          query: production signing key rotation procedure
+          auth: {tenantId: tenant-demo, principalId: user-demo}
+        outputs:
+          result:
+            sources:
+              - sourceId: handbook
+                hits: [{chunkId: chunk-rotation, text: Rotate through the security console.}]
+              - sourceId: tickets
+                hits: [{chunkId: chunk-ticket, text: Require two approvers.}]
+      fuse:
+        service: retrieval-fusion
+        outputs:
+          hits:
+            - {chunkId: chunk-rotation, score: 1.0, text: Rotate through the security console.}
+            - {chunkId: chunk-ticket, score: 0.8, text: Require two approvers.}
+      rerank:
+        service: mock-reranker
+        expectedInputs:
+          query: production signing key rotation procedure
+        outputs:
+          hits:
+            - {chunkId: chunk-rotation, score: 0.99, text: Rotate through the security console.}
+            - {chunkId: chunk-ticket, score: 0.91, text: Require two approvers.}
+      context:
+        service: context-builder
+        expectedInputs:
+          currentMessage: How do I rotate the production signing key?
+        outputs:
+          pack:
+            question: How do I rotate the production signing key?
+            citations: [chunk-rotation, chunk-ticket]
+      generate:
+        service: scripted-llm
+        expectedInputs:
+          context:
+            citations: [chunk-rotation, chunk-ticket]
+        scriptedResponse: Use the security console and obtain two approvals [chunk-rotation] [chunk-ticket].
+        responseField: response
+      validate:
+        service: grounding-validator
+        expectedInputs:
+          response: Use the security console and obtain two approvals [chunk-rotation] [chunk-ticket].
+        outputs:
+          candidate:
+            text: Use the security console and obtain two approvals.
+            citations: [chunk-rotation, chunk-ticket]
+            grounded: true
+      commit:
+        service: conversation-store
+        expectedInputs:
+          transaction: {conversationId: conversation-demo, turnId: turn-demo}
+          candidate: {grounded: true}
+        outputs:
+          result:
+            status: committed
+            text: Use the security console and obtain two approvals.
+            citations: [chunk-rotation, chunk-ticket]
+    expectedCallOrder: [begin, rewrite, retrieve, fuse, rerank, context, generate, validate, commit]
+    expectedOutput:
+      result:
+        status: committed
+        text: Use the security console and obtain two approvals.
+        citations: [chunk-rotation, chunk-ticket]

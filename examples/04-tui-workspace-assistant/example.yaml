@@ -10,7 +10,7 @@ spec:
       implementation: textual
       protocol: graphblocks.app.v1
   graphs:
-    default: graphs/workspace-agent.yaml
+    default: workspace-agent
   capabilities:
     - assistant_drafts
     - approval
@@ -62,3 +62,4 @@ spec:
     candidate:
       block: conversation.make_turn_candidate@1
       inputs: {agent: agent.result}
+      outputs: {result: $output.result}

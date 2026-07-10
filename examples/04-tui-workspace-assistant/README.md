@@ -8,4 +8,6 @@ handles workspace snapshot, agent work, review, and commit boundaries.
 python examples/04-tui-workspace-assistant/run.py
 ```
 
-Validation is local and does not open a terminal session or mutate a workspace.
+The runner executes the graph with a recording workspace API and scripted agent,
+asserting resolved inputs, draft output, and journal completion. It opens no
+terminal session and mutates no real workspace.

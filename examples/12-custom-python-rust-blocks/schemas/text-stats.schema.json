@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "examples.graphblocks.ai/TextStats@1",
+  "title": "Custom block text statistics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text", "wordCount", "characterCount", "checksum"],
+  "properties": {
+    "text": {"type": "string"},
+    "wordCount": {"type": "integer", "minimum": 0},
+    "characterCount": {"type": "integer", "minimum": 0},
+    "checksum": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"}
+  }
+}

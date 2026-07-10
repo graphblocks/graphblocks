@@ -5351,7 +5351,7 @@ def _exercise_document_ingestion(
     if application.application_id != "document-ingestion":
         raise RuntimeError("document semantic gate requires the document-ingestion application")
     documents = load_documents(scenario_path)
-    if len(documents) != 2:
+    if len(documents) < 2:
         raise RuntimeError("document-ingestion scenario must contain job and item graphs")
     item_graph = next(
         (

@@ -9,5 +9,5 @@ correctness.
 python examples/09-observability-profile/run.py
 ```
 
-The telemetry acceptance application separately exercises projection identity,
-outbox retry, and authoritative-state immutability.
+Recording OTel/Langfuse exporters exercise projection identity, failure/retry,
+and authoritative-state immutability without exporting telemetry.

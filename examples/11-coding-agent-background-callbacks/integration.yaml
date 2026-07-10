@@ -1,0 +1,6 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: coding-agent-background-callbacks-integration
+spec:
+  acceptanceApplication: coding-agent-background-callbacks

@@ -9,5 +9,5 @@ compare-and-swap.
 python examples/07-verified-rtl-workspace-trial/run.py
 ```
 
-No EDA tool runs during validation. The governed-runtime acceptance application
-executes the corresponding lease, review, and commit-authorization probes.
+No EDA tool runs locally. Recording lease, reviewer, and workspace fakes execute
+the governed-runtime commit-authorization probes.

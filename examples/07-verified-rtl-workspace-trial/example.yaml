@@ -34,7 +34,7 @@ spec:
       block: control.map@2
       inputs: {items: candidates.items}
       config:
-        graph: graphs/evaluate-rtl-candidate.yaml
+        graph: evaluate-rtl-candidate
         itemKey: $.candidate_id
         concurrency: 4
         stateIsolation: item
@@ -80,6 +80,8 @@ spec:
         base: snapshot.value
         request: verifyTrial.commitRequest
       config: {concurrency: compare_and_swap}
+      outputs:
+        result: $output.proposal
 ---
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph

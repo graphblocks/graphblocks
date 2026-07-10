@@ -29,7 +29,7 @@ spec:
       block: control.map@2
       inputs: {items: diff.changed}
       config:
-        graph: graphs/process-single-asset.yaml
+        graph: process-single-asset
         itemKey: $.revision_id
         concurrency: 16
         stateIsolation: item
@@ -43,7 +43,7 @@ spec:
       block: control.map@2
       inputs: {items: diff.deleted}
       config:
-        graph: graphs/delete-single-asset.yaml
+        graph: delete-single-asset
         itemKey: $.revision_id
         concurrency: 8
         checkpoint: per_item
@@ -53,23 +53,35 @@ spec:
       inputs:
         processed: process.outcomes
         deleted: delete.outcomes
+      outputs:
+        report: $output.report
 ---
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:
   name: process-single-asset
 spec:
+  interface:
+    inputs:
+      asset: graphblocks.documents/AssetRevision@1
+      packageLockHash: graphblocks.core/Digest@1
+    outputs:
+      result: graphblocks.documents/IngestionRevisionResult@1
   nodes:
     begin:
       block: ingestion.begin_revision@1
+      inputs: {asset: $input.asset}
     cache:
       block: processing.cache_lookup@1
       inputs:
         assetChecksum: $input.asset.checksum
-        pipelineLock: $execution.release.packageLockHash
+        pipelineLock: $input.packageLockHash
     load:
       block: asset.load@1
       when: cache.miss
+      inputs:
+        asset: $input.asset
+        cacheMiss: cache.miss
     convert:
       block: document.convert@1
       inputs: {asset: load.value}
@@ -120,3 +132,20 @@ spec:
       inputs:
         transaction: begin.transaction
         staged: persist.result
+      outputs: {result: $output.result}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: delete-single-asset
+spec:
+  interface:
+    inputs:
+      asset: graphblocks.documents/AssetRevision@1
+    outputs:
+      result: graphblocks.documents/IngestionDeletionResult@1
+  nodes:
+    delete:
+      block: ingestion.delete_revision@1
+      inputs: {asset: $input.asset}
+      outputs: {result: $output.result}

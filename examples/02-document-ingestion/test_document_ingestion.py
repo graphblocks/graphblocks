@@ -11,4 +11,8 @@ from _test_support import assert_example_runner
 
 
 def test_document_ingestion_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={"acceptance:parser fallback check", "acceptance:ACL propagation check"},
+        expected_boundaries={"document parsers", "ACL-aware index"},
+    )

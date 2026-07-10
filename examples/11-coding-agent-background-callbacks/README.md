@@ -8,6 +8,6 @@ operation, journal-before-resume ordering, review, and compare-and-swap commit.
 python examples/11-coding-agent-background-callbacks/run.py
 ```
 
-The script validates identities and callback fences without sending a webhook or
-starting CI. The production acceptance application performs authenticated server
-flows and signed-delivery verification.
+The script runs authenticated server flows, callback resume, replay, and signed
+delivery through fake CI, secret-resolver, and webhook transports. It sends no
+webhook and starts no external CI job.

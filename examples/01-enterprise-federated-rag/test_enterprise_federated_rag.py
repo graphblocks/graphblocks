@@ -11,4 +11,13 @@ from _test_support import assert_example_runner
 
 
 def test_enterprise_federated_rag_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "acceptance:rag citation validation",
+            "acceptance:abstention check",
+            "mock-graph:resolved-inputs",
+            "mock-graph:final-output",
+        },
+        expected_boundaries={"mock-retrievers", "scripted-llm"},
+    )

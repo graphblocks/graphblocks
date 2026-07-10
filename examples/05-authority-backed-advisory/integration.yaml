@@ -1,0 +1,83 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: authority-backed-advisory-integration
+spec:
+  mockGraph:
+    graph: authority-backed-advisory
+    inputs:
+      matter:
+        documents: [artifact://matter/demo]
+        relevantDate: "2026-07-10"
+      auth: {tenantId: tenant-demo, principalId: reviewer-demo}
+    nodes:
+      snapshot:
+        service: mock-authority-snapshot
+        outputs:
+          value: {snapshotId: legal-snapshot-demo, relevantDate: "2026-07-10"}
+      extractFacts:
+        service: mock-document-api
+        expectedInputs:
+          matter: {relevantDate: "2026-07-10"}
+          snapshot: {snapshotId: legal-snapshot-demo}
+        outputs:
+          facts: [{id: fact-1, text: The agreement was signed on 2026-07-01.}]
+      identifyIssues:
+        service: issue-classifier
+        outputs:
+          issues: [{id: issue-1, question: "Was approval authority documented?"}]
+      plan:
+        service: task-planner
+        outputs:
+          value: {planId: plan-demo, tasks: [resolve-statute, resolve-adverse-authority]}
+      research:
+        service: mock-authority-apis
+        expectedInputs:
+          plan: {planId: plan-demo}
+        outputs:
+          evidence:
+            - {sourceRef: statute://demo/1, authoritative: true}
+            - {sourceRef: case://demo/adverse-1, authoritative: true}
+      synthesize:
+        service: scripted-llm
+        expectedInputs:
+          evidence:
+            - {sourceRef: statute://demo/1, authoritative: true}
+            - {sourceRef: case://demo/adverse-1, authoritative: true}
+        scriptedResponse: Approval authority must be verified against both cited sources.
+        responseField: memo
+      verifySources:
+        service: source-verifier
+        expectedInputs:
+          subject: Approval authority must be verified against both cited sources.
+        outputs:
+          results:
+            - {id: official_source_resolves, passed: true}
+            - {id: relevant_date_matches, passed: true}
+            - {id: adverse_authority_considered, passed: true}
+      gate:
+        service: policy-gate
+        outputs:
+          result: {passed: true, checkIds: [official_source_resolves, relevant_date_matches]}
+      review:
+        service: mock-reviewer
+        expectedInputs:
+          gate: {passed: true}
+        outputs:
+          record: {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
+      publish:
+        service: result-builder
+        expectedInputs:
+          reviews:
+            "0": {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
+        outputs:
+          result:
+            status: approved
+            memo: Approval authority must be verified against both cited sources.
+            sourceCount: 2
+    expectedCallOrder: [snapshot, extractFacts, identifyIssues, plan, research, synthesize, verifySources, gate, review, publish]
+    expectedOutput:
+      result:
+        status: approved
+        memo: Approval authority must be verified against both cited sources.
+        sourceCount: 2

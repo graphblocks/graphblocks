@@ -11,4 +11,12 @@ from _test_support import assert_example_runner
 
 
 def test_realtime_voice_extension_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "acceptance:duplex session contract check",
+            "acceptance:interruption authority check",
+            "acceptance:playback ledger check",
+        },
+        expected_boundaries={"realtime provider", "playback transport"},
+    )

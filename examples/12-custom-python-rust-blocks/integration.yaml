@@ -1,0 +1,31 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: custom-python-rust-blocks-integration
+spec:
+  workerGraph:
+    graph: custom-python-rust-pipeline
+    pluginManifest: graphblocks-plugin.yaml
+    schemaDirectory: schemas
+    inputs:
+      text: "  GraphBlocks   custom blocks cross languages  "
+    nodes:
+      normalize:
+        kind: python
+        implementation: examples.python.normalize_text
+        modulePath: python/custom_block.py
+        callable: invoke
+        service: python-worker
+      stats:
+        kind: rust
+        implementation: examples.rust.text_stats
+        manifestPath: rust/Cargo.toml
+        binary: graphblocks-example-rust-stats
+        service: rust-worker
+    expectedCallOrder: [normalize, stats]
+    expectedOutput:
+      stats:
+        text: "gbx:graphblocks custom blocks cross languages"
+        wordCount: 5
+        characterCount: 45
+        checksum: fnv1a64:8e952db469152820

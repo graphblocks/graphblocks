@@ -11,4 +11,12 @@ from _test_support import assert_example_runner
 
 
 def test_policy_governed_chat_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "policy:scripted-model-stream",
+            "policy:finish-current-turn",
+            "policy:hard-stop",
+        },
+        expected_boundaries={"scripted-llm", "usage budget", "output stream"},
+    )

@@ -19,3 +19,9 @@ Known parity limitation: Rust voice coverage does not yet match the Python
 provider-confirmation and playback acknowledgement acceptance contract. Other
 Python-only advanced reference contracts are listed in
 [language support](../specification/conformance/language-support.md).
+
+`graphblocks-native` can validate, plan, and execute a single JSON graph without
+Python, using the Rust stdlib runtime. It does not yet load YAML/multi-document
+examples or inject arbitrary integration adapters. Despite its name,
+`graphblocksd` is currently a one-shot worker control-plane CLI rather than a
+long-running HTTP server.

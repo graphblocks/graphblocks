@@ -1,0 +1,11 @@
+lock-version = "1"
+target = "rag-cpu"
+python = "3.12"
+
+[[packages]]
+name = "graphblocks-rag"
+version = "0.1.0"
+
+[[packages]]
+name = "graphblocks-qdrant"
+version = "0.1.0"

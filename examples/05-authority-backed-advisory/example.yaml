@@ -20,6 +20,9 @@ spec:
           - $input.matter.relevantDate
     extractFacts:
       block: company.legal.extract_facts@1
+      inputs:
+        matter: $input.matter
+        snapshot: snapshot.value
     identifyIssues:
       block: company.legal.identify_issues@1
       inputs: {facts: extractFacts.facts}
@@ -64,7 +67,9 @@ spec:
     review:
       block: review.request@1
       when: gate.passed
-      inputs: {subject: synthesize.memo}
+      inputs:
+        subject: synthesize.memo
+        gate: gate.result
       config:
         scope: substantive
         requiredCredential: application-defined-attorney-credential
@@ -76,3 +81,5 @@ spec:
         evidence: research.evidence
         checks: verifySources.results
         reviews: [review.record]
+      outputs:
+        result: $output.result

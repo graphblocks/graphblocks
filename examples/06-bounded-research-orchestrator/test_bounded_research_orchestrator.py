@@ -11,4 +11,12 @@ from _test_support import assert_example_runner
 
 
 def test_bounded_research_orchestrator_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "acceptance:bounded task plan check",
+            "acceptance:task budget delegation check",
+            "acceptance:replan patch CAS check",
+        },
+        expected_boundaries={"worker pool", "budget ledger", "task leases"},
+    )

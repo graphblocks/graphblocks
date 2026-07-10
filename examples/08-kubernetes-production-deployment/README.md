@@ -8,5 +8,6 @@ automatic rollback policy, and workload-aware drain behavior.
 python examples/08-kubernetes-production-deployment/run.py
 ```
 
-Validation does not access a cluster. The production acceptance application
-executes release-attestation, canary, rollback, and drain semantic gates.
+The runner uses fake signing, metric, and deployment boundaries to execute
+release-attestation, canary, rollback, and drain gates without accessing a
+cluster.

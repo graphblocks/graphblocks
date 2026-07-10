@@ -11,4 +11,12 @@ from _test_support import assert_example_runner
 
 
 def test_observability_profile_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "acceptance:OTel projection check",
+            "acceptance:Langfuse projection check",
+            "acceptance:telemetry outage correctness check",
+        },
+        expected_boundaries={"OTel exporter", "Langfuse exporter", "telemetry outbox"},
+    )

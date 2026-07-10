@@ -1,0 +1,22 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Graph
+metadata:
+  name: custom-python-rust-pipeline
+spec:
+  interface:
+    inputs:
+      text: examples.graphblocks.ai/Text@1
+    outputs:
+      stats: examples.graphblocks.ai/TextStats@1
+  nodes:
+    normalize:
+      block: examples.python.normalize-text@1
+      config:
+        case: lower
+        prefix: "gbx:"
+    stats:
+      block: examples.rust.text-stats@1
+  edges:
+    - {from: $input.text, to: normalize.text}
+    - {from: normalize.text, to: stats.text}
+    - {from: stats.stats, to: $output.stats}

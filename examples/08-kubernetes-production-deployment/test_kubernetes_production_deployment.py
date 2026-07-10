@@ -11,4 +11,12 @@ from _test_support import assert_example_runner
 
 
 def test_kubernetes_production_deployment_example() -> None:
-    assert_example_runner(Path(__file__).with_name("run.py"))
+    assert_example_runner(
+        Path(__file__).with_name("run.py"),
+        expected_checks={
+            "acceptance:release bundle verification",
+            "acceptance:canary quality gate",
+            "acceptance:rollback and drain gate",
+        },
+        expected_boundaries={"release signer", "canary metrics", "deployment target"},
+    )

@@ -9,5 +9,6 @@ domain-neutral.
 python examples/05-authority-backed-advisory/run.py
 ```
 
-The script validates the contract and makes no request to the illustrative
-authority API.
+The script executes the graph with dated authority/document fakes, a scripted
+LLM, a source gate, and a recording reviewer. It makes no request to the
+illustrative authority APIs.

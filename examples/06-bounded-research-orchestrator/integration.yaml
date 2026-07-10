@@ -1,0 +1,6 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: bounded-research-orchestrator-integration
+spec:
+  acceptanceApplication: bounded-research-orchestrator

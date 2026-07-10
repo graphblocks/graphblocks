@@ -100,16 +100,16 @@ def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) ->
     }
 
     assert scenario_paths >= {
-        "acceptance/scenarios/bounded-research-orchestrator.yaml",
-        "acceptance/scenarios/coding-agent-background-callbacks.yaml",
         "acceptance/scenarios/direct-file-analysis.yaml",
-        "acceptance/scenarios/document-ingestion.yaml",
         "acceptance/scenarios/multi-turn-chat.yaml",
         "examples/01-enterprise-federated-rag/example.yaml",
+        "examples/02-document-ingestion/example.yaml",
+        "examples/06-bounded-research-orchestrator/example.yaml",
         "examples/07-verified-rtl-workspace-trial/example.yaml",
         "examples/08-kubernetes-production-deployment/example.yaml",
         "examples/09-observability-profile/example.yaml",
         "examples/10-realtime-voice-extension/example.yaml",
+        "examples/11-coding-agent-background-callbacks/example.yaml",
     }
 
 

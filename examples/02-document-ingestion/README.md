@@ -8,6 +8,5 @@ documents, chunks, and the staging index, and reports deletion outcomes.
 python examples/02-document-ingestion/run.py
 ```
 
-The runner validates both the outer ingestion graph and the per-asset graph.
-The acceptance application separately executes parser-lock and ACL-lineage
-checks.
+The runner validates the outer and embedded worker graphs, then executes
+parser-fallback and ACL-lineage gates with in-memory parser and index fakes.

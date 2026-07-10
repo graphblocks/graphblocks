@@ -8,5 +8,6 @@ provider cancellation, draft disposition, durable output, and effect atomicity.
 python examples/03-policy-governed-chat/run.py
 ```
 
-The script validates the profiles as resource documents; it does not start a
-chat server or model session.
+The script streams a scripted model response through the two exhaustion
+profiles and checks continuation admission, hard-stop cancellation, and late
+output rejection. It does not start a chat server or contact a provider.

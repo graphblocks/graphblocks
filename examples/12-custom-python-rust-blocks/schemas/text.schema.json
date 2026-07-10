@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "examples.graphblocks.ai/Text@1",
+  "title": "Custom block text",
+  "type": "string"
+}

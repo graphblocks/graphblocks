@@ -6,7 +6,12 @@ one of the checked-in application contracts:
 ```bash
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
 python -m graphblocks plan examples/01-enterprise-federated-rag/example.yaml --expand
+python examples/01-enterprise-federated-rag/run.py
 ```
+
+The example runner also executes deterministic semantic checks with recording
+retriever/model fakes. Real network access is blocked and the final JSON line
+contains the checks, mocked boundaries, call-input digests, and evidence digest.
 
 Inspect project assets:
 

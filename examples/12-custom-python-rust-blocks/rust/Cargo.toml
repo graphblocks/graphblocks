@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-example-rust-stats"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+graphblocks-protocol = { path = "../../../crates/graphblocks-protocol" }
+serde_json = "1.0"
+
+[workspace]

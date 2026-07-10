@@ -81,3 +81,5 @@ spec:
         evidence: execute.evidence
         checks: verify.results
         gate: gate.result
+      outputs:
+        result: $output.result

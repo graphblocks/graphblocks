@@ -1,0 +1,30 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PluginManifest
+metadata:
+  name: examples.graphblocks.ai.custom-python-rust-blocks
+  version: 0.1.0
+spec:
+  pluginId: examples.graphblocks.ai.custom-python-rust-blocks
+  version: 0.1.0
+  maturity: experimental
+  capabilities:
+    - graphblocks.worker/v1
+  blocks:
+    - typeId: examples.python.normalize-text
+      version: 1
+      role: transform
+      implementation: examples.python.normalize_text
+      inputs:
+        - {name: text, type: examples.graphblocks.ai/Text@1}
+      outputs:
+        - {name: text, type: examples.graphblocks.ai/Text@1}
+    - typeId: examples.rust.text-stats
+      version: 1
+      role: transform
+      implementation: examples.rust.text_stats
+      inputs:
+        - {name: text, type: examples.graphblocks.ai/Text@1}
+      outputs:
+        - {name: stats, type: examples.graphblocks.ai/TextStats@1}
+  connectorFactories: []
+  adapters: []

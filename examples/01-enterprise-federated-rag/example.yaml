@@ -78,6 +78,8 @@ spec:
       inputs:
         transaction: begin.transaction
         candidate: validate.candidate
+      outputs:
+        result: $output.result
 ---
 apiVersion: graphblocks.ai/v1alpha1
 kind: Binding

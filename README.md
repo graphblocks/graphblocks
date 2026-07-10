@@ -28,6 +28,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
+python examples/01-enterprise-federated-rag/run.py
 python -m pytest
 cargo test --workspace --all-targets
 ```
@@ -36,6 +37,11 @@ After virtual-environment activation, the root editable install provides
 `python -m graphblocks`. The separately
 packaged command-line and testing distributions are developed under `packages/`;
 they are not installed by the root test extra.
+
+The repository also builds `graphblocks-native`, a Python-free Rust executable
+for `validate`, `plan`, and `run`. It currently accepts one JSON `Graph` on
+stdin and executes the native stdlib block set. `graphblocksd` is a worker
+control-plane command, not yet a listening HTTP/server process.
 
 ## Documentation
 

@@ -8,5 +8,5 @@ patch through compare-and-swap, and requires independent verification.
 python examples/06-bounded-research-orchestrator/run.py
 ```
 
-The orchestration acceptance application additionally checks task-plan limits,
-delegated budget authority, and patch revision fencing.
+The runner executes semantic integration gates for task-plan limits, mocked
+worker-pool resolution, delegated budget authority, and patch revision fencing.
