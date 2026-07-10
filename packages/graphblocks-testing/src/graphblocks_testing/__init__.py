@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import importlib
+import hashlib
 import io
 import json
 import math
@@ -29,7 +30,8 @@ from graphblocks.application_event import (
     ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
-from graphblocks.canonical import canonical_dumps, canonical_hash
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import (
@@ -301,10 +303,7 @@ def _first_mapping_value(mapping: Mapping[str, object], *keys: str, default: obj
 
 def _load_tck_cases_json(path: str | Path, suite_label: str) -> object:
     try:
-        return json.loads(
-            Path(path).read_text(encoding="utf-8"),
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
+        return canonical_loads(Path(path).read_text(encoding="utf-8"))
     except ValueError as error:
         raise ValueError(f"{suite_label} TCK cases must be valid strict JSON") from error
 
@@ -732,9 +731,37 @@ class TckResult:
 class TckReport:
     profile: str
     results: tuple[TckResult, ...]
+    suite: str
+    implementation: str
+    implementation_version: str
+    fixture_digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "results", tuple(self.results))
+
+    @property
+    def evidence_valid(self) -> bool:
+        digest = self.fixture_digest.removeprefix("sha256:")
+        return (
+            bool(self.suite.strip())
+            and bool(self.implementation.strip())
+            and bool(self.implementation_version.strip())
+            and self.fixture_digest.startswith("sha256:")
+            and len(digest) == 64
+            and all(character in "0123456789abcdef" for character in digest)
+        )
 
     @property
     def ok(self) -> bool:
+        if not self.results or not self.evidence_valid:
+            return False
+        if self.profile == "native" and self.suite == "runtime":
+            native_evidence = self.native_evidence_contract()
+            if (
+                native_evidence["fallback_case_count"]
+                or native_evidence["native_case_count"] != len(self.results)
+            ):
+                return False
         return all(result.status == "passed" for result in self.results)
 
     def native_evidence_contract(self) -> dict[str, object]:
@@ -767,6 +794,12 @@ class TckReport:
         contract: dict[str, object] = {
             "profile": self.profile,
             "ok": self.ok,
+            "evidence": {
+                "fixture_digest": self.fixture_digest,
+                "implementation": self.implementation,
+                "implementation_version": self.implementation_version,
+                "suite": self.suite,
+            },
             "results": [result.result_contract() for result in self.results],
         }
         native_evidence = self.native_evidence_contract()
@@ -788,6 +821,7 @@ class TckSuiteManifest:
     suite_id: str
     path: str
     case_ids: tuple[str, ...]
+    fixture_digest: str
     auxiliary_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -795,6 +829,13 @@ class TckSuiteManifest:
             raise ValueError("TCK suite_id must not be empty")
         if not self.path.strip():
             raise ValueError("TCK suite path must not be empty")
+        fixture_digest = self.fixture_digest.removeprefix("sha256:")
+        if (
+            not self.fixture_digest.startswith("sha256:")
+            or len(fixture_digest) != 64
+            or any(character not in "0123456789abcdef" for character in fixture_digest)
+        ):
+            raise ValueError("TCK suite fixture_digest must be a canonical sha256 digest")
         case_ids = tuple(str(case_id) for case_id in self.case_ids)
         if any(not case_id.strip() for case_id in case_ids):
             raise ValueError("TCK suite case ids must not be empty")
@@ -814,6 +855,7 @@ class TckSuiteManifest:
             "path": self.path,
             "case_count": self.case_count,
             "case_ids": list(self.case_ids),
+            "fixture_digest": self.fixture_digest,
         }
         if self.auxiliary_paths:
             contract["auxiliary_paths"] = list(self.auxiliary_paths)
@@ -2341,6 +2383,15 @@ def load_schema_typed_value_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def _tck_fixture_digest(path: Path) -> str:
+    return canonical_hash(
+        {
+            fixture.name: "sha256:" + hashlib.sha256(fixture.read_bytes()).hexdigest()
+            for fixture in sorted(path.parent.glob("*.json"))
+        }
+    )
+
+
 def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
     root_path = Path(root)
     if not root_path.is_dir():
@@ -2363,15 +2414,30 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
                 raise ValueError(f"TCK suite {suite_id} has duplicate case id {case_id!r}")
             seen.add(case_id)
             case_ids.append(case_id)
+        auxiliary_files = tuple(
+            auxiliary_path
+            for auxiliary_path in sorted(path.parent.glob("*.json"))
+            if auxiliary_path.name != "cases.json"
+        )
+        if suite_id == "schema":
+            typed_values_path = path.parent / "typed-values.json"
+            if typed_values_path.is_file():
+                for case in load_schema_typed_value_tck_cases(typed_values_path):
+                    if case.case_id in seen:
+                        raise ValueError(
+                            f"TCK suite {suite_id} has duplicate case id {case.case_id!r}"
+                        )
+                    seen.add(case.case_id)
+                    case_ids.append(case.case_id)
         manifests.append(
             TckSuiteManifest(
                 suite_id=suite_id,
                 path=path.relative_to(root_path).as_posix(),
                 case_ids=tuple(case_ids),
+                fixture_digest=_tck_fixture_digest(path),
                 auxiliary_paths=tuple(
                     auxiliary_path.relative_to(root_path).as_posix()
-                    for auxiliary_path in sorted(path.parent.glob("*.json"))
-                    if auxiliary_path.name != "cases.json"
+                    for auxiliary_path in auxiliary_files
                 ),
             )
         )
@@ -2410,7 +2476,11 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
     if suite == "runtime":
         return load_runtime_tck_cases(path)
     if suite == "schema":
-        return load_schema_tck_cases(path)
+        primary_cases = load_schema_tck_cases(path)
+        typed_values_path = Path(path).with_name("typed-values.json")
+        if typed_values_path.is_file():
+            return primary_cases + load_schema_typed_value_tck_cases(typed_values_path)
+        return primary_cases
     if suite == "sequence":
         return load_sequence_tck_cases(path)
     if suite == "tool-lifecycle":
@@ -2543,12 +2613,28 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{issue.code} {issue.suite}: {issue.message}")
         return 0 if coverage.ok else 1
     if args.command == "run":
+        if args.profile == "native" and args.suite != "runtime":
+            payload = {
+                "ok": False,
+                "error": "native TCK profile is supported only for the runtime suite",
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(payload["error"])
+            return 1
         cases = load_tck_cases_for_suite(args.suite, args.path)
-        report = TckRunner(stdlib_registry(), profile=args.profile, evidence_dir=args.evidence_dir).run_cases(cases)
+        report = TckRunner(
+            stdlib_registry(),
+            profile=args.profile,
+            evidence_dir=args.evidence_dir,
+            suite=args.suite,
+            fixture_digest=_tck_fixture_digest(args.path),
+        ).run_cases(cases)
         payload = report.report_contract()
         payload["contentDigest"] = report.content_digest()
         if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
+            print(canonical_dumps(payload))
         else:
             print(f"{'OK' if report.ok else 'FAILED'} {len(report.results)} {args.suite} TCK cases")
             for result in report.results:
@@ -2556,12 +2642,32 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{result.case_id} {result.status}")
         return 0 if report.ok else 1
     if args.command == "run-all":
+        manifests = load_tck_suite_manifests(args.root)
+        if args.profile == "native" and any(
+            manifest.suite_id != "runtime" for manifest in manifests
+        ):
+            payload = {
+                "ok": False,
+                "error": "native TCK profile is supported only for the runtime suite",
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(payload["error"])
+            return 1
         reports: dict[str, dict[str, object]] = {}
         ok = True
-        for manifest in load_tck_suite_manifests(args.root):
+        for manifest in manifests:
             evidence_dir = args.evidence_dir / manifest.suite_id if args.evidence_dir is not None else None
-            report = TckRunner(stdlib_registry(), profile=args.profile, evidence_dir=evidence_dir).run_cases(
-                load_tck_cases_for_suite(manifest.suite_id, args.root / manifest.path)
+            fixture_path = args.root / manifest.path
+            report = TckRunner(
+                stdlib_registry(),
+                profile=args.profile,
+                evidence_dir=evidence_dir,
+                suite=manifest.suite_id,
+                fixture_digest=manifest.fixture_digest,
+            ).run_cases(
+                load_tck_cases_for_suite(manifest.suite_id, fixture_path)
             )
             reports[manifest.suite_id] = report.report_contract()
             ok = ok and report.ok
@@ -2572,7 +2678,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         payload["contentDigest"] = canonical_hash(payload)
         if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
+            print(canonical_dumps(payload))
         else:
             print(f"{'OK' if ok else 'FAILED'} {len(reports)} TCK suites")
             for suite_id, report in reports.items():
@@ -3156,6 +3262,8 @@ class ConformanceProfileSet:
         profile_ids: tuple[str, ...],
         *,
         tck_reports: Mapping[str, TckReport],
+        tck_manifests: Mapping[str, TckSuiteManifest],
+        tck_implementations: Mapping[str, tuple[str, str]],
         acceptance_coverage: AcceptanceCoverageResult,
         acceptance_report: AcceptanceRunReport | None = None,
     ) -> ConformanceClaimValidation:
@@ -3164,7 +3272,35 @@ class ConformanceProfileSet:
         claimed_profile = profile_ids[-1] if profile_ids else ""
         for suite in claim.tck_suites:
             report = tck_reports.get(suite)
-            if report is None:
+            manifest = tck_manifests.get(suite)
+            implementation_expectation = tck_implementations.get(suite)
+            if manifest is None:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckManifestMissing",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.manifest",
+                        message=(
+                            "claimed conformance profile requires an authoritative "
+                            "TCK suite manifest"
+                        ),
+                    )
+                )
+            elif implementation_expectation is None:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckImplementationExpectationMissing",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.implementation",
+                        message=(
+                            "claimed conformance profile requires an authoritative "
+                            "TCK implementation expectation"
+                        ),
+                    )
+                )
+            elif report is None:
                 issues.append(
                     ConformanceClaimIssue(
                         code="ConformanceTckMissing",
@@ -3172,6 +3308,65 @@ class ConformanceProfileSet:
                         suite=suite,
                         path=f"$.profiles.{claimed_profile}.tck.{suite}",
                         message="claimed conformance profile requires a passing TCK suite with no report",
+                    )
+                )
+            elif not report.evidence_valid or report.suite != suite:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckEvidenceInvalid",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.evidence",
+                        message=(
+                            "claimed conformance profile requires identified TCK evidence "
+                            "for the current suite fixture"
+                        ),
+                    )
+                )
+            elif (
+                report.implementation,
+                report.implementation_version,
+            ) != implementation_expectation:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckImplementationMismatch",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.evidence.implementation",
+                        message=(
+                            "TCK report implementation identity or version does not match "
+                            "the authoritative expectation"
+                        ),
+                    )
+                )
+            elif report.fixture_digest != manifest.fixture_digest:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckEvidenceStale",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.evidence.fixture_digest",
+                        message=(
+                            "TCK report fixture digest does not match the authoritative "
+                            "suite manifest"
+                        ),
+                    )
+                )
+            elif (
+                tuple(result.case_id for result in report.results) != manifest.case_ids
+                or len({result.case_id for result in report.results}) != len(report.results)
+                or any(result.kind != suite for result in report.results)
+            ):
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckCoverageInvalid",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}.results",
+                        message=(
+                            "TCK report results must exactly cover the authoritative case ids "
+                            "with matching suite kinds"
+                        ),
                     )
                 )
             elif not report.ok:
@@ -6211,6 +6406,7 @@ def _exercise_coding_agent_background_callback(
                 *,
                 body: bytes,
                 headers: dict[str, str],
+                resolved_addresses: tuple[str, ...],
             ) -> object:
                 envelope_payload = json.loads(body)
                 envelope = callback_module.CallbackEnvelope(**envelope_payload)
@@ -6229,6 +6425,7 @@ def _exercise_coding_agent_background_callback(
                         "runId": envelope.run_id,
                         "cursor": envelope.cursor,
                         "idempotencyKey": envelope.idempotency_key,
+                        "resolvedAddresses": list(resolved_addresses),
                     }
                 )
                 return callback_module.WebhookTransportResponse(202 if verified else 401)
@@ -6241,6 +6438,7 @@ def _exercise_coding_agent_background_callback(
             delivered_at_factory=lambda: datetime.now(timezone.utc)
             .isoformat(timespec="milliseconds")
             .replace("+00:00", "Z"),
+            hostname_resolver=lambda host, port: ("93.184.216.34",),
         )
         registered = app.handle(
             ServerRequest(
@@ -6463,6 +6661,7 @@ def _signed_webhook_delivery_check(
         or len(receiver_requests) != 1
         or receiver_requests[0].get("verified") is not True
         or receiver_requests[0].get("url") != "https://ide-relay.example.com/graphblocks/events"
+        or receiver_requests[0].get("resolvedAddresses") != ["93.184.216.34"]
     ):
         raise RuntimeError("signed webhook gate receiver did not verify the canonical HMAC request")
     return 0, canonical_dumps(
@@ -6677,8 +6876,15 @@ class TckRunner:
     registry: RuntimeRegistry
     profile: str = "local"
     evidence_dir: Path | None = None
+    suite: str | None = None
+    fixture_digest: str | None = None
+    implementation: str = "graphblocks-python"
+    implementation_version: str = GRAPHBLOCKS_VERSION
 
     def run_cases(self, cases: tuple[TckCase, ...]) -> TckReport:
+        suite = self.suite or (cases[0].kind if cases else "")
+        if self.profile == "native" and suite != "runtime":
+            raise ValueError("native TCK profile is supported only for the runtime suite")
         results: list[TckResult] = []
         for case in cases:
             if case.kind == "compiler":
@@ -6725,7 +6931,22 @@ class TckRunner:
                 results.append(self._run_voice_case(case))
             else:
                 results.append(self._run_schema_case(case))
-        return TckReport(profile=self.profile, results=tuple(results))
+        fixture_digest = self.fixture_digest or (
+            "sha256:" + hashlib.sha256(repr(cases).encode("utf-8")).hexdigest()
+        )
+        implementation = (
+            f"{self.implementation}-native"
+            if self.profile == "native" and suite == "runtime"
+            else self.implementation
+        )
+        return TckReport(
+            profile=self.profile,
+            results=tuple(results),
+            suite=suite,
+            implementation=implementation,
+            implementation_version=self.implementation_version,
+            fixture_digest=fixture_digest,
+        )
 
     def _run_compiler_case(self, case: TckCase) -> TckResult:
         if case.block_catalog:

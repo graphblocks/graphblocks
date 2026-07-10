@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import json
+from decimal import Decimal
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -11,6 +13,63 @@ import yaml
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    empty = graphblocks_testing.TckReport(
+        profile="local",
+        suite="runtime",
+        implementation="graphblocks-python",
+        implementation_version="0.1.0",
+        fixture_digest="sha256:" + ("1" * 64),
+        results=(),
+    )
+    fallback = graphblocks_testing.TckReport(
+        profile="native",
+        suite="runtime",
+        implementation="graphblocks-python-native",
+        implementation_version="0.1.0",
+        fixture_digest="sha256:" + ("1" * 64),
+        results=(
+            graphblocks_testing.TckResult(
+                "runtime/fallback",
+                "runtime",
+                "passed",
+                observed={
+                    "runtime": "local",
+                    "native_fallback_reason": "native_runtime_unavailable",
+                },
+            ),
+        ),
+    )
+    unlabeled_local = graphblocks_testing.TckReport(
+        profile="native",
+        suite="runtime",
+        implementation="graphblocks-python-native",
+        implementation_version="0.1.0",
+        fixture_digest="sha256:" + ("1" * 64),
+        results=(
+            graphblocks_testing.TckResult(
+                "runtime/local-without-reason",
+                "runtime",
+                "passed",
+                observed={"runtime": "local"},
+            ),
+        ),
+    )
+
+    assert not empty.ok
+    assert not fallback.ok
+    assert not unlabeled_local.ok
+    assert empty.report_contract()["evidence"] == {
+        "fixture_digest": "sha256:" + ("1" * 64),
+        "implementation": "graphblocks-python",
+        "implementation_version": "0.1.0",
+        "suite": "runtime",
+    }
 
 
 def test_testing_package_exposes_deterministic_in_process_runtime(monkeypatch) -> None:
@@ -119,7 +178,9 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
 
     assert report.ok
-    assert report.report_contract() == {
+    contract = report.report_contract()
+    evidence = contract.pop("evidence")
+    assert contract == {
         "profile": "local",
         "ok": True,
         "results": [
@@ -132,6 +193,13 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
             }
         ],
     }
+    assert evidence == {
+        "fixture_digest": report.fixture_digest,
+        "implementation": "graphblocks-python",
+        "implementation_version": "0.1.0",
+        "suite": "compiler",
+    }
+    assert report.fixture_digest.startswith("sha256:")
     assert report.content_digest().startswith("sha256:")
 
 
@@ -276,7 +344,7 @@ def test_testing_package_native_profile_falls_back_for_unannotated_runtime_case(
 
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
 
-    assert report.ok
+    assert not report.ok
     assert report.results[0].observed == {
         "status": "succeeded",
         "outputs": {"prompt": "Fallback Ada"},
@@ -324,7 +392,7 @@ def test_testing_package_native_profile_falls_back_when_native_runtime_unavailab
 
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry(), profile="native").run_cases((case,))
 
-    assert report.ok
+    assert not report.ok
     assert report.results[0].observed == {
         "status": "succeeded",
         "outputs": {"prompt": "Unavailable Ada"},
@@ -413,7 +481,14 @@ def test_testing_package_loads_shared_typed_value_schema_tck_cases(monkeypatch) 
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["schema"] * 3
+    assert [case.kind for case in cases] == ["schema"] * 8
+    assert {case.case_id for case in cases} >= {
+        "small_exponent_uses_cross_language_spelling",
+        "arbitrary_precision_exponent_uses_cross_language_spelling",
+        "decimal_above_binary64_integer_precision_remains_distinct",
+        "integer_larger_than_u64_remains_an_integer",
+        "negative_integer_zero_is_normalized",
+    }
     assert any(not case.expected_ok for case in cases)
     assert report.ok
     assert {result.observed["valid"] for result in report.results} == {False, True}
@@ -422,6 +497,43 @@ def test_testing_package_loads_shared_typed_value_schema_tck_cases(monkeypatch) 
         for result in report.results
     )
     assert "load_schema_typed_value_tck_cases" in graphblocks_testing.__all__
+
+
+def test_schema_suite_loader_executes_primary_and_typed_value_fixtures(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_tck_cases_for_suite(
+        "schema",
+        ROOT / "tck" / "schema" / "cases.json",
+    )
+    manifests = {
+        manifest.suite_id: manifest
+        for manifest in graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
+    }
+    expected_case_ids = (
+        "canonical_schema_id",
+        "nested_schema_id",
+        "missing_major_version",
+        "noncanonical_major_version",
+        *(
+            case.case_id
+            for case in graphblocks_testing.load_schema_typed_value_tck_cases(
+                ROOT / "tck" / "schema" / "typed-values.json"
+            )
+        ),
+    )
+    report = graphblocks_testing.TckRunner(
+        graphblocks_testing.stdlib_registry(),
+        suite="schema",
+        fixture_digest=manifests["schema"].fixture_digest,
+    ).run_cases(cases)
+
+    assert tuple(case.case_id for case in cases) == expected_case_ids
+    assert report.ok
+    assert tuple(result.case_id for result in report.results) == tuple(
+        case.case_id for case in cases
+    )
 
 
 def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
@@ -7387,6 +7499,18 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     )
     assert by_suite["schema"].auxiliary_paths == ("schema/typed-values.json",)
     assert by_suite["schema"].manifest_contract()["auxiliary_paths"] == ["schema/typed-values.json"]
+    assert by_suite["schema"].case_ids == (
+        "canonical_schema_id",
+        "nested_schema_id",
+        "missing_major_version",
+        "noncanonical_major_version",
+        *(
+            case.case_id
+            for case in graphblocks_testing.load_schema_typed_value_tck_cases(
+                ROOT / "tck" / "schema" / "typed-values.json"
+            )
+        ),
+    )
     assert by_suite["policy"].case_count >= 4
     assert by_suite["budget-race"].manifest_contract() == {
         "suite_id": "budget-race",
@@ -7396,6 +7520,14 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
             "competing_reservations_serialize_against_available_budget",
             "completion_reserve_allows_only_one_concurrent_spender",
         ],
+        "fixture_digest": graphblocks_testing.canonical_hash(
+            {
+                "cases.json": "sha256:"
+                + hashlib.sha256(
+                    (ROOT / "tck" / "budget-race" / "cases.json").read_bytes()
+                ).hexdigest()
+            }
+        ),
     }
     assert by_suite["application-events"].case_ids == (
         "tool_call_lifecycle_states_emit_standard_events",
@@ -7859,6 +7991,30 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert "load_tck_suite_manifests" in graphblocks_testing.__all__
 
 
+def test_tck_suite_manifest_digest_binds_auxiliary_fixtures(tmp_path, monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    suite = tmp_path / "schema"
+    suite.mkdir()
+    (suite / "cases.json").write_text("[]", encoding="utf-8")
+    auxiliary = suite / "typed-values.json"
+    auxiliary.write_text(
+        '[{"name":"one","schema":"schemas/Message","value":{},'
+        '"expected":{"error":"SchemaIdError"}}]',
+        encoding="utf-8",
+    )
+
+    first = graphblocks_testing.load_tck_suite_manifests(tmp_path)[0]
+    auxiliary.write_text(
+        '[{"name":"two","schema":"schemas/Message","value":{},'
+        '"expected":{"error":"SchemaIdError"}}]',
+        encoding="utf-8",
+    )
+    second = graphblocks_testing.load_tck_suite_manifests(tmp_path)[0]
+
+    assert first.fixture_digest != second.fixture_digest
+
+
 def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -7986,6 +8142,76 @@ def test_testing_package_cli_runs_policy_tck_suite(monkeypatch, capsys) -> None:
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_preserves_arbitrary_precision_schema_json(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "schema", str(ROOT / "tck" / "schema" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "1e+400" in output
+    payload = json.loads(output, parse_float=Decimal)
+    observed = {
+        result["case_id"]: result["observed"]
+        for result in payload["results"]
+    }
+    assert observed["arbitrary_precision_exponent_uses_cross_language_spelling"] == {
+        "canonical_json": '{"schema":"schemas/Score@2","value":1e+400}',
+        "canonical_value": {
+            "schema": "schemas/Score@2",
+            "value": Decimal("1e400"),
+        },
+        "valid": True,
+    }
+
+
+def test_testing_package_rejects_native_profile_for_non_runtime_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        [
+            "run",
+            "policy",
+            str(ROOT / "tck" / "policy" / "cases.json"),
+            "--profile",
+            "native",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "native TCK profile is supported only for the runtime suite",
+        "ok": False,
+    }
+
+
+def test_testing_package_run_all_rejects_non_runtime_native_suite(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "cases.json").write_text("[]", encoding="utf-8")
+
+    exit_code = graphblocks_testing.main(
+        ["run-all", str(tmp_path), "--profile", "native", "--json"]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "native TCK profile is supported only for the runtime suite",
+        "ok": False,
+    }
+
+
 def test_testing_package_cli_runs_runtime_tck_native_profile_with_fallback_metadata(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -7994,9 +8220,9 @@ def test_testing_package_cli_runs_runtime_tck_native_profile_with_fallback_metad
         ["run", "runtime", str(ROOT / "tck" / "runtime" / "cases.json"), "--profile", "native", "--json"]
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True
+    assert payload["ok"] is False
     assert payload["profile"] == "native"
     assert {result["kind"] for result in payload["results"]} == {"runtime"}
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
@@ -8068,8 +8294,9 @@ def test_testing_package_cli_native_runtime_tck_writes_evidence_paths(tmp_path, 
         ]
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
     observed = {result["case_id"]: result["observed"] for result in payload["results"]}
     prompt_observed = observed["prompt_render_output"]
     assert prompt_observed["runtime"] == "native"
@@ -8145,8 +8372,9 @@ def test_testing_package_cli_run_all_namespaces_native_tck_evidence(tmp_path, mo
         ["run-all", str(tck_root), "--profile", "native", "--evidence-dir", str(evidence_dir), "--json"]
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
     runtime_report = payload["reports"]["runtime"]
     prompt_observed = {
         result["case_id"]: result["observed"] for result in runtime_report["results"]
@@ -8895,6 +9123,10 @@ def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> No
 
     passing_tck = graphblocks_testing.TckReport(
         profile="compiler",
+        suite="compiler",
+        implementation="graphblocks-python",
+        implementation_version="0.1.0",
+        fixture_digest="sha256:" + ("1" * 64),
         results=(graphblocks_testing.TckResult("compiler/hash", "compiler", "passed"),),
     )
     failing_performance = graphblocks_testing.PerformanceBenchmarkReport(

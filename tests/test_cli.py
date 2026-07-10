@@ -8,14 +8,20 @@ import tarfile
 from types import SimpleNamespace
 import yaml
 
-from graphblocks.cli import main
-from graphblocks.canonical import canonical_hash
+from graphblocks.cli import _loads_strict_json, main
+from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.compiler import compile_graph
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
 
 RELEASE_DIGEST = "sha256:" + ("1" * 64)
 SIGNATURE_DIGEST = "sha256:" + ("3" * 64)
+
+
+def test_cli_strict_json_preserves_arbitrary_precision_numbers() -> None:
+    payload = _loads_strict_json("--input-json", '{"huge":1e400}')
+
+    assert canonical_dumps(payload) == '{"huge":1e+400}'
 
 
 def _deployment_plan_payload(
@@ -635,6 +641,55 @@ def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeyp
     assert payload["runId"] == "native-run-1"
     assert payload["outputs"] == {"prompt": "Native ok"}
     assert calls == [(graph, {"message": {"text": "ok"}})]
+
+
+def test_run_cli_preserves_arbitrary_precision_input_for_native_runtime(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-native-arbitrary-precision"},
+        "spec": {"nodes": {}},
+    }
+    inputs: list[str] = []
+
+    def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
+        inputs.append(inputs_json)
+        return (
+            '{"runId":"native-run-arbitrary-precision","status":"succeeded",'
+            '"outputs":{"huge":1e400},"journal":[{"kind":"run_succeeded"}]}'
+        )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            native_extension_available=lambda: True,
+            run_stdlib_graph_json=run_stdlib_graph_json,
+        ),
+    )
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "run",
+                str(path),
+                "--runtime",
+                "native",
+                "--input-json",
+                '{"huge":1e400}',
+            ]
+        )
+        == 0
+    )
+
+    output = canonical_loads(capsys.readouterr().out)
+    assert output["status"] == "succeeded"
+    assert canonical_dumps(output["outputs"]) == '{"huge":1e+400}'
+    assert inputs == ['{"huge":1e+400}']
 
 
 def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, capsys, monkeypatch) -> None:
@@ -1602,3 +1657,35 @@ def test_release_build_cli_creates_deterministic_verifiable_bundle(tmp_path, cap
     assert verify_payload["ok"] is True
     assert verify_payload["bundleDigest"] == first_payload["bundleDigest"]
     assert verify_payload["releaseDigest"] == first_payload["releaseDigest"]
+
+
+def test_release_build_cli_rejects_non_finite_release_numbers(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "non-finite-release", "version": "2026.07.10.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "main": {
+                    "graphHash": "sha256:graph",
+                    "normalizedPlanHash": float("nan"),
+                }
+            },
+        },
+    }
+    source = tmp_path / "release.yaml"
+    bundle = tmp_path / "release.gbr"
+    source.write_text(yaml.safe_dump(release), encoding="utf-8")
+
+    assert main(["release", "build", str(source), "--out", str(bundle), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "error": "GraphRelease document must contain only finite JSON numbers",
+        "ok": False,
+    }
+    assert not bundle.exists()

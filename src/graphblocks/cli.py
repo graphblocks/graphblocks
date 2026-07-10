@@ -11,7 +11,7 @@ import tarfile
 import yaml
 
 from . import __version__
-from .canonical import canonical_dumps, canonical_hash
+from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import compile_graph
 from .deployment import (
     DeploymentRevision,
@@ -80,10 +80,7 @@ PHASE_FIVE_IMAGE_ROLES = (
 
 def _loads_strict_json(owner: str, value: str) -> object:
     try:
-        return json.loads(
-            value,
-            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        )
+        return canonical_loads(value)
     except ValueError as error:
         raise ValueError(f"{owner} must be valid strict JSON") from error
 
@@ -567,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             try:
                 graph_json = json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True)
-                inputs_json = json.dumps(inputs, separators=(",", ":"), sort_keys=True)
+                inputs_json = canonical_dumps(inputs)
                 if (
                     args.run_id is not None
                     or args.run_store is not None
@@ -600,7 +597,7 @@ def main(argv: list[str] | None = None) -> int:
             if not isinstance(result_payload, dict):
                 print("native runtime response must decode to a JSON object")
                 return 1
-            print(json.dumps(result_payload, indent=2, sort_keys=True))
+            print(canonical_dumps(result_payload))
             return 0 if result_payload.get("status") == "succeeded" else 1
 
         run_store = SQLiteRunStore(args.run_store) if args.run_store is not None else None
@@ -904,6 +901,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"expected one GraphRelease document, found {len(matching_releases)}"
                 )
             document = matching_releases[0]
+            try:
+                json.dumps(document, allow_nan=False)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "GraphRelease document must contain only finite JSON numbers"
+                ) from error
             metadata = document.get("metadata", {})
             spec = document.get("spec", {})
             if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):

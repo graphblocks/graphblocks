@@ -21,6 +21,31 @@ def _import_testing(monkeypatch):
     return importlib.import_module("graphblocks_testing")
 
 
+def _tck_manifests(graphblocks_testing):
+    return {
+        manifest.suite_id: manifest
+        for manifest in graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
+    }
+
+
+def _passing_tck_report(graphblocks_testing, suite, manifests):
+    return graphblocks_testing.TckReport(
+        profile="local",
+        suite=suite,
+        implementation="graphblocks-python",
+        implementation_version="0.1.0",
+        fixture_digest=manifests[suite].fixture_digest,
+        results=tuple(
+            graphblocks_testing.TckResult(case_id, suite, "passed")
+            for case_id in manifests[suite].case_ids
+        ),
+    )
+
+
+def _tck_implementations(manifests):
+    return {suite: ("graphblocks-python", "0.1.0") for suite in manifests}
+
+
 def _load_yaml(path: Path) -> dict[str, object]:
     with path.open("r", encoding="utf-8") as stream:
         return yaml.safe_load(stream)
@@ -1244,11 +1269,9 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
             "multi-turn-chat",
         ),
     )
+    manifests = _tck_manifests(graphblocks_testing)
     passing_reports = {
-        suite: graphblocks_testing.TckReport(
-            profile=suite,
-            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
-        )
+        suite: _passing_tck_report(graphblocks_testing, suite, manifests)
         for suite in (
             "application-events",
             "application-protocol",
@@ -1269,6 +1292,8 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
     validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports=passing_reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=acceptance_coverage,
         acceptance_report=acceptance_report,
     )
@@ -1290,11 +1315,9 @@ def test_conformance_profile_claim_rejects_coverage_without_execution_report(mon
         _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
         root=ROOT,
     )
+    manifests = _tck_manifests(graphblocks_testing)
     passing_reports = {
-        suite: graphblocks_testing.TckReport(
-            profile=suite,
-            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
-        )
+        suite: _passing_tck_report(graphblocks_testing, suite, manifests)
         for suite in profile_set.claim_requirements(
             ("GB-C2-AI-APPLICATION",)
         ).tck_suites
@@ -1303,6 +1326,8 @@ def test_conformance_profile_claim_rejects_coverage_without_execution_report(mon
     validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports=passing_reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=acceptance_coverage,
     )
 
@@ -1318,6 +1343,124 @@ def test_conformance_profile_claim_rejects_coverage_without_execution_report(mon
     ]
 
 
+def test_conformance_profile_claim_rejects_unidentified_tck_evidence(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    claim = profile_set.claim_requirements(("GB-C0-SCHEMA",))
+    manifests = _tck_manifests(graphblocks_testing)
+    reports = {
+        suite: graphblocks_testing.TckReport(
+            profile="local",
+            suite=suite,
+            implementation="",
+            implementation_version="",
+            fixture_digest="sha256:" + ("0" * 64),
+            results=(graphblocks_testing.TckResult(suite, suite, "passed"),),
+        )
+        for suite in claim.tck_suites
+    }
+
+    validation = profile_set.validate_claim(
+        ("GB-C0-SCHEMA",),
+        tck_reports=reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+    )
+
+    assert not validation.ok
+    assert {issue.code for issue in validation.issues} == {"ConformanceTckEvidenceInvalid"}
+
+
+def test_conformance_profile_claim_rejects_stale_tck_fixture_digest(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    claim = profile_set.claim_requirements(("GB-C0-SCHEMA",))
+    manifests = _tck_manifests(graphblocks_testing)
+    reports = {
+        suite: graphblocks_testing.TckReport(
+            profile="local",
+            suite=suite,
+            implementation="graphblocks-python",
+            implementation_version="0.1.0",
+            fixture_digest="sha256:" + ("0" * 64),
+            results=(graphblocks_testing.TckResult(suite, suite, "passed"),),
+        )
+        for suite in claim.tck_suites
+    }
+
+    validation = profile_set.validate_claim(
+        ("GB-C0-SCHEMA",),
+        tck_reports=reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+    )
+
+    assert not validation.ok
+    assert {issue.code for issue in validation.issues} == {"ConformanceTckEvidenceStale"}
+
+
+def test_conformance_profile_claim_binds_case_coverage_and_implementation(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    claim = profile_set.claim_requirements(("GB-C0-SCHEMA",))
+    manifests = _tck_manifests(graphblocks_testing)
+    expectations = {
+        suite: ("graphblocks-python", "0.1.0") for suite in claim.tck_suites
+    }
+    complete = {
+        suite: _passing_tck_report(graphblocks_testing, suite, manifests)
+        for suite in claim.tck_suites
+    }
+    incomplete = dict(complete)
+    incomplete["schema"] = graphblocks_testing.TckReport(
+        profile="local",
+        suite="schema",
+        implementation="graphblocks-python",
+        implementation_version="0.1.0",
+        fixture_digest=manifests["schema"].fixture_digest,
+        results=complete["schema"].results[:-1],
+    )
+    wrong_implementation = dict(complete)
+    wrong_implementation["schema"] = graphblocks_testing.TckReport(
+        profile="local",
+        suite="schema",
+        implementation="unknown-runner",
+        implementation_version="9.9.9",
+        fixture_digest=manifests["schema"].fixture_digest,
+        results=complete["schema"].results,
+    )
+
+    incomplete_validation = profile_set.validate_claim(
+        ("GB-C0-SCHEMA",),
+        tck_reports=incomplete,
+        tck_manifests=manifests,
+        tck_implementations=expectations,
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+    )
+    implementation_validation = profile_set.validate_claim(
+        ("GB-C0-SCHEMA",),
+        tck_reports=wrong_implementation,
+        tck_manifests=manifests,
+        tck_implementations=expectations,
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+    )
+
+    assert {issue.code for issue in incomplete_validation.issues} == {
+        "ConformanceTckCoverageInvalid"
+    }
+    assert {issue.code for issue in implementation_validation.issues} == {
+        "ConformanceTckImplementationMismatch"
+    }
+
+
 def test_conformance_profile_claim_rejects_failed_and_stale_acceptance_reports(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
@@ -1331,11 +1474,9 @@ def test_conformance_profile_claim_rejects_failed_and_stale_acceptance_reports(m
         root=ROOT,
     )
     claim = profile_set.claim_requirements(("GB-C2-AI-APPLICATION",))
+    manifests = _tck_manifests(graphblocks_testing)
     tck_reports = {
-        suite: graphblocks_testing.TckReport(
-            profile=suite,
-            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
-        )
+        suite: _passing_tck_report(graphblocks_testing, suite, manifests)
         for suite in claim.tck_suites
     }
     passing = _passing_acceptance_report(
@@ -1402,18 +1543,24 @@ def test_conformance_profile_claim_rejects_failed_and_stale_acceptance_reports(m
     failed_validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports=tck_reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=coverage,
         acceptance_report=failed_report,
     )
     stale_validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports=tck_reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=coverage,
         acceptance_report=stale_report,
     )
     forged_validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports=tck_reports,
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=coverage,
         acceptance_report=forged_report,
     )
@@ -1434,15 +1581,19 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
     profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
         _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
     )
+    manifests = _tck_manifests(graphblocks_testing)
 
     validation = profile_set.validate_claim(
         ("GB-C2-AI-APPLICATION",),
         tck_reports={
-            "compiler": graphblocks_testing.TckReport(
-                profile="compiler",
-                results=(graphblocks_testing.TckResult("compiler", "compiler", "passed"),),
+            "compiler": _passing_tck_report(
+                graphblocks_testing,
+                "compiler",
+                manifests,
             )
         },
+        tck_manifests=manifests,
+        tck_implementations=_tck_implementations(manifests),
         acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
     )
 

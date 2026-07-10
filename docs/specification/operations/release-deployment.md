@@ -2,6 +2,9 @@
 
 A release bundle binds graph, physical plan, packages and lock, schemas, policy,
 prompts, indexes, and other declared artifacts. Artifact digests are immutable.
+Bundle builders MUST reject NaN and positive or negative infinity before
+writing an archive; every emitted `release.json` MUST be strict JSON that the
+bundle verifier can parse.
 `ReleaseBundle.attestation_digest()` excludes signatures and computed bundle
 identity while binding the release and artifact set.
 
