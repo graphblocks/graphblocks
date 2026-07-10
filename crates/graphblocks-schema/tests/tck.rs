@@ -3,7 +3,7 @@ use serde_json::Value;
 
 #[test]
 fn rust_schema_matches_shared_tck_cases() -> Result<(), String> {
-    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/schema/cases.json"))
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-import json
+from decimal import Decimal
 from pathlib import Path
 
-from .canonical import canonical_dumps, canonical_hash
+from .canonical import canonical_dumps, canonical_hash, canonical_loads
 
 
 SCHEMA_MANIFEST_VERSION = 1
@@ -77,7 +77,7 @@ class TypedValue:
         stack: list[object] = [self.value]
         while stack:
             current = stack.pop()
-            if current is None or isinstance(current, (str, bool, int, float)):
+            if current is None or isinstance(current, (str, bool, int, float, Decimal)):
                 continue
             if isinstance(current, list):
                 stack.extend(current)
@@ -91,7 +91,7 @@ class TypedValue:
             raise ValueError("typed value value must be canonical JSON")
 
         try:
-            canonical_value = json.loads(canonical_dumps(self.value))
+            canonical_value = canonical_loads(canonical_dumps(self.value))
         except (TypeError, ValueError) as error:
             raise ValueError("typed value value must be canonical JSON") from error
         object.__setattr__(self, "value", canonical_value)
@@ -112,7 +112,10 @@ class TypedValue:
         return cls.new(schema_id, value["value"])
 
     def canonical_value(self) -> dict[str, object]:
-        return {"schema": self.schema_id.as_str(), "value": json.loads(canonical_dumps(self.value))}
+        return {
+            "schema": self.schema_id.as_str(),
+            "value": canonical_loads(canonical_dumps(self.value)),
+        }
 
     def to_json(self) -> str:
         return canonical_dumps(self.canonical_value())
@@ -166,10 +169,7 @@ class SchemaManifest:
         entries: list[SchemaManifestEntry] = []
         for path in sorted(root_path.rglob("*.json")):
             try:
-                document = json.loads(
-                    path.read_text(encoding="utf-8"),
-                    parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-                )
+                document = canonical_loads(path.read_text(encoding="utf-8"))
             except ValueError as error:
                 raise SchemaManifestError(f"{path}: invalid strict JSON schema document") from error
             if not isinstance(document, Mapping):

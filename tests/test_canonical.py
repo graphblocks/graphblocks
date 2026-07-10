@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import sys
+from decimal import Decimal
 from types import SimpleNamespace
 
 import graphblocks
 import pytest
-from graphblocks import canonical_dumps, canonical_hash, compile_graph, compile_graph_native, normalize_graph
+from graphblocks import (
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+    compile_graph,
+    compile_graph_native,
+    normalize_graph,
+)
 from graphblocks import compiler as compiler_module
 from graphblocks.output_policy import (
     VALID_DELIVERY_MODES,
@@ -86,6 +94,54 @@ def test_canonical_json_rejects_non_string_object_keys() -> None:
         canonical_dumps({"nested": {2: "coerced"}})
     with pytest.raises(TypeError, match="canonical JSON object keys must be strings"):
         canonical_hash({"nested": {3: "coerced"}})
+
+
+def test_canonical_json_normalizes_decimal_numbers_beyond_binary64_range() -> None:
+    value = {
+        "equivalent": Decimal("10e399"),
+        "huge": Decimal("1e400"),
+        "negative": Decimal("-0.01e402"),
+    }
+
+    assert canonical_dumps(value) == (
+        '{"equivalent":1e+400,"huge":1e+400,"negative":-1e+400}'
+    )
+    assert canonical_dumps(canonical_loads("[10e999999,1e1000000]")) == (
+        "[1e+1000000,1e+1000000]"
+    )
+    assert canonical_dumps([Decimal("1e-7"), Decimal("1e16"), Decimal("1.0")]) == (
+        "[1e-07,1e+16,1.0]"
+    )
+
+
+def test_canonical_json_preserves_raw_numbers_beyond_binary64_range() -> None:
+    value = canonical_loads(
+        '{"ordinary":1.5,"equivalent":10e399,"huge":1e400,"negative":-0.01e402}'
+    )
+
+    assert type(value["ordinary"]) is float
+    assert value["huge"] == Decimal("1e400")
+    assert canonical_dumps(value) == (
+        '{"equivalent":1e+400,"huge":1e+400,"negative":-1e+400,"ordinary":1.5}'
+    )
+
+
+def test_canonical_json_keeps_distinct_decimals_above_binary64_integer_precision() -> None:
+    left = canonical_loads("9007199254740992.0")
+    right = canonical_loads("9007199254740993.0")
+    right_equivalent = canonical_loads("90071992547409930e-1")
+
+    assert canonical_dumps(left) == "9007199254740992.0"
+    assert canonical_dumps(right) == "9007199254740993.0"
+    assert canonical_dumps(right_equivalent) == "9007199254740993.0"
+    assert canonical_hash(left) != canonical_hash(right)
+    assert canonical_hash(right) == canonical_hash(right_equivalent)
+
+
+@pytest.mark.parametrize("value", (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")))
+def test_canonical_json_rejects_non_finite_decimals(value: Decimal) -> None:
+    with pytest.raises(ValueError, match="Out of range decimal values"):
+        canonical_dumps(value)
 
 
 def test_node_inputs_are_normalized_to_edges() -> None:
@@ -210,6 +266,28 @@ def test_compile_allows_effect_retry_with_idempotency_key() -> None:
     plan = compile_graph(graph)
 
     assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics]
+
+
+@pytest.mark.parametrize("idempotency_key", ("", " ", " idem-1", {"path": "$input.request_id"}))
+def test_compile_rejects_effect_retry_with_invalid_idempotency_key(idempotency_key: object) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-invalid-idempotency-key"},
+        "spec": {
+            "nodes": {
+                "write": {
+                    "block": "storage.write@1",
+                    "effects": ["external_write"],
+                    "flow": {"retry": {"maxAttempts": 2, "idempotencyKey": idempotency_key}},
+                }
+            }
+        },
+    }
+
+    plan = compile_graph(graph)
+
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
 
 
 def test_native_compile_helper_delegates_to_runtime(monkeypatch) -> None:

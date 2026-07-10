@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
 import pytest
 
 from graphblocks import SchemaId, SchemaIdError, SchemaManifest, SchemaManifestError, TypedValue
-from graphblocks.canonical import canonical_hash
+from graphblocks.canonical import canonical_hash, canonical_loads
 
 
 def test_schema_id_accepts_canonical_major_version_reference() -> None:
@@ -91,7 +90,7 @@ def test_typed_value_copies_payload_and_canonical_value() -> None:
 
 def test_python_typed_value_matches_shared_tck_cases() -> None:
     fixture = Path(__file__).resolve().parents[1] / "tck" / "schema" / "typed-values.json"
-    cases = json.loads(fixture.read_text(encoding="utf-8"))
+    cases = canonical_loads(fixture.read_text(encoding="utf-8"))
 
     for case in cases:
         expected = case["expected"]

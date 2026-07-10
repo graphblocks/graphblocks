@@ -66,3 +66,61 @@ fn canonical_hash_preserves_array_order() {
 
     assert_ne!(canonical_hash(&left), canonical_hash(&right));
 }
+
+#[test]
+fn canonical_json_preserves_large_integers_and_normalizes_exponents() {
+    let value = serde_json::from_str(
+        r#"{
+            "fixed_high": 1000000000000000.0,
+            "fixed_low": 0.0001,
+            "large": 100000000000000000000,
+            "negative_integer_zero": -0,
+            "negative_zero": -0.0,
+            "scientific_high": 10000000000000000.0,
+            "small": 1e-7,
+            "whole_float": 1.0
+        }"#,
+    )
+    .expect("numeric fixture should parse");
+
+    assert_eq!(
+        canonical_json(&value),
+        r#"{"fixed_high":1000000000000000.0,"fixed_low":0.0001,"large":100000000000000000000,"negative_integer_zero":0,"negative_zero":-0.0,"scientific_high":1e+16,"small":1e-07,"whole_float":1.0}"#
+    );
+}
+
+#[test]
+fn canonical_json_normalizes_numbers_beyond_binary64_range_without_panicking() {
+    let value = serde_json::from_str(r#"{"equivalent":10e399,"huge":1e400,"negative":-0.01e402}"#)
+        .expect("arbitrary precision numeric fixture should parse");
+
+    assert_eq!(
+        canonical_json(&value),
+        r#"{"equivalent":1e+400,"huge":1e+400,"negative":-1e+400}"#
+    );
+
+    let enormous_left = serde_json::from_str(r#"10e999999"#).expect("large exponent should parse");
+    let enormous_right =
+        serde_json::from_str(r#"1e1000000"#).expect("equivalent large exponent should parse");
+
+    assert_eq!(
+        canonical_json(&enormous_left),
+        canonical_json(&enormous_right)
+    );
+}
+
+#[test]
+fn canonical_json_keeps_distinct_decimals_above_binary64_integer_precision() {
+    let left =
+        serde_json::from_str(r#"9007199254740992.0"#).expect("exact binary64 decimal should parse");
+    let right = serde_json::from_str(r#"9007199254740993.0"#)
+        .expect("higher precision decimal should parse");
+    let right_equivalent = serde_json::from_str(r#"90071992547409930e-1"#)
+        .expect("equivalent higher precision decimal should parse");
+
+    assert_eq!(canonical_json(&left), "9007199254740992.0");
+    assert_eq!(canonical_json(&right), "9007199254740993.0");
+    assert_eq!(canonical_json(&right_equivalent), "9007199254740993.0");
+    assert_ne!(canonical_hash(&left), canonical_hash(&right));
+    assert_eq!(canonical_hash(&right), canonical_hash(&right_equivalent));
+}

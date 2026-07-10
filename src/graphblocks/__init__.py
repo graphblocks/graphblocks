@@ -99,7 +99,7 @@ from .budget import (
     VALID_RESERVATION_PURPOSES,
     VALID_RESERVATION_STATUSES,
 )
-from .canonical import canonical_dumps, canonical_hash, normalize_graph
+from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
 from .compiler import Plan, compile_graph, compile_graph_native
 from .conversation import (
     BranchRequest,
@@ -1124,6 +1124,7 @@ __all__ = [
     "admit_worker_with_policy",
     "canonical_dumps",
     "canonical_hash",
+    "canonical_loads",
     "compile_graph",
     "compile_graph_native",
     "chunk_document_by_lines",

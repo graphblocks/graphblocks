@@ -17,6 +17,23 @@ their algorithm; GraphBlocks SHA-256 identities use the `sha256:<hex>` form.
 Digest inputs MUST exclude fields explicitly declared as signatures or computed
 identities and MUST NOT silently coerce malformed persisted data.
 
+Canonical JSON numbers MUST retain their JSON type across implementations.
+Integers are emitted as their exact base-10 digits, including values outside a
+64-bit range, and MUST NOT be converted to exponential floating-point form.
+Floating-point and arbitrary-precision decimal values MUST be finite. Values
+representable as binary64 use their shortest round-tripping decimal spelling;
+integral floating-point values retain a decimal marker (`1.0`). Larger decimal
+exponents use a normalized coefficient (`10e399` becomes `1e+400`). Scientific
+notation uses a lowercase `e`, an explicit sign, and at least two exponent
+digits (`1e-07`, `1e+16`). Implementations MUST exercise the shared numeric
+cases in `tck/schema/typed-values.json` before using canonical bytes as an
+identity or signature input. JSON readers on identity-bearing boundaries MAY
+narrow a finite decimal token to binary64 only when doing so provably leaves
+its canonical spelling unchanged; otherwise they MUST preserve the exact
+decimal. Parsing `1e400` MUST make `1e+400` available to canonicalization rather
+than infinity, and `9007199254740992.0` and `9007199254740993.0` MUST retain
+distinct canonical identities.
+
 ## Versions and migration
 
 Readers MUST reject unsupported `apiVersion`/`kind` pairs with a stable
