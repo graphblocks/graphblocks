@@ -1,3 +1,4 @@
+# Durable document ingestion with parser fallback and ACL propagation.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:
@@ -6,6 +7,10 @@ spec:
   execution:
     lifetime: job
     durability: durable
+  eventStream:
+    replayable: true
+    retention: 14d
+    reconnectReplayGuarantee: 24h
   interface:
     inputs:
       previousSnapshot: graphblocks.documents/SourceSnapshotRef@1
@@ -107,6 +112,9 @@ spec:
         artifacts: document-artifacts
         manifests: document-manifests
         index: knowledge-index-staging
+      config:
+        requireAclRevision: true
+        propagateAclTo: [document, chunks, index]
     commit:
       block: ingestion.commit_revision@1
       inputs:

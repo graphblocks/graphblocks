@@ -1,3 +1,4 @@
+# TUI workspace assistant exposed through the application protocol.
 apiVersion: graphblocks.ai/v1alpha1
 kind: Application
 metadata:

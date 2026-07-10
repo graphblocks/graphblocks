@@ -1,3 +1,4 @@
+# Bounded research orchestration with task budget delegation and patch CAS.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:
@@ -6,7 +7,7 @@ spec:
   interface:
     inputs:
       objective: company.research/Objective@1
-      sources: list[graphblocks.core/SourceRef@1]
+      sources: graphblocks.core/SourceRefList@1
     outputs:
       result: graphblocks.core/ResultBundle@1
   nodes:

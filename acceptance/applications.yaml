@@ -50,7 +50,7 @@ spec:
   - id: enterprise-rag
     profiles:
     - GB-C2-AI-APPLICATION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
+    scenarioPath: examples/01-enterprise-federated-rag/example.yaml
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -60,7 +60,7 @@ spec:
   - id: kubernetes-canary
     profiles:
     - GB-C4-PRODUCTION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml
+    scenarioPath: examples/08-kubernetes-production-deployment/example.yaml
     gates:
     - graphblocks validate
     - release bundle verification
@@ -80,7 +80,7 @@ spec:
   - id: realtime-voice-agent
     profiles:
     - GB-X2-VOICE
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/10-realtime-voice-extension.yaml
+    scenarioPath: examples/10-realtime-voice-extension/example.yaml
     gates:
     - graphblocks validate
     - duplex session contract check
@@ -90,7 +90,7 @@ spec:
   - id: telemetry-outage-correctness
     profiles:
     - GB-C4-PRODUCTION
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml
+    scenarioPath: examples/09-observability-profile/example.yaml
     gates:
     - graphblocks validate
     - OTel projection check
@@ -100,7 +100,7 @@ spec:
   - id: verified-rtl-workspace-trial
     profiles:
     - GB-C3-GOVERNED-RUNTIME
-    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml
+    scenarioPath: examples/07-verified-rtl-workspace-trial/example.yaml
     gates:
     - graphblocks validate
     - budget lease reservation check

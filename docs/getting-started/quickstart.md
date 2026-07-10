@@ -4,8 +4,8 @@ Install the [root development package](installation.md), then validate and plan
 one of the checked-in application contracts:
 
 ```bash
-python -m graphblocks validate docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
-python -m graphblocks plan docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml --expand
+python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
+python -m graphblocks plan examples/01-enterprise-federated-rag/example.yaml --expand
 ```
 
 Inspect project assets:

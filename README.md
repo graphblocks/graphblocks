@@ -27,7 +27,7 @@ Requirements are Python 3.11 or newer and the Rust toolchain selected by
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
-python -m graphblocks validate docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
+python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
 python -m pytest
 cargo test --workspace --all-targets
 ```
@@ -46,7 +46,7 @@ they are not installed by the root test extra.
 - [Living specification](docs/specification/README.md)
 - [Conformance](docs/development/conformance.md)
 - [Implementation status](docs/project/status.md)
-- [Examples](docs/upstream/GraphBlocks_v1.0_Final/examples/README.md)
+- [Examples](examples/README.md)
 
 ## Project and community
 

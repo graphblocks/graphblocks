@@ -1,3 +1,4 @@
+# Governed RTL workspace trial with checks, review, leases, and CAS commit.
 # RTL/Verilog types are application-local fixtures for generic workspace/check/gate contracts.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph

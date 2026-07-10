@@ -1,3 +1,4 @@
+# Authority-backed advisory with evidence and independent review.
 # Domain-local legal schemas/blocks are illustrative. GraphBlocks core remains domain-neutral.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph

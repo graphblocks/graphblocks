@@ -17,6 +17,7 @@ def test_project_markdown_links_resolve() -> None:
         ROOT / "GOVERNANCE.md",
         ROOT / "SECURITY.md",
         *sorted((ROOT / "docs").rglob("*.md")),
+        *sorted((ROOT / "examples").rglob("*.md")),
     ]
     failures: list[str] = []
 
@@ -33,27 +34,7 @@ def test_project_markdown_links_resolve() -> None:
 
 
 def test_living_documentation_has_one_authority_tree() -> None:
-    legacy_root = ROOT / "docs" / "upstream" / "GraphBlocks_v1.0_Final"
-    remaining = {
-        path.relative_to(legacy_root).as_posix()
-        for path in legacy_root.rglob("*")
-        if path.is_file()
-    }
-
-    assert remaining == {
-        "examples/README.md",
-        "examples/01-enterprise-federated-rag.yaml",
-        "examples/02-document-ingestion.yaml",
-        "examples/03-policy-governed-chat.yaml",
-        "examples/04-tui-workspace-assistant.yaml",
-        "examples/05-authority-backed-advisory.yaml",
-        "examples/06-bounded-research-orchestrator.yaml",
-        "examples/07-verified-rtl-workspace-trial.yaml",
-        "examples/08-kubernetes-production-deployment.yaml",
-        "examples/09-observability-profile.yaml",
-        "examples/10-realtime-voice-extension.yaml",
-        "examples/11-coding-agent-background-callbacks.yaml",
-    }
+    assert not (ROOT / "docs" / "upstream").exists()
     assert (ROOT / "docs" / "specification" / "README.md").is_file()
     assert (ROOT / "src" / "graphblocks" / "data" / "package-catalog.yaml").is_file()
     assert (ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml").is_file()

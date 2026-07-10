@@ -1,3 +1,4 @@
+# Background coding agent with replayable events and authenticated callback resume.
 apiVersion: graphblocks.ai/v1alpha1
 kind: Application
 metadata:
@@ -37,6 +38,24 @@ spec:
       method: POST
       path: /v1/callbacks/{operation_id}
       command: SubmitAsyncCallback
+  callbackRegistration:
+    type: RegisterCallback
+    scope: run
+    scope_id: run_coding_001
+    event_filter:
+      types:
+        - ReviewRequested
+        - ApprovalRequested
+        - BudgetExhausted
+        - RunCompleted
+        - RunFailed
+    delivery:
+      kind: webhook
+      url: https://ide-relay.example.com/graphblocks/events
+      signing:
+        algorithm: hmac-sha256
+        secret_ref: secret://callbacks/ide-relay
+      retry_policy_ref: webhook-standard
 ---
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
@@ -47,6 +66,10 @@ spec:
     lifetime: job
     durability: checkpointed
     interaction: incremental
+  eventStream:
+    replayable: true
+    retention: 14d
+    reconnectReplayGuarantee: 24h
   interface:
     inputs:
       request: company.workspace/CodingTaskRequest@1
@@ -107,6 +130,8 @@ spec:
       config:
         provider: github-actions
         operation: workflow_dispatch
+        idempotencyKey: provider_delivery_id
+        attemptFencing: true
         callback:
           required: true
           schema: schemas/CICallback@1
@@ -115,6 +140,11 @@ spec:
             quarantineTtl: 5m
             onQuarantineExpired: reject_without_resume
             idempotencyKey: provider_delivery_id
+        resume:
+          requirePolicyReevaluation: true
+          requireBudgetReservation: true
+          requireReleaseCompatibility: true
+          requireOwnershipFence: true
         timeout: 30m
     waitCI:
       block: async.await_callback@1
@@ -122,6 +152,16 @@ spec:
         operation: startCI.operation
       config:
         checkpoint: true
+        timeout: 30m
+        idempotencyKey: provider_delivery_id
+        attemptFencing: true
+        callback:
+          schema: schemas/CICallback@1
+        resume:
+          requirePolicyReevaluation: true
+          requireBudgetReservation: true
+          requireReleaseCompatibility: true
+          requireOwnershipFence: true
         onTimeout: fail
     parseCI:
       block: check.parse_result@1
@@ -149,21 +189,3 @@ spec:
       inputs:
         commit: commit.result
         checks: parseCI.checks
----
-type: RegisterCallback
-scope: run
-scope_id: run_coding_001
-event_filter:
-  types:
-    - ReviewRequested
-    - ApprovalRequested
-    - BudgetExhausted
-    - RunCompleted
-    - RunFailed
-delivery:
-  kind: webhook
-  url: https://ide-relay.example.com/graphblocks/events
-  signing:
-    algorithm: hmac-sha256
-    secret_ref: secret://callbacks/ide-relay
-  retry_policy_ref: webhook-standard

@@ -1,3 +1,4 @@
+# Federated enterprise retrieval, reranking, grounding, and citation contracts.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:

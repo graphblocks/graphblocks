@@ -1,3 +1,4 @@
+# Realtime duplex voice with provider interruption authority and playback state.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:

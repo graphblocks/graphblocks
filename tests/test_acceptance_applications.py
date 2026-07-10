@@ -105,11 +105,11 @@ def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) ->
         "acceptance/scenarios/direct-file-analysis.yaml",
         "acceptance/scenarios/document-ingestion.yaml",
         "acceptance/scenarios/multi-turn-chat.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/07-verified-rtl-workspace-trial.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml",
-        "docs/upstream/GraphBlocks_v1.0_Final/examples/10-realtime-voice-extension.yaml",
+        "examples/01-enterprise-federated-rag/example.yaml",
+        "examples/07-verified-rtl-workspace-trial/example.yaml",
+        "examples/08-kubernetes-production-deployment/example.yaml",
+        "examples/09-observability-profile/example.yaml",
+        "examples/10-realtime-voice-extension/example.yaml",
     }
 
 
@@ -149,7 +149,7 @@ def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
     assert enterprise_rag.application_contract() == {
         "application_id": "enterprise-rag",
         "profiles": ["GB-C2-AI-APPLICATION"],
-        "scenario_path": "docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml",
+        "scenario_path": "examples/01-enterprise-federated-rag/example.yaml",
         "gates": [
             "graphblocks validate",
             "graphblocks plan --expand",
@@ -858,14 +858,10 @@ def test_acceptance_reports_reject_noncanonical_digests_and_empty_runs(monkeypat
 
 
 def test_coding_agent_background_callback_example_matches_async_contract() -> None:
-    application, graph, callback = _load_yaml_documents(
-        ROOT
-        / "docs"
-        / "upstream"
-        / "GraphBlocks_v1.0_Final"
-        / "examples"
-        / "11-coding-agent-background-callbacks.yaml"
+    application, graph = _load_yaml_documents(
+        ROOT / "examples" / "11-coding-agent-background-callbacks" / "example.yaml"
     )
+    callback = application["spec"]["callbackRegistration"]
 
     assert application["kind"] == "Application"
     assert application["metadata"]["name"] == "workspace-coding-agent"
@@ -898,6 +894,7 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
         "durability": "checkpointed",
         "interaction": "incremental",
     }
+    assert graph["spec"]["eventStream"]["replayable"] is True
     nodes = graph["spec"]["nodes"]
     assert nodes["startCI"]["block"] == "async.start_operation@1"
     assert nodes["startCI"]["config"]["callback"] == {
@@ -911,10 +908,31 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
         },
     }
     assert nodes["startCI"]["config"]["timeout"] == "30m"
+    assert nodes["startCI"]["config"]["idempotencyKey"] == "provider_delivery_id"
+    assert nodes["startCI"]["config"]["attemptFencing"] is True
+    assert nodes["startCI"]["config"]["resume"] == {
+        "requirePolicyReevaluation": True,
+        "requireBudgetReservation": True,
+        "requireReleaseCompatibility": True,
+        "requireOwnershipFence": True,
+    }
     assert nodes["waitCI"] == {
         "block": "async.await_callback@1",
         "inputs": {"operation": "startCI.operation"},
-        "config": {"checkpoint": True, "onTimeout": "fail"},
+        "config": {
+            "checkpoint": True,
+            "timeout": "30m",
+            "idempotencyKey": "provider_delivery_id",
+            "attemptFencing": True,
+            "callback": {"schema": "schemas/CICallback@1"},
+            "resume": {
+                "requirePolicyReevaluation": True,
+                "requireBudgetReservation": True,
+                "requireReleaseCompatibility": True,
+                "requireOwnershipFence": True,
+            },
+            "onTimeout": "fail",
+        },
     }
     assert nodes["commit"]["config"] == {
         "concurrency": "compare_and_swap",
@@ -936,19 +954,16 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
 
 
 def test_local_coding_agent_scenario_binds_callback_registration_evidence() -> None:
-    _, _, upstream_callback = _load_yaml_documents(
-        ROOT
-        / "docs"
-        / "upstream"
-        / "GraphBlocks_v1.0_Final"
-        / "examples"
-        / "11-coding-agent-background-callbacks.yaml"
+    example_application, _ = _load_yaml_documents(
+        ROOT / "examples" / "11-coding-agent-background-callbacks" / "example.yaml"
     )
     local_application, _ = _load_yaml_documents(
         ROOT / "acceptance" / "scenarios" / "coding-agent-background-callbacks.yaml"
     )
 
-    assert local_application["spec"]["callbackRegistration"] == upstream_callback
+    assert local_application["spec"]["callbackRegistration"] == example_application["spec"][
+        "callbackRegistration"
+    ]
 
 
 def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) -> None:
