@@ -7,11 +7,13 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
+from threading import Lock
 import time
 from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
-from .canonical import canonical_dumps
+from .async_operation import VALID_ASYNC_OPERATION_KINDS
+from .canonical import canonical_dumps, canonical_hash
 from .compiler import compile_graph
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
@@ -30,6 +32,8 @@ from .tools import (
 
 JournalKind = Literal[
     "run_started",
+    "run_waiting_callback",
+    "run_resuming",
     "node_started",
     "node_retry",
     "node_succeeded",
@@ -318,11 +322,229 @@ class SQLiteExecutionJournal:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeCheckpoint:
+    checkpoint_id: str
+    run_id: str
+    graph_hash: str
+    wait_node: str
+    remaining_nodes: tuple[str, ...]
+    inputs: Mapping[str, object]
+    node_outputs: Mapping[str, object]
+    output_values: Mapping[str, object]
+    operation: Mapping[str, object]
+    state_digest: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "checkpoint_id",
+            "run_id",
+            "graph_hash",
+            "wait_node",
+            "state_digest",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"runtime checkpoint {field_name} must be a non-empty string"
+                )
+            if value != value.strip():
+                raise ValueError(
+                    f"runtime checkpoint {field_name} must not contain surrounding whitespace"
+                )
+        remaining_nodes = tuple(self.remaining_nodes)
+        if any(
+            not isinstance(node, str)
+            or not node.strip()
+            or node != node.strip()
+            for node in remaining_nodes
+        ):
+            raise ValueError(
+                "runtime checkpoint remaining_nodes must contain exact non-empty strings"
+            )
+        if len(set(remaining_nodes)) != len(remaining_nodes):
+            raise ValueError(
+                "runtime checkpoint remaining_nodes must not contain duplicates"
+            )
+        if self.wait_node not in remaining_nodes:
+            raise ValueError(
+                "runtime checkpoint wait_node must be present in remaining_nodes"
+            )
+        object.__setattr__(self, "remaining_nodes", tuple(sorted(remaining_nodes)))
+        if not self.state_digest.startswith("sha256:") or len(self.state_digest) != 71:
+            raise ValueError(
+                "runtime checkpoint state_digest must be a canonical sha256 digest"
+            )
+        for field_name in ("inputs", "node_outputs", "output_values", "operation"):
+            value = getattr(self, field_name)
+            if not isinstance(value, Mapping):
+                raise ValueError(
+                    f"runtime checkpoint {field_name} must be a JSON object"
+                )
+            try:
+                snapshot = json.loads(
+                    canonical_dumps(_mutable_json_like(value))
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"runtime checkpoint {field_name} must contain only JSON values"
+                ) from error
+            object.__setattr__(self, field_name, _freeze_json_like(snapshot))
+        operation_run_id = self.operation.get("run_id")
+        if operation_run_id != self.run_id:
+            raise ValueError(
+                "runtime checkpoint operation run_id must match checkpoint run_id"
+            )
+        for field_name in (
+            "operation_id",
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "kind",
+            "resume_token_hash",
+            "idempotency_key",
+            "expected_schema",
+        ):
+            value = self.operation.get(field_name)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise ValueError(
+                    f"runtime checkpoint operation {field_name} must be an exact non-empty string"
+                )
+        if self.operation.get("state") != "waiting_callback":
+            raise ValueError(
+                "runtime checkpoint operation state must be waiting_callback"
+            )
+        checkpoint_node_names = set(self.remaining_nodes) | set(self.node_outputs)
+        if self.operation["node_id"] not in checkpoint_node_names:
+            raise ValueError(
+                "runtime checkpoint operation node_id must belong to checkpoint graph state"
+            )
+        if self.operation["kind"] not in VALID_ASYNC_OPERATION_KINDS:
+            raise ValueError(
+                "runtime checkpoint operation kind must be a valid async operation kind"
+            )
+        resume_token_hash = self.operation["resume_token_hash"]
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", resume_token_hash) is None:
+            raise ValueError(
+                "runtime checkpoint operation resume_token_hash must be a canonical sha256 digest"
+            )
+        for field_name in (
+            "provider_operation_id",
+            "infinite_wait_policy",
+        ):
+            value = self.operation.get(field_name)
+            if value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise ValueError(
+                    f"runtime checkpoint operation {field_name} must be an exact non-empty string"
+                )
+        timestamps: dict[str, int | None] = {}
+        for field_name in (
+            "created_at_unix_ms",
+            "submitted_at_unix_ms",
+            "expires_at_unix_ms",
+            "completed_at_unix_ms",
+        ):
+            value = self.operation.get(field_name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > MAX_U64
+            ):
+                raise ValueError(
+                    f"runtime checkpoint operation {field_name} must be an unsigned 64-bit integer"
+                )
+            timestamps[field_name] = value
+        created_at_unix_ms = timestamps["created_at_unix_ms"]
+        submitted_at_unix_ms = timestamps["submitted_at_unix_ms"]
+        if created_at_unix_ms is None:
+            raise ValueError(
+                "runtime checkpoint operation created_at_unix_ms must be an unsigned 64-bit integer"
+            )
+        if submitted_at_unix_ms is None:
+            raise ValueError(
+                "runtime checkpoint operation submitted_at_unix_ms must be an unsigned 64-bit integer"
+            )
+        if submitted_at_unix_ms < created_at_unix_ms:
+            raise ValueError(
+                "runtime checkpoint operation submitted_at_unix_ms must not precede created_at_unix_ms"
+            )
+        expires_at_unix_ms = timestamps["expires_at_unix_ms"]
+        if (
+            expires_at_unix_ms is not None
+            and expires_at_unix_ms <= submitted_at_unix_ms
+        ):
+            raise ValueError(
+                "runtime checkpoint operation expires_at_unix_ms must be after submitted_at_unix_ms"
+            )
+        if timestamps["completed_at_unix_ms"] is not None:
+            raise ValueError(
+                "runtime checkpoint waiting operation must not have completed_at_unix_ms"
+            )
+        infinite_wait_policy = self.operation.get("infinite_wait_policy")
+        if expires_at_unix_ms is None and infinite_wait_policy is None:
+            raise ValueError(
+                "runtime checkpoint waiting operation requires expires_at_unix_ms or infinite_wait_policy"
+            )
+        if expires_at_unix_ms is not None and infinite_wait_policy is not None:
+            raise ValueError(
+                "runtime checkpoint waiting operation must not define both expires_at_unix_ms and infinite_wait_policy"
+            )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "run_id": self.run_id,
+            "graph_hash": self.graph_hash,
+            "wait_node": self.wait_node,
+            "remaining_nodes": list(self.remaining_nodes),
+            "inputs": _mutable_json_like(self.inputs),
+            "node_outputs": _mutable_json_like(self.node_outputs),
+            "output_values": _mutable_json_like(self.output_values),
+            "operation": _mutable_json_like(self.operation),
+            "state_digest": self.state_digest,
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(
+            {
+                "checkpoint_id": self.checkpoint_id,
+                "run_id": self.run_id,
+                "graph_hash": self.graph_hash,
+                "wait_node": self.wait_node,
+                "remaining_nodes": list(self.remaining_nodes),
+                "inputs": _mutable_json_like(self.inputs),
+                "node_outputs": _mutable_json_like(self.node_outputs),
+                "output_values": _mutable_json_like(self.output_values),
+                "operation": _mutable_json_like(self.operation),
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RunResult:
     run_id: str
-    status: Literal["succeeded", "failed", "cancelled"]
+    status: Literal["succeeded", "failed", "cancelled", "waiting_callback"]
     outputs: dict[str, Any]
     journal: JournalLike
+    checkpoint: RuntimeCheckpoint | None = None
+
+    def __post_init__(self) -> None:
+        if self.status == "waiting_callback" and self.checkpoint is None:
+            raise ValueError(
+                "waiting_callback runtime result requires a checkpoint"
+            )
+        if self.status != "waiting_callback" and self.checkpoint is not None:
+            raise ValueError(
+                "terminal runtime result must not retain a checkpoint"
+            )
 
 
 @dataclass(slots=True)
@@ -343,6 +565,21 @@ class InProcessRuntime:
     cancellation_token: CancellationToken | None = None
     journal_factory: JournalFactory | None = None
     lease_pool: InMemoryLeasePool | None = None
+    _checkpoint_state_digests: dict[str, str] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _checkpoint_lock: Lock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+    )
+    _next_checkpoint_sequence: int = field(
+        default=1,
+        init=False,
+        repr=False,
+    )
 
     def run(
         self,
@@ -350,6 +587,9 @@ class InProcessRuntime:
         inputs: dict[str, Any],
         run_id: str = "run-000001",
         deployment_provenance: RunDeploymentProvenance | None = None,
+        *,
+        checkpoint: RuntimeCheckpoint | None = None,
+        callback_receipt: Mapping[str, object] | None = None,
     ) -> RunResult:
         if deployment_provenance is not None and not isinstance(
             deployment_provenance,
@@ -365,7 +605,37 @@ class InProcessRuntime:
             raise ValueError(message)
 
         normalized = plan.normalized
-        if self.run_store is not None:
+        if checkpoint is not None and not isinstance(checkpoint, RuntimeCheckpoint):
+            raise ValueError("runtime checkpoint must be RuntimeCheckpoint")
+        if checkpoint is None and callback_receipt is not None:
+            raise ValueError("runtime callback_receipt requires a checkpoint")
+        expected_checkpoint_digest: str | None = None
+        if checkpoint is not None:
+            if checkpoint.run_id != run_id:
+                raise ValueError("runtime checkpoint run_id must match requested run_id")
+            if checkpoint.graph_hash != plan.graph_hash:
+                raise ValueError("runtime checkpoint graph_hash must match compiled graph")
+            if not isinstance(callback_receipt, Mapping):
+                raise ValueError("runtime checkpoint resume requires callback_receipt")
+            with self._checkpoint_lock:
+                expected_checkpoint_digest = self._checkpoint_state_digests.get(
+                    checkpoint.checkpoint_id
+                )
+            if (
+                expected_checkpoint_digest is None
+                or checkpoint.content_digest() != checkpoint.state_digest
+                or checkpoint.state_digest != expected_checkpoint_digest
+            ):
+                raise ValueError(
+                    "runtime checkpoint state does not match the issuing runtime"
+                )
+            if canonical_dumps(inputs) != canonical_dumps(
+                _mutable_json_like(checkpoint.inputs)
+            ):
+                raise ValueError(
+                    "runtime checkpoint inputs must match original run inputs"
+                )
+        if self.run_store is not None and checkpoint is None:
             stored = self.run_store.create_run(
                 plan.graph_hash,
                 inputs,
@@ -377,11 +647,31 @@ class InProcessRuntime:
         spec = normalized.get("spec", {})
         nodes = spec.get("nodes", {})
         edges = spec.get("edges", [])
+        if checkpoint is not None:
+            node_names = set(nodes)
+            remaining_node_names = set(checkpoint.remaining_nodes)
+            if not remaining_node_names.issubset(node_names):
+                raise ValueError(
+                    "runtime checkpoint remaining_nodes must belong to compiled graph"
+                )
+            wait_node = nodes.get(checkpoint.wait_node)
+            if (
+                not isinstance(wait_node, Mapping)
+                or wait_node.get("block") != "async.await_callback@1"
+            ):
+                raise ValueError(
+                    "runtime checkpoint wait_node must be async.await_callback@1"
+                )
+            if set(checkpoint.node_outputs) != node_names - remaining_node_names:
+                raise ValueError(
+                    "runtime checkpoint completed node outputs must match remaining nodes"
+                )
         journal = self.journal_factory(run_id) if self.journal_factory is not None else ExecutionJournal(run_id)
-        run_started_payload: dict[str, Any] = {"graphHash": plan.graph_hash}
-        if deployment_provenance is not None:
-            run_started_payload["deploymentProvenance"] = deployment_provenance.canonical_value()
-        journal.append("run_started", run_started_payload)
+        if checkpoint is None:
+            run_started_payload: dict[str, Any] = {"graphHash": plan.graph_hash}
+            if deployment_provenance is not None:
+                run_started_payload["deploymentProvenance"] = deployment_provenance.canonical_value()
+            journal.append("run_started", run_started_payload)
 
         node_inputs: dict[str, dict[str, Any]] = {name: {} for name in nodes}
         node_outputs: dict[str, dict[str, Any]] = {}
@@ -396,6 +686,165 @@ class InProcessRuntime:
             "run_store": self.run_store,
             "deployment_provenance": deployment_provenance,
         }
+        if checkpoint is not None:
+            assert callback_receipt is not None
+            operation = _mutable_json_like(checkpoint.operation)
+            assert isinstance(operation, dict)
+            receipt = _mutable_json_like(callback_receipt)
+            if not isinstance(receipt, dict):
+                raise ValueError("runtime callback_receipt must be a JSON object")
+            verified_by = receipt.get("verified_by")
+            if (
+                not isinstance(verified_by, str)
+                or not verified_by.strip()
+                or verified_by != verified_by.strip()
+                or verified_by == "unauthenticated"
+            ):
+                raise ValueError(
+                    "runtime callback_receipt verified_by must identify an authenticated principal"
+                )
+            for field_name in ("operation_id", "run_id", "node_id", "attempt_id"):
+                if receipt.get(field_name) != operation.get(field_name):
+                    raise ValueError(
+                        f"runtime callback_receipt {field_name} must match checkpoint operation"
+                    )
+            if receipt.get("provider_operation_id") != operation.get(
+                "provider_operation_id"
+            ):
+                raise ValueError(
+                    "runtime callback_receipt provider_operation_id must match checkpoint operation"
+                )
+            for receipt_field, operation_field in (
+                ("idempotency_key", "idempotency_key"),
+                ("resume_token_hash", "resume_token_hash"),
+                ("schema_id", "expected_schema"),
+            ):
+                if receipt.get(receipt_field) != operation.get(operation_field):
+                    raise ValueError(
+                        f"runtime callback_receipt {receipt_field} must match checkpoint operation"
+                    )
+            if receipt.get("schema_validated") is not True:
+                raise ValueError(
+                    "runtime callback_receipt must carry successful schema validation evidence"
+                )
+            callback_payload = receipt.get("payload")
+            if not isinstance(callback_payload, Mapping):
+                raise ValueError(
+                    "runtime callback_receipt payload must be a JSON object"
+                )
+            try:
+                callback_payload = json.loads(canonical_dumps(callback_payload))
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "runtime callback_receipt payload must contain only JSON values"
+                ) from error
+            if receipt.get("payload_digest") != canonical_hash(callback_payload):
+                raise ValueError(
+                    "runtime callback_receipt payload_digest must match payload"
+                )
+            received_at_unix_ms = receipt.get("received_at_unix_ms")
+            if (
+                not isinstance(received_at_unix_ms, int)
+                or isinstance(received_at_unix_ms, bool)
+                or received_at_unix_ms < 1
+            ):
+                raise ValueError(
+                    "runtime callback_receipt received_at_unix_ms must be a positive integer"
+                )
+            submitted_at_unix_ms = operation.get("submitted_at_unix_ms")
+            if (
+                isinstance(submitted_at_unix_ms, int)
+                and not isinstance(submitted_at_unix_ms, bool)
+                and received_at_unix_ms < submitted_at_unix_ms
+            ):
+                raise ValueError(
+                    "runtime callback_receipt must not precede operation submission"
+                )
+            expires_at_unix_ms = operation.get("expires_at_unix_ms")
+            if (
+                isinstance(expires_at_unix_ms, int)
+                and not isinstance(expires_at_unix_ms, bool)
+                and received_at_unix_ms > expires_at_unix_ms
+            ):
+                raise ValueError(
+                    "runtime callback_receipt must not exceed operation expiration"
+                )
+            resume_admission = receipt.get("resume_admission")
+            required_resume_admission = {
+                "policy_reevaluated",
+                "budget_reserved",
+                "release_compatible",
+                "ownership_fenced",
+            }
+            if not isinstance(resume_admission, Mapping) or any(
+                resume_admission.get(field_name) is not True
+                for field_name in required_resume_admission
+            ):
+                raise ValueError(
+                    "runtime callback_receipt requires policy, budget, release, and ownership resume admission"
+                )
+            assert expected_checkpoint_digest is not None
+            node_outputs = {
+                str(node): _mutable_json_like(output)
+                for node, output in checkpoint.node_outputs.items()
+            }
+            output_values = _mutable_json_like(checkpoint.output_values)
+            assert isinstance(output_values, dict)
+            remaining = set(checkpoint.remaining_nodes)
+            if checkpoint.wait_node not in remaining:
+                raise ValueError(
+                    "runtime checkpoint wait_node must remain pending"
+                )
+            operation["state"] = "resuming"
+            wait_result = {
+                "callback": callback_payload,
+                "operation": operation,
+            }
+            node_outputs[checkpoint.wait_node] = wait_result
+            for edge in edges:
+                if not (
+                    isinstance(edge, dict)
+                    and isinstance(edge.get("from"), str)
+                    and isinstance(edge.get("to"), str)
+                    and edge["from"].split(".", 1)[0] == checkpoint.wait_node
+                    and edge["to"].startswith("$output.")
+                ):
+                    continue
+                value: Any = wait_result
+                source_path = edge["from"].partition(".")[2]
+                if source_path:
+                    for part in source_path.split("."):
+                        value = value[part]
+                target_path = edge["to"].partition(".")[2]
+                current = output_values
+                parts = target_path.split(".")
+                for part in parts[:-1]:
+                    nested = current.setdefault(part, {})
+                    if not isinstance(nested, dict):
+                        raise RuntimeError(f"output path conflict at {edge['to']}")
+                    current = nested
+                current[parts[-1]] = value
+            remaining.remove(checkpoint.wait_node)
+            if self.run_store is not None:
+                self.run_store.set_status(run_id, "resuming")
+            with self._checkpoint_lock:
+                if self._checkpoint_state_digests.get(
+                    checkpoint.checkpoint_id
+                ) != expected_checkpoint_digest:
+                    raise ValueError(
+                        "runtime checkpoint state does not match the issuing runtime"
+                    )
+                journal.append(
+                    "run_resuming",
+                    {
+                        "operationId": operation.get("operation_id"),
+                        "node": checkpoint.wait_node,
+                    },
+                )
+                self._checkpoint_state_digests.pop(
+                    checkpoint.checkpoint_id,
+                    None,
+                )
 
         while remaining:
             token = context["cancellation_token"]
@@ -544,6 +993,84 @@ class InProcessRuntime:
                             self.lease_pool.release_all(run_id)
                         return RunResult(run_id, "failed", output_values, journal)
 
+                wait_descriptor = result.get("wait")
+                if (
+                    block_id == "async.await_callback@1"
+                    and isinstance(wait_descriptor, Mapping)
+                    and wait_descriptor.get("state") == "waiting_callback"
+                    and wait_descriptor.get("checkpoint") is True
+                ):
+                    operation = wait_descriptor.get("operation")
+                    if not isinstance(operation, Mapping):
+                        raise ValueError(
+                            "async callback wait checkpoint requires operation object"
+                        )
+                    with self._checkpoint_lock:
+                        checkpoint_sequence = self._next_checkpoint_sequence
+                        self._next_checkpoint_sequence += 1
+                    checkpoint_id = (
+                        f"{run_id}:{node_name}:{checkpoint_sequence}"
+                    )
+                    checkpoint_inputs = json.loads(canonical_dumps(inputs))
+                    checkpoint_remaining_nodes = tuple(sorted(remaining))
+                    checkpoint_node_outputs = json.loads(
+                        canonical_dumps(node_outputs)
+                    )
+                    checkpoint_output_values = json.loads(
+                        canonical_dumps(output_values)
+                    )
+                    checkpoint_operation = json.loads(
+                        canonical_dumps(dict(operation))
+                    )
+                    checkpoint_state_digest = canonical_hash(
+                        {
+                            "checkpoint_id": checkpoint_id,
+                            "run_id": run_id,
+                            "graph_hash": plan.graph_hash,
+                            "wait_node": node_name,
+                            "remaining_nodes": list(
+                                checkpoint_remaining_nodes
+                            ),
+                            "inputs": checkpoint_inputs,
+                            "node_outputs": checkpoint_node_outputs,
+                            "output_values": checkpoint_output_values,
+                            "operation": checkpoint_operation,
+                        }
+                    )
+                    runtime_checkpoint = RuntimeCheckpoint(
+                        checkpoint_id=checkpoint_id,
+                        run_id=run_id,
+                        graph_hash=plan.graph_hash,
+                        wait_node=node_name,
+                        remaining_nodes=checkpoint_remaining_nodes,
+                        inputs=checkpoint_inputs,
+                        node_outputs=checkpoint_node_outputs,
+                        output_values=checkpoint_output_values,
+                        operation=checkpoint_operation,
+                        state_digest=checkpoint_state_digest,
+                    )
+                    with self._checkpoint_lock:
+                        self._checkpoint_state_digests[
+                            checkpoint_id
+                        ] = checkpoint_state_digest
+                    if self.run_store is not None:
+                        self.run_store.set_status(run_id, "waiting_callback")
+                    journal.append(
+                        "run_waiting_callback",
+                        {
+                            "operationId": operation.get("operation_id"),
+                            "node": node_name,
+                            "graphHash": plan.graph_hash,
+                        },
+                    )
+                    return RunResult(
+                        run_id,
+                        "waiting_callback",
+                        dict(output_values),
+                        journal,
+                        runtime_checkpoint,
+                    )
+
                 node_outputs[node_name] = result
                 for edge in edges:
                     if not (
@@ -582,6 +1109,14 @@ class InProcessRuntime:
                     self.lease_pool.release_all(run_id)
                 return RunResult(run_id, "failed", output_values, journal)
 
+        token = context["cancellation_token"]
+        if isinstance(token, CancellationToken) and token.cancelled:
+            journal.append_terminal("run_cancelled", {"reason": token.reason})
+            if self.run_store is not None:
+                self.run_store.set_status(run_id, "cancelled")
+            if self.lease_pool is not None:
+                self.lease_pool.release_all(run_id)
+            return RunResult(run_id, "cancelled", output_values, journal)
         journal.append_terminal("run_succeeded", {"outputs": output_values})
         if self.run_store is not None:
             self.run_store.set_status(run_id, "succeeded")

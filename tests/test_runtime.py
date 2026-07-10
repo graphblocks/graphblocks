@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from copy import deepcopy
+import graphblocks
 import pytest
 
 from graphblocks.runtime import (
@@ -73,6 +76,326 @@ def test_runtime_executes_conversation_vertical_slice() -> None:
         "node_succeeded",
         "run_succeeded",
     ]
+
+
+def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None:
+    prepare_calls = 0
+    consume_calls = 0
+
+    def prepare(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return {"subject": {"change": "patch-1"}}
+
+    def consume(
+        inputs: dict[str, object],
+        config: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        nonlocal consume_calls
+        consume_calls += 1
+        assert store.get_run("run-runtime-resume-1").status == "resuming"
+        return {"result": inputs["callback"]}
+
+    registry = stdlib_registry()
+    registry.register("test.prepare@1", prepare)
+    registry.register("test.consume-callback@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-callback-checkpoint"},
+        "spec": {
+            "nodes": {
+                "prepare": {"block": "test.prepare@1"},
+                "start": {
+                    "block": "async.start_operation@1",
+                    "inputs": {"subject": "prepare.subject"},
+                    "config": {
+                        "operationId": "operation-runtime-resume-1",
+                        "runId": "run-runtime-resume-1",
+                        "nodeId": "wait",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
+                        "idempotencyKey": "idem-operation-runtime-resume-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeoutMs": 60_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 60_000,
+                        "idempotencyKey": "idem-operation-runtime-resume-1",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "consume": {
+                    "block": "test.consume-callback@1",
+                    "inputs": {"callback": "wait.callback"},
+                    "outputs": {"result": "$output.result"},
+                },
+            }
+        },
+    }
+    store = InMemoryRunStore()
+    runtime = InProcessRuntime(registry, run_store=store)
+
+    waiting = runtime.run(graph, {}, run_id="run-runtime-resume-1")
+
+    assert waiting.status == "waiting_callback"
+    assert waiting.checkpoint is not None
+    assert graphblocks.RuntimeCheckpoint is type(waiting.checkpoint)
+    assert waiting.checkpoint.wait_node == "wait"
+    assert waiting.checkpoint.operation["operation_id"] == "operation-runtime-resume-1"
+    assert waiting.journal.records[-1].kind == "run_waiting_callback"
+    assert store.get_run("run-runtime-resume-1").status == "waiting_callback"
+    assert prepare_calls == 1
+    assert consume_calls == 0
+
+    valid_checkpoint_operation = dict(waiting.checkpoint.operation)
+    invalid_checkpoint_operations = (
+        (
+            {**valid_checkpoint_operation, "kind": "not-a-real-kind"},
+            "runtime checkpoint operation kind must be a valid async operation kind",
+        ),
+        (
+            {**valid_checkpoint_operation, "node_id": "foreign-node"},
+            "runtime checkpoint operation node_id must belong to checkpoint graph state",
+        ),
+        (
+            {
+                **valid_checkpoint_operation,
+                "resume_token_hash": "sha256:" + "z" * 64,
+            },
+            "runtime checkpoint operation resume_token_hash must be a canonical sha256 digest",
+        ),
+        (
+            {**valid_checkpoint_operation, "submitted_at_unix_ms": "1050"},
+            "runtime checkpoint operation submitted_at_unix_ms must be an unsigned 64-bit integer",
+        ),
+        (
+            {**valid_checkpoint_operation, "expires_at_unix_ms": "61000"},
+            "runtime checkpoint operation expires_at_unix_ms must be an unsigned 64-bit integer",
+        ),
+        (
+            {**valid_checkpoint_operation, "submitted_at_unix_ms": 999},
+            "runtime checkpoint operation submitted_at_unix_ms must not precede created_at_unix_ms",
+        ),
+        (
+            {**valid_checkpoint_operation, "expires_at_unix_ms": 1_050},
+            "runtime checkpoint operation expires_at_unix_ms must be after submitted_at_unix_ms",
+        ),
+        (
+            {**valid_checkpoint_operation, "completed_at_unix_ms": 2_000},
+            "runtime checkpoint waiting operation must not have completed_at_unix_ms",
+        ),
+        (
+            {
+                **valid_checkpoint_operation,
+                "expires_at_unix_ms": None,
+                "infinite_wait_policy": None,
+            },
+            "runtime checkpoint waiting operation requires expires_at_unix_ms or infinite_wait_policy",
+        ),
+        (
+            {
+                **valid_checkpoint_operation,
+                "infinite_wait_policy": "operator_review_required",
+            },
+            "runtime checkpoint waiting operation must not define both expires_at_unix_ms and infinite_wait_policy",
+        ),
+        (
+            {
+                **valid_checkpoint_operation,
+                "expires_at_unix_ms": None,
+                "infinite_wait_policy": " operator_review_required ",
+            },
+            "runtime checkpoint operation infinite_wait_policy must be an exact non-empty string",
+        ),
+    )
+    for invalid_operation, expected_error in invalid_checkpoint_operations:
+        with pytest.raises(ValueError, match=expected_error):
+            replace(waiting.checkpoint, operation=invalid_operation)
+
+    callback_receipt = {
+        "operation_id": "operation-runtime-resume-1",
+        "run_id": "run-runtime-resume-1",
+        "node_id": "wait",
+        "attempt_id": "attempt-1",
+        "provider_operation_id": "provider-operation-1",
+        "idempotency_key": "idem-operation-runtime-resume-1",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+        "schema_id": "schemas/CICallback@1",
+        "schema_validated": True,
+        "payload": {"status": "completed", "conclusion": "success"},
+        "payload_digest": graphblocks.canonical_hash(
+            {"status": "completed", "conclusion": "success"}
+        ),
+        "received_at_unix_ms": 2_000,
+        "verified_by": "callback-relay",
+        "resume_admission": {
+            "policy_reevaluated": True,
+            "budget_reserved": True,
+            "release_compatible": True,
+            "ownership_fenced": True,
+        },
+    }
+    with pytest.raises(
+        ValueError,
+        match="runtime callback_receipt verified_by must identify an authenticated principal",
+    ):
+        runtime.run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+            checkpoint=waiting.checkpoint,
+            callback_receipt={**callback_receipt, "verified_by": "unauthenticated"},
+        )
+    with pytest.raises(
+        ValueError,
+        match="runtime callback_receipt verified_by must identify an authenticated principal",
+    ):
+        runtime.run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+            checkpoint=waiting.checkpoint,
+            callback_receipt={**callback_receipt, "verified_by": " unauthenticated "},
+        )
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint inputs must match original run inputs",
+    ):
+        runtime.run(
+            graph,
+            {"changed": True},
+            run_id="run-runtime-resume-1",
+            checkpoint=waiting.checkpoint,
+            callback_receipt=callback_receipt,
+        )
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint state does not match the issuing runtime",
+    ):
+        runtime.run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+            checkpoint=replace(
+                waiting.checkpoint,
+                remaining_nodes=("wait",),
+            ),
+            callback_receipt=callback_receipt,
+        )
+
+    resumed = runtime.run(
+        graph,
+        {},
+        run_id="run-runtime-resume-1",
+        checkpoint=waiting.checkpoint,
+        callback_receipt=callback_receipt,
+    )
+
+    assert resumed.status == "succeeded"
+    assert resumed.outputs == {
+        "result": {"status": "completed", "conclusion": "success"}
+    }
+    assert resumed.checkpoint is None
+    assert resumed.journal.records[0].kind == "run_resuming"
+    assert store.get_run("run-runtime-resume-1").status == "succeeded"
+    assert prepare_calls == 1
+    assert consume_calls == 1
+
+    cancelled_graph = deepcopy(graph)
+    del cancelled_graph["spec"]["nodes"]["consume"]
+    cancelled_store = InMemoryRunStore()
+    cancelled_token = graphblocks.CancellationToken()
+    cancelled_runtime = InProcessRuntime(
+        registry,
+        run_store=cancelled_store,
+        cancellation_token=cancelled_token,
+    )
+    cancelled_wait = cancelled_runtime.run(
+        cancelled_graph,
+        {},
+        run_id="run-runtime-resume-1",
+    )
+    assert cancelled_wait.checkpoint is not None
+    cancelled_token.cancel("operator stop")
+
+    cancelled = cancelled_runtime.run(
+        cancelled_graph,
+        {},
+        run_id="run-runtime-resume-1",
+        checkpoint=cancelled_wait.checkpoint,
+        callback_receipt=callback_receipt,
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled_store.get_run("run-runtime-resume-1").status == "cancelled"
+
+    duplicate_id_runtime = InProcessRuntime(registry)
+    first_wait = duplicate_id_runtime.run(
+        graph,
+        {},
+        run_id="run-runtime-resume-1",
+    )
+    second_wait = duplicate_id_runtime.run(
+        graph,
+        {},
+        run_id="run-runtime-resume-1",
+    )
+    assert first_wait.checkpoint is not None
+    assert second_wait.checkpoint is not None
+    assert first_wait.checkpoint.checkpoint_id != second_wait.checkpoint.checkpoint_id
+
+    malformed_registry = stdlib_registry()
+    malformed_registry.register("test.prepare@1", prepare)
+    malformed_registry.register("test.consume-callback@1", consume)
+    malformed_registry.register(
+        "async.await_callback@1",
+        lambda inputs, config, context: {
+            "wait": {
+                "state": "waiting_callback",
+                "checkpoint": True,
+                "operation": {"run_id": "run-runtime-resume-1"},
+            }
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint operation operation_id must be an exact non-empty string",
+    ):
+        InProcessRuntime(malformed_registry).run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+        )
 
 
 def test_stdlib_policy_stop_turn_blocks_late_commit() -> None:
@@ -818,13 +1141,18 @@ def test_stdlib_async_blocks_start_and_await_callback_operation() -> None:
         },
     }
 
-    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+    result = InProcessRuntime(stdlib_registry()).run(
+        graph,
+        {},
+        run_id="run-coding-1",
+    )
 
-    assert result.status == "succeeded"
+    assert result.status == "waiting_callback"
     assert result.outputs["operation"]["state"] == "waiting_callback"
     assert result.outputs["operation"]["expires_at_unix_ms"] == 1_801_000
-    assert result.outputs["wait"]["timeoutMs"] == 1_800_000
-    assert result.outputs["wait"]["operation"]["operation_id"] == "op-ci-1"
+    assert result.checkpoint is not None
+    assert result.checkpoint.wait_node == "waitCI"
+    assert result.checkpoint.operation["operation_id"] == "op-ci-1"
 
 
 def test_stdlib_async_start_operation_rejects_noncanonical_resume_token_hash() -> None:

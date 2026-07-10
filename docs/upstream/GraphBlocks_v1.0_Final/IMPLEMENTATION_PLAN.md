@@ -814,6 +814,22 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python `AsyncOperationResult.from_late_callback(...)` now projects late callback payloads for
   terminal operations as `incomplete` diagnostic results while preserving committed external effect
   metadata, so facade consumers cannot accidentally treat a late callback as a resumable operation.
+- Python `InProcessRuntime` now treats checkpoint-enabled `async.await_callback@1` as a nonterminal
+  execution boundary instead of a successful ordinary node. It returns `waiting_callback` with an
+  immutable, JSON-safe `RuntimeCheckpoint` containing the compiled graph hash, completed node
+  outputs, graph outputs, remaining nodes, wait node, and fenced async-operation identity. Resuming
+  with a matching callback receipt validates the graph/run/operation/node/attempt/provider fences,
+  original inputs, resume token, idempotency key, payload digest, schema-validation evidence,
+  authenticated verifier, operation deadline, and policy/budget/release/ownership resume-admission
+  evidence. The issuing runtime seals checkpoint scheduler state and rejects altered, foreign, or
+  already-consumed checkpoints before they can skip or repeat nodes. Resume restores completed
+  state, injects the callback payload as the wait node's `callback` output, and schedules only the
+  remaining nodes; already completed nodes are not executed again. The runtime
+  journal records `run_waiting_callback` before suspension and begins continued execution with
+  `run_resuming`, while an attached run store projects `waiting_callback` and `resuming` states.
+  This reference path supports one active callback wait per process-local checkpoint;
+  restart recovery, remote-worker handoff, and durable checkpoint persistence remain owned by
+  `graphblocks-runtime-durable`.
 - Python `graphblocks-core` now exposes an immutable `AsyncOperation` schema facade with the
   amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
   `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,
