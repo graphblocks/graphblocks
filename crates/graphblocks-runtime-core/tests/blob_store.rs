@@ -406,6 +406,28 @@ fn s3_compatible_blob_store_supports_range_reads_and_pagination()
         )?,
         b"lph"
     );
+    let range_request_count = client.range_headers().len();
+    assert_eq!(
+        store.get(
+            &BlobKey::new("docs/a.txt"),
+            Some(ByteRange {
+                offset: 1,
+                length: Some(0),
+            }),
+        )?,
+        b""
+    );
+    assert_eq!(client.range_headers().len(), range_request_count);
+    assert!(matches!(
+        store.get(
+            &BlobKey::new("missing.txt"),
+            Some(ByteRange {
+                offset: 1,
+                length: Some(0),
+            }),
+        ),
+        Err(BlobStoreError::NotFound { .. })
+    ));
     let first_page = store.list("docs/", None, 1)?;
     let second_page = store.list("docs/", first_page.next_cursor.as_deref(), 1)?;
 

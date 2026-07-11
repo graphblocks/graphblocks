@@ -20,6 +20,10 @@ Numeric cursors emitted or accepted by a local blob store MUST use canonical
 unsigned decimal syntax. Advancing a valid cursor MUST NOT overflow, including
 when a caller supplies the platform's largest representable cursor.
 
+A zero-length blob byte-range read MUST verify that the blob exists and return
+empty bytes without issuing an invalid transport range whose end precedes its
+start. Local and S3-compatible stores MUST expose the same result.
+
 ## Ordered parser fallback
 
 A parser candidate chain MUST be non-empty, ordered, and free of duplicate

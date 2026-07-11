@@ -296,6 +296,10 @@ impl<C: S3CompatibleClient> S3CompatibleBlobStore<C> {
         byte_range: Option<ByteRange>,
     ) -> Result<Vec<u8>, BlobStoreError> {
         validate_blob_key(key)?;
+        if byte_range.is_some_and(|byte_range| byte_range.length == Some(0)) {
+            self.head(key)?;
+            return Ok(Vec::new());
+        }
         Ok(self
             .client
             .get_object(S3GetObjectRequest {
