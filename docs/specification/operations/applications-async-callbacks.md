@@ -128,6 +128,9 @@ Unauthenticated callbacks MUST NOT create resumable or quarantined state.
 Ordinary subscription events MUST NOT be promoted to async receipts. Duplicate
 callbacks MUST NOT resume twice. A callback after timeout/cancellation or for a
 stale attempt MUST NOT modify the newer or terminal operation.
+Async operation `expires_at` is an exclusive callback admission deadline;
+callbacks received at or after the deadline MUST be rejected before journaling a
+resumable receipt.
 
 The reference daemon exposes `register-async-operation`,
 `submit-async-callback`, `quarantine-async-callback`,

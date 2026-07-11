@@ -2954,6 +2954,51 @@ fn callback_after_timeout_records_late_callback_without_resume() {
 }
 
 #[test]
+fn callback_at_operation_deadline_is_rejected_without_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-at-deadline", "idem-at-deadline");
+    submission.received_at_unix_ms = 2_000;
+
+    let error = store
+        .accept_callback(submission, &callback_schema_registry())
+        .expect_err("callback received at deadline must be rejected");
+
+    assert_eq!(
+        error,
+        AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "callback received after operation expiration".to_owned(),
+        }
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-at-deadline" && reason == "callback_after_expiration"
+        )
+    }));
+    assert!(!store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::StateChanged {
+                to: AsyncOperationState::CallbackReceived,
+                ..
+            }
+        )
+    }));
+}
+
+#[test]
 fn sqlite_expired_operation_after_deadline_survives_reopen() -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("expired-after-deadline-reopen");
     {

@@ -2376,7 +2376,7 @@ impl AsyncOperationStore {
             && operation
                 .expires_at_unix_ms
                 .is_some_and(|expires_at_unix_ms| {
-                    submission.received_at_unix_ms > expires_at_unix_ms
+                    submission.received_at_unix_ms >= expires_at_unix_ms
                 })
         {
             inner
