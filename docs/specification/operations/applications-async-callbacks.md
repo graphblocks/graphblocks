@@ -22,6 +22,31 @@ CLI/TUI attachment, local callbacks, and webhooks are projections. Run
 correctness MUST NOT depend on projection delivery success, and exactly-once
 callback delivery MUST NOT be promised.
 
+Durable runtime implementations MUST persist the authoritative stream in a
+restart-safe store before projecting events to any delivery transport. The
+runtime-core reference implementation provides `SqliteApplicationProtocolLog`,
+which stores immutable event envelopes, validates decoded rows against their
+stored run, sequence, cursor, and event identity, and rebuilds the in-memory
+`ApplicationProtocolLog` on reopen so duplicate, cursor, run, and sequence
+rules remain identical across process restarts. Cursor replay MUST use the
+persisted stream; retained replay that cannot satisfy an old cursor MUST report
+the requested cursor, earliest retained cursor, last cursor, and last sequence.
+
+Example durable event-stream configuration:
+
+```yaml
+runtime:
+  applicationEventStream:
+    store:
+      kind: sqlite
+      path: /var/lib/graphblocks/runs/application-events.sqlite
+
+    replay:
+      retention: 14d
+      retainedEventCount: 10000
+      cursorExpiredResponse: include_run_status
+```
+
 ## Subscriptions and webhook delivery
 
 A callback subscription binds run, event filter, target, delivery policy, and

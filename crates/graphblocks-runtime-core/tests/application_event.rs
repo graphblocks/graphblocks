@@ -4,7 +4,7 @@ use graphblocks_runtime_core::application_event::{
     ApplicationEventStreamState, ApplicationEventVisibility, ApplicationProtocolCapabilities,
     ApplicationProtocolError, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolReplayError,
-    ApplicationProtocolStreamState, AttachToRunReplay,
+    ApplicationProtocolStreamState, AttachToRunReplay, SqliteApplicationProtocolLog,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -22,6 +22,17 @@ use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallError, ToolCall
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolResult, ToolResultEvent, ToolResultEventError, ToolResultStatus,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn sqlite_application_event_path(label: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-application-event-{label}-{unique}.sqlite3"
+    ))
+}
 use serde_json::json;
 
 fn metadata() -> ApplicationEventMetadata {
@@ -2459,6 +2470,115 @@ fn protocol_log_rejects_events_from_another_run() {
         Err(ApplicationProtocolError::RunMismatch {
             expected_run_id: "run-1".to_owned(),
             actual_run_id: "run-2".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn sqlite_protocol_log_persists_events_and_replays_after_reopen() {
+    let path = sqlite_application_event_path("persist-replay");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        assert!(
+            log.append(
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::RunStarted,
+                    protocol_event_metadata("event-1", 1, "cursor-1"),
+                    json!({"status": "running"}),
+                )
+                .expect("event is valid"),
+            )
+            .expect("event appends")
+        );
+        assert!(
+            log.append(
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata("event-2", 2, "cursor-2"),
+                    json!({"done": 1, "total": 2}),
+                )
+                .expect("event is valid"),
+            )
+            .expect("event appends")
+        );
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+    let replay = log
+        .replay_after(Some("cursor-1"), 10)
+        .expect("replay succeeds");
+
+    assert_eq!(log.len().expect("len loads"), 2);
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].metadata.event_id, "event-2");
+    assert_eq!(replay[0].payload, json!({"done": 1, "total": 2}));
+}
+
+#[test]
+fn sqlite_protocol_log_rejects_mutated_duplicate_event_after_reopen() {
+    let path = sqlite_application_event_path("duplicate-event-id");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::RunStarted,
+                protocol_event_metadata("event-1", 1, "cursor-1"),
+                json!({"status": "running"}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+    assert_eq!(
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata("event-1", 2, "cursor-2"),
+                json!({"done": 1, "total": 2}),
+            )
+            .expect("event is valid"),
+        ),
+        Err(ApplicationProtocolError::DuplicateEventIdConflict {
+            event_id: "event-1".to_owned(),
+        })
+    );
+    assert_eq!(log.len().expect("len loads"), 1);
+}
+
+#[test]
+fn sqlite_protocol_log_retained_replay_reports_expired_cursor_after_reopen() {
+    let path = sqlite_application_event_path("expired-cursor");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        for sequence in 1..=4 {
+            log.append(
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata(
+                        &format!("event-{sequence}"),
+                        sequence,
+                        &format!("cursor-{sequence}"),
+                    ),
+                    json!({"message": sequence}),
+                )
+                .expect("event is valid"),
+            )
+            .expect("event appends");
+        }
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+
+    let durable_snapshot = log.to_protocol_log().expect("durable log loads");
+    assert_eq!(
+        durable_snapshot.replay_after_retained(Some("cursor-1"), 10, 2),
+        Err(ApplicationProtocolReplayError::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: Some("cursor-3".to_owned()),
+            last_cursor: Some("cursor-4".to_owned()),
+            last_sequence: Some(4),
         })
     );
 }

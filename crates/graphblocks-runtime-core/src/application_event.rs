@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::path::Path;
+use std::sync::Mutex;
 
 use crate::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputCutoffError,
@@ -17,6 +19,7 @@ use crate::tool_result::{
     ContentPart, ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent,
     ToolResultEventError, ToolResultStatus,
 };
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1230,6 +1233,9 @@ pub enum ApplicationProtocolError {
         expected_run_id: String,
         actual_run_id: String,
     },
+    Storage {
+        message: String,
+    },
 }
 
 impl fmt::Display for ApplicationProtocolError {
@@ -1280,6 +1286,12 @@ impl fmt::Display for ApplicationProtocolError {
                 formatter,
                 "application event run {actual_run_id:?} does not match log run {expected_run_id:?}"
             ),
+            Self::Storage { message } => {
+                write!(
+                    formatter,
+                    "application protocol log storage error: {message}"
+                )
+            }
         }
     }
 }
@@ -1861,6 +1873,368 @@ impl ApplicationProtocolLog {
 
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+}
+
+pub struct SqliteApplicationProtocolLog {
+    connection: Mutex<Connection>,
+}
+
+impl SqliteApplicationProtocolLog {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ApplicationProtocolError> {
+        let connection = Connection::open(path).map_err(application_protocol_storage_error)?;
+        initialize_sqlite_application_protocol_log(&connection)?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    pub fn open_in_memory() -> Result<Self, ApplicationProtocolError> {
+        let connection =
+            Connection::open_in_memory().map_err(application_protocol_storage_error)?;
+        initialize_sqlite_application_protocol_log(&connection)?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+
+    pub fn append(
+        &self,
+        event: ApplicationProtocolEvent,
+    ) -> Result<bool, ApplicationProtocolError> {
+        let event = ApplicationProtocolEvent::new(
+            event.kind,
+            event.metadata.clone(),
+            event.payload.clone(),
+        )?;
+        let cursor = event
+            .metadata
+            .cursor
+            .as_deref()
+            .ok_or(ApplicationProtocolError::EmptyMetadataField { field: "cursor" })?;
+        let sequence = sqlite_i64_from_u64("sequence", event.metadata.sequence)?;
+        let event_json = application_protocol_event_to_value(&event).to_string();
+        let mut connection =
+            self.connection
+                .lock()
+                .map_err(|_| ApplicationProtocolError::Storage {
+                    message: "application protocol log mutex was poisoned".to_owned(),
+                })?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(application_protocol_storage_error)?;
+        let mut log = sqlite_load_application_protocol_log(&transaction)?;
+        let appended = log.append(event.clone())?;
+        if !appended {
+            transaction
+                .commit()
+                .map_err(application_protocol_storage_error)?;
+            return Ok(false);
+        }
+
+        transaction
+            .execute(
+                "INSERT INTO application_protocol_events (
+                    event_id,
+                    run_id,
+                    sequence,
+                    cursor,
+                    event_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    &event.metadata.event_id,
+                    &event.metadata.run_id,
+                    sequence,
+                    cursor,
+                    event_json,
+                ],
+            )
+            .map_err(application_protocol_storage_error)?;
+        transaction
+            .commit()
+            .map_err(application_protocol_storage_error)?;
+        Ok(true)
+    }
+
+    pub fn replay_after(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ApplicationProtocolEvent>, ApplicationProtocolError> {
+        Ok(self.to_protocol_log()?.replay_after(cursor, limit))
+    }
+
+    pub fn to_protocol_log(&self) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ApplicationProtocolError::Storage {
+                message: "application protocol log mutex was poisoned".to_owned(),
+            })?;
+        sqlite_load_application_protocol_log(&connection)
+    }
+
+    pub fn len(&self) -> Result<usize, ApplicationProtocolError> {
+        Ok(self.to_protocol_log()?.len())
+    }
+
+    pub fn is_empty(&self) -> Result<bool, ApplicationProtocolError> {
+        Ok(self.to_protocol_log()?.is_empty())
+    }
+}
+
+fn initialize_sqlite_application_protocol_log(
+    connection: &Connection,
+) -> Result<(), ApplicationProtocolError> {
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS application_protocol_events (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                cursor TEXT NOT NULL,
+                event_json TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS application_protocol_events_cursor_idx
+                ON application_protocol_events(cursor);
+            CREATE INDEX IF NOT EXISTS application_protocol_events_sequence_idx
+                ON application_protocol_events(sequence, event_id);
+            ",
+        )
+        .map_err(application_protocol_storage_error)
+}
+
+fn sqlite_load_application_protocol_log(
+    connection: &Connection,
+) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT event_id, run_id, sequence, cursor, event_json
+             FROM application_protocol_events
+             ORDER BY sequence ASC, event_id ASC",
+        )
+        .map_err(application_protocol_storage_error)?;
+    let mut rows = statement
+        .query([])
+        .map_err(application_protocol_storage_error)?;
+    let mut log = ApplicationProtocolLog::new();
+
+    while let Some(row) = rows.next().map_err(application_protocol_storage_error)? {
+        let event_id: String = row.get(0).map_err(application_protocol_storage_error)?;
+        let run_id: String = row.get(1).map_err(application_protocol_storage_error)?;
+        let sequence = sqlite_u64_from_i64(
+            "sequence",
+            row.get(2).map_err(application_protocol_storage_error)?,
+        )?;
+        let cursor: String = row.get(3).map_err(application_protocol_storage_error)?;
+        let event_json: String = row.get(4).map_err(application_protocol_storage_error)?;
+        let event_value: Value = serde_json::from_str(&event_json).map_err(|error| {
+            ApplicationProtocolError::Storage {
+                message: format!(
+                    "stored application protocol event {event_id:?} is invalid JSON: {error}"
+                ),
+            }
+        })?;
+        let event = application_protocol_event_from_value(event_value)?;
+
+        if event.metadata.event_id != event_id
+            || event.metadata.run_id != run_id
+            || event.metadata.sequence != sequence
+            || event.metadata.cursor.as_deref() != Some(cursor.as_str())
+        {
+            return Err(ApplicationProtocolError::Storage {
+                message: format!(
+                    "stored application protocol event {event_id:?} row metadata does not match decoded event"
+                ),
+            });
+        }
+
+        log.append(event)?;
+    }
+
+    Ok(log)
+}
+
+fn application_protocol_event_to_value(event: &ApplicationProtocolEvent) -> Value {
+    json!({
+        "kind": event.kind.as_str(),
+        "metadata": {
+            "event_id": event.metadata.event_id.clone(),
+            "protocol_version": event.metadata.protocol_version.clone(),
+            "run_id": event.metadata.run_id.clone(),
+            "release_id": event.metadata.release_id.clone(),
+            "turn_id": event.metadata.turn_id.clone(),
+            "operation_id": event.metadata.operation_id.clone(),
+            "sequence": event.metadata.sequence,
+            "cursor": event.metadata.cursor.clone(),
+            "occurred_at_unix_ms": event.metadata.occurred_at_unix_ms,
+        },
+        "payload": event.payload.clone(),
+    })
+}
+
+fn application_protocol_event_from_value(
+    value: Value,
+) -> Result<ApplicationProtocolEvent, ApplicationProtocolError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| ApplicationProtocolError::Storage {
+            message: "stored application protocol event must be a JSON object".to_owned(),
+        })?;
+    let kind = application_protocol_event_kind_from_str(required_json_string(object, "kind")?)?;
+    let metadata = required_json_object(object, "metadata")?;
+    let payload =
+        object
+            .get("payload")
+            .cloned()
+            .ok_or_else(|| ApplicationProtocolError::Storage {
+                message: "stored application protocol event missing payload".to_owned(),
+            })?;
+
+    ApplicationProtocolEvent::new(
+        kind,
+        ApplicationProtocolEventMetadata {
+            event_id: required_json_string(metadata, "event_id")?.to_owned(),
+            protocol_version: required_json_string(metadata, "protocol_version")?.to_owned(),
+            run_id: required_json_string(metadata, "run_id")?.to_owned(),
+            release_id: required_json_string(metadata, "release_id")?.to_owned(),
+            turn_id: optional_json_string(metadata, "turn_id")?,
+            operation_id: optional_json_string(metadata, "operation_id")?,
+            sequence: required_json_u64(metadata, "sequence")?,
+            cursor: optional_json_string(metadata, "cursor")?,
+            occurred_at_unix_ms: required_json_u64(metadata, "occurred_at_unix_ms")?,
+        },
+        payload,
+    )
+}
+
+fn application_protocol_event_kind_from_str(
+    value: &str,
+) -> Result<ApplicationProtocolEventKind, ApplicationProtocolError> {
+    match value {
+        "RunStarted" => Ok(ApplicationProtocolEventKind::RunStarted),
+        "TurnStarted" => Ok(ApplicationProtocolEventKind::TurnStarted),
+        "ContextReady" => Ok(ApplicationProtocolEventKind::ContextReady),
+        "AssistantDraftStarted" => Ok(ApplicationProtocolEventKind::AssistantDraftStarted),
+        "AssistantDraftDelta" => Ok(ApplicationProtocolEventKind::AssistantDraftDelta),
+        "AssistantCommitted" => Ok(ApplicationProtocolEventKind::AssistantCommitted),
+        "AssistantIncomplete" => Ok(ApplicationProtocolEventKind::AssistantIncomplete),
+        "AssistantRetracted" => Ok(ApplicationProtocolEventKind::AssistantRetracted),
+        "ToolStarted" => Ok(ApplicationProtocolEventKind::ToolStarted),
+        "ToolCompleted" => Ok(ApplicationProtocolEventKind::ToolCompleted),
+        "ToolCallApprovalRequested" => Ok(ApplicationProtocolEventKind::ToolCallApprovalRequested),
+        "ApprovalRequested" => Ok(ApplicationProtocolEventKind::ApprovalRequested),
+        "ReviewRequested" => Ok(ApplicationProtocolEventKind::ReviewRequested),
+        "BudgetConstrained" => Ok(ApplicationProtocolEventKind::BudgetConstrained),
+        "BudgetExhausted" => Ok(ApplicationProtocolEventKind::BudgetExhausted),
+        "BudgetExtensionRequested" => Ok(ApplicationProtocolEventKind::BudgetExtensionRequested),
+        "BudgetExtensionGranted" => Ok(ApplicationProtocolEventKind::BudgetExtensionGranted),
+        "PolicyDecisionRequired" => Ok(ApplicationProtocolEventKind::PolicyDecisionRequired),
+        "ExecutionDegraded" => Ok(ApplicationProtocolEventKind::ExecutionDegraded),
+        "OutputCutoff" => Ok(ApplicationProtocolEventKind::OutputCutoff),
+        "FilePatchPreview" => Ok(ApplicationProtocolEventKind::FilePatchPreview),
+        "JobProgress" => Ok(ApplicationProtocolEventKind::JobProgress),
+        "ArtifactReady" => Ok(ApplicationProtocolEventKind::ArtifactReady),
+        "StateSnapshot" => Ok(ApplicationProtocolEventKind::StateSnapshot),
+        "RunCompleted" => Ok(ApplicationProtocolEventKind::RunCompleted),
+        "RunFailed" => Ok(ApplicationProtocolEventKind::RunFailed),
+        "RunCancelled" => Ok(ApplicationProtocolEventKind::RunCancelled),
+        "RunPolicyStopped" => Ok(ApplicationProtocolEventKind::RunPolicyStopped),
+        "RunExpired" => Ok(ApplicationProtocolEventKind::RunExpired),
+        "AsyncOperationStarted" => Ok(ApplicationProtocolEventKind::AsyncOperationStarted),
+        "AsyncOperationWaitingCallback" => {
+            Ok(ApplicationProtocolEventKind::AsyncOperationWaitingCallback)
+        }
+        "AsyncOperationPolling" => Ok(ApplicationProtocolEventKind::AsyncOperationPolling),
+        "AsyncOperationCompleted" => Ok(ApplicationProtocolEventKind::AsyncOperationCompleted),
+        "AsyncOperationFailed" => Ok(ApplicationProtocolEventKind::AsyncOperationFailed),
+        "AsyncOperationCancelled" => Ok(ApplicationProtocolEventKind::AsyncOperationCancelled),
+        "AsyncOperationExpired" => Ok(ApplicationProtocolEventKind::AsyncOperationExpired),
+        "ExternalCallbackReceived" => Ok(ApplicationProtocolEventKind::ExternalCallbackReceived),
+        "ExternalCallbackRejected" => Ok(ApplicationProtocolEventKind::ExternalCallbackRejected),
+        "LateExternalCallbackReceived" => {
+            Ok(ApplicationProtocolEventKind::LateExternalCallbackReceived)
+        }
+        "RunResuming" => Ok(ApplicationProtocolEventKind::RunResuming),
+        "RunPausedBudget" => Ok(ApplicationProtocolEventKind::RunPausedBudget),
+        "RunPausedCallbackDelivery" => Ok(ApplicationProtocolEventKind::RunPausedCallbackDelivery),
+        "RunPausedPolicy" => Ok(ApplicationProtocolEventKind::RunPausedPolicy),
+        "RunPausedOperator" => Ok(ApplicationProtocolEventKind::RunPausedOperator),
+        _ => Err(ApplicationProtocolError::Storage {
+            message: format!("stored application protocol event kind {value:?} is unknown"),
+        }),
+    }
+}
+
+fn required_json_object<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<&'a serde_json::Map<String, Value>, ApplicationProtocolError> {
+    object
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| ApplicationProtocolError::Storage {
+            message: format!("stored application protocol event {field} must be a JSON object"),
+        })
+}
+
+fn required_json_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<&'a str, ApplicationProtocolError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApplicationProtocolError::Storage {
+            message: format!("stored application protocol event {field} must be a string"),
+        })
+}
+
+fn optional_json_string(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<Option<String>, ApplicationProtocolError> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(ApplicationProtocolError::Storage {
+            message: format!(
+                "stored application protocol event optional field {field} must be a string or null"
+            ),
+        }),
+    }
+}
+
+fn required_json_u64(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<u64, ApplicationProtocolError> {
+    object
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ApplicationProtocolError::Storage {
+            message: format!(
+                "stored application protocol event field {field} must be an unsigned integer"
+            ),
+        })
+}
+
+fn sqlite_i64_from_u64(field: &'static str, value: u64) -> Result<i64, ApplicationProtocolError> {
+    i64::try_from(value).map_err(|_| ApplicationProtocolError::Storage {
+        message: format!("application protocol event {field} {value} exceeds SQLite integer range"),
+    })
+}
+
+fn sqlite_u64_from_i64(field: &'static str, value: i64) -> Result<u64, ApplicationProtocolError> {
+    u64::try_from(value).map_err(|_| ApplicationProtocolError::Storage {
+        message: format!("stored application protocol event {field} {value} is negative"),
+    })
+}
+
+fn application_protocol_storage_error(error: rusqlite::Error) -> ApplicationProtocolError {
+    ApplicationProtocolError::Storage {
+        message: error.to_string(),
     }
 }
 
