@@ -10,6 +10,23 @@ from graphblocks.policy import PrincipalRef
 ROOT = Path(__file__).parents[1]
 
 
+def test_review_package_preserves_retired_facade_wildcard_exports() -> None:
+    graphblocks_review = importlib.import_module("graphblocks.review")
+    exported: dict[str, object] = {}
+
+    exec("from graphblocks.review import *", exported)
+
+    expected_exports = {
+        "PrincipalRef",
+        "ResourceSnapshotRef",
+        "ReviewDecision",
+        "ReviewRecord",
+    }
+    assert expected_exports <= set(graphblocks_review.__all__)
+    for export_name in expected_exports:
+        assert exported[export_name] is getattr(graphblocks_review, export_name)
+
+
 def test_review_package_reexports_workflow_contracts(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-review" / "src"))
     graphblocks_review = importlib.import_module("graphblocks_review")

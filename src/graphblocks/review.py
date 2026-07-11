@@ -301,7 +301,10 @@ class ReviewWorkflow:
 
 __all__ = [
     "InMemoryReviewerCredentialProvider",
+    "PrincipalRef",
     "ReviewCredentialMissingError",
+    "ReviewDecision",
+    "ReviewRecord",
     "ReviewRequest",
     "ReviewScopeNotRequestedError",
     "ReviewSubjectChangedError",
@@ -309,4 +312,5 @@ __all__ = [
     "ReviewWorkflowError",
     "ReviewerCredential",
     "ReviewerCredentialProvider",
+    "ResourceSnapshotRef",
 ]
