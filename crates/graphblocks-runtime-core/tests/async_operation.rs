@@ -94,6 +94,16 @@ fn valid_submission(callback_id: &str, idempotency_key: &str) -> AsyncCallbackSu
     .with_provider_operation_id("gha-run-1")
 }
 
+fn authorized_resume_decision() -> AsyncCallbackResumeDecision {
+    AsyncCallbackResumeDecision::ResumeAuthorized {
+        authentication_verified: true,
+        policy_decision_id: "policy-reevaluation-1".to_owned(),
+        budget_reservation_id: "budget-reservation-1".to_owned(),
+        compatible_release_id: "release-1".to_owned(),
+        ownership_fence_token: "lease-generation-7".to_owned(),
+    }
+}
+
 #[test]
 fn bearer_callback_endpoint_authenticates_and_builds_submission() {
     let endpoint = CallbackEndpointRef::new(
@@ -1247,9 +1257,10 @@ fn external_callback_is_journaled_before_operation_can_resume() {
         .expect("operation registers");
 
     let accepted = store
-        .accept_callback(
+        .accept_callback_with_resume_decision(
             valid_submission("cb-1", "idem-cb-1"),
             &callback_schema_registry(),
+            authorized_resume_decision(),
         )
         .expect("callback is accepted");
     let events = store.events_for_operation("op-1");
@@ -1261,7 +1272,7 @@ fn external_callback_is_journaled_before_operation_can_resume() {
         accepted.receipt.payload_digest,
         accepted.receipt.compute_payload_digest()
     );
-    assert_eq!(events.len(), 4);
+    assert_eq!(events.len(), 5);
     assert!(matches!(
         events[2],
         AsyncOperationEvent::ExternalCallbackReceived { .. }
@@ -1272,6 +1283,10 @@ fn external_callback_is_journaled_before_operation_can_resume() {
             to: graphblocks_runtime_core::async_operation::AsyncOperationState::CallbackReceived,
             ..
         }
+    ));
+    assert!(matches!(
+        events[4],
+        AsyncOperationEvent::CallbackResumeAuthorized { .. }
     ));
 }
 
@@ -1321,9 +1336,10 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
         .expect("operation registers");
 
     let first = store
-        .accept_callback(
+        .accept_callback_with_resume_decision(
             valid_submission("cb-1", "idem-cb-1"),
             &callback_schema_registry(),
+            authorized_resume_decision(),
         )
         .expect("first callback is accepted");
     let duplicate = store
@@ -1510,7 +1526,11 @@ fn early_callback_is_quarantined_until_operation_registers() {
         .register(waiting_operation())
         .expect("operation is registered after callback ingress");
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("quarantined callback is consumed after registration");
 
     assert_eq!(accepted.len(), 1);
@@ -1545,7 +1565,11 @@ fn expired_early_callback_quarantine_is_not_replayed_after_operation_registers()
         .expect("operation is registered after callback ingress");
 
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("expired quarantine entry is discarded without resuming");
 
     assert!(accepted.is_empty());
@@ -1598,7 +1622,11 @@ fn duplicate_early_callback_is_quarantined_once_and_consumed_once() {
         .register(waiting_operation())
         .expect("operation is registered after callback ingress");
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("quarantined duplicate set is consumed once");
 
     assert_eq!(accepted.len(), 1);
@@ -1633,7 +1661,11 @@ fn superseded_quarantined_callbacks_are_audited_after_first_resume() {
         .register(waiting_operation())
         .expect("operation is registered after callback ingress");
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("quarantined callbacks are consumed");
 
     assert_eq!(accepted.len(), 1);
@@ -1685,7 +1717,11 @@ fn invalid_quarantined_callback_does_not_block_later_valid_callback() {
         .register(waiting_operation())
         .expect("operation is registered after callback ingress");
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("invalid quarantined callback is rejected and valid callback still resumes");
 
     assert_eq!(accepted.len(), 1);
@@ -1726,7 +1762,11 @@ fn quarantined_callbacks_replay_in_arrival_order_not_idempotency_key_order() {
         .register(waiting_operation())
         .expect("operation is registered after callback ingress");
     let accepted = store
-        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .accept_quarantined_callbacks_with_resume_decision(
+            "op-1",
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
         .expect("quarantined callbacks are replayed");
 
     assert_eq!(accepted.len(), 1);
@@ -1923,7 +1963,11 @@ fn callback_idempotency_key_conflict_rejects_mutated_payload_without_overwriting
     let registry = callback_schema_registry();
 
     let first = store
-        .accept_callback(valid_submission("cb-1", "idem-cb-1"), &registry)
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-1", "idem-cb-1"),
+            &registry,
+            authorized_resume_decision(),
+        )
         .expect("first callback is accepted");
     let conflict = store.accept_callback(
         AsyncCallbackSubmission::new(
@@ -2009,10 +2053,14 @@ fn callback_idempotency_key_is_scoped_to_operation() {
     let registry = callback_schema_registry();
 
     let first = store
-        .accept_callback(valid_submission("cb-1", "provider-delivery-1"), &registry)
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-1", "provider-delivery-1"),
+            &registry,
+            authorized_resume_decision(),
+        )
         .expect("first callback is accepted");
     let second = store
-        .accept_callback(
+        .accept_callback_with_resume_decision(
             AsyncCallbackSubmission::new(
                 "cb-2",
                 "op-2",
@@ -2027,6 +2075,7 @@ fn callback_idempotency_key_is_scoped_to_operation() {
             )
             .with_provider_operation_id("gha-run-2"),
             &registry,
+            authorized_resume_decision(),
         )
         .expect("same provider idempotency key is accepted for another operation");
 
@@ -2483,7 +2532,7 @@ fn oversized_callback_payload_can_be_converted_to_artifact_ref_before_journal() 
     });
 
     let accepted = store
-        .accept_callback_with_artifact_on_payload_limit(
+        .accept_callback_with_artifact_on_payload_limit_and_resume_decision(
             submission,
             &callback_schema_registry(),
             AsyncCallbackIngestionLimits {
@@ -2492,6 +2541,7 @@ fn oversized_callback_payload_can_be_converted_to_artifact_ref_before_journal() 
             CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
                 .with_media_type("application/json")
                 .with_checksum("sha256:callback-log"),
+            authorized_resume_decision(),
         )
         .expect("oversized callback can be stored as artifact ref");
 
@@ -2538,8 +2588,94 @@ fn callback_default_payload_limit_allows_normal_payload() {
         )
         .expect("normal callback is accepted");
 
-    assert!(accepted.should_resume);
+    assert!(!accepted.should_resume);
     assert!(!accepted.duplicate);
+}
+
+#[test]
+fn callback_admission_defaults_to_paused_without_explicit_resume_authorization() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback(
+            valid_submission("cb-default-paused", "idem-default-paused"),
+            &callback_schema_registry(),
+        )
+        .expect("authenticated callback receipt is durably admitted");
+
+    assert!(!accepted.should_resume);
+    assert!(!accepted.duplicate);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+}
+
+#[test]
+fn callback_resumes_only_with_explicit_positive_gate_evidence() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-authorized", "idem-authorized"),
+            &callback_schema_registry(),
+            authorized_resume_decision(),
+        )
+        .expect("callback with complete resume authorization is accepted");
+
+    assert!(accepted.should_resume);
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::CallbackResumeAuthorized {
+                operation_id,
+                policy_decision_id,
+                budget_reservation_id,
+                compatible_release_id,
+                ownership_fence_token,
+                ..
+            } if operation_id == "op-1"
+                && policy_decision_id == "policy-reevaluation-1"
+                && budget_reservation_id == "budget-reservation-1"
+                && compatible_release_id == "release-1"
+                && ownership_fence_token == "lease-generation-7"
+        )
+    }));
+}
+
+#[test]
+fn callback_authentication_must_be_explicit_even_with_all_other_resume_gates() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let decision = AsyncCallbackResumeDecision::ResumeAuthorized {
+        authentication_verified: false,
+        policy_decision_id: "policy-reevaluation-1".to_owned(),
+        budget_reservation_id: "budget-reservation-1".to_owned(),
+        compatible_release_id: "release-1".to_owned(),
+        ownership_fence_token: "lease-generation-7".to_owned(),
+    };
+
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-auth-held", "idem-auth-held"),
+            &callback_schema_registry(),
+            decision,
+        )
+        .expect("receipt admission remains durable while resume is held");
+
+    assert!(!accepted.should_resume);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
 }
 
 #[test]
@@ -2855,9 +2991,10 @@ fn concurrent_duplicate_callbacks_have_one_resume_winner() {
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
-                store.accept_callback(
+                store.accept_callback_with_resume_decision(
                     valid_submission(&format!("cb-{index}"), "idem-cb-race"),
                     &registry,
+                    authorized_resume_decision(),
                 )
             })
         })
@@ -2910,9 +3047,10 @@ fn sqlite_concurrent_duplicate_callbacks_have_one_resume_winner() -> Result<(), 
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
-                store.accept_callback(
+                store.accept_callback_with_resume_decision(
                     valid_submission(&format!("cb-sqlite-{index}"), "idem-cb-sqlite-race"),
                     &registry,
+                    authorized_resume_decision(),
                 )
             })
         })
@@ -3451,9 +3589,10 @@ fn callback_and_cancel_race_has_single_terminal_winner() {
         let callback_barrier = Arc::clone(&barrier);
         let callback = thread::spawn(move || {
             callback_barrier.wait();
-            callback_store.accept_callback(
+            callback_store.accept_callback_with_resume_decision(
                 valid_submission(&format!("cb-race-{seed}"), "idem-race"),
                 &callback_registry,
+                authorized_resume_decision(),
             )
         });
 
@@ -3872,9 +4011,10 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
     {
         let store = SqliteAsyncOperationStore::open(&path)?;
         store.register(waiting_operation())?;
-        let accepted = store.accept_callback(
+        let accepted = store.accept_callback_with_resume_decision(
             valid_submission("cb-1", "idem-cb-1"),
             &callback_schema_registry(),
+            authorized_resume_decision(),
         )?;
         assert!(accepted.should_resume);
     }
@@ -4420,15 +4560,16 @@ fn sqlite_async_operation_store_scopes_callback_idempotency_to_operation_after_r
             .submitted("gha-run-2", 1_050)
             .waiting_callback(2_000),
         )?;
-        let accepted = store.accept_callback(
+        let accepted = store.accept_callback_with_resume_decision(
             valid_submission("cb-1", "provider-delivery-1"),
             &callback_schema_registry(),
+            authorized_resume_decision(),
         )?;
         assert!(accepted.should_resume);
     }
 
     let store = SqliteAsyncOperationStore::open(&path)?;
-    let accepted = store.accept_callback(
+    let accepted = store.accept_callback_with_resume_decision(
         AsyncCallbackSubmission::new(
             "cb-2",
             "op-2",
@@ -4443,6 +4584,7 @@ fn sqlite_async_operation_store_scopes_callback_idempotency_to_operation_after_r
         )
         .with_provider_operation_id("gha-run-2"),
         &callback_schema_registry(),
+        authorized_resume_decision(),
     )?;
 
     assert!(accepted.should_resume);
@@ -4618,7 +4760,11 @@ fn sqlite_async_operation_store_persists_quarantined_callback_across_reopen()
         "early callback must survive process restart before operation commit"
     );
     store.register(waiting_operation())?;
-    let accepted = store.accept_quarantined_callbacks("op-1", &callback_schema_registry())?;
+    let accepted = store.accept_quarantined_callbacks_with_resume_decision(
+        "op-1",
+        &callback_schema_registry(),
+        authorized_resume_decision(),
+    )?;
 
     assert_eq!(accepted.len(), 1);
     assert_eq!(accepted[0].receipt.callback_id, "cb-early");

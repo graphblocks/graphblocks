@@ -175,6 +175,22 @@ fn submit_daemon_ci_callback(
     idempotency_key: &str,
     received_at_unix_ms: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    submit_daemon_ci_callback_with_resume_args(
+        path_text,
+        callback_id,
+        idempotency_key,
+        received_at_unix_ms,
+        &[],
+    )
+}
+
+fn submit_daemon_ci_callback_with_resume_args(
+    path_text: &str,
+    callback_id: &str,
+    idempotency_key: &str,
+    received_at_unix_ms: &str,
+    resume_args: &[&str],
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
         .args([
             "submit-async-callback",
@@ -205,6 +221,7 @@ fn submit_daemon_ci_callback(
             "--schema-json",
             r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
         ])
+        .args(resume_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
@@ -2317,7 +2334,7 @@ fn graphblocksd_quarantines_early_async_callback_and_accepts_after_registration(
         accepted
             .pointer("/accepted/0/shouldResume")
             .and_then(|value| value.as_bool()),
-        Some(true),
+        Some(false),
     );
     assert_eq!(
         accepted
@@ -2612,6 +2629,15 @@ fn graphblocksd_submits_async_callback_through_sqlite_store()
             "schemas/CICallback@1",
             "--schema-json",
             r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+            "--authentication-verified",
+            "--resume-policy-decision-id",
+            "policy-reevaluation-1",
+            "--resume-budget-reservation-id",
+            "budget-reservation-1",
+            "--resume-compatible-release-id",
+            "release-1",
+            "--resume-ownership-fence-token",
+            "lease-generation-7",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2669,6 +2695,135 @@ fn graphblocksd_submits_async_callback_through_sqlite_store()
 }
 
 #[test]
+fn graphblocksd_verified_by_text_alone_cannot_authorize_callback_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback-fail-closed");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let payload = submit_daemon_ci_callback(
+        path_text,
+        "cb-untrusted-provenance",
+        "idem-untrusted-provenance",
+        "1200",
+    )?;
+
+    assert_eq!(
+        payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_requires_authentication_and_every_resume_gate_for_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback-authorized");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let payload = submit_daemon_ci_callback_with_resume_args(
+        path_text,
+        "cb-authorized",
+        "idem-authorized",
+        "1200",
+        &[
+            "--authentication-verified",
+            "--resume-policy-decision-id",
+            "policy-reevaluation-1",
+            "--resume-budget-reservation-id",
+            "budget-reservation-1",
+            "--resume-compatible-release-id",
+            "release-1",
+            "--resume-ownership-fence-token",
+            "lease-generation-7",
+        ],
+    )?;
+
+    assert_eq!(
+        payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(true),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_holds_resume_when_gate_evidence_lacks_explicit_authentication()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback-auth-held");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let payload = submit_daemon_ci_callback_with_resume_args(
+        path_text,
+        "cb-auth-held",
+        "idem-auth-held",
+        "1200",
+        &[
+            "--resume-policy-decision-id",
+            "policy-reevaluation-1",
+            "--resume-budget-reservation-id",
+            "budget-reservation-1",
+            "--resume-compatible-release-id",
+            "release-1",
+            "--resume-ownership-fence-token",
+            "lease-generation-7",
+        ],
+    )?;
+
+    assert_eq!(
+        payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = sqlite_async_operation_path("submit-callback-duplicate");
@@ -2712,6 +2867,15 @@ fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
                 "schemas/CICallback@1",
                 "--schema-json",
                 r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+                "--authentication-verified",
+                "--resume-policy-decision-id",
+                "policy-reevaluation-1",
+                "--resume-budget-reservation-id",
+                "budget-reservation-1",
+                "--resume-compatible-release-id",
+                "release-1",
+                "--resume-ownership-fence-token",
+                "lease-generation-7",
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

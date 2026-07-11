@@ -2,8 +2,8 @@ use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
 use graphblocks_runtime_core::async_operation::{
-    AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationKind,
-    AsyncOperationState, ExternalCallbackReceived, SqliteAsyncOperationStore,
+    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation, AsyncOperationError,
+    AsyncOperationKind, AsyncOperationState, ExternalCallbackReceived, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::callback_delivery::{
     CallbackDeadLetter, CallbackDelivery, CallbackDeliveryError, CallbackDeliveryResponse,
@@ -559,6 +559,11 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
     let mut idempotency_key = None;
     let mut received_at_unix_ms = None;
     let mut verified_by = None;
+    let mut authentication_verified = false;
+    let mut resume_policy_decision_id = None;
+    let mut resume_budget_reservation_id = None;
+    let mut resume_compatible_release_id = None;
+    let mut resume_ownership_fence_token = None;
     let mut policy_snapshot_id = None;
     let mut schema_id = None;
     let mut schema_json = None;
@@ -599,6 +604,25 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
             }
             "--verified-by" => {
                 verified_by = Some(next_arg(&mut args, "--verified-by")?);
+            }
+            "--authentication-verified" => {
+                authentication_verified = true;
+            }
+            "--resume-policy-decision-id" => {
+                resume_policy_decision_id =
+                    Some(next_arg(&mut args, "--resume-policy-decision-id")?);
+            }
+            "--resume-budget-reservation-id" => {
+                resume_budget_reservation_id =
+                    Some(next_arg(&mut args, "--resume-budget-reservation-id")?);
+            }
+            "--resume-compatible-release-id" => {
+                resume_compatible_release_id =
+                    Some(next_arg(&mut args, "--resume-compatible-release-id")?);
+            }
+            "--resume-ownership-fence-token" => {
+                resume_ownership_fence_token =
+                    Some(next_arg(&mut args, "--resume-ownership-fence-token")?);
             }
             "--policy-snapshot-id" => {
                 policy_snapshot_id = Some(next_arg(&mut args, "--policy-snapshot-id")?);
@@ -660,10 +684,36 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
         submission = submission.with_provider_operation_id(provider_operation_id);
     }
 
+    let resume_gate_count = [
+        resume_policy_decision_id.is_some(),
+        resume_budget_reservation_id.is_some(),
+        resume_compatible_release_id.is_some(),
+        resume_ownership_fence_token.is_some(),
+    ]
+    .into_iter()
+    .filter(|provided| *provided)
+    .count();
+    let resume_decision = if resume_gate_count == 0 {
+        AsyncCallbackResumeDecision::PauseAuthorizationRequired
+    } else if resume_gate_count == 4 {
+        AsyncCallbackResumeDecision::ResumeAuthorized {
+            authentication_verified,
+            policy_decision_id: resume_policy_decision_id.expect("gate count checked"),
+            budget_reservation_id: resume_budget_reservation_id.expect("gate count checked"),
+            compatible_release_id: resume_compatible_release_id.expect("gate count checked"),
+            ownership_fence_token: resume_ownership_fence_token.expect("gate count checked"),
+        }
+    } else {
+        return Err(CliError::Usage(
+            "callback resume requires all of --resume-policy-decision-id, --resume-budget-reservation-id, --resume-compatible-release-id, and --resume-ownership-fence-token"
+                .to_owned(),
+        ));
+    };
+
     let store =
         SqliteAsyncOperationStore::open(async_operation_store).map_err(CliError::AsyncOperation)?;
     let accepted = store
-        .accept_callback(submission, &registry)
+        .accept_callback_with_resume_decision(submission, &registry, resume_decision)
         .map_err(CliError::AsyncOperation)?;
 
     Ok(json!({

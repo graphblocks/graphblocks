@@ -1389,7 +1389,14 @@ pub struct ExternalCallbackReceived {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AsyncCallbackResumeDecision {
-    Resume,
+    ResumeAuthorized {
+        authentication_verified: bool,
+        policy_decision_id: String,
+        budget_reservation_id: String,
+        compatible_release_id: String,
+        ownership_fence_token: String,
+    },
+    PauseAuthorizationRequired,
     PauseBudget {
         reason: String,
     },
@@ -1710,6 +1717,14 @@ pub enum AsyncOperationEvent {
         reason: String,
         occurred_at_unix_ms: u64,
     },
+    CallbackResumeAuthorized {
+        operation_id: String,
+        policy_decision_id: String,
+        budget_reservation_id: String,
+        compatible_release_id: String,
+        ownership_fence_token: String,
+        occurred_at_unix_ms: u64,
+    },
     CallbackResumeDenied {
         operation_id: String,
         decision_id: String,
@@ -1862,7 +1877,7 @@ impl AsyncOperationStore {
     ) -> Result<QuarantinedCallback, AsyncOperationError> {
         validate_callback_submission_and_resume_decision(
             &submission,
-            &AsyncCallbackResumeDecision::Resume,
+            &AsyncCallbackResumeDecision::PauseAuthorizationRequired,
         )?;
         ensure_callback_submission_authenticated(&submission)?;
         if expires_at_unix_ms <= submission.received_at_unix_ms {
@@ -1939,6 +1954,19 @@ impl AsyncOperationStore {
         operation_id: &str,
         registry: &ToolSchemaRegistry,
     ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
+        self.accept_quarantined_callbacks_with_resume_decision(
+            operation_id,
+            registry,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        )
+    }
+
+    pub fn accept_quarantined_callbacks_with_resume_decision(
+        &self,
+        operation_id: &str,
+        registry: &ToolSchemaRegistry,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
         let submissions = {
             let mut inner = self
                 .inner
@@ -1999,7 +2027,11 @@ impl AsyncOperationStore {
                 self.record_callback_rejected(&submission, "quarantined_callback_superseded");
                 continue;
             }
-            let result = match self.accept_callback(submission, registry) {
+            let result = match self.accept_callback_with_resume_decision(
+                submission,
+                registry,
+                resume_decision.clone(),
+            ) {
                 Ok(result) => result,
                 Err(error) => {
                     if first_error.is_none() {
@@ -2031,7 +2063,7 @@ impl AsyncOperationStore {
         self.accept_callback_with_resume_decision(
             submission,
             registry,
-            AsyncCallbackResumeDecision::Resume,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
         )
     }
 
@@ -2059,21 +2091,35 @@ impl AsyncOperationStore {
             submission,
             registry,
             limits,
-            AsyncCallbackResumeDecision::Resume,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
         )
     }
 
     pub fn accept_callback_with_artifact_on_payload_limit(
         &self,
-        mut submission: AsyncCallbackSubmission,
+        submission: AsyncCallbackSubmission,
         registry: &ToolSchemaRegistry,
         limits: AsyncCallbackIngestionLimits,
         artifact: CallbackArtifactRef,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        validate_callback_submission_and_resume_decision(
-            &submission,
-            &AsyncCallbackResumeDecision::Resume,
-        )?;
+        self.accept_callback_with_artifact_on_payload_limit_and_resume_decision(
+            submission,
+            registry,
+            limits,
+            artifact,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        )
+    }
+
+    pub fn accept_callback_with_artifact_on_payload_limit_and_resume_decision(
+        &self,
+        mut submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        artifact: CallbackArtifactRef,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        validate_callback_submission_and_resume_decision(&submission, &resume_decision)?;
         if let Err(error) = ensure_callback_submission_authenticated(&submission) {
             self.record_callback_rejected(&submission, "authentication_failed");
             return Err(error);
@@ -2091,7 +2137,7 @@ impl AsyncOperationStore {
             submission,
             registry,
             artifacts,
-            AsyncCallbackResumeDecision::Resume,
+            resume_decision,
         )
     }
 
@@ -2445,7 +2491,40 @@ impl AsyncOperationStore {
                 occurred_at_unix_ms: submission.received_at_unix_ms,
             });
         let should_resume = match resume_decision {
-            AsyncCallbackResumeDecision::Resume => true,
+            AsyncCallbackResumeDecision::ResumeAuthorized {
+                authentication_verified,
+                policy_decision_id,
+                budget_reservation_id,
+                compatible_release_id,
+                ownership_fence_token,
+            } if authentication_verified => {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::CallbackResumeAuthorized {
+                        operation_id: submission.operation_id.clone(),
+                        policy_decision_id,
+                        budget_reservation_id,
+                        compatible_release_id,
+                        ownership_fence_token,
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                    });
+                true
+            }
+            AsyncCallbackResumeDecision::ResumeAuthorized { .. }
+            | AsyncCallbackResumeDecision::PauseAuthorizationRequired => {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::CallbackResumePaused {
+                        operation_id: submission.operation_id.clone(),
+                        reason: "explicit callback resume authorization required".to_owned(),
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                    });
+                false
+            }
             AsyncCallbackResumeDecision::PauseBudget { reason } => {
                 inner
                     .events_by_operation
@@ -2721,7 +2800,7 @@ impl SqliteAsyncOperationStore {
         self.accept_callback_with_resume_decision(
             submission,
             registry,
-            AsyncCallbackResumeDecision::Resume,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
         )
     }
 
@@ -2749,7 +2828,7 @@ impl SqliteAsyncOperationStore {
             submission,
             registry,
             limits,
-            AsyncCallbackResumeDecision::Resume,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
         )
     }
 
@@ -2760,10 +2839,32 @@ impl SqliteAsyncOperationStore {
         limits: AsyncCallbackIngestionLimits,
         artifact: CallbackArtifactRef,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_artifact_on_payload_limit_and_resume_decision(
+            submission,
+            registry,
+            limits,
+            artifact,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        )
+    }
+
+    pub fn accept_callback_with_artifact_on_payload_limit_and_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        artifact: CallbackArtifactRef,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
         self.mutate_memory_store(|memory| {
-            let accepted = memory.accept_callback_with_artifact_on_payload_limit(
-                submission, registry, limits, artifact,
-            );
+            let accepted = memory
+                .accept_callback_with_artifact_on_payload_limit_and_resume_decision(
+                    submission,
+                    registry,
+                    limits,
+                    artifact,
+                    resume_decision,
+                );
             let persist = !matches!(&accepted, Ok(accepted) if accepted.duplicate);
             (accepted, persist)
         })
@@ -2793,8 +2894,25 @@ impl SqliteAsyncOperationStore {
         operation_id: &str,
         registry: &ToolSchemaRegistry,
     ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
+        self.accept_quarantined_callbacks_with_resume_decision(
+            operation_id,
+            registry,
+            AsyncCallbackResumeDecision::PauseAuthorizationRequired,
+        )
+    }
+
+    pub fn accept_quarantined_callbacks_with_resume_decision(
+        &self,
+        operation_id: &str,
+        registry: &ToolSchemaRegistry,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
         self.mutate_memory_store(|memory| {
-            let accepted = memory.accept_quarantined_callbacks(operation_id, registry);
+            let accepted = memory.accept_quarantined_callbacks_with_resume_decision(
+                operation_id,
+                registry,
+                resume_decision,
+            );
             (accepted, true)
         })
     }
@@ -3330,7 +3448,27 @@ fn validate_callback_submission_and_resume_decision(
 ) -> Result<(), AsyncOperationError> {
     validate_callback_submission_identity(submission)?;
     match resume_decision {
-        AsyncCallbackResumeDecision::Resume => {}
+        AsyncCallbackResumeDecision::ResumeAuthorized {
+            policy_decision_id,
+            budget_reservation_id,
+            compatible_release_id,
+            ownership_fence_token,
+            ..
+        } => {
+            for (field, value) in [
+                ("resume_policy_decision_id", policy_decision_id),
+                ("resume_budget_reservation_id", budget_reservation_id),
+                ("resume_compatible_release_id", compatible_release_id),
+                ("resume_ownership_fence_token", ownership_fence_token),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+            }
+        }
+        AsyncCallbackResumeDecision::PauseAuthorizationRequired => {}
         AsyncCallbackResumeDecision::PauseBudget { reason } => {
             if reason.trim().is_empty() {
                 return Err(AsyncOperationError::EmptyField {
@@ -3776,6 +3914,22 @@ fn event_to_value(event: &AsyncOperationEvent) -> Value {
             "reason": reason,
             "occurred_at_unix_ms": occurred_at_unix_ms,
         }),
+        AsyncOperationEvent::CallbackResumeAuthorized {
+            operation_id,
+            policy_decision_id,
+            budget_reservation_id,
+            compatible_release_id,
+            ownership_fence_token,
+            occurred_at_unix_ms,
+        } => json!({
+            "type": "CallbackResumeAuthorized",
+            "operation_id": operation_id,
+            "policy_decision_id": policy_decision_id,
+            "budget_reservation_id": budget_reservation_id,
+            "compatible_release_id": compatible_release_id,
+            "ownership_fence_token": ownership_fence_token,
+            "occurred_at_unix_ms": occurred_at_unix_ms,
+        }),
         AsyncOperationEvent::CallbackResumeDenied {
             operation_id,
             decision_id,
@@ -3804,6 +3958,7 @@ fn event_operation_id(event: &AsyncOperationEvent) -> &str {
         AsyncOperationEvent::StateChanged { operation_id, .. }
         | AsyncOperationEvent::ExternalCallbackRejected { operation_id, .. }
         | AsyncOperationEvent::CallbackResumePaused { operation_id, .. }
+        | AsyncOperationEvent::CallbackResumeAuthorized { operation_id, .. }
         | AsyncOperationEvent::CallbackResumeDenied { operation_id, .. } => operation_id,
         AsyncOperationEvent::ExternalCallbackReceived { receipt }
         | AsyncOperationEvent::LateExternalCallbackReceived { receipt, .. } => {
@@ -3896,6 +4051,41 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
             Ok(AsyncOperationEvent::CallbackResumePaused {
                 operation_id,
                 reason,
+                occurred_at_unix_ms,
+            })
+        }
+        "CallbackResumeAuthorized" => {
+            let operation_id = required_string(&value, "operation_id")?;
+            let policy_decision_id = required_string(&value, "policy_decision_id")?;
+            let budget_reservation_id = required_string(&value, "budget_reservation_id")?;
+            let compatible_release_id = required_string(&value, "compatible_release_id")?;
+            let ownership_fence_token = required_string(&value, "ownership_fence_token")?;
+            let occurred_at_unix_ms = required_u64(&value, "occurred_at_unix_ms")?;
+            for (field, value) in [
+                ("operation_id", &operation_id),
+                ("policy_decision_id", &policy_decision_id),
+                ("budget_reservation_id", &budget_reservation_id),
+                ("compatible_release_id", &compatible_release_id),
+                ("ownership_fence_token", &ownership_fence_token),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: field.to_owned(),
+                    });
+                }
+            }
+            if occurred_at_unix_ms == 0 {
+                return Err(AsyncOperationError::Storage {
+                    message: "stored async operation event occurred_at_unix_ms must be non-zero"
+                        .to_owned(),
+                });
+            }
+            Ok(AsyncOperationEvent::CallbackResumeAuthorized {
+                operation_id,
+                policy_decision_id,
+                budget_reservation_id,
+                compatible_release_id,
+                ownership_fence_token,
                 occurred_at_unix_ms,
             })
         }
