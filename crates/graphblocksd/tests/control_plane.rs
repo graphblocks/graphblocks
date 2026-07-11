@@ -9,6 +9,7 @@ use graphblocks_protocol::{
     WorkerInvocationContext, WorkerInvokeRequest, WorkerProtocolErrorPayload,
     WorkerProtocolMessage, WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
 };
+use graphblocks_runtime_core::run_store::{RunInvocationMode, SqliteRunStore};
 use graphblocks_runtime_durable::{
     CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
@@ -1171,6 +1172,229 @@ fn graphblocksd_reports_forged_checkpoint_claim_identity_as_structured_json()
             .and_then(|value| value.as_u64()),
         Some(1),
     );
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_acquires_and_renews_sqlite_run_ownership_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("graphblocksd-run-lease-{unique}.sqlite3"));
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({"task": "background"}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let acquire_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "acquire-run-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--owner",
+            "coordinator-a",
+            "--acquired-at-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "1500",
+        ])
+        .output()?;
+    assert!(acquire_output.status.success());
+    let acquire_payload = serde_json::from_slice::<serde_json::Value>(&acquire_output.stdout)?;
+
+    assert_eq!(
+        acquire_payload
+            .pointer("/lease/leaseId")
+            .and_then(|value| value.as_str()),
+        Some("run-000001:1"),
+    );
+    assert_eq!(
+        acquire_payload
+            .pointer("/lease/owner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-a"),
+    );
+    assert_eq!(
+        acquire_payload
+            .pointer("/lease/fencingEpoch")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+
+    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "renew-run-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--owner",
+            "coordinator-a",
+            "--lease-id",
+            "run-000001:1",
+            "--fencing-epoch",
+            "1",
+            "--now-unix-ms",
+            "1200",
+            "--new-expires-at-unix-ms",
+            "2500",
+        ])
+        .output()?;
+    assert!(renew_output.status.success());
+    let renew_payload = serde_json::from_slice::<serde_json::Value>(&renew_output.stdout)?;
+
+    assert_eq!(
+        renew_payload
+            .pointer("/lease/leaseId")
+            .and_then(|value| value.as_str()),
+        Some("run-000001:1"),
+    );
+    assert_eq!(
+        renew_payload
+            .pointer("/lease/expiresAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(2500),
+    );
+    assert_eq!(
+        renew_payload
+            .pointer("/lease/renewedAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(1200),
+    );
+
+    let blocked_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "acquire-run-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--owner",
+            "coordinator-b",
+            "--acquired-at-unix-ms",
+            "2000",
+            "--expires-at-unix-ms",
+            "3000",
+        ])
+        .output()?;
+    assert!(!blocked_output.status.success());
+    let blocked_payload = serde_json::from_slice::<serde_json::Value>(&blocked_output.stderr)?;
+
+    assert_eq!(
+        blocked_payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.run_lease.active"),
+    );
+    assert_eq!(
+        blocked_payload
+            .pointer("/error/owner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-a"),
+    );
+    assert_eq!(
+        blocked_payload
+            .pointer("/error/expiresAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(2500),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_reports_forged_run_lease_renewal_as_structured_json()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("graphblocksd-run-lease-forged-{unique}.sqlite3"));
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let run = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .acquire_ownership_lease(&run.run_id, "coordinator-a", 1000, 2000)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let forged_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "renew-run-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--owner",
+            "coordinator-forged",
+            "--lease-id",
+            "run-000001:1",
+            "--fencing-epoch",
+            "1",
+            "--now-unix-ms",
+            "1200",
+            "--new-expires-at-unix-ms",
+            "2500",
+        ])
+        .output()?;
+    assert!(!forged_output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&forged_output.stderr)?;
+
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.run_lease.mismatch"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/expectedOwner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-a"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/actualOwner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-forged"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/actualLeaseId")
+            .and_then(|value| value.as_str()),
+        Some("run-000001:1"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/actualFencingEpoch")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+
+    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 

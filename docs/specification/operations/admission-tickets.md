@@ -50,6 +50,8 @@ mutating, or completing work; stale or forged-owner claims fail closed.
 The current owner MAY renew an active claim lease without changing the fencing
 token, but renewal MUST extend the existing expiration and MUST fail after the
 claim expires or another owner acquires a newer fence.
+The reference daemon exposes `acquire-run-lease` and `renew-run-lease` as
+SQLite-backed control-plane operations for durable workers.
 Fencing and owner data are server-internal and MUST NOT be exposed as client
 capabilities.
 

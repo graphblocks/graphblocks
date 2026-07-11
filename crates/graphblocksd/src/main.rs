@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
+use graphblocks_runtime_core::run_store::{RunOwnershipLease, RunStoreError, SqliteRunStore};
 use graphblocks_runtime_durable::{
     CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
 };
@@ -30,13 +31,14 @@ impl Default for AdmitWorkerMessageOptions {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum CliError {
     Usage(String),
     ReadStdin(String),
     ParseJson(String),
     Config(String),
     Registry(WorkerRegistryError),
+    RunStore(RunStoreError),
     CheckpointStore(CheckpointStoreError),
     Render(String),
 }
@@ -46,11 +48,13 @@ fn main() {
     let command = args.next();
     let result = match command.as_deref() {
         Some("admit-worker-message") => run_admit_worker_message(args.collect()),
+        Some("acquire-run-lease") => run_acquire_run_lease(args.collect()),
+        Some("renew-run-lease") => run_renew_run_lease(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -98,6 +102,149 @@ fn run_admit_worker_message(args: Vec<String>) -> Result<Value, CliError> {
         "ok": true,
         "response": response,
         "status": daemon_status_json(&status),
+    }))
+}
+
+fn run_acquire_run_lease(args: Vec<String>) -> Result<Value, CliError> {
+    let mut run_store = None;
+    let mut run_id = None;
+    let mut owner = None;
+    let mut acquired_at_unix_ms = None;
+    let mut expires_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--run-store" => {
+                run_store = Some(next_arg(&mut args, "--run-store")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--owner" => {
+                owner = Some(next_arg(&mut args, "--owner")?);
+            }
+            "--acquired-at-unix-ms" => {
+                let value = next_arg(&mut args, "--acquired-at-unix-ms")?;
+                acquired_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--acquired-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--expires-at-unix-ms")?;
+                expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let run_store =
+        run_store.ok_or_else(|| CliError::Usage("--run-store is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let owner = owner.ok_or_else(|| CliError::Usage("--owner is required".to_owned()))?;
+    let acquired_at_unix_ms = acquired_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--acquired-at-unix-ms is required".to_owned()))?;
+    let expires_at_unix_ms = expires_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--expires-at-unix-ms is required".to_owned()))?;
+
+    let mut store = SqliteRunStore::open(run_store).map_err(CliError::RunStore)?;
+    let lease = store
+        .acquire_ownership_lease(&run_id, &owner, acquired_at_unix_ms, expires_at_unix_ms)
+        .map_err(CliError::RunStore)?;
+
+    Ok(json!({
+        "ok": true,
+        "lease": run_ownership_lease_json(&lease),
+    }))
+}
+
+fn run_renew_run_lease(args: Vec<String>) -> Result<Value, CliError> {
+    let mut run_store = None;
+    let mut run_id = None;
+    let mut owner = None;
+    let mut lease_id = None;
+    let mut fencing_epoch = None;
+    let mut now_unix_ms = None;
+    let mut new_expires_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--run-store" => {
+                run_store = Some(next_arg(&mut args, "--run-store")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--owner" => {
+                owner = Some(next_arg(&mut args, "--owner")?);
+            }
+            "--lease-id" => {
+                lease_id = Some(next_arg(&mut args, "--lease-id")?);
+            }
+            "--fencing-epoch" => {
+                let value = next_arg(&mut args, "--fencing-epoch")?;
+                fencing_epoch = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--fencing-epoch requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--new-expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--new-expires-at-unix-ms")?;
+                new_expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--new-expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let run_store =
+        run_store.ok_or_else(|| CliError::Usage("--run-store is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let owner = owner.ok_or_else(|| CliError::Usage("--owner is required".to_owned()))?;
+    let lease_id = lease_id.ok_or_else(|| CliError::Usage("--lease-id is required".to_owned()))?;
+    let fencing_epoch =
+        fencing_epoch.ok_or_else(|| CliError::Usage("--fencing-epoch is required".to_owned()))?;
+    let now_unix_ms =
+        now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
+    let new_expires_at_unix_ms = new_expires_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--new-expires-at-unix-ms is required".to_owned()))?;
+
+    let mut store = SqliteRunStore::open(run_store).map_err(CliError::RunStore)?;
+    let lease = store
+        .renew_ownership_lease(
+            &run_id,
+            &owner,
+            &lease_id,
+            fencing_epoch,
+            now_unix_ms,
+            new_expires_at_unix_ms,
+        )
+        .map_err(CliError::RunStore)?;
+    let mut lease_json = run_ownership_lease_json(&lease);
+    if let Some(object) = lease_json.as_object_mut() {
+        object.insert("renewedAtUnixMs".to_owned(), json!(now_unix_ms));
+    }
+
+    Ok(json!({
+        "ok": true,
+        "lease": lease_json,
     }))
 }
 
@@ -488,6 +635,17 @@ fn daemon_status_json(status: &DaemonStatus) -> Value {
     })
 }
 
+fn run_ownership_lease_json(lease: &RunOwnershipLease) -> Value {
+    json!({
+        "runId": lease.run_id,
+        "leaseId": lease.lease_id,
+        "owner": lease.owner,
+        "fencingEpoch": lease.fencing_epoch,
+        "acquiredAtUnixMs": lease.acquired_at_unix_ms,
+        "expiresAtUnixMs": lease.expires_at_unix_ms,
+    })
+}
+
 fn print_json(value: &Value, stderr: bool) -> Result<(), CliError> {
     let rendered =
         serde_json::to_string_pretty(value).map_err(|error| CliError::Render(error.to_string()))?;
@@ -503,7 +661,7 @@ impl CliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Usage(_) | Self::ReadStdin(_) | Self::ParseJson(_) | Self::Config(_) => 2,
-            Self::Registry(_) | Self::CheckpointStore(_) | Self::Render(_) => 1,
+            Self::Registry(_) | Self::RunStore(_) | Self::CheckpointStore(_) | Self::Render(_) => 1,
         }
     }
 
@@ -523,6 +681,9 @@ impl CliError {
             }
             Self::Registry(error) => {
                 json!({"ok": false, "error": worker_registry_error_json(error)})
+            }
+            Self::RunStore(error) => {
+                json!({"ok": false, "error": run_store_error_json(error)})
             }
             Self::CheckpointStore(error) => {
                 let error = match error {
@@ -611,6 +772,68 @@ impl CliError {
                 json!({"ok": false, "error": {"code": "json.render_failed", "message": message}})
             }
         }
+    }
+}
+
+fn run_store_error_json(error: &RunStoreError) -> Value {
+    match error {
+        RunStoreError::EmptyField { field } => json!({
+            "code": "daemon.run_lease.empty_field",
+            "field": field,
+        }),
+        RunStoreError::NotFound { run_id } => json!({
+            "code": "daemon.run.not_found",
+            "runId": run_id,
+        }),
+        RunStoreError::InvalidRunOwnershipLease { run_id, reason } => json!({
+            "code": "daemon.run_lease.invalid",
+            "runId": run_id,
+            "reason": reason,
+        }),
+        RunStoreError::RunOwnershipLeaseActive {
+            run_id,
+            owner,
+            expires_at_unix_ms,
+        } => json!({
+            "code": "daemon.run_lease.active",
+            "runId": run_id,
+            "owner": owner,
+            "expiresAtUnixMs": expires_at_unix_ms,
+        }),
+        RunStoreError::RunOwnershipLeaseMismatch {
+            run_id,
+            expected,
+            actual,
+        } => json!({
+            "code": "daemon.run_lease.mismatch",
+            "runId": run_id,
+            "expectedOwner": expected.owner,
+            "expectedLeaseId": expected.lease_id,
+            "expectedFencingEpoch": expected.fencing_epoch,
+            "actualOwner": actual.owner,
+            "actualLeaseId": actual.lease_id,
+            "actualFencingEpoch": actual.fencing_epoch,
+        }),
+        RunStoreError::RunOwnershipLeaseExpired {
+            run_id,
+            lease_id,
+            expires_at_unix_ms,
+            now_unix_ms,
+        } => json!({
+            "code": "daemon.run_lease.expired",
+            "runId": run_id,
+            "leaseId": lease_id,
+            "expiresAtUnixMs": expires_at_unix_ms,
+            "nowUnixMs": now_unix_ms,
+        }),
+        RunStoreError::Storage { message } => json!({
+            "code": "daemon.run_store.storage",
+            "message": message,
+        }),
+        other => json!({
+            "code": "daemon.run_store.error",
+            "message": format!("{other:?}"),
+        }),
     }
 }
 
