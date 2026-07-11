@@ -774,6 +774,120 @@ fn run_store_rejects_invalid_or_stale_ownership_lease_renewal() -> Result<(), Ru
 }
 
 #[test]
+fn run_store_rejects_ownership_lease_use_before_acquisition() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_invocation_mode(
+        "sha256:graph",
+        json!({}),
+        RunInvocationMode::Background,
+    );
+    let lease = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 2_000)?;
+    let not_yet_active = RunStoreError::InvalidRunOwnershipLease {
+        run_id: record.run_id.clone(),
+        reason: "lease is not active before acquisition",
+    };
+
+    assert!(!lease.is_active_at(999));
+    assert_eq!(
+        store.validate_ownership_lease(
+            &record.run_id,
+            "coordinator-a",
+            &lease.lease_id,
+            lease.fencing_epoch,
+            999,
+        ),
+        Err(not_yet_active.clone()),
+    );
+    assert_eq!(
+        store.renew_ownership_lease(
+            &record.run_id,
+            "coordinator-a",
+            &lease.lease_id,
+            lease.fencing_epoch,
+            999,
+            2_500,
+        ),
+        Err(not_yet_active.clone()),
+    );
+    assert_eq!(
+        store.patch_state_with_ownership_lease(
+            &record.run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["premature"], json!(true))),
+            "coordinator-a",
+            &lease.lease_id,
+            lease.fencing_epoch,
+            999,
+        ),
+        Err(not_yet_active),
+    );
+    assert_eq!(store.get_run(&record.run_id)?.state.get("premature"), None);
+    assert_eq!(
+        store.acquire_ownership_lease(&record.run_id, "coordinator-b", 999, 2_500),
+        Err(RunStoreError::RunOwnershipLeaseActive {
+            run_id: record.run_id,
+            owner: "coordinator-a".to_owned(),
+            expires_at_unix_ms: 2_000,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_rejects_lease_renewal_before_acquisition_after_reopen() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-lease-not-active-{}.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let record = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 2_000)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let mut reopened = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        reopened
+            .renew_ownership_lease(
+                "run-000001",
+                "coordinator-a",
+                "run-000001:1",
+                1,
+                999,
+                2_500,
+            )
+            .map_err(|error| format!("{error:?}")),
+        Err(
+            "InvalidRunOwnershipLease { run_id: \"run-000001\", reason: \"lease is not active before acquisition\" }"
+                .to_owned()
+        ),
+    );
+    reopened
+        .set_status_with_ownership_lease(
+            "run-000001",
+            RunStatus::Running,
+            "coordinator-a",
+            "run-000001:1",
+            1,
+            1_500,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn sqlite_run_store_persists_renewed_ownership_lease_across_reopen() -> Result<(), String> {
     let mut path = std::env::temp_dir();
     path.push(format!(

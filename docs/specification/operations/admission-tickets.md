@@ -49,7 +49,10 @@ Workers MUST present the current owner identity and fence when starting,
 mutating, or completing work; stale or forged-owner claims fail closed.
 The current owner MAY renew an active claim lease without changing the fencing
 token, but renewal MUST extend the existing expiration and MUST fail after the
-claim expires or another owner acquires a newer fence.
+claim expires or another owner acquires a newer fence. Lease authority uses the
+half-open interval from acquisition through, but not including, expiration;
+timestamps before acquisition MUST fail owner mutations without allowing a
+competing owner to replace the unexpired lease.
 The reference daemon exposes `acquire-run-lease`, `renew-run-lease`, and
 `set-run-status-with-lease` as SQLite-backed control-plane operations for
 durable workers.

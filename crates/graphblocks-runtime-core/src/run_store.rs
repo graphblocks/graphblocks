@@ -332,7 +332,7 @@ pub struct RunOwnershipLease {
 
 impl RunOwnershipLease {
     pub fn is_active_at(&self, now_unix_ms: u64) -> bool {
-        self.expires_at_unix_ms > now_unix_ms
+        self.acquired_at_unix_ms <= now_unix_ms && self.expires_at_unix_ms > now_unix_ms
     }
 }
 
@@ -1359,7 +1359,7 @@ fn acquire_run_ownership_lease(
 ) -> Result<RunOwnershipLease, RunStoreError> {
     validate_lease_request(run_id, owner, acquired_at_unix_ms, expires_at_unix_ms)?;
     if let Some(current) = current
-        && current.is_active_at(acquired_at_unix_ms)
+        && current.expires_at_unix_ms > acquired_at_unix_ms
     {
         return Err(RunStoreError::RunOwnershipLeaseActive {
             run_id: run_id.to_owned(),
@@ -1422,6 +1422,12 @@ fn validate_run_ownership_lease(
                 lease_id,
                 fencing_epoch,
             )),
+        });
+    }
+    if now_unix_ms < current.acquired_at_unix_ms {
+        return Err(RunStoreError::InvalidRunOwnershipLease {
+            run_id: run_id.to_owned(),
+            reason: "lease is not active before acquisition",
         });
     }
     if !current.is_active_at(now_unix_ms) {
