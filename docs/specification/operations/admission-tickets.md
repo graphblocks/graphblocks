@@ -44,9 +44,11 @@ queued -> admitted -> running -> completed
 
 Queued tickets are promoted in sequence order. A queued ticket expires at its
 TTL and MUST never execute. An admitted or running claim uses an internal,
-monotonically increasing fencing token. Workers MUST present the current fence
-when starting or completing work; stale claims fail closed. Fencing and owner
-data are server-internal and MUST NOT be exposed as client capabilities.
+monotonically increasing fencing token bound to the server-side owner identity.
+Workers MUST present the current owner identity and fence when starting,
+mutating, or completing work; stale or forged-owner claims fail closed.
+Fencing and owner data are server-internal and MUST NOT be exposed as client
+capabilities.
 
 ## HTTP projection
 

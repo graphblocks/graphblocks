@@ -327,6 +327,31 @@ impl RunOwnershipLease {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunOwnershipLeaseIdentity {
+    pub owner: String,
+    pub lease_id: String,
+    pub fencing_epoch: u64,
+}
+
+impl RunOwnershipLeaseIdentity {
+    fn from_lease(lease: &RunOwnershipLease) -> Self {
+        Self {
+            owner: lease.owner.clone(),
+            lease_id: lease.lease_id.clone(),
+            fencing_epoch: lease.fencing_epoch,
+        }
+    }
+
+    fn attempted(owner: &str, lease_id: &str, fencing_epoch: u64) -> Self {
+        Self {
+            owner: owner.to_owned(),
+            lease_id: lease_id.to_owned(),
+            fencing_epoch,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunStoreError {
     EmptyField {
@@ -374,10 +399,8 @@ pub enum RunStoreError {
     },
     RunOwnershipLeaseMismatch {
         run_id: String,
-        expected_lease_id: String,
-        actual_lease_id: String,
-        expected_fencing_epoch: u64,
-        actual_fencing_epoch: u64,
+        expected: Box<RunOwnershipLeaseIdentity>,
+        actual: Box<RunOwnershipLeaseIdentity>,
     },
     RunOwnershipLeaseExpired {
         run_id: String,
@@ -1349,18 +1372,24 @@ fn acquire_run_ownership_lease(
 
 fn validate_run_ownership_lease(
     run_id: &str,
+    owner: &str,
     lease_id: &str,
     fencing_epoch: u64,
     now_unix_ms: u64,
     current: &RunOwnershipLease,
 ) -> Result<(), RunStoreError> {
-    if current.lease_id != lease_id || current.fencing_epoch != fencing_epoch {
+    if current.owner != owner
+        || current.lease_id != lease_id
+        || current.fencing_epoch != fencing_epoch
+    {
         return Err(RunStoreError::RunOwnershipLeaseMismatch {
             run_id: run_id.to_owned(),
-            expected_lease_id: current.lease_id.clone(),
-            actual_lease_id: lease_id.to_owned(),
-            expected_fencing_epoch: current.fencing_epoch,
-            actual_fencing_epoch: fencing_epoch,
+            expected: Box::new(RunOwnershipLeaseIdentity::from_lease(current)),
+            actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                owner,
+                lease_id,
+                fencing_epoch,
+            )),
         });
     }
     if !current.is_active_at(now_unix_ms) {
@@ -1585,12 +1614,14 @@ impl InMemoryRunStore {
         &mut self,
         run_id: impl AsRef<str>,
         status: RunStatus,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
     ) -> Result<RunRecord, RunStoreError> {
         self.validate_ownership_lease(
             run_id.as_ref(),
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
@@ -1636,12 +1667,14 @@ impl InMemoryRunStore {
         &mut self,
         run_id: impl AsRef<str>,
         patch: StatePatch,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
     ) -> Result<RunRecord, RunStoreError> {
         self.validate_ownership_lease(
             run_id.as_ref(),
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
@@ -1673,6 +1706,7 @@ impl InMemoryRunStore {
     pub fn validate_ownership_lease(
         &self,
         run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
@@ -1682,14 +1716,17 @@ impl InMemoryRunStore {
         let current = self.ownership_leases.get(run_id).ok_or_else(|| {
             RunStoreError::RunOwnershipLeaseMismatch {
                 run_id: run_id.to_owned(),
-                expected_lease_id: String::new(),
-                actual_lease_id: lease_id.as_ref().to_owned(),
-                expected_fencing_epoch: 0,
-                actual_fencing_epoch: fencing_epoch,
+                expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                    owner.as_ref(),
+                    lease_id.as_ref(),
+                    fencing_epoch,
+                )),
             }
         })?;
         validate_run_ownership_lease(
             run_id,
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
@@ -2042,6 +2079,7 @@ impl SqliteRunStore {
         &mut self,
         run_id: impl AsRef<str>,
         status: RunStatus,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
@@ -2052,14 +2090,17 @@ impl SqliteRunStore {
             sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
                 RunStoreError::RunOwnershipLeaseMismatch {
                     run_id: run_id.to_owned(),
-                    expected_lease_id: String::new(),
-                    actual_lease_id: lease_id.as_ref().to_owned(),
-                    expected_fencing_epoch: 0,
-                    actual_fencing_epoch: fencing_epoch,
+                    expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                    actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                        owner.as_ref(),
+                        lease_id.as_ref(),
+                        fencing_epoch,
+                    )),
                 }
             })?;
         validate_run_ownership_lease(
             run_id,
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
@@ -2128,6 +2169,7 @@ impl SqliteRunStore {
         &mut self,
         run_id: impl AsRef<str>,
         patch: StatePatch,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
@@ -2138,14 +2180,17 @@ impl SqliteRunStore {
             sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
                 RunStoreError::RunOwnershipLeaseMismatch {
                     run_id: run_id.to_owned(),
-                    expected_lease_id: String::new(),
-                    actual_lease_id: lease_id.as_ref().to_owned(),
-                    expected_fencing_epoch: 0,
-                    actual_fencing_epoch: fencing_epoch,
+                    expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                    actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                        owner.as_ref(),
+                        lease_id.as_ref(),
+                        fencing_epoch,
+                    )),
                 }
             })?;
         validate_run_ownership_lease(
             run_id,
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
@@ -2197,6 +2242,7 @@ impl SqliteRunStore {
     pub fn validate_ownership_lease(
         &self,
         run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
         lease_id: impl AsRef<str>,
         fencing_epoch: u64,
         now_unix_ms: u64,
@@ -2207,14 +2253,17 @@ impl SqliteRunStore {
             sqlite_load_run_ownership_lease(&self.connection, run_id)?.ok_or_else(|| {
                 RunStoreError::RunOwnershipLeaseMismatch {
                     run_id: run_id.to_owned(),
-                    expected_lease_id: String::new(),
-                    actual_lease_id: lease_id.as_ref().to_owned(),
-                    expected_fencing_epoch: 0,
-                    actual_fencing_epoch: fencing_epoch,
+                    expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                    actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                        owner.as_ref(),
+                        lease_id.as_ref(),
+                        fencing_epoch,
+                    )),
                 }
             })?;
         validate_run_ownership_lease(
             run_id,
+            owner.as_ref(),
             lease_id.as_ref(),
             fencing_epoch,
             now_unix_ms,
