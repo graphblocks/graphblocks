@@ -9,12 +9,44 @@ use graphblocks_protocol::{
     WorkerInvocationContext, WorkerInvokeRequest, WorkerProtocolErrorPayload,
     WorkerProtocolMessage, WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
 };
+use graphblocks_runtime_core::async_operation::{
+    AsyncOperation, AsyncOperationKind, AsyncOperationState, SqliteAsyncOperationStore,
+};
 use graphblocks_runtime_core::run_store::{RunInvocationMode, RunStatus, SqliteRunStore};
 use graphblocks_runtime_durable::{
     CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
 use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError};
 use serde_json::json;
+
+const VALID_RESUME_TOKEN_HASH: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn sqlite_async_operation_path(label: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocksd-async-operation-{label}-{unique}.sqlite3"
+    ))
+}
+
+fn waiting_daemon_async_operation() -> AsyncOperation {
+    AsyncOperation::new(
+        "op-1",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        VALID_RESUME_TOKEN_HASH,
+        "idem-op-1",
+        "schemas/CICallback@1",
+        1_000,
+    )
+    .submitted("gha-run-1", 1_050)
+    .waiting_callback(2_000)
+}
 
 #[test]
 fn daemon_config_validates_identity_protocol_and_capacity() {
@@ -1549,6 +1581,284 @@ fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn
             .map_err(|error| format!("{error:?}"))?
             .status,
         RunStatus::Created,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_submits_async_callback_through_sqlite_store()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "submit-async-callback",
+            "--async-operation-store",
+            path_text,
+            "--callback-id",
+            "cb-1",
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--idempotency-key",
+            "idem-cb-1",
+            "--received-at-unix-ms",
+            "1200",
+            "--verified-by",
+            "hmac:callback-endpoint-1",
+            "--policy-snapshot-id",
+            "policy-snapshot-1",
+            "--schema-id",
+            "schemas/CICallback@1",
+            "--schema-json",
+            r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?;
+    stdin.write_all(
+        serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
+            .as_bytes(),
+    )?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        payload
+            .pointer("/accepted/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        payload
+            .pointer("/receipt/operationId")
+            .and_then(|value| value.as_str()),
+        Some("op-1"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/receipt/callbackId")
+            .and_then(|value| value.as_str()),
+        Some("cb-1"),
+    );
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_submitted_async_callback_duplicate_does_not_resume_twice()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback-duplicate");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    for callback_id in ["cb-1", "cb-duplicate"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+            .args([
+                "submit-async-callback",
+                "--async-operation-store",
+                path_text,
+                "--callback-id",
+                callback_id,
+                "--operation-id",
+                "op-1",
+                "--run-id",
+                "run-1",
+                "--node-id",
+                "node-ci",
+                "--attempt-id",
+                "attempt-1",
+                "--provider-operation-id",
+                "gha-run-1",
+                "--idempotency-key",
+                "idem-cb-1",
+                "--received-at-unix-ms",
+                "1200",
+                "--verified-by",
+                "hmac:callback-endpoint-1",
+                "--policy-snapshot-id",
+                "policy-snapshot-1",
+                "--schema-id",
+                "schemas/CICallback@1",
+                "--schema-json",
+                r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or("graphblocksd stdin pipe was not available")?;
+        stdin.write_all(
+            serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
+                .as_bytes(),
+        )?;
+        let output = child.wait_with_output()?;
+        assert!(output.status.success());
+        let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+        if callback_id == "cb-1" {
+            assert_eq!(
+                payload
+                    .pointer("/accepted/shouldResume")
+                    .and_then(|value| value.as_bool()),
+                Some(true),
+            );
+            assert_eq!(
+                payload
+                    .pointer("/accepted/duplicate")
+                    .and_then(|value| value.as_bool()),
+                Some(false),
+            );
+        } else {
+            assert_eq!(
+                payload
+                    .pointer("/accepted/shouldResume")
+                    .and_then(|value| value.as_bool()),
+                Some(false),
+            );
+            assert_eq!(
+                payload
+                    .pointer("/accepted/duplicate")
+                    .and_then(|value| value.as_bool()),
+                Some(true),
+            );
+            assert_eq!(
+                payload
+                    .pointer("/receipt/callbackId")
+                    .and_then(|value| value.as_str()),
+                Some("cb-1"),
+            );
+        }
+    }
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_rejects_schema_invalid_async_callback_without_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("submit-callback-schema-invalid");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "submit-async-callback",
+            "--async-operation-store",
+            path_text,
+            "--callback-id",
+            "cb-schema-invalid",
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--idempotency-key",
+            "idem-schema-invalid",
+            "--received-at-unix-ms",
+            "1200",
+            "--verified-by",
+            "hmac:callback-endpoint-1",
+            "--policy-snapshot-id",
+            "policy-snapshot-1",
+            "--schema-id",
+            "schemas/CICallback@1",
+            "--schema-json",
+            r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?;
+    stdin.write_all(serde_json::to_string(&json!({"status": "completed"}))?.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    assert!(!output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stderr)?;
+
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.async_operation.callback_schema_invalid"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/expected")
+            .and_then(|value| value.as_str()),
+        Some("required property workflow_run_id"),
+    );
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback),
     );
 
     let _ = std::fs::remove_file(&path);

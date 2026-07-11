@@ -26,6 +26,19 @@ impl JsonSchemaType {
             Self::Object => "object",
         }
     }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "null" => Some(Self::Null),
+            "boolean" => Some(Self::Boolean),
+            "integer" => Some(Self::Integer),
+            "number" => Some(Self::Number),
+            "string" => Some(Self::String),
+            "array" => Some(Self::Array),
+            "object" => Some(Self::Object),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,6 +100,103 @@ impl JsonSchemaNode {
         self
     }
 
+    pub fn from_json_schema_value(value: &Value) -> Result<Self, JsonSchemaParseError> {
+        if !value.is_object() {
+            return Err(JsonSchemaParseError::InvalidNode {
+                path: "$".to_owned(),
+                reason: "schema node must be an object".to_owned(),
+            });
+        }
+
+        let mut node = match value.get("type") {
+            None => JsonSchemaNode::any(),
+            Some(Value::String(schema_type)) => {
+                match JsonSchemaType::from_str(schema_type.as_str()).ok_or_else(|| {
+                    JsonSchemaParseError::InvalidNode {
+                        path: "$.type".to_owned(),
+                        reason: format!("unsupported schema type {schema_type:?}"),
+                    }
+                })? {
+                    JsonSchemaType::Null => JsonSchemaNode::typed(JsonSchemaType::Null),
+                    JsonSchemaType::Boolean => JsonSchemaNode::boolean(),
+                    JsonSchemaType::Integer => JsonSchemaNode::integer(),
+                    JsonSchemaType::Number => JsonSchemaNode::number(),
+                    JsonSchemaType::String => JsonSchemaNode::string(),
+                    JsonSchemaType::Array => {
+                        let item_schema = if let Some(items) = value.get("items") {
+                            JsonSchemaNode::from_json_schema_value(items)
+                                .map_err(|error| error.with_prefix("$.items"))?
+                        } else {
+                            JsonSchemaNode::any()
+                        };
+                        JsonSchemaNode::array(item_schema)
+                    }
+                    JsonSchemaType::Object => JsonSchemaNode::object(),
+                }
+            }
+            Some(_) => {
+                return Err(JsonSchemaParseError::InvalidNode {
+                    path: "$.type".to_owned(),
+                    reason: "schema type must be a string".to_owned(),
+                });
+            }
+        };
+
+        if value.get("properties").is_some() || value.get("required").is_some() {
+            if let Some(expected_type) = node.expected_type {
+                if expected_type != JsonSchemaType::Object {
+                    return Err(JsonSchemaParseError::InvalidNode {
+                        path: "$".to_owned(),
+                        reason: "properties and required are only supported for object schemas"
+                            .to_owned(),
+                    });
+                }
+            } else {
+                node.expected_type = Some(JsonSchemaType::Object);
+            }
+        }
+
+        if let Some(properties) = value.get("properties") {
+            let properties =
+                properties
+                    .as_object()
+                    .ok_or_else(|| JsonSchemaParseError::InvalidNode {
+                        path: "$.properties".to_owned(),
+                        reason: "properties must be an object".to_owned(),
+                    })?;
+            for (property, property_schema) in properties {
+                let property_node = JsonSchemaNode::from_json_schema_value(property_schema)
+                    .map_err(|error| error.with_prefix(format!("$.properties.{property}")))?;
+                node.properties.insert(property.clone(), property_node);
+            }
+        }
+
+        if let Some(required) = value.get("required") {
+            let required =
+                required
+                    .as_array()
+                    .ok_or_else(|| JsonSchemaParseError::InvalidNode {
+                        path: "$.required".to_owned(),
+                        reason: "required must be an array".to_owned(),
+                    })?;
+            for (index, property) in required.iter().enumerate() {
+                let property =
+                    property
+                        .as_str()
+                        .ok_or_else(|| JsonSchemaParseError::InvalidNode {
+                            path: format!("$.required[{index}]"),
+                            reason: "required entries must be strings".to_owned(),
+                        })?;
+                node.required.insert(property.to_owned());
+                node.properties
+                    .entry(property.to_owned())
+                    .or_insert_with(JsonSchemaNode::any);
+            }
+        }
+
+        Ok(node)
+    }
+
     fn typed(expected_type: JsonSchemaType) -> Self {
         Self {
             expected_type: Some(expected_type),
@@ -108,6 +218,39 @@ impl JsonSchema {
         Self {
             schema_id: schema_id.into(),
             root,
+        }
+    }
+
+    pub fn from_json_schema_value(
+        schema_id: impl Into<String>,
+        value: &Value,
+    ) -> Result<Self, JsonSchemaParseError> {
+        Ok(Self::new(
+            schema_id,
+            JsonSchemaNode::from_json_schema_value(value)?,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JsonSchemaParseError {
+    InvalidNode { path: String, reason: String },
+}
+
+impl JsonSchemaParseError {
+    fn with_prefix(self, prefix: impl Into<String>) -> Self {
+        match self {
+            Self::InvalidNode { path, reason } => {
+                let prefix = prefix.into();
+                let path = if path == "$" {
+                    prefix
+                } else if let Some(suffix) = path.strip_prefix('$') {
+                    format!("{prefix}{suffix}")
+                } else {
+                    format!("{prefix}.{path}")
+                };
+                Self::InvalidNode { path, reason }
+            }
         }
     }
 }

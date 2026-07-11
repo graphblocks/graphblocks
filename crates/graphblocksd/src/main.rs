@@ -1,9 +1,13 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
+use graphblocks_runtime_core::async_operation::{
+    AsyncCallbackSubmission, AsyncOperationError, AsyncOperationState, SqliteAsyncOperationStore,
+};
 use graphblocks_runtime_core::run_store::{
     RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
 };
+use graphblocks_runtime_core::tool_schema::{JsonSchema, ToolSchemaRegistry};
 use graphblocks_runtime_durable::{
     CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
 };
@@ -41,6 +45,7 @@ enum CliError {
     Config(String),
     Registry(WorkerRegistryError),
     RunStore(RunStoreError),
+    AsyncOperation(AsyncOperationError),
     CheckpointStore(CheckpointStoreError),
     Render(String),
 }
@@ -53,11 +58,12 @@ fn main() {
         Some("acquire-run-lease") => run_acquire_run_lease(args.collect()),
         Some("renew-run-lease") => run_renew_run_lease(args.collect()),
         Some("set-run-status-with-lease") => run_set_run_status_with_lease(args.collect()),
+        Some("submit-async-callback") => run_submit_async_callback(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|submit-async-callback|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -338,6 +344,166 @@ fn run_set_run_status_with_lease(args: Vec<String>) -> Result<Value, CliError> {
             "leaseId": lease_id,
             "fencingEpoch": fencing_epoch,
             "validatedAtUnixMs": now_unix_ms,
+        },
+    }))
+}
+
+fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
+    let mut async_operation_store = None;
+    let mut callback_id = None;
+    let mut operation_id = None;
+    let mut run_id = None;
+    let mut node_id = None;
+    let mut attempt_id = None;
+    let mut provider_operation_id = None;
+    let mut idempotency_key = None;
+    let mut received_at_unix_ms = None;
+    let mut verified_by = None;
+    let mut policy_snapshot_id = None;
+    let mut schema_id = None;
+    let mut schema_json = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--async-operation-store" => {
+                async_operation_store = Some(next_arg(&mut args, "--async-operation-store")?);
+            }
+            "--callback-id" => {
+                callback_id = Some(next_arg(&mut args, "--callback-id")?);
+            }
+            "--operation-id" => {
+                operation_id = Some(next_arg(&mut args, "--operation-id")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--node-id" => {
+                node_id = Some(next_arg(&mut args, "--node-id")?);
+            }
+            "--attempt-id" => {
+                attempt_id = Some(next_arg(&mut args, "--attempt-id")?);
+            }
+            "--provider-operation-id" => {
+                provider_operation_id = Some(next_arg(&mut args, "--provider-operation-id")?);
+            }
+            "--idempotency-key" => {
+                idempotency_key = Some(next_arg(&mut args, "--idempotency-key")?);
+            }
+            "--received-at-unix-ms" => {
+                let value = next_arg(&mut args, "--received-at-unix-ms")?;
+                received_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--received-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--verified-by" => {
+                verified_by = Some(next_arg(&mut args, "--verified-by")?);
+            }
+            "--policy-snapshot-id" => {
+                policy_snapshot_id = Some(next_arg(&mut args, "--policy-snapshot-id")?);
+            }
+            "--schema-id" => {
+                schema_id = Some(next_arg(&mut args, "--schema-id")?);
+            }
+            "--schema-json" => {
+                schema_json = Some(next_arg(&mut args, "--schema-json")?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let async_operation_store = async_operation_store
+        .ok_or_else(|| CliError::Usage("--async-operation-store is required".to_owned()))?;
+    let callback_id =
+        callback_id.ok_or_else(|| CliError::Usage("--callback-id is required".to_owned()))?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::Usage("--operation-id is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let node_id = node_id.ok_or_else(|| CliError::Usage("--node-id is required".to_owned()))?;
+    let attempt_id =
+        attempt_id.ok_or_else(|| CliError::Usage("--attempt-id is required".to_owned()))?;
+    let idempotency_key = idempotency_key
+        .ok_or_else(|| CliError::Usage("--idempotency-key is required".to_owned()))?;
+    let received_at_unix_ms = received_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--received-at-unix-ms is required".to_owned()))?;
+    let verified_by =
+        verified_by.ok_or_else(|| CliError::Usage("--verified-by is required".to_owned()))?;
+    let policy_snapshot_id = policy_snapshot_id
+        .ok_or_else(|| CliError::Usage("--policy-snapshot-id is required".to_owned()))?;
+    let schema_id =
+        schema_id.ok_or_else(|| CliError::Usage("--schema-id is required".to_owned()))?;
+    let schema_json =
+        schema_json.ok_or_else(|| CliError::Usage("--schema-json is required".to_owned()))?;
+
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| CliError::ReadStdin(error.to_string()))?;
+    let payload = serde_json::from_str::<Value>(&input)
+        .map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let schema_value = serde_json::from_str::<Value>(&schema_json).map_err(|error| {
+        CliError::Usage(format!(
+            "--schema-json must be a JSON schema object: {error}"
+        ))
+    })?;
+    let schema = JsonSchema::from_json_schema_value(schema_id, &schema_value).map_err(|error| {
+        CliError::Usage(format!(
+            "--schema-json is not supported by graphblocksd: {error:?}"
+        ))
+    })?;
+    let registry = ToolSchemaRegistry::new([schema])
+        .map_err(|error| CliError::Usage(format!("invalid callback schema registry: {error:?}")))?;
+
+    let mut submission = AsyncCallbackSubmission::new(
+        callback_id,
+        operation_id,
+        run_id,
+        node_id,
+        attempt_id,
+        idempotency_key,
+        payload,
+        received_at_unix_ms,
+        verified_by,
+        policy_snapshot_id,
+    );
+    if let Some(provider_operation_id) = provider_operation_id {
+        submission = submission.with_provider_operation_id(provider_operation_id);
+    }
+
+    let store =
+        SqliteAsyncOperationStore::open(async_operation_store).map_err(CliError::AsyncOperation)?;
+    let accepted = store
+        .accept_callback(submission, &registry)
+        .map_err(CliError::AsyncOperation)?;
+
+    Ok(json!({
+        "ok": true,
+        "accepted": {
+            "duplicate": accepted.duplicate,
+            "shouldResume": accepted.should_resume,
+        },
+        "receipt": {
+            "callbackId": accepted.receipt.callback_id,
+            "operationId": accepted.receipt.operation_id,
+            "runId": accepted.receipt.run_id,
+            "nodeId": accepted.receipt.node_id,
+            "attemptId": accepted.receipt.attempt_id,
+            "providerOperationId": accepted.receipt.provider_operation_id,
+            "idempotencyKey": accepted.receipt.idempotency_key,
+            "payloadDigest": accepted.receipt.payload_digest,
+            "payload": accepted.receipt.payload,
+            "receivedAtUnixMs": accepted.receipt.received_at_unix_ms,
+            "verifiedBy": accepted.receipt.verified_by,
+            "policySnapshotId": accepted.receipt.policy_snapshot_id,
+            "artifacts": accepted.receipt.artifacts.into_iter().map(|artifact| {
+                json!({
+                    "artifactId": artifact.artifact_id,
+                    "uri": artifact.uri,
+                    "mediaType": artifact.media_type,
+                    "checksum": artifact.checksum,
+                })
+            }).collect::<Vec<_>>(),
         },
     }))
 }
@@ -755,7 +921,11 @@ impl CliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Usage(_) | Self::ReadStdin(_) | Self::ParseJson(_) | Self::Config(_) => 2,
-            Self::Registry(_) | Self::RunStore(_) | Self::CheckpointStore(_) | Self::Render(_) => 1,
+            Self::Registry(_)
+            | Self::RunStore(_)
+            | Self::AsyncOperation(_)
+            | Self::CheckpointStore(_)
+            | Self::Render(_) => 1,
         }
     }
 
@@ -778,6 +948,9 @@ impl CliError {
             }
             Self::RunStore(error) => {
                 json!({"ok": false, "error": run_store_error_json(error)})
+            }
+            Self::AsyncOperation(error) => {
+                json!({"ok": false, "error": async_operation_error_json(error)})
             }
             Self::CheckpointStore(error) => {
                 let error = match error {
@@ -928,6 +1101,154 @@ fn run_store_error_json(error: &RunStoreError) -> Value {
             "code": "daemon.run_store.error",
             "message": format!("{other:?}"),
         }),
+    }
+}
+
+fn async_operation_error_json(error: &AsyncOperationError) -> Value {
+    match error {
+        AsyncOperationError::EmptyField { field } => json!({
+            "code": "daemon.async_operation.empty_field",
+            "field": field,
+        }),
+        AsyncOperationError::InvalidOperation {
+            operation_id,
+            reason,
+        } => json!({
+            "code": "daemon.async_operation.invalid_operation",
+            "operationId": operation_id,
+            "reason": reason,
+        }),
+        AsyncOperationError::InvalidExpiration {
+            operation_id,
+            created_at_unix_ms,
+            expires_at_unix_ms,
+        } => json!({
+            "code": "daemon.async_operation.invalid_expiration",
+            "operationId": operation_id,
+            "createdAtUnixMs": created_at_unix_ms,
+            "expiresAtUnixMs": expires_at_unix_ms,
+        }),
+        AsyncOperationError::DuplicateOperation { operation_id } => json!({
+            "code": "daemon.async_operation.duplicate_operation",
+            "operationId": operation_id,
+        }),
+        AsyncOperationError::OperationNotFound { operation_id } => json!({
+            "code": "daemon.async_operation.not_found",
+            "operationId": operation_id,
+        }),
+        AsyncOperationError::OperationIdentityMismatch {
+            operation_id,
+            field,
+            expected,
+            actual,
+        } => json!({
+            "code": "daemon.async_operation.identity_mismatch",
+            "operationId": operation_id,
+            "field": field,
+            "expected": expected,
+            "actual": actual,
+        }),
+        AsyncOperationError::OperationNotWaitingCallback {
+            operation_id,
+            state,
+        } => json!({
+            "code": "daemon.async_operation.not_waiting_callback",
+            "operationId": operation_id,
+            "state": async_operation_state_name(*state),
+        }),
+        AsyncOperationError::OperationTerminal {
+            operation_id,
+            state,
+        } => json!({
+            "code": "daemon.async_operation.terminal",
+            "operationId": operation_id,
+            "state": async_operation_state_name(*state),
+        }),
+        AsyncOperationError::StaleAttempt {
+            operation_id,
+            expected_attempt_id,
+            actual_attempt_id,
+        } => json!({
+            "code": "daemon.async_operation.stale_attempt",
+            "operationId": operation_id,
+            "expectedAttemptId": expected_attempt_id,
+            "actualAttemptId": actual_attempt_id,
+        }),
+        AsyncOperationError::CallbackSchemaMissing { schema_id } => json!({
+            "code": "daemon.async_operation.callback_schema_missing",
+            "schemaId": schema_id,
+        }),
+        AsyncOperationError::CallbackSchemaInvalid {
+            operation_id,
+            schema_id,
+            path,
+            expected,
+        } => json!({
+            "code": "daemon.async_operation.callback_schema_invalid",
+            "operationId": operation_id,
+            "schemaId": schema_id,
+            "path": path,
+            "expected": expected,
+        }),
+        AsyncOperationError::RequiredCallbackPropertyMissing {
+            operation_id,
+            schema_id,
+            path,
+            property,
+        } => json!({
+            "code": "daemon.async_operation.callback_required_property_missing",
+            "operationId": operation_id,
+            "schemaId": schema_id,
+            "path": path,
+            "property": property,
+        }),
+        AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id,
+            reason,
+        } => json!({
+            "code": "daemon.async_operation.callback_authentication_failed",
+            "endpointId": endpoint_id,
+            "reason": reason,
+        }),
+        AsyncOperationError::CallbackPayloadTooLarge {
+            operation_id,
+            max_payload_bytes,
+            actual_payload_bytes,
+        } => json!({
+            "code": "daemon.async_operation.callback_payload_too_large",
+            "operationId": operation_id,
+            "maxPayloadBytes": max_payload_bytes,
+            "actualPayloadBytes": actual_payload_bytes,
+        }),
+        AsyncOperationError::CallbackIdempotencyConflict {
+            operation_id,
+            idempotency_key,
+            field,
+        } => json!({
+            "code": "daemon.async_operation.callback_idempotency_conflict",
+            "operationId": operation_id,
+            "idempotencyKey": idempotency_key,
+            "field": field,
+        }),
+        AsyncOperationError::Storage { message } => json!({
+            "code": "daemon.async_operation.storage",
+            "message": message,
+        }),
+    }
+}
+
+fn async_operation_state_name(state: AsyncOperationState) -> &'static str {
+    match state {
+        AsyncOperationState::Created => "created",
+        AsyncOperationState::Submitted => "submitted",
+        AsyncOperationState::WaitingCallback => "waiting_callback",
+        AsyncOperationState::CallbackReceived => "callback_received",
+        AsyncOperationState::Polling => "polling",
+        AsyncOperationState::Resuming => "resuming",
+        AsyncOperationState::Completed => "completed",
+        AsyncOperationState::Failed => "failed",
+        AsyncOperationState::Cancelled => "cancelled",
+        AsyncOperationState::Expired => "expired",
     }
 }
 

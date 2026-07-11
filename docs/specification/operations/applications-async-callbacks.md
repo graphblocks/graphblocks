@@ -70,6 +70,15 @@ Ordinary subscription events MUST NOT be promoted to async receipts. Duplicate
 callbacks MUST NOT resume twice. A callback after timeout/cancellation or for a
 stale attempt MUST NOT modify the newer or terminal operation.
 
+The reference daemon exposes `submit-async-callback` as a SQLite-backed
+callback-ingestion operation. The command reads the callback payload from
+standard input, loads the expected callback schema from `--schema-json`, and
+submits the receipt to `SqliteAsyncOperationStore`; it returns whether the
+receipt was a duplicate and whether the operation should resume. The command is
+a control-plane adapter only: durable acceptance, schema validation,
+idempotency, late-callback handling, and journal-before-resume ordering remain
+owned by the Rust runtime store.
+
 ## Checkpoint resume
 
 A checkpoint binds run, graph/plan, next work, journal position, operation,
