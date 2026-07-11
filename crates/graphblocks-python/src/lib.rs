@@ -5659,6 +5659,27 @@ fn parse_application_protocol_event_kind(
         "RunCompleted" => Ok(ApplicationProtocolEventKind::RunCompleted),
         "RunFailed" => Ok(ApplicationProtocolEventKind::RunFailed),
         "RunCancelled" => Ok(ApplicationProtocolEventKind::RunCancelled),
+        "RunPolicyStopped" => Ok(ApplicationProtocolEventKind::RunPolicyStopped),
+        "RunExpired" => Ok(ApplicationProtocolEventKind::RunExpired),
+        "AsyncOperationStarted" => Ok(ApplicationProtocolEventKind::AsyncOperationStarted),
+        "AsyncOperationWaitingCallback" => {
+            Ok(ApplicationProtocolEventKind::AsyncOperationWaitingCallback)
+        }
+        "AsyncOperationPolling" => Ok(ApplicationProtocolEventKind::AsyncOperationPolling),
+        "AsyncOperationCompleted" => Ok(ApplicationProtocolEventKind::AsyncOperationCompleted),
+        "AsyncOperationFailed" => Ok(ApplicationProtocolEventKind::AsyncOperationFailed),
+        "AsyncOperationCancelled" => Ok(ApplicationProtocolEventKind::AsyncOperationCancelled),
+        "AsyncOperationExpired" => Ok(ApplicationProtocolEventKind::AsyncOperationExpired),
+        "ExternalCallbackReceived" => Ok(ApplicationProtocolEventKind::ExternalCallbackReceived),
+        "ExternalCallbackRejected" => Ok(ApplicationProtocolEventKind::ExternalCallbackRejected),
+        "LateExternalCallbackReceived" => {
+            Ok(ApplicationProtocolEventKind::LateExternalCallbackReceived)
+        }
+        "RunResuming" => Ok(ApplicationProtocolEventKind::RunResuming),
+        "RunPausedBudget" => Ok(ApplicationProtocolEventKind::RunPausedBudget),
+        "RunPausedCallbackDelivery" => Ok(ApplicationProtocolEventKind::RunPausedCallbackDelivery),
+        "RunPausedPolicy" => Ok(ApplicationProtocolEventKind::RunPausedPolicy),
+        "RunPausedOperator" => Ok(ApplicationProtocolEventKind::RunPausedOperator),
         value => Err(PyValueError::new_err(format!(
             "{label} has unknown application protocol event kind {value:?}"
         ))),
@@ -5727,7 +5748,9 @@ fn serialize_application_protocol_event_metadata(
         "eventId": metadata.event_id.as_str(),
         "protocolVersion": metadata.protocol_version.as_str(),
         "runId": metadata.run_id.as_str(),
+        "releaseId": metadata.release_id.as_str(),
         "turnId": metadata.turn_id.as_deref(),
+        "operationId": metadata.operation_id.as_deref(),
         "sequence": metadata.sequence,
         "cursor": metadata.cursor.as_deref(),
         "occurredAtUnixMs": metadata.occurred_at_unix_ms,
@@ -5791,6 +5814,10 @@ fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) ->
         ApplicationProtocolError::InvalidPayloadKey { field } => json!({
             "code": "invalid_payload_key",
             "field": field,
+        }),
+        ApplicationProtocolError::Storage { message } => json!({
+            "code": "storage",
+            "message": message,
         }),
     }
 }
@@ -9256,6 +9283,9 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use graphblocks_runtime_core::application_event::{
+        ApplicationProtocolError, ApplicationProtocolEventKind,
+    };
     use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
     use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult};
     use serde_json::{Value, json};
@@ -9273,13 +9303,86 @@ mod tests {
         evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
         evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
-        negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
-        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
-        record_tool_effect_precondition_json, run_stdlib_graph_json,
-        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
+        parse_resolved_tool, parse_tool_call, prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
+        run_stdlib_graph_json, run_stdlib_graph_with_options_json, run_test_graph_json,
+        run_test_graph_with_options_json, serialize_application_protocol_log_error,
         validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
+
+    #[test]
+    fn serialize_application_protocol_log_error_reports_storage_failures() {
+        assert_eq!(
+            serialize_application_protocol_log_error(&ApplicationProtocolError::Storage {
+                message: "database unavailable".to_owned(),
+            }),
+            json!({
+                "code": "storage",
+                "message": "database unavailable",
+            })
+        );
+    }
+
+    #[test]
+    fn application_protocol_event_kinds_all_parse_and_round_trip() -> Result<(), String> {
+        let kinds = [
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventKind::TurnStarted,
+            ApplicationProtocolEventKind::ContextReady,
+            ApplicationProtocolEventKind::AssistantDraftStarted,
+            ApplicationProtocolEventKind::AssistantDraftDelta,
+            ApplicationProtocolEventKind::AssistantCommitted,
+            ApplicationProtocolEventKind::AssistantIncomplete,
+            ApplicationProtocolEventKind::AssistantRetracted,
+            ApplicationProtocolEventKind::ToolStarted,
+            ApplicationProtocolEventKind::ToolCompleted,
+            ApplicationProtocolEventKind::ToolCallApprovalRequested,
+            ApplicationProtocolEventKind::ApprovalRequested,
+            ApplicationProtocolEventKind::ReviewRequested,
+            ApplicationProtocolEventKind::BudgetConstrained,
+            ApplicationProtocolEventKind::BudgetExhausted,
+            ApplicationProtocolEventKind::BudgetExtensionRequested,
+            ApplicationProtocolEventKind::BudgetExtensionGranted,
+            ApplicationProtocolEventKind::PolicyDecisionRequired,
+            ApplicationProtocolEventKind::ExecutionDegraded,
+            ApplicationProtocolEventKind::OutputCutoff,
+            ApplicationProtocolEventKind::FilePatchPreview,
+            ApplicationProtocolEventKind::JobProgress,
+            ApplicationProtocolEventKind::ArtifactReady,
+            ApplicationProtocolEventKind::StateSnapshot,
+            ApplicationProtocolEventKind::RunCompleted,
+            ApplicationProtocolEventKind::RunFailed,
+            ApplicationProtocolEventKind::RunCancelled,
+            ApplicationProtocolEventKind::RunPolicyStopped,
+            ApplicationProtocolEventKind::RunExpired,
+            ApplicationProtocolEventKind::AsyncOperationStarted,
+            ApplicationProtocolEventKind::AsyncOperationWaitingCallback,
+            ApplicationProtocolEventKind::AsyncOperationPolling,
+            ApplicationProtocolEventKind::AsyncOperationCompleted,
+            ApplicationProtocolEventKind::AsyncOperationFailed,
+            ApplicationProtocolEventKind::AsyncOperationCancelled,
+            ApplicationProtocolEventKind::AsyncOperationExpired,
+            ApplicationProtocolEventKind::ExternalCallbackReceived,
+            ApplicationProtocolEventKind::ExternalCallbackRejected,
+            ApplicationProtocolEventKind::LateExternalCallbackReceived,
+            ApplicationProtocolEventKind::RunResuming,
+            ApplicationProtocolEventKind::RunPausedBudget,
+            ApplicationProtocolEventKind::RunPausedCallbackDelivery,
+            ApplicationProtocolEventKind::RunPausedPolicy,
+            ApplicationProtocolEventKind::RunPausedOperator,
+        ];
+
+        for kind in kinds {
+            assert_eq!(
+                parse_application_protocol_event_kind(kind.as_str(), "event kind")
+                    .map_err(|error| error.to_string())?,
+                kind
+            );
+        }
+        Ok(())
+    }
 
     fn unique_sqlite_path(label: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
@@ -12140,6 +12243,84 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn application_protocol_log_state_preserves_release_and_operation_metadata_across_calls()
+    -> Result<(), String> {
+        pyo3::Python::initialize();
+        let event = |event_id: &str, sequence: u64, operation_id: Option<&str>| {
+            json!({
+                "kind": "JobProgress",
+                "metadata": {
+                    "eventId": event_id,
+                    "protocolVersion": "graphblocks.app.v1",
+                    "runId": "run-1",
+                    "releaseId": "release-1",
+                    "turnId": "turn-1",
+                    "operationId": operation_id,
+                    "sequence": sequence,
+                    "cursor": format!("cursor-{sequence}"),
+                    "occurredAtUnixMs": 1_000 + sequence
+                },
+                "payload": {"done": sequence, "total": 2}
+            })
+        };
+
+        let first_output_json = evaluate_application_protocol_log_json(
+            "{}",
+            &serde_json::to_string(&json!([{
+                "kind": "append",
+                "event": event("event-1", 1, Some("operation-1")),
+            }]))
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let first_output =
+            serde_json::from_str::<Value>(&first_output_json).map_err(|error| error.to_string())?;
+        assert_eq!(
+            first_output.pointer("/state/events/0/metadata/releaseId"),
+            Some(&json!("release-1"))
+        );
+        assert_eq!(
+            first_output.pointer("/state/events/0/metadata/operationId"),
+            Some(&json!("operation-1"))
+        );
+
+        let second_output_json = evaluate_application_protocol_log_json(
+            &serde_json::to_string(
+                first_output
+                    .get("state")
+                    .ok_or_else(|| "first output state is missing".to_owned())?,
+            )
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!([{
+                "kind": "append",
+                "event": event("event-2", 2, None),
+            }]))
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let second_output = serde_json::from_str::<Value>(&second_output_json)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(second_output.pointer("/state/length"), Some(&json!(2)));
+        assert_eq!(
+            second_output.pointer("/state/events/0/metadata/releaseId"),
+            Some(&json!("release-1"))
+        );
+        assert_eq!(
+            second_output.pointer("/state/events/0/metadata/operationId"),
+            Some(&json!("operation-1"))
+        );
+        assert_eq!(
+            second_output.pointer("/state/events/1/metadata/releaseId"),
+            Some(&json!("release-1"))
+        );
+        assert_eq!(
+            second_output.pointer("/state/events/1/metadata/operationId"),
+            Some(&Value::Null)
         );
         Ok(())
     }
