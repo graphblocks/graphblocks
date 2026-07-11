@@ -9,6 +9,18 @@ with state participate in checkpoint barriers. A completed checkpoint binds
 source offsets, watermarks, operator state, physical plan, release, and ownership
 fence before it becomes eligible for recovery.
 
+A tumbling window is identified by its half-open event-time bounds. Discarding
+windows emit one revision-0 final snapshot when the watermark reaches the
+window end plus allowed lateness. Accumulating windows emit a revision-0
+non-final snapshot when the watermark reaches the window end and a revision-1
+final snapshot at the lateness deadline. The higher revision atomically replaces
+the earlier snapshot; no separate retraction is emitted. A watermark that first
+reaches the final deadline, including a zero-lateness deadline, MUST coalesce
+the firings into one revision-0 final snapshot. Repeated, processing-time, and
+backward watermarks MUST NOT duplicate panes. Events remain admissible until
+their containing window's final deadline, and emitted events MUST be ordered by
+source cursor.
+
 Sink effects use prepare/commit/abort semantics or an equivalent idempotent
 protocol. A sink commit MUST be bound to a completed checkpoint; failover MUST
 not commit the same logical output twice. A stale coordinator or fencing token
