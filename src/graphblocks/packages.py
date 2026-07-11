@@ -53,7 +53,7 @@ def _python_dependency_name(dependency: str) -> str:
         if marker_index > 0:
             dependency_name = dependency_name[:marker_index]
             break
-    return dependency_name.strip().lower().replace("_", "-")
+    return canonicalize_name(dependency_name.strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,7 +244,7 @@ class PackageManifestAuditPolicy:
             tuple(
                 sorted(
                     {
-                        dependency.strip().lower().replace("_", "-")
+                        canonicalize_name(dependency.strip())
                         for dependency in blocked_dependencies
                     }
                 )

@@ -48,6 +48,9 @@ pre-release alpha software.
 - Aligned Python event-time windows with the durable contract by rejecting
   missing event timestamps, ignoring processing-time watermarks, and preserving
   monotonic event-time watermarks.
+- Canonicalized blocked Python dependency names according to PEP 503 so dotted,
+  underscored, repeated-separator, and mixed-case spellings cannot bypass
+  vulnerability policy.
 
 ### Removed
 

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from graphblocks.packages import build_wheel_matrix
+from graphblocks.packages import (
+    PackageManifestAuditPolicy,
+    audit_package_manifests,
+    build_wheel_matrix,
+)
 
 
 @pytest.mark.parametrize(
@@ -53,3 +57,41 @@ packages = ["src/selected"]
     assert not matrix.ok
     assert [item.code for item in matrix.diagnostics] == ["WheelPythonVersionUnsupported"]
     assert matrix.targets[0].python_versions == expected_versions
+
+
+@pytest.mark.parametrize("dependency", ("Vulnerable.SDK>=1", "vulnerable--sdk>=1"))
+def test_package_manifest_audit_canonicalizes_blocked_dependency_names(
+    tmp_path,
+    dependency: str,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f"""
+[project]
+name = "unsafe-package"
+version = "0.1.0"
+license = "Apache-2.0"
+dependencies = ["{dependency}"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable_sdk",)),
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]")
+    ]
+
+
+def test_package_manifest_audit_policy_deduplicates_canonical_dependency_names() -> None:
+    policy = PackageManifestAuditPolicy(
+        blocked_dependencies=(
+            "Vulnerable.SDK",
+            "vulnerable--sdk",
+            "vulnerable_sdk",
+        )
+    )
+
+    assert policy.blocked_dependencies == ("vulnerable-sdk",)
