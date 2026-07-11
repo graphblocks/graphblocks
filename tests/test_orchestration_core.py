@@ -517,6 +517,9 @@ def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     assert grant.fencing_epoch == 1
     assert grant.units == 2
     assert leased.available_units == 0
+    assert grant.is_active_at("2026-06-23T23:59:59Z") is False
+    assert grant.is_active_at("2026-06-24T00:00:00Z") is True
+    assert grant.is_active_at("2026-06-24T00:05:00Z") is False
 
     with pytest.raises(LeasePoolExhaustedError) as exhausted:
         leased.acquire(
@@ -540,6 +543,22 @@ def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     assert reaped.available_units == 2
     assert renewed.available_units == 1
     assert renewed_grant.fencing_epoch == 2
+
+
+@pytest.mark.parametrize(
+    "expires_at",
+    ("2026-06-24T00:00:00Z", "2026-06-23T23:59:59Z"),
+)
+def test_lease_pool_rejects_non_positive_intervals(expires_at: str) -> None:
+    pool = LeasePool("formal-license", "eda.formal", capacity_units=1)
+
+    with pytest.raises(ValueError, match="lease expires_at must be later than acquired_at"):
+        pool.acquire(
+            LeaseRequest("formal-check", ResourceRef("trial:formal"), "eda.formal"),
+            lease_id="lease-invalid",
+            acquired_at="2026-06-24T00:00:00Z",
+            expires_at=expires_at,
+        )
 
 
 def test_lease_pool_acquisition_is_bound_to_active_budget_permit() -> None:

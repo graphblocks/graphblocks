@@ -254,6 +254,9 @@ fn lease_pool_enforces_capacity_and_fencing_epoch() -> Result<(), Box<dyn Error>
 
     assert_eq!(grant.fencing_epoch, 1);
     assert_eq!(leased.available_units(), 0);
+    assert!(!grant.is_active_at("2026-06-25T23:59:59Z"));
+    assert!(grant.is_active_at("2026-06-26T00:00:00Z"));
+    assert!(!grant.is_active_at("2026-06-26T00:05:00Z"));
     assert_eq!(
         leased
             .acquire(
@@ -285,6 +288,44 @@ fn lease_pool_enforces_capacity_and_fencing_epoch() -> Result<(), Box<dyn Error>
             .available_units(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn lease_pool_rejects_non_positive_intervals() -> Result<(), Box<dyn Error>> {
+    let pool = LeasePool::new("formal-license", "eda.formal", 1)?;
+    let request = LeaseRequest::new("formal-check", "trial:formal", "eda.formal");
+
+    for expires_at in ["2026-06-26T00:00:00Z", "2026-06-25T23:59:59Z"] {
+        let error = pool
+            .acquire(
+                &request,
+                "lease-invalid",
+                "2026-06-26T00:00:00Z",
+                expires_at,
+            )
+            .expect_err("non-positive lease interval must be rejected");
+        assert!(error.to_string().contains("expires_at must be later"));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn lease_pool_rejects_invalid_timestamps() -> Result<(), Box<dyn Error>> {
+    let pool = LeasePool::new("formal-license", "eda.formal", 1)?;
+    let request = LeaseRequest::new("formal-check", "trial:formal", "eda.formal");
+
+    for (acquired_at, expires_at) in [
+        ("not-a-time", "2026-06-26T00:05:00Z"),
+        ("2026-06-26T00:00:00Z", "not-a-time"),
+    ] {
+        let error = pool
+            .acquire(&request, "lease-invalid", acquired_at, expires_at)
+            .expect_err("invalid lease timestamps must be rejected");
+        assert!(error.to_string().contains("valid RFC 3339"));
+    }
+
     Ok(())
 }
 

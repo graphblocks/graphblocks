@@ -747,13 +747,18 @@ class LeaseGrant:
     def __post_init__(self) -> None:
         if self.units <= 0:
             raise LeasePoolCapacityError("units", self.units)
-        _parse_lease_datetime("acquired_at", self.acquired_at)
-        _parse_lease_datetime("expires_at", self.expires_at)
+        acquired_at = _parse_lease_datetime("acquired_at", self.acquired_at)
+        expires_at = _parse_lease_datetime("expires_at", self.expires_at)
+        if expires_at <= acquired_at:
+            raise ValueError("lease expires_at must be later than acquired_at")
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def is_active_at(self, now: str) -> bool:
         try:
-            return _parse_lease_datetime("expires_at", self.expires_at) > _parse_lease_datetime("now", now)
+            acquired_at = _parse_lease_datetime("acquired_at", self.acquired_at)
+            expires_at = _parse_lease_datetime("expires_at", self.expires_at)
+            evaluated_at = _parse_lease_datetime("now", now)
+            return acquired_at <= evaluated_at < expires_at
         except ValueError:
             return False
 

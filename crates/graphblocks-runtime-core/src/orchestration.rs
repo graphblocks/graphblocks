@@ -1161,6 +1161,14 @@ pub enum LeasePoolError {
         field_name: &'static str,
         value: u64,
     },
+    InvalidTimestamp {
+        field_name: &'static str,
+        value: String,
+    },
+    InvalidInterval {
+        acquired_at: String,
+        expires_at: String,
+    },
     Exhausted {
         pool_id: String,
         requested_units: u64,
@@ -1189,6 +1197,19 @@ impl fmt::Display for LeasePoolError {
             Self::Capacity { field_name, value } => {
                 write!(formatter, "{field_name} must be positive, got {value}")
             }
+            Self::InvalidTimestamp { field_name, value } => {
+                write!(
+                    formatter,
+                    "lease {field_name} must be valid RFC 3339, got {value:?}"
+                )
+            }
+            Self::InvalidInterval {
+                acquired_at,
+                expires_at,
+            } => write!(
+                formatter,
+                "lease expires_at must be later than acquired_at: {expires_at:?} <= {acquired_at:?}"
+            ),
             Self::Exhausted {
                 pool_id,
                 requested_units,
@@ -1275,10 +1296,13 @@ pub struct LeaseGrant {
 impl LeaseGrant {
     pub fn is_active_at(&self, now: &str) -> bool {
         match (
+            parse_policy_datetime_millis(&self.acquired_at),
             parse_policy_datetime_millis(&self.expires_at),
             parse_policy_datetime_millis(now),
         ) {
-            (Some(expires_at), Some(now)) => expires_at > now,
+            (Some(acquired_at), Some(expires_at), Some(now)) => {
+                acquired_at <= now && now < expires_at
+            }
             _ => false,
         }
     }
@@ -1401,6 +1425,25 @@ impl LeasePool {
         }
 
         let acquired_at = acquired_at.into();
+        let expires_at = expires_at.into();
+        let acquired_at_millis = parse_policy_datetime_millis(&acquired_at).ok_or_else(|| {
+            LeasePoolError::InvalidTimestamp {
+                field_name: "acquired_at",
+                value: acquired_at.clone(),
+            }
+        })?;
+        let expires_at_millis = parse_policy_datetime_millis(&expires_at).ok_or_else(|| {
+            LeasePoolError::InvalidTimestamp {
+                field_name: "expires_at",
+                value: expires_at.clone(),
+            }
+        })?;
+        if expires_at_millis <= acquired_at_millis {
+            return Err(LeasePoolError::InvalidInterval {
+                acquired_at,
+                expires_at,
+            });
+        }
         let lease_id = lease_id.into();
         let mut current = self.reap_expired(&acquired_at)?;
         if current
@@ -1427,7 +1470,7 @@ impl LeasePool {
             units: request.units,
             fencing_epoch: current.next_fencing_epoch,
             acquired_at,
-            expires_at: expires_at.into(),
+            expires_at,
             metadata: request.metadata.clone(),
         };
         current.next_fencing_epoch += 1;

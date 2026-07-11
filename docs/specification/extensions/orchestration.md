@@ -25,4 +25,7 @@ permit.
 `LeasePool.acquire_with_budget_permit()` MUST verify holder identity, active
 permit, covered reservation, capacity, and expiry. Lease expiry cannot exceed
 permit or reservation expiry, and lease metadata records permit/reservation
-evidence. Stale lease or permit identity MUST NOT authorize a task.
+evidence. A lease interval MUST use valid timestamps with
+`acquired_at < expires_at`; a grant is active only throughout the
+acquisition-inclusive, expiry-exclusive interval. Stale, future, or malformed
+lease or permit identity MUST NOT authorize a task.

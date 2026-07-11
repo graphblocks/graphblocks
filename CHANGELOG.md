@@ -81,6 +81,8 @@ pre-release alpha software.
   maximum-value cursors overflow-safe.
 - Preserved the authorized workspace commit identity through compare-and-swap
   materialization instead of replacing it with a generated snapshot identity.
+- Enforced valid positive lease intervals in Python and Rust and rejected lease
+  authority before acquisition as well as at or after expiry.
 
 ### Removed
 
