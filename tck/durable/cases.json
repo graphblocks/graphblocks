@@ -156,8 +156,86 @@
       "closedAfter": 1,
       "paneStartUnixMs": 1820000000000,
       "paneEndUnixMs": 1820000001000,
+      "paneRevision": 0,
+      "paneIsFinal": true,
       "paneOffsets": [
         100,
+        900
+      ],
+      "lateError": "late_event",
+      "lateWatermarkUnixMs": 1820000001250
+    }
+  },
+  {
+    "name": "window_accumulating_emits_on_time_and_final_replacement",
+    "kind": "window_lateness",
+    "policy": {
+      "sizeMs": 1000,
+      "allowedLatenessMs": 250,
+      "accumulationMode": "accumulating"
+    },
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 900,
+        "payload": {
+          "orderId": "ord-900"
+        },
+        "eventTimeUnixMs": 1820000000900
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 100,
+        "payload": {
+          "orderId": "ord-100"
+        },
+        "eventTimeUnixMs": 1820000000100
+      }
+    ],
+    "watermarks": [
+      1820000001000,
+      1820000001250
+    ],
+    "lateEvents": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 500,
+        "payload": {
+          "orderId": "ord-500"
+        },
+        "eventTimeUnixMs": 1820000000100
+      }
+    ],
+    "lateEvent": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 999,
+      "payload": {
+        "orderId": "ord-999"
+      },
+      "eventTimeUnixMs": 1820000000999
+    },
+    "expected": {
+      "closedBefore": 1,
+      "closedAfter": 1,
+      "beforePaneStartUnixMs": 1820000000000,
+      "beforePaneEndUnixMs": 1820000001000,
+      "beforePaneRevision": 0,
+      "beforePaneIsFinal": false,
+      "beforePaneOffsets": [
+        100,
+        900
+      ],
+      "paneStartUnixMs": 1820000000000,
+      "paneEndUnixMs": 1820000001000,
+      "paneRevision": 1,
+      "paneIsFinal": true,
+      "paneOffsets": [
+        100,
+        500,
         900
       ],
       "lateError": "late_event",

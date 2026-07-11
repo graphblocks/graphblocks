@@ -10546,8 +10546,9 @@ class TckRunner:
                 raw_policy = fixture.get("policy", {})
                 raw_events = fixture.get("events", [])
                 raw_watermarks = fixture.get("watermarks", [])
+                raw_late_events = fixture.get("lateEvents", fixture.get("late_events", []))
                 raw_late_event = fixture.get("lateEvent", fixture.get("late_event", {}))
-                if not isinstance(raw_policy, Mapping) or not isinstance(raw_events, list) or not isinstance(raw_watermarks, list) or not isinstance(raw_late_event, Mapping):
+                if not isinstance(raw_policy, Mapping) or not isinstance(raw_events, list) or not isinstance(raw_watermarks, list) or not isinstance(raw_late_events, list) or not isinstance(raw_late_event, Mapping):
                     raise ValueError("durable window_lateness case requires policy, events, watermarks, and lateEvent")
                 policy = durable.WindowPolicy.tumbling_event_time(
                     size_ms=int(raw_policy.get("sizeMs", raw_policy.get("size_ms", 0))),
@@ -10571,6 +10572,21 @@ class TckRunner:
                         )
                     )
                 closed_before = windows.advance_watermark(durable.Watermark.event_time(int(raw_watermarks[0])))
+                for raw_event in raw_late_events:
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("durable late window event must be a mapping")
+                    event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                    windows.ingest(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=int(event_time) if event_time is not None else None,
+                        )
+                    )
                 closed_after = windows.advance_watermark(durable.Watermark.event_time(int(raw_watermarks[1])))
                 late_error = None
                 late_watermark_unix_ms = None
@@ -10590,12 +10606,20 @@ class TckRunner:
                 except durable.LateEventError as error:
                     late_error = "late_event"
                     late_watermark_unix_ms = error.watermark_unix_ms
+                before_pane = closed_before[0] if closed_before else None
                 first_pane = closed_after[0] if closed_after else None
                 observed = {
                     "closedBefore": len(closed_before),
                     "closedAfter": len(closed_after),
+                    "beforePaneStartUnixMs": before_pane.start_unix_ms if before_pane is not None else None,
+                    "beforePaneEndUnixMs": before_pane.end_unix_ms if before_pane is not None else None,
+                    "beforePaneRevision": before_pane.revision if before_pane is not None else None,
+                    "beforePaneIsFinal": before_pane.is_final if before_pane is not None else None,
+                    "beforePaneOffsets": [event.cursor.offset for event in before_pane.events] if before_pane is not None else [],
                     "paneStartUnixMs": first_pane.start_unix_ms if first_pane is not None else None,
                     "paneEndUnixMs": first_pane.end_unix_ms if first_pane is not None else None,
+                    "paneRevision": first_pane.revision if first_pane is not None else None,
+                    "paneIsFinal": first_pane.is_final if first_pane is not None else None,
                     "paneOffsets": [event.cursor.offset for event in first_pane.events] if first_pane is not None else [],
                     "lateError": late_error,
                     "lateWatermarkUnixMs": late_watermark_unix_ms,

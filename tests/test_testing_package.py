@@ -1386,7 +1386,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 321
+    assert [case.kind for case in cases] == ["durable"] * 322
     assert resume_token_hashes
     assert all(
         isinstance(token_hash, str)
@@ -1400,6 +1400,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "source_cursor_replay_and_commit_advances",
         "source_rejects_unknown_cursor_and_stale_commit",
         "window_watermark_closes_after_allowed_lateness",
+        "window_accumulating_emits_on_time_and_final_replacement",
         "sink_idempotency_replays_and_rejects_conflict",
         "checkpoint_barrier_and_replay_latest_compatible",
         "tool_terminal_record_projects_tool_result",
@@ -7592,6 +7593,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "source_cursor_replay_and_commit_advances",
         "source_rejects_unknown_cursor_and_stale_commit",
         "window_watermark_closes_after_allowed_lateness",
+        "window_accumulating_emits_on_time_and_final_replacement",
         "sink_idempotency_replays_and_rejects_conflict",
         "checkpoint_barrier_and_replay_latest_compatible",
         "tool_terminal_record_projects_tool_result",

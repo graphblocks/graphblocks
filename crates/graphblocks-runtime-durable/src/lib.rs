@@ -310,12 +310,15 @@ pub struct WindowPane {
     pub start_unix_ms: u64,
     pub end_unix_ms: u64,
     pub events: Vec<SourceEvent>,
+    pub revision: u64,
+    pub is_final: bool,
 }
 
 pub struct WindowAccumulator {
     policy: WindowPolicy,
     watermark: Option<Watermark>,
     windows: BTreeMap<u64, Vec<SourceEvent>>,
+    on_time_emitted: BTreeSet<u64>,
 }
 
 impl WindowAccumulator {
@@ -324,6 +327,7 @@ impl WindowAccumulator {
             policy,
             watermark: None,
             windows: BTreeMap::new(),
+            on_time_emitted: BTreeSet::new(),
         }
     }
 
@@ -333,9 +337,12 @@ impl WindowAccumulator {
                 cursor: event.cursor,
             });
         };
+        let start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms);
+        let deadline_unix_ms = start_unix_ms
+            .saturating_add(self.policy.size_ms)
+            .saturating_add(self.policy.allowed_lateness_ms);
         if let Some(watermark) = self.watermark
-            && event_time_unix_ms.saturating_add(self.policy.allowed_lateness_ms)
-                < watermark.unix_ms
+            && deadline_unix_ms <= watermark.unix_ms
         {
             return Err(DurableError::LateEvent {
                 event_time_unix_ms,
@@ -343,7 +350,6 @@ impl WindowAccumulator {
                 allowed_lateness_ms: self.policy.allowed_lateness_ms,
             });
         }
-        let start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms);
         self.windows.entry(start_unix_ms).or_default().push(event);
         Ok(())
     }
@@ -352,35 +358,54 @@ impl WindowAccumulator {
         if watermark.kind != WatermarkKind::EventTime {
             return Vec::new();
         }
-        let effective_watermark = match self.watermark {
-            Some(current) if current.unix_ms >= watermark.unix_ms => current,
-            _ => {
-                self.watermark = Some(watermark);
-                watermark
-            }
-        };
-        let closable = self
+        if self
+            .watermark
+            .is_some_and(|current| current.unix_ms >= watermark.unix_ms)
+        {
+            return Vec::new();
+        }
+        self.watermark = Some(watermark);
+        let triggerable = self
             .windows
             .keys()
             .copied()
             .filter(|start_unix_ms| {
-                start_unix_ms
-                    .saturating_add(self.policy.size_ms)
-                    .saturating_add(self.policy.allowed_lateness_ms)
-                    <= effective_watermark.unix_ms
+                start_unix_ms.saturating_add(self.policy.size_ms) <= watermark.unix_ms
             })
             .collect::<Vec<_>>();
-        let mut closed = Vec::new();
-        for start_unix_ms in closable {
-            if let Some(events) = self.windows.remove(&start_unix_ms) {
-                closed.push(WindowPane {
+        let mut emitted = Vec::new();
+        for start_unix_ms in triggerable {
+            let end_unix_ms = start_unix_ms.saturating_add(self.policy.size_ms);
+            let deadline_unix_ms = end_unix_ms.saturating_add(self.policy.allowed_lateness_ms);
+            if deadline_unix_ms <= watermark.unix_ms {
+                if let Some(mut events) = self.windows.remove(&start_unix_ms) {
+                    events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
+                    let revision = u64::from(self.on_time_emitted.remove(&start_unix_ms));
+                    emitted.push(WindowPane {
+                        start_unix_ms,
+                        end_unix_ms,
+                        events,
+                        revision,
+                        is_final: true,
+                    });
+                }
+            } else if self.policy.accumulation_mode == AccumulationMode::Accumulating
+                && !self.on_time_emitted.contains(&start_unix_ms)
+                && let Some(events) = self.windows.get(&start_unix_ms)
+            {
+                let mut events = events.clone();
+                events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
+                self.on_time_emitted.insert(start_unix_ms);
+                emitted.push(WindowPane {
                     start_unix_ms,
-                    end_unix_ms: start_unix_ms.saturating_add(self.policy.size_ms),
+                    end_unix_ms,
                     events,
+                    revision: 0,
+                    is_final: false,
                 });
             }
         }
-        closed
+        emitted
     }
 }
 

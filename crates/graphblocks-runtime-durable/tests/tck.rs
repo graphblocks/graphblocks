@@ -156,6 +156,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .and_then(Value::as_u64)
                     .ok_or_else(|| format!("{name} has invalid first watermark"))?,
             ));
+            if case.get("lateEvents").is_some() {
+                for event in event_list(case, "lateEvents", name)? {
+                    windows
+                        .ingest(event)
+                        .map_err(|error| format!("{name} late ingest failed: {error:?}"))?;
+                }
+            }
             let after = windows.advance_watermark(Watermark::event_time(
                 watermarks
                     .get(1)
@@ -171,12 +178,20 @@ fn run_case(case: &Value) -> Result<(), String> {
                 late_error = Some("late_event");
                 late_watermark_unix_ms = Some(watermark_unix_ms);
             }
+            let before_pane = before.first();
             let pane = after.first();
             json!({
                 "closedBefore": before.len(),
                 "closedAfter": after.len(),
+                "beforePaneStartUnixMs": before_pane.map(|pane| pane.start_unix_ms),
+                "beforePaneEndUnixMs": before_pane.map(|pane| pane.end_unix_ms),
+                "beforePaneRevision": before_pane.map(|pane| pane.revision),
+                "beforePaneIsFinal": before_pane.map(|pane| pane.is_final),
+                "beforePaneOffsets": before_pane.map(|pane| offsets(&pane.events)).unwrap_or_default(),
                 "paneStartUnixMs": pane.map(|pane| pane.start_unix_ms),
                 "paneEndUnixMs": pane.map(|pane| pane.end_unix_ms),
+                "paneRevision": pane.map(|pane| pane.revision),
+                "paneIsFinal": pane.map(|pane| pane.is_final),
                 "paneOffsets": pane.map(|pane| offsets(&pane.events)).unwrap_or_default(),
                 "lateError": late_error,
                 "lateWatermarkUnixMs": late_watermark_unix_ms,

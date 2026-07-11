@@ -122,3 +122,124 @@ fn window_policy_rejects_size_without_event_time() {
         Err(DurableError::InvalidWindowSize),
     );
 }
+
+#[test]
+fn accumulating_window_emits_on_time_and_final_replacement() {
+    let policy = WindowPolicy::tumbling_event_time(100, 50, AccumulationMode::Accumulating)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    windows.ingest(event(900, 90)).expect("event accepted");
+    windows.ingest(event(100, 10)).expect("event accepted");
+
+    let on_time = windows.advance_watermark(Watermark::event_time(100));
+
+    assert_eq!(on_time.len(), 1);
+    assert_eq!(
+        on_time[0]
+            .events
+            .iter()
+            .map(|event| event.cursor.offset)
+            .collect::<Vec<_>>(),
+        vec![100, 900]
+    );
+    assert_eq!(on_time[0].revision, 0);
+    assert!(!on_time[0].is_final);
+    assert!(
+        windows
+            .advance_watermark(Watermark::event_time(100))
+            .is_empty()
+    );
+    assert!(
+        windows
+            .advance_watermark(Watermark::event_time(90))
+            .is_empty()
+    );
+
+    windows
+        .ingest(event(500, 10))
+        .expect("window remains open until its deadline");
+    assert!(
+        windows
+            .advance_watermark(Watermark::event_time(149))
+            .is_empty()
+    );
+
+    let final_pane = windows.advance_watermark(Watermark::event_time(150));
+
+    assert_eq!(final_pane.len(), 1);
+    assert_eq!(
+        final_pane[0]
+            .events
+            .iter()
+            .map(|event| event.cursor.offset)
+            .collect::<Vec<_>>(),
+        vec![100, 500, 900]
+    );
+    assert_eq!(final_pane[0].revision, 1);
+    assert!(final_pane[0].is_final);
+    assert!(matches!(
+        windows.ingest(event(999, 99)),
+        Err(DurableError::LateEvent { .. })
+    ));
+}
+
+#[test]
+fn accumulating_window_direct_final_watermark_coalesces_panes() {
+    for (allowed_lateness_ms, watermark_unix_ms) in [(50, 150), (0, 100)] {
+        let policy = WindowPolicy::tumbling_event_time(
+            100,
+            allowed_lateness_ms,
+            AccumulationMode::Accumulating,
+        )
+        .expect("policy should be valid");
+        let mut windows = WindowAccumulator::new(policy);
+        windows.ingest(event(900, 90)).expect("event accepted");
+        windows.ingest(event(100, 10)).expect("event accepted");
+
+        let panes = windows.advance_watermark(Watermark::event_time(watermark_unix_ms));
+
+        assert_eq!(panes.len(), 1);
+        assert_eq!(
+            panes[0]
+                .events
+                .iter()
+                .map(|event| event.cursor.offset)
+                .collect::<Vec<_>>(),
+            vec![100, 900]
+        );
+        assert_eq!(panes[0].revision, 0);
+        assert!(panes[0].is_final);
+    }
+}
+
+#[test]
+fn discarding_window_keeps_single_final_snapshot_and_deadline_admission() {
+    let policy = WindowPolicy::tumbling_event_time(100, 50, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    windows.ingest(event(900, 90)).expect("event accepted");
+    windows.ingest(event(100, 10)).expect("event accepted");
+
+    assert!(
+        windows
+            .advance_watermark(Watermark::event_time(100))
+            .is_empty()
+    );
+    windows
+        .ingest(event(500, 10))
+        .expect("window remains open until its deadline");
+
+    let panes = windows.advance_watermark(Watermark::event_time(150));
+
+    assert_eq!(panes.len(), 1);
+    assert_eq!(
+        panes[0]
+            .events
+            .iter()
+            .map(|event| event.cursor.offset)
+            .collect::<Vec<_>>(),
+        vec![100, 500, 900]
+    );
+    assert_eq!(panes[0].revision, 0);
+    assert!(panes[0].is_final);
+}

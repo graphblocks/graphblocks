@@ -69,6 +69,8 @@ pre-release alpha software.
   path instead of mislabeling package metadata as unsupported.
 - Made the offline wheelhouse release gate compare the complete installed schema
   manifest with the checked-in schemas, rejecting omissions and malformed output.
+- Implemented observable accumulating event-time windows in Python and Rust with
+  on-time/final pane revisions, deadline-bound lateness, and shared TCK coverage.
 
 ### Removed
 

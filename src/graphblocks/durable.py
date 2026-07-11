@@ -352,6 +352,8 @@ class WindowPane:
     start_unix_ms: int
     end_unix_ms: int
     events: tuple[SourceEvent, ...]
+    revision: int = 0
+    is_final: bool = True
 
 
 @dataclass(slots=True)
@@ -359,46 +361,78 @@ class WindowAccumulator:
     policy: WindowPolicy
     watermark: Watermark | None = None
     windows: dict[int, list[SourceEvent]] = field(default_factory=dict)
+    _on_time_emitted: set[int] = field(default_factory=set, init=False, repr=False)
 
     def ingest(self, event: SourceEvent) -> None:
         if event.event_time_unix_ms is None:
             raise MissingEventTimeError(event.cursor)
         event_time_unix_ms = event.event_time_unix_ms
+        start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms)
+        deadline_unix_ms = (
+            start_unix_ms + self.policy.size_ms + self.policy.allowed_lateness_ms
+        )
         if (
             self.watermark is not None
-            and event_time_unix_ms + self.policy.allowed_lateness_ms < self.watermark.unix_ms
+            and deadline_unix_ms <= self.watermark.unix_ms
         ):
             raise LateEventError(
                 event_time_unix_ms,
                 self.watermark.unix_ms,
                 self.policy.allowed_lateness_ms,
             )
-        start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms)
         self.windows.setdefault(start_unix_ms, []).append(event)
 
     def advance_watermark(self, watermark: Watermark) -> list[WindowPane]:
         if watermark.kind != "event_time":
             return []
-        if self.watermark is None or watermark.unix_ms > self.watermark.unix_ms:
-            self.watermark = watermark
-        effective_watermark = self.watermark
-        closable = [
+        if self.watermark is not None and watermark.unix_ms <= self.watermark.unix_ms:
+            return []
+        self.watermark = watermark
+        triggerable = [
             start_unix_ms
             for start_unix_ms in sorted(self.windows)
-            if start_unix_ms + self.policy.size_ms + self.policy.allowed_lateness_ms
-            <= effective_watermark.unix_ms
+            if start_unix_ms + self.policy.size_ms <= watermark.unix_ms
         ]
-        closed: list[WindowPane] = []
-        for start_unix_ms in closable:
-            events = tuple(sorted(self.windows.pop(start_unix_ms), key=lambda event: event.cursor))
-            closed.append(
-                WindowPane(
-                    start_unix_ms=start_unix_ms,
-                    end_unix_ms=start_unix_ms + self.policy.size_ms,
-                    events=events,
+        emitted: list[WindowPane] = []
+        for start_unix_ms in triggerable:
+            end_unix_ms = start_unix_ms + self.policy.size_ms
+            deadline_unix_ms = end_unix_ms + self.policy.allowed_lateness_ms
+            if deadline_unix_ms <= watermark.unix_ms:
+                events = tuple(
+                    sorted(
+                        self.windows.pop(start_unix_ms),
+                        key=lambda event: event.cursor,
+                    )
                 )
-            )
-        return closed
+                revision = 1 if start_unix_ms in self._on_time_emitted else 0
+                self._on_time_emitted.discard(start_unix_ms)
+                emitted.append(
+                    WindowPane(
+                        start_unix_ms=start_unix_ms,
+                        end_unix_ms=end_unix_ms,
+                        events=events,
+                        revision=revision,
+                        is_final=True,
+                    )
+                )
+            elif (
+                self.policy.accumulation_mode == "accumulating"
+                and start_unix_ms not in self._on_time_emitted
+            ):
+                events = tuple(
+                    sorted(self.windows[start_unix_ms], key=lambda event: event.cursor)
+                )
+                self._on_time_emitted.add(start_unix_ms)
+                emitted.append(
+                    WindowPane(
+                        start_unix_ms=start_unix_ms,
+                        end_unix_ms=end_unix_ms,
+                        events=events,
+                        revision=0,
+                        is_final=False,
+                    )
+                )
+        return emitted
 
 
 @dataclass(frozen=True, slots=True)
