@@ -3,8 +3,9 @@ use std::error::Error;
 
 use graphblocks_runtime_core::voice::{
     AudioFrame, DuplexSession, InterruptionClassifier, InterruptionKind, PlaybackEntry,
-    PlaybackLedger, PlaybackStatus, RealtimeProviderAdapter, RealtimeSessionRequest, VadAuthority,
-    VadDecisionKind, VoiceContractError, VoiceSessionState, VoiceTransport, VoiceTransportKind,
+    PlaybackLedger, PlaybackStatus, ProviderInterruptionDecision, RealtimeProviderAdapter,
+    RealtimeSessionRequest, VadAuthority, VadDecisionKind, VoiceContractError, VoiceSessionState,
+    VoiceTransport, VoiceTransportKind,
 };
 
 #[test]
@@ -51,7 +52,7 @@ fn vad_authority_and_interruption_classifier_detect_barge_in() -> Result<(), Box
     let speech = authority.evaluate(&AudioFrame::new("mic", 2, 20, 20, 0.9)?, false);
     let playback = PlaybackLedger::new().append(
         PlaybackEntry::new("assistant-audio-1", 1, PlaybackStatus::Started)?.with_started_at_ms(0),
-    );
+    )?;
     let decision =
         InterruptionClassifier::new("barge-in")?.classify("session-1", &speech, &playback, 25)?;
 
@@ -67,14 +68,160 @@ fn vad_authority_and_interruption_classifier_detect_barge_in() -> Result<(), Box
 }
 
 #[test]
+fn provider_authority_waits_for_confirmation() -> Result<(), Box<dyn Error>> {
+    let speech = VadAuthority::new("vad-local", 0.6)?
+        .evaluate(&AudioFrame::new("mic", 2, 20, 20, 0.9)?, false);
+    let playback = PlaybackLedger::new().append(
+        PlaybackEntry::new("assistant-audio-1", 1, PlaybackStatus::Started)?.with_started_at_ms(0),
+    )?;
+    let classifier =
+        InterruptionClassifier::new("barge-in")?.with_provider_authority_id("provider-realtime")?;
+
+    let advisory =
+        classifier.classify_with_provider_decision("session-1", &speech, &playback, 25, None)?;
+    let provider_continue = classifier.classify_with_provider_decision(
+        "session-1",
+        &speech,
+        &playback,
+        26,
+        Some(
+            &ProviderInterruptionDecision::new(
+                "provider-realtime",
+                "session-1",
+                InterruptionKind::Continue,
+                26,
+            )?
+            .with_reason("provider_turn_continues")?,
+        ),
+    )?;
+    let provider_interrupt = classifier.classify_with_provider_decision(
+        "session-1",
+        &speech,
+        &playback,
+        27,
+        Some(
+            &ProviderInterruptionDecision::new(
+                "provider-realtime",
+                "session-1",
+                InterruptionKind::Interrupt,
+                27,
+            )?
+            .with_reason("provider_confirmed_barge_in")?,
+        ),
+    )?;
+
+    assert_eq!(advisory.kind, InterruptionKind::Continue);
+    assert!(advisory.interrupted_playback_ids.is_empty());
+    assert_eq!(
+        advisory.reason.as_deref(),
+        Some("awaiting_provider_confirmation")
+    );
+    assert_eq!(provider_continue.kind, InterruptionKind::Continue);
+    assert_eq!(
+        provider_continue.reason.as_deref(),
+        Some("provider_turn_continues")
+    );
+    assert_eq!(provider_interrupt.kind, InterruptionKind::Interrupt);
+    assert_eq!(
+        provider_interrupt.interrupted_playback_ids,
+        vec!["assistant-audio-1"]
+    );
+    assert_eq!(
+        provider_interrupt.reason.as_deref(),
+        Some("provider_confirmed_barge_in")
+    );
+
+    assert!(matches!(
+        classifier.classify_with_provider_decision(
+            "session-1",
+            &speech,
+            &playback,
+            28,
+            Some(&ProviderInterruptionDecision::new(
+                "other-provider",
+                "session-1",
+                InterruptionKind::Interrupt,
+                28,
+            )?),
+        ),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        classifier.classify_with_provider_decision(
+            "session-1",
+            &speech,
+            &playback,
+            28,
+            Some(&ProviderInterruptionDecision::new(
+                "provider-realtime",
+                "other-session",
+                InterruptionKind::Interrupt,
+                28,
+            )?),
+        ),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn playback_ledger_acknowledges_terminal_entries() -> Result<(), Box<dyn Error>> {
+    let queued = PlaybackEntry::new("audio-1", 1, PlaybackStatus::Queued)?
+        .with_audio_ref("artifact://voice/audio-1")?;
+    let ledger = PlaybackLedger::new().append(queued.clone())?;
+
+    assert_eq!(ledger.clone().append(queued)?, ledger);
+    let started = ledger.start("audio-1", 10)?;
+    assert_eq!(started.entries[0].status, PlaybackStatus::Started);
+    assert_eq!(started.entries[0].started_at_ms, Some(10));
+    let completed = started.complete("audio-1", 30)?;
+    assert_eq!(completed.entries[0].status, PlaybackStatus::Completed);
+    assert_eq!(completed.entries[0].completed_at_ms, Some(30));
+    let acknowledged = completed.acknowledge("audio-1", 35)?;
+    assert_eq!(acknowledged.entries[0].acknowledged_at_ms, Some(35));
+    assert_eq!(
+        acknowledged.clone().acknowledge("audio-1", 35)?,
+        acknowledged
+    );
+
+    assert!(matches!(
+        ledger.acknowledge("audio-1", 5),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        completed.acknowledge("audio-1", 29),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        acknowledged.acknowledge("audio-1", 36),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        ledger
+            .clone()
+            .append(PlaybackEntry::new("audio-2", 1, PlaybackStatus::Queued)?),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        ledger
+            .clone()
+            .append(PlaybackEntry::new("audio-1", 2, PlaybackStatus::Queued)?),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn playback_ledger_interrupts_active_items_only() -> Result<(), Box<dyn Error>> {
     let ledger = PlaybackLedger::new()
         .append(
             PlaybackEntry::new("audio-1", 1, PlaybackStatus::Completed)?
                 .with_started_at_ms(0)
                 .with_completed_at_ms(100),
-        )
-        .append(PlaybackEntry::new("audio-2", 2, PlaybackStatus::Started)?.with_started_at_ms(110));
+        )?
+        .append(
+            PlaybackEntry::new("audio-2", 2, PlaybackStatus::Started)?.with_started_at_ms(110),
+        )?;
 
     let interrupted = ledger.interrupt_active(150, "barge_in")?;
 

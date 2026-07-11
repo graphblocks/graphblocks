@@ -5,9 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use graphblocks_runtime_core::voice::{
-    AudioFrame, DuplexSession, InterruptionClassifier, PlaybackEntry, PlaybackLedger,
-    PlaybackStatus, RealtimeSessionRequest, VadAuthority, VoiceContractError, VoiceSessionState,
-    VoiceTransport, VoiceTransportKind,
+    AudioFrame, DuplexSession, InterruptionClassifier, InterruptionKind, PlaybackEntry,
+    PlaybackLedger, PlaybackStatus, ProviderInterruptionDecision, RealtimeSessionRequest,
+    VadAuthority, VoiceContractError, VoiceSessionState, VoiceTransport, VoiceTransportKind,
 };
 use serde_json::{Map, Value, json};
 
@@ -86,18 +86,35 @@ fn voice_tck_cases_match_runtime_core() {
                     .get("classifier")
                     .and_then(Value::as_object)
                     .expect("classifier");
-                let decision = InterruptionClassifier::new(required_str(
+                let mut classifier_impl = InterruptionClassifier::new(required_str(
                     classifier,
                     &["classifierId", "classifier_id"],
                 ))
-                .expect("classifier is valid")
-                .classify(
-                    required_str(classifier, &["sessionId", "session_id"]),
-                    decisions.last().expect("last vad decision"),
-                    &playback,
-                    required_u64(classifier, &["occurredAtMs", "occurred_at_ms"]),
-                )
-                .expect("interruption classification succeeds");
+                .expect("classifier is valid");
+                if let Some(provider_authority_id) = optional_str(
+                    classifier,
+                    &["providerAuthorityId", "provider_authority_id"],
+                ) {
+                    classifier_impl = classifier_impl
+                        .with_provider_authority_id(provider_authority_id)
+                        .expect("provider authority is valid");
+                }
+                let provider_decision = classifier
+                    .get("providerDecision")
+                    .or_else(|| classifier.get("provider_decision"))
+                    .and_then(Value::as_object)
+                    .map(provider_interruption_decision_from)
+                    .transpose()
+                    .expect("provider decision is valid");
+                let decision = classifier_impl
+                    .classify_with_provider_decision(
+                        required_str(classifier, &["sessionId", "session_id"]),
+                        decisions.last().expect("last vad decision"),
+                        &playback,
+                        required_u64(classifier, &["occurredAtMs", "occurred_at_ms"]),
+                        provider_decision.as_ref(),
+                    )
+                    .expect("interruption classification succeeds");
                 json!({
                     "decisionKinds": decisions.iter().map(|decision| decision.kind.as_str()).collect::<Vec<_>>(),
                     "interruptionKind": decision.kind.as_str(),
@@ -331,6 +348,13 @@ fn playback_entry_from(raw: &Map<String, Value>) -> Result<PlaybackEntry, VoiceC
     {
         entry = entry.with_completed_at_ms(completed_at_ms);
     }
+    if let Some(acknowledged_at_ms) = raw
+        .get("acknowledgedAtMs")
+        .or_else(|| raw.get("acknowledged_at_ms"))
+        .and_then(Value::as_u64)
+    {
+        entry = entry.with_acknowledged_at_ms(acknowledged_at_ms);
+    }
     if let Some(reason) = optional_str(raw, &["reason"]) {
         entry = entry.with_reason(reason)?;
     }
@@ -342,7 +366,26 @@ fn playback_ledger_from(raw: &[Value]) -> Result<PlaybackLedger, VoiceContractEr
         .iter()
         .map(|entry| playback_entry_from(entry.as_object().expect("playback entry")))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(PlaybackLedger::from_entries(entries))
+    PlaybackLedger::from_entries(entries)
+}
+
+fn provider_interruption_decision_from(
+    raw: &Map<String, Value>,
+) -> Result<ProviderInterruptionDecision, VoiceContractError> {
+    let mut decision = ProviderInterruptionDecision::new(
+        required_str(raw, &["authorityId", "authority_id"]),
+        required_str(raw, &["sessionId", "session_id"]),
+        match required_str(raw, &["kind"]).as_str() {
+            "continue" => InterruptionKind::Continue,
+            "interrupt" => InterruptionKind::Interrupt,
+            other => panic!("unsupported provider interruption kind {other:?}"),
+        },
+        required_u64(raw, &["occurredAtMs", "occurred_at_ms"]),
+    )?;
+    if let Some(reason) = optional_str(raw, &["reason"]) {
+        decision = decision.with_reason(reason)?;
+    }
+    Ok(decision)
 }
 
 fn voice_error_code(_error: VoiceContractError) -> &'static str {

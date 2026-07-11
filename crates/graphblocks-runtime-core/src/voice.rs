@@ -451,6 +451,7 @@ pub struct PlaybackEntry {
     pub audio_ref: Option<String>,
     pub started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,
+    pub acknowledged_at_ms: Option<u64>,
     pub reason: Option<String>,
 }
 
@@ -467,6 +468,7 @@ impl PlaybackEntry {
             audio_ref: None,
             started_at_ms: None,
             completed_at_ms: None,
+            acknowledged_at_ms: None,
             reason: None,
         };
         entry.validate()?;
@@ -492,6 +494,11 @@ impl PlaybackEntry {
         self
     }
 
+    pub fn with_acknowledged_at_ms(mut self, acknowledged_at_ms: u64) -> Self {
+        self.acknowledged_at_ms = Some(acknowledged_at_ms);
+        self
+    }
+
     pub fn with_reason(mut self, reason: impl Into<String>) -> Result<Self, VoiceContractError> {
         let reason = reason.into();
         require_non_empty("playback reason", &reason)?;
@@ -507,6 +514,92 @@ impl PlaybackEntry {
         Ok(())
     }
 
+    fn validate_lifecycle(&self) -> Result<(), VoiceContractError> {
+        self.validate()?;
+        match self.status {
+            PlaybackStatus::Queued => {
+                if self.started_at_ms.is_some()
+                    || self.completed_at_ms.is_some()
+                    || self.acknowledged_at_ms.is_some()
+                    || self.reason.is_some()
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "queued playback must not have lifecycle timestamps or a reason"
+                            .to_string(),
+                    });
+                }
+            }
+            PlaybackStatus::Started => {
+                if self.started_at_ms.is_none() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "started playback requires started_at_ms".to_string(),
+                    });
+                }
+                if self.completed_at_ms.is_some()
+                    || self.acknowledged_at_ms.is_some()
+                    || self.reason.is_some()
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message:
+                            "started playback must not be completed, acknowledged, or have a reason"
+                                .to_string(),
+                    });
+                }
+            }
+            PlaybackStatus::Completed | PlaybackStatus::Interrupted => {
+                let Some(started_at_ms) = self.started_at_ms else {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: format!(
+                            "{} playback requires started_at_ms",
+                            self.status.as_str()
+                        ),
+                    });
+                };
+                let Some(completed_at_ms) = self.completed_at_ms else {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: format!(
+                            "{} playback requires completed_at_ms",
+                            self.status.as_str()
+                        ),
+                    });
+                };
+                if completed_at_ms < started_at_ms {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "completed_at_ms",
+                        message: "must be greater than or equal to started_at_ms".to_string(),
+                    });
+                }
+                if self.status == PlaybackStatus::Completed && self.reason.is_some() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "completed playback must not have a reason".to_string(),
+                    });
+                }
+                if self.status == PlaybackStatus::Interrupted && self.reason.is_none() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "interrupted playback requires a reason".to_string(),
+                    });
+                }
+                if self
+                    .acknowledged_at_ms
+                    .is_some_and(|acknowledged_at_ms| acknowledged_at_ms < completed_at_ms)
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "acknowledged_at_ms",
+                        message: "must be greater than or equal to completed_at_ms".to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn contract(&self) -> Value {
         json!({
             "playbackId": self.playback_id,
@@ -515,6 +608,7 @@ impl PlaybackEntry {
             "audioRef": self.audio_ref,
             "startedAtMs": self.started_at_ms,
             "completedAtMs": self.completed_at_ms,
+            "acknowledgedAtMs": self.acknowledged_at_ms,
             "reason": self.reason,
         })
     }
@@ -532,24 +626,43 @@ impl PlaybackLedger {
         }
     }
 
-    pub fn from_entries<I>(entries: I) -> Self
+    pub fn from_entries<I>(entries: I) -> Result<Self, VoiceContractError>
     where
         I: IntoIterator<Item = PlaybackEntry>,
     {
-        let mut ledger = Self {
-            entries: entries.into_iter().collect(),
-        };
-        ledger
-            .entries
-            .sort_by(|left, right| left.sequence.cmp(&right.sequence));
-        ledger
+        let mut ledger = Self::new();
+        for entry in entries {
+            ledger = ledger.append(entry)?;
+        }
+        Ok(ledger)
     }
 
-    pub fn append(mut self, entry: PlaybackEntry) -> Self {
+    pub fn append(mut self, entry: PlaybackEntry) -> Result<Self, VoiceContractError> {
+        entry.validate_lifecycle()?;
+        for existing in &self.entries {
+            if existing.playback_id == entry.playback_id || existing.sequence == entry.sequence {
+                if existing == &entry {
+                    return Ok(self);
+                }
+                return Err(VoiceContractError::Invalid {
+                    field_name: "playback",
+                    message: "playback_id and sequence must identify one immutable entry"
+                        .to_string(),
+                });
+            }
+        }
+        if self
+            .entries
+            .last()
+            .is_some_and(|last| entry.sequence <= last.sequence)
+        {
+            return Err(VoiceContractError::Invalid {
+                field_name: "playback",
+                message: "playback entries must be appended in sequence order".to_string(),
+            });
+        }
         self.entries.push(entry);
-        self.entries
-            .sort_by(|left, right| left.sequence.cmp(&right.sequence));
-        self
+        Ok(self)
     }
 
     pub fn active_playback_ids(&self) -> Vec<String> {
@@ -567,16 +680,174 @@ impl PlaybackLedger {
     ) -> Result<Self, VoiceContractError> {
         let reason = reason.into();
         require_non_empty("interruption reason", &reason)?;
-        Ok(Self::from_entries(self.entries.iter().cloned().map(
-            |mut entry| {
-                if entry.status == PlaybackStatus::Started {
-                    entry.status = PlaybackStatus::Interrupted;
-                    entry.completed_at_ms = Some(occurred_at_ms);
-                    entry.reason = Some(reason.clone());
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            let mut entry = entry.clone();
+            if entry.status == PlaybackStatus::Started {
+                if entry
+                    .started_at_ms
+                    .is_some_and(|started_at_ms| occurred_at_ms < started_at_ms)
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "playback interruption occurred before playback start".to_string(),
+                    });
                 }
-                entry
-            },
-        )))
+                entry.status = PlaybackStatus::Interrupted;
+                entry.completed_at_ms = Some(occurred_at_ms);
+                entry.acknowledged_at_ms = None;
+                entry.reason = Some(reason.clone());
+            }
+            entries.push(entry);
+        }
+        Self::from_entries(entries)
+    }
+
+    pub fn start(
+        &self,
+        playback_id: impl Into<String>,
+        occurred_at_ms: u64,
+    ) -> Result<Self, VoiceContractError> {
+        let playback_id = playback_id.into();
+        require_non_empty("playback_id", &playback_id)?;
+        let mut entries = Vec::with_capacity(self.entries.len());
+        let mut found = false;
+        for entry in &self.entries {
+            let mut entry = entry.clone();
+            if entry.playback_id == playback_id {
+                found = true;
+                if entry.status == PlaybackStatus::Started
+                    && entry.started_at_ms == Some(occurred_at_ms)
+                {
+                    entries.push(entry);
+                    continue;
+                }
+                if entry.status != PlaybackStatus::Queued {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: format!("cannot start playback in {:?} status", entry.status),
+                    });
+                }
+                entry.status = PlaybackStatus::Started;
+                entry.started_at_ms = Some(occurred_at_ms);
+            }
+            entries.push(entry);
+        }
+        if !found {
+            return Err(VoiceContractError::Invalid {
+                field_name: "playback_id",
+                message: format!("{playback_id:?} is unknown"),
+            });
+        }
+        Self::from_entries(entries)
+    }
+
+    pub fn complete(
+        &self,
+        playback_id: impl Into<String>,
+        occurred_at_ms: u64,
+    ) -> Result<Self, VoiceContractError> {
+        let playback_id = playback_id.into();
+        require_non_empty("playback_id", &playback_id)?;
+        let mut entries = Vec::with_capacity(self.entries.len());
+        let mut found = false;
+        for entry in &self.entries {
+            let mut entry = entry.clone();
+            if entry.playback_id == playback_id {
+                found = true;
+                if entry.status == PlaybackStatus::Completed
+                    && entry.completed_at_ms == Some(occurred_at_ms)
+                {
+                    entries.push(entry);
+                    continue;
+                }
+                if entry.status != PlaybackStatus::Started {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: format!("cannot complete playback in {:?} status", entry.status),
+                    });
+                }
+                if entry
+                    .started_at_ms
+                    .is_some_and(|started_at_ms| occurred_at_ms < started_at_ms)
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "playback completion occurred before playback start".to_string(),
+                    });
+                }
+                entry.status = PlaybackStatus::Completed;
+                entry.completed_at_ms = Some(occurred_at_ms);
+            }
+            entries.push(entry);
+        }
+        if !found {
+            return Err(VoiceContractError::Invalid {
+                field_name: "playback_id",
+                message: format!("{playback_id:?} is unknown"),
+            });
+        }
+        Self::from_entries(entries)
+    }
+
+    pub fn acknowledge(
+        &self,
+        playback_id: impl Into<String>,
+        occurred_at_ms: u64,
+    ) -> Result<Self, VoiceContractError> {
+        let playback_id = playback_id.into();
+        require_non_empty("playback_id", &playback_id)?;
+        let mut entries = Vec::with_capacity(self.entries.len());
+        let mut found = false;
+        for entry in &self.entries {
+            let mut entry = entry.clone();
+            if entry.playback_id == playback_id {
+                found = true;
+                if !matches!(
+                    entry.status,
+                    PlaybackStatus::Completed | PlaybackStatus::Interrupted
+                ) {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: format!(
+                            "cannot acknowledge playback in {:?} status",
+                            entry.status
+                        ),
+                    });
+                }
+                if entry
+                    .completed_at_ms
+                    .is_some_and(|completed_at_ms| occurred_at_ms < completed_at_ms)
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message: "playback acknowledgement occurred before playback completion"
+                            .to_string(),
+                    });
+                }
+                if let Some(acknowledged_at_ms) = entry.acknowledged_at_ms {
+                    if acknowledged_at_ms == occurred_at_ms {
+                        entries.push(entry);
+                        continue;
+                    }
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "playback",
+                        message:
+                            "playback acknowledgement conflicts with the recorded acknowledgement"
+                                .to_string(),
+                    });
+                }
+                entry.acknowledged_at_ms = Some(occurred_at_ms);
+            }
+            entries.push(entry);
+        }
+        if !found {
+            return Err(VoiceContractError::Invalid {
+                field_name: "playback_id",
+                message: format!("{playback_id:?} is unknown"),
+            });
+        }
+        Self::from_entries(entries)
     }
 
     pub fn content_digest(&self) -> String {
@@ -618,17 +889,71 @@ pub struct InterruptionDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderInterruptionDecision {
+    pub authority_id: String,
+    pub session_id: String,
+    pub kind: InterruptionKind,
+    pub occurred_at_ms: u64,
+    pub reason: Option<String>,
+}
+
+impl ProviderInterruptionDecision {
+    pub fn new(
+        authority_id: impl Into<String>,
+        session_id: impl Into<String>,
+        kind: InterruptionKind,
+        occurred_at_ms: u64,
+    ) -> Result<Self, VoiceContractError> {
+        let decision = Self {
+            authority_id: authority_id.into(),
+            session_id: session_id.into(),
+            kind,
+            occurred_at_ms,
+            reason: None,
+        };
+        decision.validate()?;
+        Ok(decision)
+    }
+
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Result<Self, VoiceContractError> {
+        let reason = reason.into();
+        require_non_empty("interruption reason", &reason)?;
+        self.reason = Some(reason);
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("authority_id", &self.authority_id)?;
+        require_non_empty("session_id", &self.session_id)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterruptionClassifier {
     pub classifier_id: String,
+    pub provider_authority_id: Option<String>,
 }
 
 impl InterruptionClassifier {
     pub fn new(classifier_id: impl Into<String>) -> Result<Self, VoiceContractError> {
         let classifier = Self {
             classifier_id: classifier_id.into(),
+            provider_authority_id: None,
         };
         require_non_empty("classifier_id", &classifier.classifier_id)?;
         Ok(classifier)
+    }
+
+    pub fn with_provider_authority_id(
+        mut self,
+        provider_authority_id: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        let provider_authority_id = provider_authority_id.into();
+        require_non_empty("provider_authority_id", &provider_authority_id)?;
+        self.provider_authority_id = Some(provider_authority_id);
+        Ok(self)
     }
 
     pub fn classify(
@@ -638,9 +963,73 @@ impl InterruptionClassifier {
         playback: &PlaybackLedger,
         occurred_at_ms: u64,
     ) -> Result<InterruptionDecision, VoiceContractError> {
+        self.classify_with_provider_decision(
+            session_id,
+            vad_decision,
+            playback,
+            occurred_at_ms,
+            None,
+        )
+    }
+
+    pub fn classify_with_provider_decision(
+        &self,
+        session_id: impl Into<String>,
+        vad_decision: &VadDecision,
+        playback: &PlaybackLedger,
+        occurred_at_ms: u64,
+        provider_decision: Option<&ProviderInterruptionDecision>,
+    ) -> Result<InterruptionDecision, VoiceContractError> {
         let session_id = session_id.into();
         require_non_empty("session_id", &session_id)?;
         let active_ids = playback.active_playback_ids();
+        if let Some(provider_authority_id) = &self.provider_authority_id {
+            let Some(provider_decision) = provider_decision else {
+                return Ok(InterruptionDecision {
+                    classifier_id: self.classifier_id.clone(),
+                    session_id,
+                    kind: InterruptionKind::Continue,
+                    occurred_at_ms,
+                    interrupted_playback_ids: Vec::new(),
+                    reason: Some("awaiting_provider_confirmation".to_string()),
+                });
+            };
+            if provider_decision.authority_id != *provider_authority_id {
+                return Err(VoiceContractError::Invalid {
+                    field_name: "provider_authority_id",
+                    message: "does not match classifier authority".to_string(),
+                });
+            }
+            if provider_decision.session_id != session_id {
+                return Err(VoiceContractError::Invalid {
+                    field_name: "provider_session_id",
+                    message: "belongs to a different session".to_string(),
+                });
+            }
+            if provider_decision.kind == InterruptionKind::Interrupt {
+                return Ok(InterruptionDecision {
+                    classifier_id: self.classifier_id.clone(),
+                    session_id,
+                    kind: InterruptionKind::Interrupt,
+                    occurred_at_ms: provider_decision.occurred_at_ms,
+                    interrupted_playback_ids: active_ids,
+                    reason: Some(
+                        provider_decision
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| "provider_confirmed_interruption".to_string()),
+                    ),
+                });
+            }
+            return Ok(InterruptionDecision {
+                classifier_id: self.classifier_id.clone(),
+                session_id,
+                kind: InterruptionKind::Continue,
+                occurred_at_ms: provider_decision.occurred_at_ms,
+                interrupted_playback_ids: Vec::new(),
+                reason: provider_decision.reason.clone(),
+            });
+        }
         if !active_ids.is_empty()
             && matches!(
                 vad_decision.kind,

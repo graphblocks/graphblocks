@@ -22,7 +22,7 @@ timestamps are monotonic; started, terminal, and acknowledgement timestamps
 cannot move backwards. Conflicting acknowledgement reuse MUST fail. Completed or
 interrupted entries are immutable except for a matching acknowledgement.
 
-The Python package implements provider-authoritative interruption and playback
-acknowledgement. Rust implements the shared voice TCK foundation but does not yet
-have full parity for these authority checks; see
-[language support](../conformance/language-support.md).
+The Python package and Rust runtime-core implement provider-authoritative
+interruption and playback acknowledgement. The shared voice TCK MUST consume
+provider authority fields when they are present so local VAD remains advisory
+until a matching provider confirmation is recorded.

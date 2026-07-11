@@ -15,8 +15,6 @@ adapter. Many integrations are lightweight contracts, package boundaries, and
 test doubles. The monorepo's `0.1.0` package versions and some historical
 inter-package `~=1.0` constraints still need publication reconciliation.
 
-Known parity limitation: Rust voice coverage does not yet match the Python
-provider-confirmation and playback acknowledgement acceptance contract. Other
 Python-only advanced reference contracts are listed in
 [language support](../specification/conformance/language-support.md).
 

@@ -14,10 +14,10 @@ release compatibility promise.
 | Workspace governed commit | Implemented | Evaluation primitives only; not full commit contract |
 | Release attestation, canary, rollback/drain evidence | Implemented | Deployment primitives; not full named reference contract |
 | Telemetry correctness outbox | Implemented in optional telemetry package | Observability primitives; not full outbox contract |
-| Voice interruption/playback authority | Implemented in optional voice package | Voice foundation; provider-authority parity remains open |
+| Voice interruption/playback authority | Implemented in optional voice package | Implemented in runtime-core and covered by the shared TCK foundation |
 | Durable stream extension | Implemented reference contracts | Implemented reference contracts |
 
 Profile claims are determined by applicable fixtures and acceptance evidence,
-not this summary alone. In particular, the current Rust voice TCK does not yet
-exercise every provider-authoritative interruption and playback acknowledgement
-invariant implemented by Python.
+not this summary alone. Advanced provider-specific voice adapters may still add
+their own evidence beyond the shared provider-authority and playback lifecycle
+cases.
