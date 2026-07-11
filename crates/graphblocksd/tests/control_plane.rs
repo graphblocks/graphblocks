@@ -10,7 +10,8 @@ use graphblocks_protocol::{
     WorkerProtocolMessage, WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
 };
 use graphblocks_runtime_core::async_operation::{
-    AsyncOperation, AsyncOperationKind, AsyncOperationState, SqliteAsyncOperationStore,
+    AsyncOperation, AsyncOperationEvent, AsyncOperationKind, AsyncOperationState,
+    SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::run_store::{RunInvocationMode, RunStatus, SqliteRunStore};
 use graphblocks_runtime_durable::{
@@ -1581,6 +1582,157 @@ fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn
             .map_err(|error| format!("{error:?}"))?
             .status,
         RunStatus::Created,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_registers_async_operation_for_callback_wait()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("register-callback-wait");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "register-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--kind",
+            "ci_job",
+            "--resume-token-hash",
+            VALID_RESUME_TOKEN_HASH,
+            "--idempotency-key",
+            "idem-op-1",
+            "--expected-schema",
+            "schemas/CICallback@1",
+            "--created-at-unix-ms",
+            "1000",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--submitted-at-unix-ms",
+            "1050",
+            "--waiting-callback-expires-at-unix-ms",
+            "2000",
+        ])
+        .output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/operationId")
+            .and_then(|value| value.as_str()),
+        Some("op-1"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/kind")
+            .and_then(|value| value.as_str()),
+        Some("ci_job"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/state")
+            .and_then(|value| value.as_str()),
+        Some("waiting_callback"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/expiresAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(2000),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback),
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .into_iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::StateChanged { .. }))
+            .count(),
+        2,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_rejects_waiting_callback_async_operation_without_timeout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("register-callback-without-timeout");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "register-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--kind",
+            "ci_job",
+            "--resume-token-hash",
+            VALID_RESUME_TOKEN_HASH,
+            "--idempotency-key",
+            "idem-op-1",
+            "--expected-schema",
+            "schemas/CICallback@1",
+            "--created-at-unix-ms",
+            "1000",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--submitted-at-unix-ms",
+            "1050",
+            "--waiting-callback",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stderr)?;
+
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.async_operation.invalid_operation"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/reason")
+            .and_then(|value| value.as_str()),
+        Some("waiting callback operations require an expiration or infinite_wait_policy"),
+    );
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        None,
     );
 
     let _ = std::fs::remove_file(&path);

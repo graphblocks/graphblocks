@@ -2,7 +2,8 @@ use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
 use graphblocks_runtime_core::async_operation::{
-    AsyncCallbackSubmission, AsyncOperationError, AsyncOperationState, SqliteAsyncOperationStore,
+    AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationKind,
+    AsyncOperationState, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::run_store::{
     RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
@@ -58,12 +59,13 @@ fn main() {
         Some("acquire-run-lease") => run_acquire_run_lease(args.collect()),
         Some("renew-run-lease") => run_renew_run_lease(args.collect()),
         Some("set-run-status-with-lease") => run_set_run_status_with_lease(args.collect()),
+        Some("register-async-operation") => run_register_async_operation(args.collect()),
         Some("submit-async-callback") => run_submit_async_callback(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|submit-async-callback|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -344,6 +346,187 @@ fn run_set_run_status_with_lease(args: Vec<String>) -> Result<Value, CliError> {
             "leaseId": lease_id,
             "fencingEpoch": fencing_epoch,
             "validatedAtUnixMs": now_unix_ms,
+        },
+    }))
+}
+
+fn run_register_async_operation(args: Vec<String>) -> Result<Value, CliError> {
+    let mut async_operation_store = None;
+    let mut operation_id = None;
+    let mut run_id = None;
+    let mut node_id = None;
+    let mut attempt_id = None;
+    let mut kind = None;
+    let mut resume_token_hash = None;
+    let mut idempotency_key = None;
+    let mut expected_schema = None;
+    let mut created_at_unix_ms = None;
+    let mut provider_operation_id = None;
+    let mut submitted_at_unix_ms = None;
+    let mut waiting_callback = false;
+    let mut waiting_callback_expires_at_unix_ms = None;
+    let mut infinite_wait_policy = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--async-operation-store" => {
+                async_operation_store = Some(next_arg(&mut args, "--async-operation-store")?);
+            }
+            "--operation-id" => {
+                operation_id = Some(next_arg(&mut args, "--operation-id")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--node-id" => {
+                node_id = Some(next_arg(&mut args, "--node-id")?);
+            }
+            "--attempt-id" => {
+                attempt_id = Some(next_arg(&mut args, "--attempt-id")?);
+            }
+            "--kind" => {
+                let value = next_arg(&mut args, "--kind")?;
+                kind = Some(match value.as_str() {
+                    "tool" => AsyncOperationKind::Tool,
+                    "sandbox_task" => AsyncOperationKind::SandboxTask,
+                    "ci_job" => AsyncOperationKind::CiJob,
+                    "browser_task" => AsyncOperationKind::BrowserTask,
+                    "workspace_trial" => AsyncOperationKind::WorkspaceTrial,
+                    "external_provider_job" => AsyncOperationKind::ExternalProviderJob,
+                    "document_job" => AsyncOperationKind::DocumentJob,
+                    "research_task" => AsyncOperationKind::ResearchTask,
+                    "custom" => AsyncOperationKind::Custom,
+                    _ => {
+                        return Err(CliError::Usage(format!(
+                            "--kind uses an unsupported async operation kind: {value}"
+                        )));
+                    }
+                });
+            }
+            "--resume-token-hash" => {
+                resume_token_hash = Some(next_arg(&mut args, "--resume-token-hash")?);
+            }
+            "--idempotency-key" => {
+                idempotency_key = Some(next_arg(&mut args, "--idempotency-key")?);
+            }
+            "--expected-schema" => {
+                expected_schema = Some(next_arg(&mut args, "--expected-schema")?);
+            }
+            "--created-at-unix-ms" => {
+                let value = next_arg(&mut args, "--created-at-unix-ms")?;
+                created_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--created-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--provider-operation-id" => {
+                provider_operation_id = Some(next_arg(&mut args, "--provider-operation-id")?);
+            }
+            "--submitted-at-unix-ms" => {
+                let value = next_arg(&mut args, "--submitted-at-unix-ms")?;
+                submitted_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--submitted-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--waiting-callback" => {
+                waiting_callback = true;
+            }
+            "--waiting-callback-expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--waiting-callback-expires-at-unix-ms")?;
+                waiting_callback = true;
+                waiting_callback_expires_at_unix_ms =
+                    Some(value.parse::<u64>().map_err(|error| {
+                        CliError::Usage(format!(
+                            "--waiting-callback-expires-at-unix-ms requires an unsigned integer: {error}"
+                        ))
+                    })?);
+            }
+            "--infinite-wait-policy" => {
+                waiting_callback = true;
+                infinite_wait_policy = Some(next_arg(&mut args, "--infinite-wait-policy")?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let async_operation_store = async_operation_store
+        .ok_or_else(|| CliError::Usage("--async-operation-store is required".to_owned()))?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::Usage("--operation-id is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let node_id = node_id.ok_or_else(|| CliError::Usage("--node-id is required".to_owned()))?;
+    let attempt_id =
+        attempt_id.ok_or_else(|| CliError::Usage("--attempt-id is required".to_owned()))?;
+    let kind = kind.ok_or_else(|| CliError::Usage("--kind is required".to_owned()))?;
+    let resume_token_hash = resume_token_hash
+        .ok_or_else(|| CliError::Usage("--resume-token-hash is required".to_owned()))?;
+    let idempotency_key = idempotency_key
+        .ok_or_else(|| CliError::Usage("--idempotency-key is required".to_owned()))?;
+    let expected_schema = expected_schema
+        .ok_or_else(|| CliError::Usage("--expected-schema is required".to_owned()))?;
+    let created_at_unix_ms = created_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--created-at-unix-ms is required".to_owned()))?;
+
+    let mut operation = AsyncOperation::new(
+        operation_id,
+        run_id,
+        node_id,
+        attempt_id,
+        kind,
+        resume_token_hash,
+        idempotency_key,
+        expected_schema,
+        created_at_unix_ms,
+    );
+    operation.provider_operation_id = provider_operation_id;
+    if let Some(submitted_at_unix_ms) = submitted_at_unix_ms {
+        operation.submitted_at_unix_ms = Some(submitted_at_unix_ms);
+        operation.state = AsyncOperationState::Submitted;
+    }
+    if waiting_callback {
+        operation.state = AsyncOperationState::WaitingCallback;
+        operation.expires_at_unix_ms = waiting_callback_expires_at_unix_ms;
+        operation.infinite_wait_policy = infinite_wait_policy;
+    }
+
+    let store =
+        SqliteAsyncOperationStore::open(async_operation_store).map_err(CliError::AsyncOperation)?;
+    store
+        .register(operation.clone())
+        .map_err(CliError::AsyncOperation)?;
+
+    let kind = match operation.kind {
+        AsyncOperationKind::Tool => "tool",
+        AsyncOperationKind::SandboxTask => "sandbox_task",
+        AsyncOperationKind::CiJob => "ci_job",
+        AsyncOperationKind::BrowserTask => "browser_task",
+        AsyncOperationKind::WorkspaceTrial => "workspace_trial",
+        AsyncOperationKind::ExternalProviderJob => "external_provider_job",
+        AsyncOperationKind::DocumentJob => "document_job",
+        AsyncOperationKind::ResearchTask => "research_task",
+        AsyncOperationKind::Custom => "custom",
+    };
+
+    Ok(json!({
+        "ok": true,
+        "operation": {
+            "operationId": operation.operation_id,
+            "runId": operation.run_id,
+            "nodeId": operation.node_id,
+            "attemptId": operation.attempt_id,
+            "kind": kind,
+            "providerOperationId": operation.provider_operation_id,
+            "state": async_operation_state_name(operation.state),
+            "resumeTokenHash": operation.resume_token_hash,
+            "idempotencyKey": operation.idempotency_key,
+            "expectedSchema": operation.expected_schema,
+            "createdAtUnixMs": operation.created_at_unix_ms,
+            "submittedAtUnixMs": operation.submitted_at_unix_ms,
+            "expiresAtUnixMs": operation.expires_at_unix_ms,
+            "infiniteWaitPolicy": operation.infinite_wait_policy,
         },
     }))
 }
