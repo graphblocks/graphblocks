@@ -1,10 +1,22 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_runtime_durable::{
     CheckpointBarrier, CheckpointBarrierError, CheckpointStoreError, InMemoryCheckpointStore,
-    SchemaRef, SourceCursor, SourceCursorCommitPlan,
+    SchemaRef, SourceCursor, SourceCursorCommitPlan, SqliteCheckpointStore,
 };
 use serde_json::json;
+
+fn sqlite_checkpoint_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-durable-checkpoint-{label}-{unique}.sqlite3"
+    ))
+}
 
 fn checkpoint(checkpoint_id: &str, state_revision: u64, plan_hash: &str) -> CheckpointBarrier {
     CheckpointBarrier {
@@ -291,4 +303,101 @@ fn checkpoint_store_reclaims_expired_checkpoint_claim_with_new_fence() {
             actual_fencing_epoch: 2,
         })
     );
+}
+
+#[test]
+fn sqlite_checkpoint_store_persists_recovery_claim_fencing_across_reopen() {
+    let path = sqlite_checkpoint_path("claim-fencing");
+    let first_claim = {
+        let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+        store
+            .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+            .expect("checkpoint should persist");
+        store
+            .claim_latest_compatible(
+                "run-000001",
+                "release-2026-06-23",
+                "deployment-rev-1",
+                "sha256:plan",
+                "worker-a",
+                "lease-a",
+                1_000,
+                1_100,
+            )
+            .expect("first worker should claim checkpoint")
+            .claim
+    };
+
+    let mut reopened = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    assert_eq!(
+        reopened.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_050,
+            2_000,
+        ),
+        Err(CheckpointStoreError::ActiveRecoveryClaim {
+            run_id: "run-000001".to_owned(),
+            worker_id: "worker-a".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            expires_at_unix_ms: 1_100,
+        })
+    );
+    drop(reopened);
+
+    let replacement = {
+        let mut after_expiry =
+            SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+        after_expiry
+            .claim_latest_compatible(
+                "run-000001",
+                "release-2026-06-23",
+                "deployment-rev-1",
+                "sha256:plan",
+                "worker-b",
+                "lease-b",
+                1_101,
+                2_000,
+            )
+            .expect("expired claim should be replaceable")
+            .claim
+    };
+    assert_eq!(replacement.fencing_epoch, 2);
+
+    let mut final_reopen =
+        SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    assert_eq!(
+        final_reopen.complete_claim(&first_claim, 1_200),
+        Err(CheckpointStoreError::RecoveryClaimMismatch {
+            run_id: "run-000001".to_owned(),
+            expected_lease_id: "lease-a".to_owned(),
+            expected_fencing_epoch: 1,
+            actual_lease_id: "lease-b".to_owned(),
+            actual_fencing_epoch: 2,
+        })
+    );
+    final_reopen
+        .complete_claim(&replacement, 1_300)
+        .expect("current claim should complete after reopen");
+    drop(final_reopen);
+
+    let mut after_completion =
+        SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    let third = after_completion
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-c",
+            "lease-c",
+            1_400,
+            2_400,
+        )
+        .expect("completed claim should allow a new fenced claim");
+    assert_eq!(third.claim.fencing_epoch, 3);
 }

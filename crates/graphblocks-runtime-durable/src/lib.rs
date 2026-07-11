@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
 use graphblocks_runtime_core::tool_result::{ToolResult, ToolResultStatus};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,7 +42,7 @@ pub enum DurableError {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub struct SourceCursor {
     pub stream: String,
     pub partition: u32,
@@ -1022,7 +1025,7 @@ impl InMemoryDurableToolTerminalStore {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SchemaRef {
     pub schema_id: String,
     pub schema_version: u32,
@@ -1037,7 +1040,7 @@ impl SchemaRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CheckpointBarrier {
     pub checkpoint_id: String,
     pub run_id: String,
@@ -1283,6 +1286,383 @@ impl InMemoryCheckpointStore {
     }
 }
 
+pub struct SqliteCheckpointStore {
+    connection: Connection,
+}
+
+impl SqliteCheckpointStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, CheckpointStoreError> {
+        let connection = Connection::open(path).map_err(checkpoint_storage_error)?;
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS checkpoint_barriers (
+                    checkpoint_id TEXT PRIMARY KEY NOT NULL,
+                    run_id TEXT NOT NULL,
+                    release_id TEXT NOT NULL,
+                    deployment_revision_id TEXT NOT NULL,
+                    plan_hash TEXT NOT NULL,
+                    state_revision INTEGER NOT NULL,
+                    barrier_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS checkpoint_barriers_run_lookup
+                    ON checkpoint_barriers (
+                        run_id,
+                        release_id,
+                        deployment_revision_id,
+                        plan_hash,
+                        state_revision
+                    );
+                CREATE TABLE IF NOT EXISTS checkpoint_recovery_claims (
+                    run_id TEXT PRIMARY KEY NOT NULL,
+                    checkpoint_id TEXT NOT NULL,
+                    worker_id TEXT NOT NULL,
+                    lease_id TEXT NOT NULL,
+                    fencing_epoch INTEGER NOT NULL,
+                    claimed_at_unix_ms INTEGER NOT NULL,
+                    expires_at_unix_ms INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS checkpoint_recovery_epochs (
+                    run_id TEXT PRIMARY KEY NOT NULL,
+                    next_fencing_epoch INTEGER NOT NULL
+                );
+                ",
+            )
+            .map_err(checkpoint_storage_error)?;
+        Ok(Self { connection })
+    }
+
+    pub fn put(&mut self, barrier: CheckpointBarrier) -> Result<(), CheckpointStoreError> {
+        barrier
+            .validate()
+            .map_err(CheckpointStoreError::InvalidBarrier)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(checkpoint_storage_error)?;
+        let current = transaction
+            .query_row(
+                "SELECT MAX(state_revision) FROM checkpoint_barriers WHERE run_id = ?1",
+                params![barrier.run_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(checkpoint_storage_error)?
+            .map(|value| sqlite_i64_to_u64(value, "state_revision"))
+            .transpose()?;
+        if let Some(current) = current
+            && barrier.state_revision <= current
+        {
+            return Err(CheckpointStoreError::StaleStateRevision {
+                run_id: barrier.run_id,
+                current,
+                attempted: barrier.state_revision,
+            });
+        }
+        let barrier_json = serde_json::to_string(&barrier).map_err(checkpoint_json_error)?;
+        transaction
+            .execute(
+                "
+                INSERT INTO checkpoint_barriers (
+                    checkpoint_id,
+                    run_id,
+                    release_id,
+                    deployment_revision_id,
+                    plan_hash,
+                    state_revision,
+                    barrier_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+                params![
+                    barrier.checkpoint_id,
+                    barrier.run_id,
+                    barrier.release_id,
+                    barrier.deployment_revision_id,
+                    barrier.plan_hash,
+                    sqlite_u64_to_i64(barrier.state_revision, "state_revision")?,
+                    barrier_json,
+                ],
+            )
+            .map_err(checkpoint_storage_error)?;
+        transaction.commit().map_err(checkpoint_storage_error)?;
+        Ok(())
+    }
+
+    pub fn latest_compatible(
+        &self,
+        run_id: &str,
+        release_id: &str,
+        deployment_revision_id: &str,
+        plan_hash: &str,
+    ) -> Result<Option<CheckpointBarrier>, CheckpointStoreError> {
+        self.connection
+            .query_row(
+                "
+                SELECT barrier_json
+                  FROM checkpoint_barriers
+                 WHERE run_id = ?1
+                   AND release_id = ?2
+                   AND deployment_revision_id = ?3
+                   AND plan_hash = ?4
+                 ORDER BY state_revision DESC
+                 LIMIT 1
+                ",
+                params![run_id, release_id, deployment_revision_id, plan_hash],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?
+            .map(|raw| {
+                let barrier = serde_json::from_str::<CheckpointBarrier>(&raw)
+                    .map_err(checkpoint_json_error)?;
+                barrier
+                    .validate()
+                    .map_err(CheckpointStoreError::InvalidBarrier)?;
+                Ok(barrier)
+            })
+            .transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_latest_compatible(
+        &mut self,
+        run_id: &str,
+        release_id: &str,
+        deployment_revision_id: &str,
+        plan_hash: &str,
+        worker_id: &str,
+        lease_id: &str,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<CheckpointRecovery, CheckpointStoreError> {
+        if worker_id.trim().is_empty() {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "worker_id" });
+        }
+        if lease_id.trim().is_empty() {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "lease_id" });
+        }
+        if expires_at_unix_ms <= now_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
+            });
+        }
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(checkpoint_storage_error)?;
+        let checkpoint = transaction
+            .query_row(
+                "
+                SELECT barrier_json
+                  FROM checkpoint_barriers
+                 WHERE run_id = ?1
+                   AND release_id = ?2
+                   AND deployment_revision_id = ?3
+                   AND plan_hash = ?4
+                 ORDER BY state_revision DESC
+                 LIMIT 1
+                ",
+                params![run_id, release_id, deployment_revision_id, plan_hash],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?
+            .ok_or_else(|| CheckpointStoreError::CompatibleCheckpointNotFound {
+                run_id: run_id.to_owned(),
+                release_id: release_id.to_owned(),
+                deployment_revision_id: deployment_revision_id.to_owned(),
+                plan_hash: plan_hash.to_owned(),
+            })
+            .and_then(|raw| {
+                let barrier = serde_json::from_str::<CheckpointBarrier>(&raw)
+                    .map_err(checkpoint_json_error)?;
+                barrier
+                    .validate()
+                    .map_err(CheckpointStoreError::InvalidBarrier)?;
+                Ok(barrier)
+            })?;
+        let active_claim = transaction
+            .query_row(
+                "
+                SELECT checkpoint_id,
+                       worker_id,
+                       lease_id,
+                       fencing_epoch,
+                       claimed_at_unix_ms,
+                       expires_at_unix_ms
+                  FROM checkpoint_recovery_claims
+                 WHERE run_id = ?1
+                ",
+                params![run_id],
+                |row| {
+                    Ok(CheckpointRecoveryClaim {
+                        run_id: run_id.to_owned(),
+                        checkpoint_id: row.get(0)?,
+                        worker_id: row.get(1)?,
+                        lease_id: row.get(2)?,
+                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?;
+        if let Some(active) = active_claim
+            && active.is_active_at(now_unix_ms)
+        {
+            return Err(CheckpointStoreError::ActiveRecoveryClaim {
+                run_id: run_id.to_owned(),
+                worker_id: active.worker_id,
+                lease_id: active.lease_id,
+                expires_at_unix_ms: active.expires_at_unix_ms,
+            });
+        }
+        let next_fencing_epoch = transaction
+            .query_row(
+                "SELECT next_fencing_epoch FROM checkpoint_recovery_epochs WHERE run_id = ?1",
+                params![run_id],
+                |row| {
+                    sqlite_i64_to_u64(row.get(0)?, "next_fencing_epoch")
+                        .map_err(rusqlite_error_from_checkpoint)
+                },
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?
+            .unwrap_or(1);
+        let claim = CheckpointRecoveryClaim {
+            run_id: run_id.to_owned(),
+            checkpoint_id: checkpoint.checkpoint_id.clone(),
+            worker_id: worker_id.to_owned(),
+            lease_id: lease_id.to_owned(),
+            fencing_epoch: next_fencing_epoch,
+            claimed_at_unix_ms: now_unix_ms,
+            expires_at_unix_ms,
+        };
+        transaction
+            .execute(
+                "
+                INSERT INTO checkpoint_recovery_claims (
+                    run_id,
+                    checkpoint_id,
+                    worker_id,
+                    lease_id,
+                    fencing_epoch,
+                    claimed_at_unix_ms,
+                    expires_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    checkpoint_id = excluded.checkpoint_id,
+                    worker_id = excluded.worker_id,
+                    lease_id = excluded.lease_id,
+                    fencing_epoch = excluded.fencing_epoch,
+                    claimed_at_unix_ms = excluded.claimed_at_unix_ms,
+                    expires_at_unix_ms = excluded.expires_at_unix_ms
+                ",
+                params![
+                    claim.run_id,
+                    claim.checkpoint_id,
+                    claim.worker_id,
+                    claim.lease_id,
+                    sqlite_u64_to_i64(claim.fencing_epoch, "fencing_epoch")?,
+                    sqlite_u64_to_i64(claim.claimed_at_unix_ms, "claimed_at_unix_ms")?,
+                    sqlite_u64_to_i64(claim.expires_at_unix_ms, "expires_at_unix_ms")?,
+                ],
+            )
+            .map_err(checkpoint_storage_error)?;
+        transaction
+            .execute(
+                "
+                INSERT INTO checkpoint_recovery_epochs (
+                    run_id,
+                    next_fencing_epoch
+                ) VALUES (?1, ?2)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    next_fencing_epoch = excluded.next_fencing_epoch
+                ",
+                params![
+                    run_id,
+                    sqlite_u64_to_i64(next_fencing_epoch.saturating_add(1), "next_fencing_epoch")?,
+                ],
+            )
+            .map_err(checkpoint_storage_error)?;
+        transaction.commit().map_err(checkpoint_storage_error)?;
+        Ok(CheckpointRecovery { checkpoint, claim })
+    }
+
+    pub fn complete_claim(
+        &mut self,
+        claim: &CheckpointRecoveryClaim,
+        now_unix_ms: u64,
+    ) -> Result<(), CheckpointStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(checkpoint_storage_error)?;
+        let active = transaction
+            .query_row(
+                "
+                SELECT checkpoint_id,
+                       worker_id,
+                       lease_id,
+                       fencing_epoch,
+                       claimed_at_unix_ms,
+                       expires_at_unix_ms
+                  FROM checkpoint_recovery_claims
+                 WHERE run_id = ?1
+                ",
+                params![claim.run_id],
+                |row| {
+                    Ok(CheckpointRecoveryClaim {
+                        run_id: claim.run_id.clone(),
+                        checkpoint_id: row.get(0)?,
+                        worker_id: row.get(1)?,
+                        lease_id: row.get(2)?,
+                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?
+            .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
+                run_id: claim.run_id.clone(),
+            })?;
+        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+            return Err(CheckpointStoreError::RecoveryClaimMismatch {
+                run_id: claim.run_id.clone(),
+                expected_lease_id: claim.lease_id.clone(),
+                expected_fencing_epoch: claim.fencing_epoch,
+                actual_lease_id: active.lease_id,
+                actual_fencing_epoch: active.fencing_epoch,
+            });
+        }
+        if !active.is_active_at(now_unix_ms) {
+            return Err(CheckpointStoreError::RecoveryClaimExpired {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                expires_at_unix_ms: active.expires_at_unix_ms,
+                now_unix_ms,
+            });
+        }
+        transaction
+            .execute(
+                "DELETE FROM checkpoint_recovery_claims WHERE run_id = ?1",
+                params![claim.run_id],
+            )
+            .map_err(checkpoint_storage_error)?;
+        transaction.commit().map_err(checkpoint_storage_error)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckpointStoreError {
     InvalidBarrier(CheckpointBarrierError),
@@ -1322,4 +1702,35 @@ pub enum CheckpointStoreError {
         expires_at_unix_ms: u64,
         now_unix_ms: u64,
     },
+    Storage {
+        message: String,
+    },
+}
+
+fn sqlite_u64_to_i64(value: u64, field: &'static str) -> Result<i64, CheckpointStoreError> {
+    i64::try_from(value).map_err(|_| CheckpointStoreError::Storage {
+        message: format!("checkpoint field {field} exceeds sqlite integer range"),
+    })
+}
+
+fn sqlite_i64_to_u64(value: i64, field: &'static str) -> Result<u64, CheckpointStoreError> {
+    u64::try_from(value).map_err(|_| CheckpointStoreError::Storage {
+        message: format!("stored checkpoint field {field} is negative"),
+    })
+}
+
+fn checkpoint_json_error(error: serde_json::Error) -> CheckpointStoreError {
+    CheckpointStoreError::Storage {
+        message: error.to_string(),
+    }
+}
+
+fn checkpoint_storage_error(error: rusqlite::Error) -> CheckpointStoreError {
+    CheckpointStoreError::Storage {
+        message: error.to_string(),
+    }
+}
+
+fn rusqlite_error_from_checkpoint(error: CheckpointStoreError) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(format!("{error:?}"))))
 }
