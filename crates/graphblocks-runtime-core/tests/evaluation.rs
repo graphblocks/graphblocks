@@ -308,6 +308,82 @@ fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
     );
 }
 
+fn workspace_commit_identity_inputs() -> (WorkspaceHead, ChangeSet) {
+    let base = ResourceSnapshotRef::new("workspace", "sha256:base").with_resource_kind("workspace");
+    let candidate =
+        ResourceSnapshotRef::new("workspace", "sha256:candidate").with_resource_kind("workspace");
+    let head = WorkspaceHead::new("workspace", base.clone(), 7);
+    let change_set = ChangeSet {
+        change_set_id: "change-1".to_owned(),
+        base: base.clone(),
+        candidate: candidate.clone(),
+        operations: Vec::new(),
+        summary: None,
+    };
+    (head, change_set)
+}
+
+#[test]
+fn workspace_commit_rejects_cross_workspace_base_identity() {
+    let (head, change_set) = workspace_commit_identity_inputs();
+
+    let wrong_base = ChangeSet {
+        base: ResourceSnapshotRef::new("other-workspace", "sha256:base")
+            .with_resource_kind("workspace"),
+        ..change_set.clone()
+    };
+    let error = head
+        .commit(WorkspaceCommitRequest::new(
+            "commit-wrong-base",
+            wrong_base,
+            7,
+        ))
+        .expect_err("base identity from another workspace must be rejected");
+    assert!(error.to_string().contains("base targets workspace"));
+}
+
+#[test]
+fn workspace_commit_rejects_cross_workspace_candidate_identity() {
+    let (head, change_set) = workspace_commit_identity_inputs();
+
+    let wrong_candidate = ChangeSet {
+        candidate: ResourceSnapshotRef::new("other-workspace", "sha256:candidate")
+            .with_resource_kind("workspace"),
+        ..change_set.clone()
+    };
+    let error = head
+        .commit(WorkspaceCommitRequest::new(
+            "commit-wrong-candidate",
+            wrong_candidate,
+            7,
+        ))
+        .expect_err("candidate identity from another workspace must be rejected");
+    assert!(error.to_string().contains("candidate targets workspace"));
+}
+
+#[test]
+fn workspace_commit_rejects_stale_passing_gate_subject() {
+    let (head, change_set) = workspace_commit_identity_inputs();
+
+    let stale_gate = evaluate_gate(
+        "quality",
+        ResourceSnapshotRef::new("workspace", "sha256:stale-candidate")
+            .with_resource_kind("workspace"),
+        &[],
+        &[],
+        None::<[&str; 0]>,
+        &[],
+        None,
+    );
+    assert_eq!(stale_gate.decision, GateDecision::Pass);
+    let error = head
+        .commit(
+            WorkspaceCommitRequest::new("commit-stale-gate", change_set, 7).with_gate(stale_gate),
+        )
+        .expect_err("passing gate for another candidate must be rejected");
+    assert!(error.to_string().contains("gate subject"));
+}
+
 #[test]
 fn evaluate_gate_supports_rollout_regression_for_minimized_metrics() {
     let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");

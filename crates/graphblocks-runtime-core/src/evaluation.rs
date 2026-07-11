@@ -290,6 +290,22 @@ impl WorkspaceHead {
         &self,
         request: WorkspaceCommitRequest,
     ) -> Result<(Self, WorkspaceCommitRecord), WorkspaceCommitError> {
+        for (field, actual_workspace_id) in [
+            ("head", self.current.resource_id.as_str()),
+            ("base", request.change_set.base.resource_id.as_str()),
+            (
+                "candidate",
+                request.change_set.candidate.resource_id.as_str(),
+            ),
+        ] {
+            if actual_workspace_id != self.workspace_id {
+                return Err(WorkspaceCommitError::WorkspaceIdentityMismatch {
+                    field,
+                    expected_workspace_id: self.workspace_id.clone(),
+                    actual_workspace_id: actual_workspace_id.to_owned(),
+                });
+            }
+        }
         if request.expected_base_revision != self.revision
             || request.change_set.base.digest != self.current.digest
         {
@@ -313,13 +329,20 @@ impl WorkspaceHead {
                     .unwrap_or_default(),
             });
         }
-        if let Some(gate) = &request.gate
-            && gate.decision != GateDecision::Pass
-        {
-            return Err(WorkspaceCommitError::GateNotPassed {
-                gate_id: gate.gate_id.clone(),
-                decision: gate.decision,
-            });
+        if let Some(gate) = &request.gate {
+            if gate.subject != request.change_set.candidate {
+                return Err(WorkspaceCommitError::GateSubjectMismatch {
+                    gate_id: gate.gate_id.clone(),
+                    expected_digest: request.change_set.candidate.digest.clone(),
+                    actual_digest: gate.subject.digest.clone(),
+                });
+            }
+            if gate.decision != GateDecision::Pass {
+                return Err(WorkspaceCommitError::GateNotPassed {
+                    gate_id: gate.gate_id.clone(),
+                    decision: gate.decision,
+                });
+            }
         }
         for review in &request.reviews {
             if !matches!(
@@ -447,6 +470,11 @@ impl WorkspaceCommitRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceCommitError {
+    WorkspaceIdentityMismatch {
+        field: &'static str,
+        expected_workspace_id: String,
+        actual_workspace_id: String,
+    },
     StaleHead {
         expected_revision: u64,
         actual_revision: u64,
@@ -460,6 +488,11 @@ pub enum WorkspaceCommitError {
         gate_id: String,
         decision: GateDecision,
     },
+    GateSubjectMismatch {
+        gate_id: String,
+        expected_digest: String,
+        actual_digest: String,
+    },
     ReviewInvalid {
         review_id: String,
     },
@@ -472,6 +505,14 @@ pub enum WorkspaceCommitError {
 impl fmt::Display for WorkspaceCommitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::WorkspaceIdentityMismatch {
+                field,
+                expected_workspace_id,
+                actual_workspace_id,
+            } => write!(
+                formatter,
+                "workspace commit {field} targets workspace {actual_workspace_id:?}, expected {expected_workspace_id:?}"
+            ),
             Self::StaleHead {
                 expected_revision,
                 actual_revision,
@@ -490,6 +531,14 @@ impl fmt::Display for WorkspaceCommitError {
                     "workspace commit gate {gate_id:?} did not pass: {decision:?}"
                 )
             }
+            Self::GateSubjectMismatch {
+                gate_id,
+                expected_digest,
+                actual_digest,
+            } => write!(
+                formatter,
+                "workspace commit gate subject {gate_id:?} has digest {actual_digest}, expected {expected_digest}"
+            ),
             Self::ReviewInvalid { review_id } => {
                 write!(
                     formatter,

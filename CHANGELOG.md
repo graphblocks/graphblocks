@@ -85,6 +85,8 @@ pre-release alpha software.
   authority before acquisition as well as at or after expiry.
 - Retained governed-trial lease evidence in workspace commit requests and
   revalidated required lease kinds at the immediate commit time.
+- Bound native workspace commits to matching head, base, candidate, and gate
+  identities instead of accepting digest-only cross-workspace substitutions.
 
 ### Removed
 

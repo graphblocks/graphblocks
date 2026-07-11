@@ -22,6 +22,10 @@ compare-and-swap commit. Any mismatch rejects the commit without partially
 applying the candidate. Review or gate evidence from an earlier candidate MUST
 NOT authorize a changed candidate. A successful commit MUST retain the commit
 identity authorized by its request.
+The workspace head, change-set base, and change-set candidate MUST all name the
+same workspace; matching digests cannot substitute for workspace identity. A
+passing gate MUST bind the complete candidate reference, not merely report a
+passing decision.
 Lease-bearing requests MUST be committed with an explicit evaluation time. A
 required lease that is not yet acquired, has expired, belongs to another trial,
 or was not retained by the request MUST reject the commit.
