@@ -43,6 +43,16 @@ fn sqlite_callback_delivery_path(label: &str) -> std::path::PathBuf {
     ))
 }
 
+fn sqlite_callback_dead_letter_path(label: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocksd-callback-dead-letter-{label}-{unique}.sqlite3"
+    ))
+}
+
 fn waiting_daemon_async_operation() -> AsyncOperation {
     AsyncOperation::new(
         "op-1",
@@ -115,6 +125,7 @@ fn complete_daemon_callback_delivery(
     claim: &serde_json::Value,
     response: &[&str],
     now_unix_ms: &str,
+    retry_max_attempts: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let delivery_id = claim
         .pointer("/delivery/deliveryId")
@@ -143,7 +154,7 @@ fn complete_daemon_callback_delivery(
         "--now-unix-ms",
         now_unix_ms,
         "--retry-max-attempts",
-        "3",
+        retry_max_attempts,
         "--retry-base-delay-ms",
         "100",
         "--retry-max-delay-ms",
@@ -358,8 +369,13 @@ fn graphblocksd_claims_and_completes_callback_delivery() -> Result<(), Box<dyn s
         Some(1)
     );
 
-    let completed =
-        complete_daemon_callback_delivery(path_text, claim, &["--response", "success"], "1100")?;
+    let completed = complete_daemon_callback_delivery(
+        path_text,
+        claim,
+        &["--response", "success"],
+        "1100",
+        "3",
+    )?;
     assert_eq!(
         completed
             .pointer("/delivery/status")
@@ -403,6 +419,7 @@ fn graphblocksd_retries_callback_delivery_after_server_error()
         claim,
         &["--response", "server_error", "--status-code", "503"],
         "1100",
+        "3",
     )?;
 
     assert_eq!(
@@ -436,6 +453,127 @@ fn graphblocksd_retries_callback_delivery_after_server_error()
             .pointer("/claimed/0/delivery/attempt")
             .and_then(|value| value.as_u64()),
         Some(2)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let delivery_path = sqlite_callback_delivery_path("dead-letter-redrive");
+    let dead_letter_path = sqlite_callback_dead_letter_path("dead-letter-redrive");
+    let delivery_path_text = delivery_path
+        .to_str()
+        .ok_or("temporary callback delivery path is not valid utf-8")?;
+    let dead_letter_path_text = dead_letter_path
+        .to_str()
+        .ok_or("temporary callback dead-letter path is not valid utf-8")?;
+
+    enqueue_daemon_callback_delivery(delivery_path_text)?;
+    let claimed = claim_daemon_callback_deliveries(delivery_path_text, "1000")?;
+    let claim = claimed
+        .pointer("/claimed/0")
+        .ok_or("claimed delivery should be returned")?;
+    let dead_lettered = complete_daemon_callback_delivery(
+        delivery_path_text,
+        claim,
+        &["--response", "server_error", "--status-code", "503"],
+        "1100",
+        "1",
+    )?;
+    assert_eq!(
+        dead_lettered
+            .pointer("/delivery/status")
+            .and_then(|value| value.as_str()),
+        Some("dead_lettered")
+    );
+
+    let moved_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "move-callback-to-dead-letter",
+            "--callback-delivery-store",
+            delivery_path_text,
+            "--callback-dead-letter-store",
+            dead_letter_path_text,
+            "--delivery-id",
+            "del-sub-1-event-1",
+            "--dead-lettered-at-unix-ms",
+            "1200",
+        ])
+        .output()?;
+    assert!(moved_output.status.success());
+    let moved = serde_json::from_slice::<serde_json::Value>(&moved_output.stdout)?;
+    assert_eq!(
+        moved
+            .pointer("/deadLetter/originalDeliveryId")
+            .and_then(|value| value.as_str()),
+        Some("del-sub-1-event-1")
+    );
+    assert_eq!(
+        moved
+            .pointer("/deadLetter/attemptHistory")
+            .and_then(|value| value.as_array())
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let redriven_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "redrive-callback-delivery",
+            "--callback-delivery-store",
+            delivery_path_text,
+            "--callback-dead-letter-store",
+            dead_letter_path_text,
+            "--delivery-id",
+            "del-sub-1-event-1",
+            "--operator",
+            "operator:alice",
+            "--reason",
+            "receiver recovered",
+            "--redriven-at-unix-ms",
+            "1300",
+        ])
+        .output()?;
+    assert!(redriven_output.status.success());
+    let redriven = serde_json::from_slice::<serde_json::Value>(&redriven_output.stdout)?;
+    assert_eq!(
+        redriven
+            .pointer("/delivery/status")
+            .and_then(|value| value.as_str()),
+        Some("pending")
+    );
+    assert_eq!(
+        redriven
+            .pointer("/delivery/attempt")
+            .and_then(|value| value.as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        redriven
+            .pointer("/delivery/redriveCount")
+            .and_then(|value| value.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        redriven
+            .pointer("/delivery/lastRedriveOperator")
+            .and_then(|value| value.as_str()),
+        Some("operator:alice")
+    );
+
+    let claimed_again = claim_daemon_callback_deliveries(delivery_path_text, "1300")?;
+    assert_eq!(
+        claimed_again
+            .pointer("/claimed/0/delivery/attempt")
+            .and_then(|value| value.as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        claimed_again
+            .pointer("/claimed/0/delivery/status")
+            .and_then(|value| value.as_str()),
+        Some("delivering")
     );
 
     Ok(())

@@ -6,9 +6,9 @@ use graphblocks_runtime_core::async_operation::{
     AsyncOperationState, ExternalCallbackReceived, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::callback_delivery::{
-    CallbackDelivery, CallbackDeliveryError, CallbackDeliveryResponse, CallbackDeliveryScheduler,
-    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, ClaimedCallbackDelivery,
-    SqliteCallbackDeliveryQueue,
+    CallbackDeadLetter, CallbackDelivery, CallbackDeliveryError, CallbackDeliveryResponse,
+    CallbackDeliveryScheduler, CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy,
+    ClaimedCallbackDelivery, SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue,
 };
 use graphblocks_runtime_core::run_store::{
     RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
@@ -74,13 +74,15 @@ fn main() {
         Some("enqueue-callback-delivery") => run_enqueue_callback_delivery(args.collect()),
         Some("claim-callback-deliveries") => run_claim_callback_deliveries(args.collect()),
         Some("complete-callback-delivery") => run_complete_callback_delivery(args.collect()),
+        Some("move-callback-to-dead-letter") => run_move_callback_to_dead_letter(args.collect()),
+        Some("redrive-callback-delivery") => run_redrive_callback_delivery(args.collect()),
         Some("cancel-async-operation") => run_cancel_async_operation(args.collect()),
         Some("expire-async-operation") => run_expire_async_operation(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|enqueue-callback-delivery|claim-callback-deliveries|complete-callback-delivery|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|enqueue-callback-delivery|claim-callback-deliveries|complete-callback-delivery|move-callback-to-dead-letter|redrive-callback-delivery|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -1211,6 +1213,142 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
     }))
 }
 
+fn run_move_callback_to_dead_letter(args: Vec<String>) -> Result<Value, CliError> {
+    let mut callback_delivery_store = None;
+    let mut callback_dead_letter_store = None;
+    let mut delivery_id = None;
+    let mut dead_lettered_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--callback-delivery-store" => {
+                callback_delivery_store = Some(next_arg(&mut args, "--callback-delivery-store")?);
+            }
+            "--callback-dead-letter-store" => {
+                callback_dead_letter_store =
+                    Some(next_arg(&mut args, "--callback-dead-letter-store")?);
+            }
+            "--delivery-id" => {
+                delivery_id = Some(next_arg(&mut args, "--delivery-id")?);
+            }
+            "--dead-lettered-at-unix-ms" => {
+                let value = next_arg(&mut args, "--dead-lettered-at-unix-ms")?;
+                dead_lettered_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--dead-lettered-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let delivery_store = SqliteCallbackDeliveryQueue::open(
+        callback_delivery_store
+            .ok_or_else(|| CliError::Usage("--callback-delivery-store is required".to_owned()))?,
+    )
+    .map_err(CliError::CallbackDelivery)?;
+    let dead_letter_store =
+        SqliteCallbackDeadLetterStore::open(callback_dead_letter_store.ok_or_else(|| {
+            CliError::Usage("--callback-dead-letter-store is required".to_owned())
+        })?)
+        .map_err(CliError::CallbackDelivery)?;
+    let delivery_id =
+        delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?;
+    let delivery = delivery_store
+        .get_delivery(&delivery_id)
+        .map_err(CliError::CallbackDelivery)?
+        .ok_or_else(|| {
+            CliError::CallbackDelivery(CallbackDeliveryError::Storage {
+                message: format!("callback delivery {delivery_id} was not found"),
+            })
+        })?;
+    let dead_letter = CallbackDeadLetter::from_delivery(
+        delivery,
+        dead_lettered_at_unix_ms
+            .ok_or_else(|| CliError::Usage("--dead-lettered-at-unix-ms is required".to_owned()))?,
+    )
+    .map_err(CliError::CallbackDelivery)?;
+
+    dead_letter_store
+        .insert_dead_letter(dead_letter.clone())
+        .map_err(CliError::CallbackDelivery)?;
+
+    Ok(json!({
+        "ok": true,
+        "deadLetter": callback_dead_letter_json(&dead_letter),
+    }))
+}
+
+fn run_redrive_callback_delivery(args: Vec<String>) -> Result<Value, CliError> {
+    let mut callback_delivery_store = None;
+    let mut callback_dead_letter_store = None;
+    let mut delivery_id = None;
+    let mut operator = None;
+    let mut reason = None;
+    let mut redriven_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--callback-delivery-store" => {
+                callback_delivery_store = Some(next_arg(&mut args, "--callback-delivery-store")?);
+            }
+            "--callback-dead-letter-store" => {
+                callback_dead_letter_store =
+                    Some(next_arg(&mut args, "--callback-dead-letter-store")?);
+            }
+            "--delivery-id" => {
+                delivery_id = Some(next_arg(&mut args, "--delivery-id")?);
+            }
+            "--operator" => {
+                operator = Some(next_arg(&mut args, "--operator")?);
+            }
+            "--reason" => {
+                reason = Some(next_arg(&mut args, "--reason")?);
+            }
+            "--redriven-at-unix-ms" => {
+                let value = next_arg(&mut args, "--redriven-at-unix-ms")?;
+                redriven_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--redriven-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let delivery_store = SqliteCallbackDeliveryQueue::open(
+        callback_delivery_store
+            .ok_or_else(|| CliError::Usage("--callback-delivery-store is required".to_owned()))?,
+    )
+    .map_err(CliError::CallbackDelivery)?;
+    let dead_letter_store =
+        SqliteCallbackDeadLetterStore::open(callback_dead_letter_store.ok_or_else(|| {
+            CliError::Usage("--callback-dead-letter-store is required".to_owned())
+        })?)
+        .map_err(CliError::CallbackDelivery)?;
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 1, 1));
+    let redriven = dead_letter_store
+        .redrive_dead_letter(
+            &scheduler,
+            &delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?,
+            operator.ok_or_else(|| CliError::Usage("--operator is required".to_owned()))?,
+            reason.ok_or_else(|| CliError::Usage("--reason is required".to_owned()))?,
+            redriven_at_unix_ms
+                .ok_or_else(|| CliError::Usage("--redriven-at-unix-ms is required".to_owned()))?,
+        )
+        .map_err(CliError::CallbackDelivery)?;
+    delivery_store
+        .upsert_delivery(redriven.clone())
+        .map_err(CliError::CallbackDelivery)?;
+
+    Ok(json!({
+        "ok": true,
+        "delivery": callback_delivery_json(&redriven),
+    }))
+}
+
 fn run_cancel_async_operation(args: Vec<String>) -> Result<Value, CliError> {
     let options = parse_terminal_async_operation_options(args, "--cancelled-at-unix-ms")?;
     let store = SqliteAsyncOperationStore::open(&options.async_operation_store)
@@ -1718,6 +1856,23 @@ fn claimed_callback_delivery_json(claimed: &ClaimedCallbackDelivery) -> Value {
         "claimGeneration": claimed.claim_generation,
         "claimExpiresAtUnixMs": claimed.claim_expires_at_unix_ms,
         "delivery": callback_delivery_json(&claimed.delivery),
+    })
+}
+
+fn callback_dead_letter_json(dead_letter: &CallbackDeadLetter) -> Value {
+    json!({
+        "originalDeliveryId": dead_letter.original_delivery_id,
+        "subscriptionId": dead_letter.subscription_id,
+        "eventId": dead_letter.event_id,
+        "runId": dead_letter.run_id,
+        "sequence": dead_letter.sequence,
+        "cursor": dead_letter.cursor,
+        "idempotencyKey": dead_letter.idempotency_key,
+        "failurePolicy": callback_failure_policy_name(dead_letter.failure_policy),
+        "attemptHistory": dead_letter.attempt_history,
+        "lastError": dead_letter.last_error,
+        "deadLetteredAtUnixMs": dead_letter.dead_lettered_at_unix_ms,
+        "redriveCount": dead_letter.redrive_count,
     })
 }
 

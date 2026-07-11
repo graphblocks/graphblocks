@@ -49,7 +49,8 @@ outcome. Missing secrets, signing failure, and transport failure fail closed.
 Delivery is at least once. Dead-letter redrive MUST continue the original
 consecutive attempt history without duplicating the application event.
 The reference daemon exposes `enqueue-callback-delivery`,
-`claim-callback-deliveries`, and `complete-callback-delivery` as
+`claim-callback-deliveries`, `complete-callback-delivery`,
+`move-callback-to-dead-letter`, and `redrive-callback-delivery` as
 SQLite-backed callback-delivery queue operations. Enqueue stores a pending
 delivery identity, claim moves due deliveries to `delivering` with a lease and
 claim generation, and completion records success, duplicate acknowledgement,
@@ -57,6 +58,11 @@ target-gone cancellation, rate-limit retry, server-error retry/dead-letter, or
 client-error failure through the runtime scheduler. Claim generation and lease
 expiration are returned to workers and MUST be presented back on completion, so
 recovered or superseded claims cannot overwrite a newer terminal delivery.
+Dead-letter movement stores immutable delivery identity, consecutive attempt
+history, error reason, and redrive count in the dead-letter store. Redrive MUST
+preserve the original delivery identity and idempotency key, append operator
+audit fields, increment attempt/redrive counters, and reinsert the delivery as
+pending only through the queue's terminal-state redrive transition.
 
 ## Async operations and receipt admission
 
