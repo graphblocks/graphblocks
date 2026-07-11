@@ -77,6 +77,8 @@ pre-release alpha software.
   rejected symlink escapes before writing blob content.
 - Made local blob reads reject malformed sidecars and content that no longer
   matches its recorded checksum or size.
+- Aligned native local blob pagination with canonical decimal cursors and made
+  maximum-value cursors overflow-safe.
 
 ### Removed
 

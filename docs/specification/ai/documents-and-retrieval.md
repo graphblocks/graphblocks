@@ -16,6 +16,9 @@ a rejected key cannot leave a partial blob behind.
 When sidecar metadata records a content checksum and size, local `head` and
 `get` operations MUST verify the stored bytes against both values. Malformed
 sidecars or mismatched content MUST fail closed as blob-store errors.
+Numeric cursors emitted or accepted by a local blob store MUST use canonical
+unsigned decimal syntax. Advancing a valid cursor MUST NOT overflow, including
+when a caller supplies the platform's largest representable cursor.
 
 ## Ordered parser fallback
 

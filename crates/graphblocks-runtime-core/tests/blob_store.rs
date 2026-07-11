@@ -185,6 +185,38 @@ fn local_blob_store_lists_sorted_prefix_with_cursor() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn local_blob_store_rejects_noncanonical_list_cursors() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("invalid-list-cursor");
+    let store = LocalBlobStore::new(&root)?;
+    store.put(&BlobKey::new("docs/a.txt"), b"a", PutOptions::new())?;
+
+    for cursor in ["", "+1", "01", "1.0", "one"] {
+        assert!(matches!(
+            store.list("", Some(cursor), 1),
+            Err(BlobStoreError::InvalidCursor { .. })
+        ));
+    }
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn local_blob_store_handles_maximum_list_cursor_without_overflow()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("maximum-list-cursor");
+    let store = LocalBlobStore::new(&root)?;
+    store.put(&BlobKey::new("docs/a.txt"), b"a", PutOptions::new())?;
+
+    let page = store.list("", Some(&usize::MAX.to_string()), 1)?;
+
+    assert!(page.items.is_empty());
+    assert!(page.next_cursor.is_none());
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn local_blob_store_delete_removes_blob() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root("delete");
     let store = LocalBlobStore::new(&root)?;

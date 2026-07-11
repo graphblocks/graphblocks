@@ -643,11 +643,22 @@ impl LocalBlobStore {
             return Err(BlobStoreError::InvalidLimit);
         }
         let start = match cursor {
-            Some(cursor) => cursor
-                .parse::<usize>()
-                .map_err(|_| BlobStoreError::InvalidCursor {
+            Some(cursor)
+                if !cursor.is_empty()
+                    && cursor.bytes().all(|byte| byte.is_ascii_digit())
+                    && (cursor == "0" || !cursor.starts_with('0')) =>
+            {
+                cursor
+                    .parse::<usize>()
+                    .map_err(|_| BlobStoreError::InvalidCursor {
+                        cursor: cursor.to_owned(),
+                    })?
+            }
+            Some(cursor) => {
+                return Err(BlobStoreError::InvalidCursor {
                     cursor: cursor.to_owned(),
-                })?,
+                });
+            }
             None => 0,
         };
         let mut keys = Vec::new();
@@ -700,8 +711,9 @@ impl LocalBlobStore {
             .take(limit)
             .cloned()
             .collect::<Vec<_>>();
-        let next_cursor = if start + limit < keys.len() {
-            Some((start + limit).to_string())
+        let page_end = start.saturating_add(limit);
+        let next_cursor = if page_end < keys.len() {
+            Some(page_end.to_string())
         } else {
             None
         };
