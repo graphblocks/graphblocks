@@ -71,12 +71,18 @@ fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
         return None;
     }
     let second = second_part.split('.').next()?.parse::<u32>().ok()?;
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 60
-    {
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.rem_euclid(4) == 0
+            && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0) =>
+        {
+            29
+        }
+        2 => 28,
+        _ => return None,
+    };
+    if day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 60 {
         return None;
     }
     let days = days_from_civil(year, month, day);

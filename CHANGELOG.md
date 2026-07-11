@@ -54,6 +54,8 @@ pre-release alpha software.
 - Fenced SQLite run mutations against concurrent terminal transitions so stale
   state, tool-evidence, or status writers cannot erase an authoritative run
   outcome.
+- Rejected impossible calendar dates in Rust RAG freshness metadata, matching
+  Python ISO-datetime validation while preserving valid Gregorian leap days.
 
 ### Removed
 

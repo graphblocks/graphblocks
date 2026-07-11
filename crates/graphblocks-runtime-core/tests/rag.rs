@@ -551,6 +551,64 @@ fn build_context_pack_compares_source_modified_at_as_datetime() {
 }
 
 #[test]
+fn build_context_pack_rejects_impossible_source_modified_at_dates() {
+    let hits = [
+        ("hit-invalid-february-day", "2024-02-30T00:00:00Z"),
+        ("hit-invalid-april-day", "2024-04-31T00:00:00Z"),
+        ("hit-invalid-non-leap-day", "2023-02-29T00:00:00Z"),
+        ("hit-valid-leap-day", "2024-02-29T00:00:00Z"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (hit_id, source_modified_at))| {
+        let mut search_hit = hit(
+            hit_id,
+            &format!("chunk-{index}"),
+            &format!("doc-{index}"),
+            source_modified_at,
+            index + 1,
+        );
+        search_hit
+            .metadata
+            .insert("source_modified_at".to_owned(), json!(source_modified_at));
+        search_hit
+    })
+    .collect();
+
+    let context = build_context_pack(
+        "ctx-impossible-dates",
+        hits,
+        ContextBuildOptions::new(10).with_minimum_source_modified_at("2023-01-01T00:00:00Z"),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-valid-leap-day"]
+    );
+    assert_eq!(
+        context.metadata["dropped_hit_ids"],
+        json!([
+            "hit-invalid-february-day",
+            "hit-invalid-april-day",
+            "hit-invalid-non-leap-day",
+        ])
+    );
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({
+            "hit-invalid-february-day": "freshness",
+            "hit-invalid-april-day": "freshness",
+            "hit-invalid-non-leap-day": "freshness",
+        })
+    );
+}
+
+#[test]
 fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
     let keyword_hits = vec![
         hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 1, "keyword"),
