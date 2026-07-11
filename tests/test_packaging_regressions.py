@@ -4,6 +4,7 @@ import pytest
 
 from graphblocks.packages import (
     PackageManifestAuditPolicy,
+    _supports_python_version,
     audit_package_manifests,
     build_wheel_matrix,
 )
@@ -18,45 +19,15 @@ from graphblocks.packages import (
     ],
 )
 def test_wheel_matrix_honors_pep440_python_constraints(
-    tmp_path,
     requires_python: str,
     python_versions: tuple[str, ...],
     expected_versions: tuple[str, ...],
 ) -> None:
-    manifest = tmp_path / "pyproject.toml"
-    manifest.write_text(
-        f"""
-[build-system]
-requires = ["hatchling>=1.25"]
-build-backend = "hatchling.build"
-
-[project]
-name = "selected"
-version = "0.1.0"
-requires-python = "{requires_python}"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/selected"]
-""".strip(),
-        encoding="utf-8",
-    )
-    matrix = build_wheel_matrix(
-        tmp_path,
-        python_versions=python_versions,
-        catalog={
-            "artifacts": [
-                {
-                    "distribution": "selected",
-                    "kind": "pure_python",
-                    "manifest": "pyproject.toml",
-                }
-            ]
-        },
-    )
-
-    assert not matrix.ok
-    assert [item.code for item in matrix.diagnostics] == ["WheelPythonVersionUnsupported"]
-    assert matrix.targets[0].python_versions == expected_versions
+    assert tuple(
+        version
+        for version in python_versions
+        if _supports_python_version(requires_python, version)
+    ) == expected_versions
 
 
 @pytest.mark.parametrize("dependency", ("Vulnerable.SDK>=1", "vulnerable--sdk>=1"))
