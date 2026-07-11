@@ -1370,6 +1370,27 @@ fn acquire_run_ownership_lease(
     })
 }
 
+fn validate_lease_renewal_request(
+    run_id: &str,
+    owner: &str,
+    now_unix_ms: u64,
+    expires_at_unix_ms: u64,
+) -> Result<(), RunStoreError> {
+    if run_id.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "run_id" });
+    }
+    if owner.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "owner" });
+    }
+    if expires_at_unix_ms <= now_unix_ms {
+        return Err(RunStoreError::InvalidRunOwnershipLease {
+            run_id: run_id.to_owned(),
+            reason: "lease expiration must be after renewal",
+        });
+    }
+    Ok(())
+}
+
 fn validate_run_ownership_lease(
     run_id: &str,
     owner: &str,
@@ -1401,6 +1422,29 @@ fn validate_run_ownership_lease(
         });
     }
     Ok(())
+}
+
+fn renew_run_ownership_lease(
+    run_id: &str,
+    owner: &str,
+    lease_id: &str,
+    fencing_epoch: u64,
+    now_unix_ms: u64,
+    expires_at_unix_ms: u64,
+    current: &RunOwnershipLease,
+) -> Result<RunOwnershipLease, RunStoreError> {
+    validate_lease_renewal_request(run_id, owner, now_unix_ms, expires_at_unix_ms)?;
+    validate_run_ownership_lease(run_id, owner, lease_id, fencing_epoch, now_unix_ms, current)?;
+    if expires_at_unix_ms <= current.expires_at_unix_ms {
+        return Err(RunStoreError::InvalidRunOwnershipLease {
+            run_id: run_id.to_owned(),
+            reason: "lease renewal must extend active lease",
+        });
+    }
+
+    let mut renewed = current.clone();
+    renewed.expires_at_unix_ms = expires_at_unix_ms;
+    Ok(renewed)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1701,6 +1745,42 @@ impl InMemoryRunStore {
         self.ownership_leases
             .insert(run_id.to_owned(), lease.clone());
         Ok(lease)
+    }
+
+    pub fn renew_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<RunOwnershipLease, RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let current = self.ownership_leases.get(run_id).ok_or_else(|| {
+            RunStoreError::RunOwnershipLeaseMismatch {
+                run_id: run_id.to_owned(),
+                expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                    owner.as_ref(),
+                    lease_id.as_ref(),
+                    fencing_epoch,
+                )),
+            }
+        })?;
+        let renewed = renew_run_ownership_lease(
+            run_id,
+            owner.as_ref(),
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            expires_at_unix_ms,
+            current,
+        )?;
+        self.ownership_leases
+            .insert(run_id.to_owned(), renewed.clone());
+        Ok(renewed)
     }
 
     pub fn validate_ownership_lease(
@@ -2237,6 +2317,43 @@ impl SqliteRunStore {
         sqlite_upsert_run_ownership_lease(&transaction, &lease)?;
         transaction.commit().map_err(storage_error)?;
         Ok(lease)
+    }
+
+    pub fn renew_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<RunOwnershipLease, RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let current = sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
+            RunStoreError::RunOwnershipLeaseMismatch {
+                run_id: run_id.to_owned(),
+                expected: Box::new(RunOwnershipLeaseIdentity::attempted("", "", 0)),
+                actual: Box::new(RunOwnershipLeaseIdentity::attempted(
+                    owner.as_ref(),
+                    lease_id.as_ref(),
+                    fencing_epoch,
+                )),
+            }
+        })?;
+        let renewed = renew_run_ownership_lease(
+            run_id,
+            owner.as_ref(),
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            expires_at_unix_ms,
+            &current,
+        )?;
+        sqlite_upsert_run_ownership_lease(&transaction, &renewed)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(renewed)
     }
 
     pub fn validate_ownership_lease(

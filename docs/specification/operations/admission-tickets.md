@@ -47,6 +47,9 @@ TTL and MUST never execute. An admitted or running claim uses an internal,
 monotonically increasing fencing token bound to the server-side owner identity.
 Workers MUST present the current owner identity and fence when starting,
 mutating, or completing work; stale or forged-owner claims fail closed.
+The current owner MAY renew an active claim lease without changing the fencing
+token, but renewal MUST extend the existing expiration and MUST fail after the
+claim expires or another owner acquires a newer fence.
 Fencing and owner data are server-internal and MUST NOT be exposed as client
 capabilities.
 

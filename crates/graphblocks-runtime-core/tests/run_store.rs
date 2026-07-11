@@ -587,6 +587,195 @@ fn run_store_ownership_lease_rejects_forged_owner_identity() -> Result<(), RunSt
 }
 
 #[test]
+fn run_store_renews_ownership_lease_without_changing_fence() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_invocation_mode(
+        "sha256:graph",
+        json!({}),
+        RunInvocationMode::Background,
+    );
+    let lease = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
+
+    let renewed = store.renew_ownership_lease(
+        &record.run_id,
+        "coordinator-a",
+        &lease.lease_id,
+        lease.fencing_epoch,
+        1_200,
+        2_500,
+    )?;
+
+    assert_eq!(renewed.run_id, lease.run_id);
+    assert_eq!(renewed.lease_id, lease.lease_id);
+    assert_eq!(renewed.owner, lease.owner);
+    assert_eq!(renewed.fencing_epoch, lease.fencing_epoch);
+    assert_eq!(renewed.acquired_at_unix_ms, lease.acquired_at_unix_ms);
+    assert_eq!(renewed.expires_at_unix_ms, 2_500);
+    assert_eq!(
+        store.acquire_ownership_lease(&record.run_id, "coordinator-b", 2_000, 3_000),
+        Err(RunStoreError::RunOwnershipLeaseActive {
+            run_id: record.run_id.clone(),
+            owner: "coordinator-a".to_owned(),
+            expires_at_unix_ms: 2_500,
+        })
+    );
+    store.set_status_with_ownership_lease(
+        &record.run_id,
+        RunStatus::Running,
+        "coordinator-a",
+        &renewed.lease_id,
+        renewed.fencing_epoch,
+        2_400,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn run_store_rejects_invalid_or_stale_ownership_lease_renewal() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_invocation_mode(
+        "sha256:graph",
+        json!({}),
+        RunInvocationMode::Background,
+    );
+    let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
+
+    assert_eq!(
+        store.renew_ownership_lease(
+            &record.run_id,
+            "coordinator-forged",
+            &first.lease_id,
+            first.fencing_epoch,
+            1_100,
+            2_500,
+        ),
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: record.run_id.clone(),
+            expected: run_lease_identity("coordinator-a", &first.lease_id, first.fencing_epoch),
+            actual: run_lease_identity("coordinator-forged", &first.lease_id, first.fencing_epoch),
+        })
+    );
+    assert_eq!(
+        store.renew_ownership_lease(
+            &record.run_id,
+            "coordinator-a",
+            &first.lease_id,
+            first.fencing_epoch,
+            1_600,
+            2_500,
+        ),
+        Err(RunStoreError::RunOwnershipLeaseExpired {
+            run_id: record.run_id.clone(),
+            lease_id: first.lease_id.clone(),
+            expires_at_unix_ms: 1_500,
+            now_unix_ms: 1_600,
+        })
+    );
+
+    let second = store.acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_200)?;
+    assert_eq!(
+        store.renew_ownership_lease(
+            &record.run_id,
+            "coordinator-a",
+            &first.lease_id,
+            first.fencing_epoch,
+            1_700,
+            2_600,
+        ),
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: record.run_id.clone(),
+            expected: run_lease_identity("coordinator-b", &second.lease_id, second.fencing_epoch,),
+            actual: run_lease_identity("coordinator-a", &first.lease_id, first.fencing_epoch),
+        })
+    );
+    assert_eq!(
+        store.renew_ownership_lease(
+            &record.run_id,
+            "coordinator-b",
+            &second.lease_id,
+            second.fencing_epoch,
+            2_000,
+            2_100,
+        ),
+        Err(RunStoreError::InvalidRunOwnershipLease {
+            run_id: record.run_id,
+            reason: "lease renewal must extend active lease",
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_persists_renewed_ownership_lease_across_reopen() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-lease-renewal-{}.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let record = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let lease = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)
+            .map_err(|error| format!("{error:?}"))?;
+        let renewed = store
+            .renew_ownership_lease(
+                &record.run_id,
+                "coordinator-a",
+                &lease.lease_id,
+                lease.fencing_epoch,
+                1_200,
+                2_500,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+
+        assert_eq!(
+            renewed,
+            RunOwnershipLease {
+                run_id: record.run_id,
+                lease_id: "run-000001:1".to_owned(),
+                owner: "coordinator-a".to_owned(),
+                fencing_epoch: 1,
+                acquired_at_unix_ms: 1_000,
+                expires_at_unix_ms: 2_500,
+            }
+        );
+    }
+
+    let mut reopened = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        reopened
+            .acquire_ownership_lease("run-000001", "coordinator-b", 2_000, 3_000)
+            .map_err(|error| format!("{error:?}")),
+        Err(
+            "RunOwnershipLeaseActive { run_id: \"run-000001\", owner: \"coordinator-a\", expires_at_unix_ms: 2500 }"
+                .to_owned()
+        )
+    );
+    reopened
+        .set_status_with_ownership_lease(
+            "run-000001",
+            RunStatus::Running,
+            "coordinator-a",
+            "run-000001:1",
+            1,
+            2_400,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn sqlite_run_store_persists_ownership_lease_across_reopen_and_allows_failover()
 -> Result<(), String> {
     let mut path = std::env::temp_dir();
