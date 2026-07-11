@@ -1,7 +1,9 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
-use graphblocks_runtime_durable::{CheckpointRecoveryClaim, SqliteCheckpointStore};
+use graphblocks_runtime_durable::{
+    CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
+};
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use serde_json::{Value, json};
 
@@ -35,7 +37,7 @@ enum CliError {
     ParseJson(String),
     Config(String),
     Registry(WorkerRegistryError),
-    CheckpointStore(String),
+    CheckpointStore(CheckpointStoreError),
     Render(String),
 }
 
@@ -169,8 +171,8 @@ fn run_claim_checkpoint(args: Vec<String>) -> Result<Value, CliError> {
     let expires_at_unix_ms = expires_at_unix_ms
         .ok_or_else(|| CliError::Usage("--expires-at-unix-ms is required".to_owned()))?;
 
-    let mut store = SqliteCheckpointStore::open(checkpoint_store)
-        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+    let mut store =
+        SqliteCheckpointStore::open(checkpoint_store).map_err(CliError::CheckpointStore)?;
     let recovery = store
         .claim_latest_compatible(
             &run_id,
@@ -182,7 +184,7 @@ fn run_claim_checkpoint(args: Vec<String>) -> Result<Value, CliError> {
             now_unix_ms,
             expires_at_unix_ms,
         )
-        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+        .map_err(CliError::CheckpointStore)?;
 
     Ok(json!({
         "ok": true,
@@ -288,11 +290,11 @@ fn run_complete_checkpoint_claim(args: Vec<String>) -> Result<Value, CliError> {
     };
     let now_unix_ms =
         now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
-    let mut store = SqliteCheckpointStore::open(checkpoint_store)
-        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+    let mut store =
+        SqliteCheckpointStore::open(checkpoint_store).map_err(CliError::CheckpointStore)?;
     store
         .complete_claim(&claim, now_unix_ms)
-        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+        .map_err(CliError::CheckpointStore)?;
 
     Ok(json!({
         "ok": true,
@@ -407,8 +409,86 @@ impl CliError {
             Self::Registry(error) => {
                 json!({"ok": false, "error": worker_registry_error_json(error)})
             }
-            Self::CheckpointStore(message) => {
-                json!({"ok": false, "error": {"code": "daemon.checkpoint_store", "message": message}})
+            Self::CheckpointStore(error) => {
+                let error = match error {
+                    CheckpointStoreError::InvalidBarrier(source) => json!({
+                        "code": "daemon.checkpoint.invalid_barrier",
+                        "message": format!("{source:?}"),
+                    }),
+                    CheckpointStoreError::StaleStateRevision {
+                        run_id,
+                        current,
+                        attempted,
+                    } => json!({
+                        "code": "daemon.checkpoint.stale_state_revision",
+                        "runId": run_id,
+                        "current": current,
+                        "attempted": attempted,
+                    }),
+                    CheckpointStoreError::CompatibleCheckpointNotFound {
+                        run_id,
+                        release_id,
+                        deployment_revision_id,
+                        plan_hash,
+                    } => json!({
+                        "code": "daemon.checkpoint.not_found",
+                        "runId": run_id,
+                        "releaseId": release_id,
+                        "deploymentRevisionId": deployment_revision_id,
+                        "planHash": plan_hash,
+                    }),
+                    CheckpointStoreError::InvalidRecoveryClaim { field } => json!({
+                        "code": "daemon.checkpoint.invalid_recovery_claim",
+                        "field": field,
+                    }),
+                    CheckpointStoreError::ActiveRecoveryClaim {
+                        run_id,
+                        worker_id,
+                        lease_id,
+                        expires_at_unix_ms,
+                    } => json!({
+                        "code": "daemon.checkpoint.active_recovery_claim",
+                        "runId": run_id,
+                        "workerId": worker_id,
+                        "leaseId": lease_id,
+                        "expiresAtUnixMs": expires_at_unix_ms,
+                    }),
+                    CheckpointStoreError::RecoveryClaimNotFound { run_id } => json!({
+                        "code": "daemon.checkpoint.recovery_claim_not_found",
+                        "runId": run_id,
+                    }),
+                    CheckpointStoreError::RecoveryClaimMismatch {
+                        run_id,
+                        expected_lease_id,
+                        expected_fencing_epoch,
+                        actual_lease_id,
+                        actual_fencing_epoch,
+                    } => json!({
+                        "code": "daemon.checkpoint.recovery_claim_mismatch",
+                        "runId": run_id,
+                        "expectedLeaseId": expected_lease_id,
+                        "expectedFencingEpoch": expected_fencing_epoch,
+                        "actualLeaseId": actual_lease_id,
+                        "actualFencingEpoch": actual_fencing_epoch,
+                    }),
+                    CheckpointStoreError::RecoveryClaimExpired {
+                        run_id,
+                        lease_id,
+                        expires_at_unix_ms,
+                        now_unix_ms,
+                    } => json!({
+                        "code": "daemon.checkpoint.recovery_claim_expired",
+                        "runId": run_id,
+                        "leaseId": lease_id,
+                        "expiresAtUnixMs": expires_at_unix_ms,
+                        "nowUnixMs": now_unix_ms,
+                    }),
+                    CheckpointStoreError::Storage { message } => json!({
+                        "code": "daemon.checkpoint.storage",
+                        "message": message,
+                    }),
+                };
+                json!({"ok": false, "error": error})
             }
             Self::Render(message) => {
                 json!({"ok": false, "error": {"code": "json.render_failed", "message": message}})

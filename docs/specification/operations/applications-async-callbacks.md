@@ -80,7 +80,9 @@ re-evaluation, budget reservation, release compatibility, and ownership fence.
 runtime implementations MUST claim the latest compatible checkpoint with a
 lease and fencing epoch before resuming; stale or expired claims MUST NOT
 complete resume. Restart-durable stores MUST preserve active claims and the
-next fencing epoch across coordinator restart.
+next fencing epoch across coordinator restart. Control-plane claim and
+completion APIs SHOULD expose active-claim, missing-checkpoint, stale-fence,
+and expired-claim failures as structured machine-readable errors.
 
 If no executor is available, a valid receipt remains recorded and the run may
 project a paused callback-delivery state for explicit retry. The Python
