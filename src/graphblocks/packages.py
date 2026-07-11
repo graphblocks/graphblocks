@@ -7,6 +7,7 @@ import tomllib
 from typing import Any, Literal
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 import yaml
@@ -484,32 +485,12 @@ def _pyproject_paths(root_path: Path) -> list[Path]:
 
 
 def _supports_python_version(requires_python: str, version: str) -> bool:
-    text = requires_python.strip()
-    if not text:
+    if not requires_python.strip():
         return False
-    major_minor = tuple(int(part) for part in version.split(".")[:2])
-    for clause in (part.strip() for part in text.split(",")):
-        if not clause:
-            continue
-        for operator in (">=", "==", ">", "<=", "<"):
-            if clause.startswith(operator):
-                raw_bound = clause[len(operator) :].strip()
-                bound_parts = raw_bound.split(".")[:2]
-                if not all(part.isdigit() for part in bound_parts):
-                    continue
-                bound = tuple(int(part) for part in bound_parts)
-                if operator == ">=" and major_minor < bound:
-                    return False
-                if operator == ">" and major_minor <= bound:
-                    return False
-                if operator == "<=" and major_minor > bound:
-                    return False
-                if operator == "<" and major_minor >= bound:
-                    return False
-                if operator == "==" and major_minor != bound:
-                    return False
-                break
-    return True
+    try:
+        return SpecifierSet(requires_python).contains(Version(version), prereleases=True)
+    except (InvalidSpecifier, InvalidVersion):
+        return False
 
 
 def build_wheel_matrix(
