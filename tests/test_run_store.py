@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 
 import pytest
 
@@ -369,6 +370,85 @@ def test_sqlite_run_store_rejects_malformed_deployment_provenance_on_replay(tmp_
 
     with pytest.raises(ValueError, match="run deployment provenance mapping must be an object"):
         store.get_run(record.run_id)
+
+
+@pytest.mark.parametrize(
+    ("column", "message"),
+    (
+        (
+            "deployment_provenance_json",
+            "run store stored deployment_provenance_json must be valid strict JSON",
+        ),
+        (
+            "model_visible_tools_json",
+            "run store stored model_visible_tools_json must be valid strict JSON",
+        ),
+        ("invocation_mode", "invalid run record invocation_mode None"),
+    ),
+)
+def test_sqlite_run_store_rejects_null_persisted_contract_fields(
+    tmp_path,
+    column: str,
+    message: str,
+) -> None:
+    database = tmp_path / "runs.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """
+        CREATE TABLE runs (
+          run_id TEXT PRIMARY KEY NOT NULL,
+          sequence INTEGER NOT NULL UNIQUE,
+          graph_hash TEXT NOT NULL,
+          inputs_json TEXT NOT NULL,
+          deployment_provenance_json TEXT,
+          invocation_mode TEXT,
+          model_visible_tools_json TEXT,
+          status TEXT NOT NULL,
+          state_json TEXT NOT NULL,
+          state_revision INTEGER NOT NULL
+        )
+        """
+    )
+    values: dict[str, object] = {
+        "deployment_provenance_json": "{}",
+        "invocation_mode": "sync",
+        "model_visible_tools_json": "[]",
+    }
+    values[column] = None
+    connection.execute(
+        """
+        INSERT INTO runs (
+          run_id,
+          sequence,
+          graph_hash,
+          inputs_json,
+          deployment_provenance_json,
+          invocation_mode,
+          model_visible_tools_json,
+          status,
+          state_json,
+          state_revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "run-000001",
+            1,
+            "sha256:test",
+            "{}",
+            values["deployment_provenance_json"],
+            values["invocation_mode"],
+            values["model_visible_tools_json"],
+            "created",
+            "{}",
+            0,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    store = SQLiteRunStore(database)
+
+    with pytest.raises(ValueError, match=message):
+        store.get_run("run-000001")
 
 
 def test_sqlite_run_store_rejects_malformed_deployment_provenance_field_on_replay(tmp_path) -> None:

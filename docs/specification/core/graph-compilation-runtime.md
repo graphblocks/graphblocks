@@ -31,6 +31,10 @@ use an expected revision or equivalent compare-and-swap fence. Replay MUST be
 idempotent for identical authoritative records and reject conflicting identity
 reuse.
 
+Persisted run records MUST fail closed when required deployment provenance,
+invocation mode, or model-visible tool evidence is missing or malformed. Replay
+MUST NOT synthesize defaults for corrupt stored contract fields.
+
 ## Python/native boundary
 
 Python is the authoring and broad reference implementation. Native execution

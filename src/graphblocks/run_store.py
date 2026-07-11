@@ -562,11 +562,11 @@ class SQLiteRunStore:
             graph_hash=str(row["graph_hash"]),
             inputs=_loads_strict_json("run store", "stored inputs_json", str(row["inputs_json"])),
             deployment_provenance=_parse_deployment_provenance_json(
-                str(row["deployment_provenance_json"] or "{}")
+                str(row["deployment_provenance_json"])
             ),
-            invocation_mode=str(row["invocation_mode"] or "sync"),
+            invocation_mode=str(row["invocation_mode"]),
             model_visible_tools=_parse_model_visible_tools_json(
-                str(row["model_visible_tools_json"] or "[]")
+                str(row["model_visible_tools_json"])
             ),
             status=row["status"],
             state=_loads_strict_json("run store", "stored state_json", str(row["state_json"])),
