@@ -205,6 +205,38 @@ fn output_gate_rejects_restored_delivery_beyond_policy_acceptance() {
 }
 
 #[test]
+fn immediate_draft_restore_permits_provisional_delivery() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::from_state_with_delivery_policy(
+        "stream-1",
+        "response-1",
+        Vec::<GenerationChunk>::new(),
+        1,
+        0,
+        1,
+        OutputDeliveryPolicy::immediate_draft(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        ),
+    )?;
+
+    assert_eq!(gate.last_generated_sequence(), 1);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked")
+            .with_draft_disposition(DraftDisposition::Retract),
+        1_100,
+    )?;
+    let cutoff = stopped.cutoff.expect("policy abort records cutoff");
+    assert_eq!(cutoff.last_generated_sequence, 1);
+    assert_eq!(cutoff.last_policy_accepted_sequence, 0);
+    assert_eq!(cutoff.last_client_delivered_sequence, 1);
+    assert_eq!(cutoff.draft_disposition, DraftDisposition::Retract);
+    Ok(())
+}
+
+#[test]
 fn output_gate_resumes_terminal_cutoff_state() -> Result<(), OutputGateError> {
     let cutoff = OutputCutoff {
         stream_id: "stream-1".to_owned(),

@@ -1243,7 +1243,34 @@ impl OutputDeliveryGate {
     where
         I: IntoIterator<Item = GenerationChunk>,
     {
-        let mut gate = Self::new(stream_id, response_id);
+        Self::from_state_with_delivery_policy(
+            stream_id,
+            response_id,
+            pending,
+            last_generated_sequence,
+            last_policy_accepted_sequence,
+            last_client_delivered_sequence,
+            OutputDeliveryPolicy::bounded_holdback(
+                ViolationAction::AbortResponse,
+                DraftDisposition::Retract,
+            )
+            .with_holdback_max_tokens(48),
+        )
+    }
+
+    pub fn from_state_with_delivery_policy<I>(
+        stream_id: impl Into<String>,
+        response_id: impl Into<String>,
+        pending: I,
+        last_generated_sequence: u64,
+        last_policy_accepted_sequence: u64,
+        last_client_delivered_sequence: u64,
+        delivery_policy: OutputDeliveryPolicy,
+    ) -> Result<Self, OutputGateError>
+    where
+        I: IntoIterator<Item = GenerationChunk>,
+    {
+        let mut gate = Self::new(stream_id, response_id).with_delivery_policy(delivery_policy)?;
         gate.validate_identity()?;
         if last_policy_accepted_sequence > last_generated_sequence {
             return Err(OutputGateError::AcceptedSequenceBeyondGenerated {
@@ -1257,7 +1284,9 @@ impl OutputDeliveryGate {
                 last_client_delivered_sequence,
             });
         }
-        if last_client_delivered_sequence > last_policy_accepted_sequence {
+        if last_client_delivered_sequence > last_policy_accepted_sequence
+            && gate.delivery_policy.mode != DeliveryMode::ImmediateDraft
+        {
             return Err(
                 OutputGateError::ClientDeliveredSequenceBeyondPolicyAccepted {
                     last_policy_accepted_sequence,

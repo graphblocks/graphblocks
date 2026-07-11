@@ -19,3 +19,9 @@ delivery, and durable commit. Holdback bounds MUST be finite. A violation MUST
 apply the configured disposition to provider cancellation, pending tool calls,
 delivered drafts, and durable results. Mandatory policy checks fail closed;
 optional advisory checks MUST be identified as such.
+
+When `immediate_draft` is selected, a restored output gate MAY have client
+delivery ahead of policy acceptance because the delivered text is provisional.
+The restored state MUST retain the last generated, last policy-accepted, and
+last client-delivered sequences independently, and later policy decisions MUST
+either accept the draft or emit incomplete/retraction semantics before commit.
