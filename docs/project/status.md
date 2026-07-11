@@ -22,5 +22,6 @@ Python-only advanced reference contracts are listed in
 without Python, and can select a named graph from multi-document YAML, using the
 Rust stdlib runtime. It does not yet inject arbitrary integration adapters.
 Despite its name,
-`graphblocksd` is currently a one-shot worker control-plane CLI rather than a
-long-running HTTP server.
+`graphblocksd` is currently a one-shot worker control-plane CLI for worker
+admission and SQLite checkpoint recovery claims rather than a long-running HTTP
+server.

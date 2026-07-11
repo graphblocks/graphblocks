@@ -1,11 +1,16 @@
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_protocol::{
     BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerDrainDisposition,
     WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
     WorkerInvocationContext, WorkerInvokeRequest, WorkerProtocolErrorPayload,
     WorkerProtocolMessage, WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
+};
+use graphblocks_runtime_durable::{
+    CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
 use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError};
 use serde_json::json;
@@ -290,6 +295,90 @@ fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::er
     assert_eq!(
         payload
             .pointer("/status/rejectedWorkers")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("graphblocksd-checkpoint-claim-{unique}.sqlite3"));
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(CheckpointBarrier {
+            checkpoint_id: "checkpoint-000001".to_owned(),
+            run_id: "run-000001".to_owned(),
+            release_id: "release-2026-07-11".to_owned(),
+            deployment_revision_id: "deployment-rev-1".to_owned(),
+            plan_hash: "sha256:plan".to_owned(),
+            checkpoint_schema: SchemaRef::new("graphblocks.ai/Checkpoint", 1),
+            state_revision: 1,
+            completed_nodes: vec!["begin".to_owned()],
+            pending_nodes: vec!["resume".to_owned()],
+            source_cursors: BTreeMap::from([(
+                "events".to_owned(),
+                SourceCursor::new("events", 0, 7),
+            )]),
+            operator_state: BTreeMap::new(),
+            sink_commit_metadata: BTreeMap::new(),
+            schema_versions: BTreeMap::from([("checkpoint".to_owned(), 1)]),
+            created_at_unix_ms: 1_820_000_000_000,
+        })
+        .expect("checkpoint should persist");
+    drop(store);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "claim-checkpoint",
+            "--checkpoint-store",
+            path.to_str().ok_or("checkpoint path was not utf-8")?,
+            "--run-id",
+            "run-000001",
+            "--release-id",
+            "release-2026-07-11",
+            "--deployment-revision-id",
+            "deployment-rev-1",
+            "--plan-hash",
+            "sha256:plan",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--now-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "2000",
+        ])
+        .stdout(Stdio::piped())
+        .output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .pointer("/checkpoint/checkpointId")
+            .and_then(|value| value.as_str()),
+        Some("checkpoint-000001"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/claim/workerId")
+            .and_then(|value| value.as_str()),
+        Some("worker-1"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/claim/fencingEpoch")
             .and_then(|value| value.as_u64()),
         Some(1),
     );

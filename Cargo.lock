@@ -217,6 +217,7 @@ version = "0.1.0"
 dependencies = [
  "graphblocks-protocol",
  "graphblocks-runtime-core",
+ "graphblocks-runtime-durable",
  "serde_json",
 ]
 

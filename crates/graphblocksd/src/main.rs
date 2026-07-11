@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
+use graphblocks_runtime_durable::SqliteCheckpointStore;
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use serde_json::{Value, json};
 
@@ -34,6 +35,7 @@ enum CliError {
     ParseJson(String),
     Config(String),
     Registry(WorkerRegistryError),
+    CheckpointStore(String),
     Render(String),
 }
 
@@ -42,8 +44,9 @@ fn main() {
     let command = args.next();
     let result = match command.as_deref() {
         Some("admit-worker-message") => run_admit_worker_message(args.collect()),
+        Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd admit-worker-message [--daemon-id ID] [--bind-address ADDR] [--package-lock-hash HASH] [--max-workers N] [--response-message-id ID] [--response-sequence N] < worker-message.json".to_owned(),
+            "usage: graphblocksd <admit-worker-message|claim-checkpoint> [options]".to_owned(),
         )),
     };
 
@@ -91,6 +94,114 @@ fn run_admit_worker_message(args: Vec<String>) -> Result<Value, CliError> {
         "ok": true,
         "response": response,
         "status": daemon_status_json(&status),
+    }))
+}
+
+fn run_claim_checkpoint(args: Vec<String>) -> Result<Value, CliError> {
+    let mut checkpoint_store = None;
+    let mut run_id = None;
+    let mut release_id = None;
+    let mut deployment_revision_id = None;
+    let mut plan_hash = None;
+    let mut worker_id = None;
+    let mut lease_id = None;
+    let mut now_unix_ms = None;
+    let mut expires_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--checkpoint-store" => {
+                checkpoint_store = Some(next_arg(&mut args, "--checkpoint-store")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--release-id" => {
+                release_id = Some(next_arg(&mut args, "--release-id")?);
+            }
+            "--deployment-revision-id" => {
+                deployment_revision_id = Some(next_arg(&mut args, "--deployment-revision-id")?);
+            }
+            "--plan-hash" => {
+                plan_hash = Some(next_arg(&mut args, "--plan-hash")?);
+            }
+            "--worker-id" => {
+                worker_id = Some(next_arg(&mut args, "--worker-id")?);
+            }
+            "--lease-id" => {
+                lease_id = Some(next_arg(&mut args, "--lease-id")?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--expires-at-unix-ms")?;
+                expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let checkpoint_store = checkpoint_store
+        .ok_or_else(|| CliError::Usage("--checkpoint-store is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let release_id =
+        release_id.ok_or_else(|| CliError::Usage("--release-id is required".to_owned()))?;
+    let deployment_revision_id = deployment_revision_id
+        .ok_or_else(|| CliError::Usage("--deployment-revision-id is required".to_owned()))?;
+    let plan_hash =
+        plan_hash.ok_or_else(|| CliError::Usage("--plan-hash is required".to_owned()))?;
+    let worker_id =
+        worker_id.ok_or_else(|| CliError::Usage("--worker-id is required".to_owned()))?;
+    let lease_id = lease_id.ok_or_else(|| CliError::Usage("--lease-id is required".to_owned()))?;
+    let now_unix_ms =
+        now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
+    let expires_at_unix_ms = expires_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--expires-at-unix-ms is required".to_owned()))?;
+
+    let mut store = SqliteCheckpointStore::open(checkpoint_store)
+        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+    let recovery = store
+        .claim_latest_compatible(
+            &run_id,
+            &release_id,
+            &deployment_revision_id,
+            &plan_hash,
+            &worker_id,
+            &lease_id,
+            now_unix_ms,
+            expires_at_unix_ms,
+        )
+        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+
+    Ok(json!({
+        "ok": true,
+        "checkpoint": {
+            "checkpointId": recovery.checkpoint.checkpoint_id,
+            "runId": recovery.checkpoint.run_id,
+            "releaseId": recovery.checkpoint.release_id,
+            "deploymentRevisionId": recovery.checkpoint.deployment_revision_id,
+            "planHash": recovery.checkpoint.plan_hash,
+            "stateRevision": recovery.checkpoint.state_revision,
+        },
+        "claim": {
+            "runId": recovery.claim.run_id,
+            "checkpointId": recovery.claim.checkpoint_id,
+            "workerId": recovery.claim.worker_id,
+            "leaseId": recovery.claim.lease_id,
+            "fencingEpoch": recovery.claim.fencing_epoch,
+            "claimedAtUnixMs": recovery.claim.claimed_at_unix_ms,
+            "expiresAtUnixMs": recovery.claim.expires_at_unix_ms,
+        },
     }))
 }
 
@@ -171,7 +282,7 @@ impl CliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Usage(_) | Self::ReadStdin(_) | Self::ParseJson(_) | Self::Config(_) => 2,
-            Self::Registry(_) | Self::Render(_) => 1,
+            Self::Registry(_) | Self::CheckpointStore(_) | Self::Render(_) => 1,
         }
     }
 
@@ -191,6 +302,9 @@ impl CliError {
             }
             Self::Registry(error) => {
                 json!({"ok": false, "error": worker_registry_error_json(error)})
+            }
+            Self::CheckpointStore(message) => {
+                json!({"ok": false, "error": {"code": "daemon.checkpoint_store", "message": message}})
             }
             Self::Render(message) => {
                 json!({"ok": false, "error": {"code": "json.render_failed", "message": message}})
