@@ -24,6 +24,9 @@ apply the configured disposition to provider cancellation, pending tool calls,
 delivered drafts, and durable results. Mandatory policy checks fail closed;
 optional advisory checks MUST be identified as such.
 
+Typed redaction ranges MUST be non-empty. A zero-width range does not remove
+content and MUST fail closed rather than authorize the original output.
+
 When `immediate_draft` is selected, a restored output gate MAY have client
 delivery ahead of policy acceptance because the delivered text is provisional.
 The restored state MUST retain the last generated, last policy-accepted, and

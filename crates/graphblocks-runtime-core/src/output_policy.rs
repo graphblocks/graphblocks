@@ -440,7 +440,7 @@ impl OutputPolicyDecision {
                 .map_err(|source| OutputPolicyDecisionError::InvalidReplacementChunk { source })?;
         }
         for redaction in &self.redactions {
-            if redaction.path.trim().is_empty() || redaction.start > redaction.end {
+            if redaction.path.trim().is_empty() || redaction.start >= redaction.end {
                 return Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
                     path: redaction.path.clone(),
                 });

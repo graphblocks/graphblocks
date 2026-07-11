@@ -415,6 +415,8 @@ class OutputPolicyDecision:
                     raise ValueError("redaction range must use integer start and end")
                 if start < 0 or end < 0:
                     raise ValueError("redaction range must be non-negative")
+                if start == end:
+                    raise ValueError("redaction range must not be empty")
                 if start > end:
                     raise ValueError("redaction range must not be reversed")
             replacement = redaction_copy.get("replacement")

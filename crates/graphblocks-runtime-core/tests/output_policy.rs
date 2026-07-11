@@ -1158,6 +1158,29 @@ fn output_policy_decision_rejects_invalid_redaction_instructions() {
 }
 
 #[test]
+fn output_policy_decision_rejects_empty_redaction_ranges() {
+    let empty_range = OutputPolicyDecision::redact(
+        "decision-redact",
+        Some(1),
+        Vec::<GenerationChunk>::new(),
+        "sha256:redact",
+    )
+    .with_redactions([RedactionInstruction::text_range(
+        "/chunks/1/text",
+        6,
+        6,
+        "[redacted]",
+    )]);
+
+    assert_eq!(
+        empty_range.validate(),
+        Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
+            path: "/chunks/1/text".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn declarative_output_policy_rules_reject_invalid_contracts() {
     let empty_rule_id =
         DeclarativeOutputPolicyRule::new(" ", "secret", OutputDisposition::AbortResponse);

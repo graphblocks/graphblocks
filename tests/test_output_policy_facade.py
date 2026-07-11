@@ -112,6 +112,18 @@ def test_output_policy_decision_rejects_invalid_redaction_instructions() -> None
         )
 
 
+def test_output_policy_decision_rejects_empty_redaction_ranges() -> None:
+    with pytest.raises(ValueError, match="redaction range must not be empty"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=(
+                {"path": "/chunks/1/text", "start": 6, "end": 6, "replacement": "[redacted]"},
+            ),
+            input_digest="sha256:redact",
+        )
+
+
 def test_output_policy_decision_metadata_builders_are_chainable() -> None:
     decision = (
         OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold")
