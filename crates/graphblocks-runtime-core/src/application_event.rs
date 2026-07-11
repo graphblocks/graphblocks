@@ -1964,6 +1964,32 @@ impl SqliteApplicationProtocolLog {
         Ok(self.to_protocol_log()?.replay_after(cursor, limit))
     }
 
+    pub fn attach_to_run(
+        &self,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+    ) -> Result<AttachToRunReplay, ApplicationProtocolError> {
+        Ok(self
+            .to_protocol_log()?
+            .attach_to_run(last_cursor, replay_limit, retained_event_count))
+    }
+
+    pub fn attach_to_run_with_status(
+        &self,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+        run_status: RunStatusSnapshot,
+    ) -> Result<AttachToRunReplay, ApplicationProtocolError> {
+        Ok(self.to_protocol_log()?.attach_to_run_with_status(
+            last_cursor,
+            replay_limit,
+            retained_event_count,
+            run_status,
+        ))
+    }
+
     pub fn to_protocol_log(&self) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
         let connection = self
             .connection

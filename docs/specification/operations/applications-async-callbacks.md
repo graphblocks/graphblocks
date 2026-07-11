@@ -36,6 +36,10 @@ The native stdlib runtime exposes this through the
 `applicationEventStorePath` runtime option. When set, graph execution persists a
 per-run SQLite application event stream containing `RunStarted` and the terminal
 run event before clients attach or replay from that store.
+Durable attach implementations SHOULD call the same retained cursor replay over
+the persisted stream; if the requested cursor has expired, the response SHOULD
+include the earliest retained cursor, last cursor, last sequence, and current
+run status when available.
 
 Example durable event-stream configuration:
 

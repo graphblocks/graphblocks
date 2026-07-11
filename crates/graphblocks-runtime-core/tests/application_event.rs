@@ -2584,6 +2584,85 @@ fn sqlite_protocol_log_retained_replay_reports_expired_cursor_after_reopen() {
 }
 
 #[test]
+fn sqlite_protocol_log_attach_replays_retained_cursor_after_reopen() {
+    let path = sqlite_application_event_path("attach-retained-cursor");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        for sequence in 1..=4 {
+            log.append(
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata(
+                        &format!("event-{sequence}"),
+                        sequence,
+                        &format!("cursor-{sequence}"),
+                    ),
+                    json!({"message": sequence}),
+                )
+                .expect("event is valid"),
+            )
+            .expect("event appends");
+        }
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+
+    assert_eq!(
+        log.attach_to_run(Some("cursor-3"), 10, 2)
+            .expect("attach replay loads"),
+        AttachToRunReplay::Attached {
+            replayed_events: vec![
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata("event-4", 4, "cursor-4"),
+                    json!({"message": 4}),
+                )
+                .expect("event is valid")
+            ],
+            live_cursor: Some("cursor-4".to_owned()),
+        }
+    );
+}
+
+#[test]
+fn sqlite_protocol_log_attach_reports_expired_cursor_with_status_after_reopen() {
+    let path = sqlite_application_event_path("attach-expired-cursor");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        for sequence in 1..=4 {
+            log.append(
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata(
+                        &format!("event-{sequence}"),
+                        sequence,
+                        &format!("cursor-{sequence}"),
+                    ),
+                    json!({"message": sequence}),
+                )
+                .expect("event is valid"),
+            )
+            .expect("event appends");
+        }
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+    let status = protocol_run_status_snapshot("cursor-4");
+
+    assert_eq!(
+        log.attach_to_run_with_status(Some("cursor-1"), 10, 2, status.clone())
+            .expect("attach replay loads"),
+        AttachToRunReplay::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: Some("cursor-3".to_owned()),
+            last_cursor: Some("cursor-4".to_owned()),
+            last_sequence: Some(4),
+            run_status: Some(status),
+        }
+    );
+}
+
+#[test]
 fn protocol_log_retained_replay_reports_expired_cursor_with_nearest_available_cursor() {
     let mut log = ApplicationProtocolLog::new();
     for sequence in 1..=4 {
