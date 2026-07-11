@@ -61,6 +61,8 @@ pre-release alpha software.
   from effective-policy identity.
 - Made zero-length byte-range reads consistent across local and S3-compatible
   blob stores without emitting an invalid HTTP Range request.
+- Rejected malformed `project.requires-python` constraints during wheel-matrix
+  construction instead of emitting empty, falsely unsupported build targets.
 
 ### Removed
 

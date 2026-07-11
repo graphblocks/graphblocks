@@ -581,6 +581,17 @@ def build_wheel_matrix(
                 )
             )
             continue
+        try:
+            SpecifierSet(requires_python)
+        except InvalidSpecifier as error:
+            diagnostics.append(
+                Diagnostic(
+                    "WheelPythonRequiresInvalid",
+                    f"wheel target {distribution!r} declares invalid project.requires-python: {error}",
+                    f"{path_prefix}.project.requires-python",
+                )
+            )
+            continue
         supported_versions = tuple(
             version for version in python_versions if _supports_python_version(requires_python, version)
         )
