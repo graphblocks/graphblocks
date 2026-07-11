@@ -1,9 +1,10 @@
 # Versioning and Diagnostics
 
-GraphBlocks resources use explicit API versions. The current alpha resource
-family is `graphblocks.ai/v1alpha1`; specialized manifests use their documented
-versioned namespaces. Readers MUST reject unknown versions unless an explicit
-migration exists.
+GraphBlocks resources use explicit API versions. The current `Graph` resource is
+`graphblocks.ai/v1alpha3`; application, binding, plugin, and specialized
+manifests use the version declared by their matching schema or specification,
+including `graphblocks.ai/v1alpha1` contracts. Readers MUST reject unknown
+`apiVersion`/`kind` pairs unless an explicit migration exists.
 
 Breaking wire or semantic changes require a new API version, profile revision,
 or pre-1.0 release change with a documented migration. Additive optional fields

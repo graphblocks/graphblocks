@@ -1,5 +1,7 @@
 # GraphBlocks
 
+> Don't reinvent the wheel.
+
 GraphBlocks is a provider-neutral contract toolkit for portable, testable, and
 governable AI applications. It defines typed graphs, runtime behavior,
 application protocols, policy and budget boundaries, package metadata, and
@@ -11,12 +13,13 @@ and executable evidence, not by package or directory presence.
 
 ## What is here
 
-- A Python authoring, validation, and reference-runtime implementation.
+- The pure-Python `graphblocks` SDK, including authoring, validation, built-in
+  blocks, the reference runtime, CLI, and framework-neutral server contracts.
+- The optional native `graphblocks-runtime` Python extension.
+- The `graphblocks-testing` distribution and shared TCK fixtures.
 - Rust schema, compiler, protocol, and runtime crates.
 - Versioned schemas and provider-neutral package catalogs.
 - Shared TCK fixtures and executable acceptance applications.
-- Optional adapter packages for existing provider, storage, policy,
-  observability, deployment, voice, and durable-stream ecosystems.
 
 ## Development quickstart
 
@@ -34,14 +37,23 @@ cargo test --workspace --all-targets
 ```
 
 After virtual-environment activation, the root editable install provides
-`python -m graphblocks`. The separately
-packaged command-line and testing distributions are developed under `packages/`;
-they are not installed by the root test extra.
+the `graphblocks` import package, the `graphblocks` command, and
+`python -m graphblocks`. Built-in block implementations and the CLI and server
+contracts are part of that distribution; they are not separate feature wheels.
+Extras add actual install dependencies: `runtime` adds the native bindings,
+`pdf` adds `pypdf`, and `test` adds pytest. Install `graphblocks-testing` for
+the `graphblocks-tck` command.
+
+The machine-readable package catalog distinguishes release artifacts from
+portable component and binding identities. Component entries do not correspond
+to separately published Python wheels. The Python release surface consists of
+`graphblocks`, `graphblocks-runtime`, and `graphblocks-testing`.
 
 The repository also builds `graphblocks-native`, a Python-free Rust executable
-for `validate`, `plan`, and `run`. It currently accepts one JSON `Graph` on
-stdin and executes the native stdlib block set. `graphblocksd` is a worker
-control-plane command, not yet a listening HTTP/server process.
+for `validate`, `plan`, and `run`. It accepts JSON or YAML on stdin, can select a
+named `Graph` from a multi-document YAML stream, and executes the native stdlib
+block set. `graphblocksd` is a worker control-plane command, not yet a listening
+HTTP/server process.
 
 ## Documentation
 

@@ -33,6 +33,21 @@ pre-release alpha software.
 - Pinned webhook connections to policy-validated DNS results, closed frozen
   mapping mutation escapes, and aligned Python/Rust canonical number bytes for
   large integers and floating-point exponents.
+- Kept bearer credentials on their original HTTP origin, normalized urllib
+  errors, and closed Python client responses on every result path.
+- Brought the PyO3 application-protocol bridge up to runtime-core event and
+  metadata parity, rejected stale provider interruption decisions, and made
+  callback resumption fail closed until all resume gates pass.
+- Cross-checked persisted checkpoint payload identity against indexed SQLite
+  fields, enforced event-time-only window inputs and watermarks, honored full
+  PEP 440 Python constraints, and made bundled schemas available to the
+  installed CLI.
+- Added fallible SQLite async-operation reads and made the daemon preserve
+  storage and decoding failures instead of misreporting corrupt state as a
+  missing operation.
+- Aligned Python event-time windows with the durable contract by rejecting
+  missing event timestamps, ignoring processing-time watermarks, and preserving
+  monotonic event-time watermarks.
 
 ### Removed
 

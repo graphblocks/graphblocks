@@ -22,4 +22,9 @@ deadline, policy, budget, release, and ownership fences before a worker claims
 the checkpoint. Duplicate callbacks do not resume twice, and stale callbacks
 cannot modify a newer attempt.
 
+The reference daemon therefore treats callback submission as receipt-only by
+default. A resume requires `--authentication-verified` together with policy,
+budget, compatible-release, and ownership-fence evidence; partial gate sets
+are rejected, and the complete authorization is journaled before resumption.
+
 See the normative [application, async-run, and callback contract](../specification/operations/applications-async-callbacks.md).

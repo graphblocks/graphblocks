@@ -159,6 +159,17 @@ quarantine, late-callback handling, timeout validation, terminal-state
 persistence, and journal-before-resume ordering remain owned by the Rust
 runtime store.
 
+Receipt acceptance is fail-closed for execution resumption. The reference
+daemon records a valid receipt but returns `shouldResume: false` unless the
+submission includes explicit authentication verification plus a policy
+decision identifier, budget reservation identifier, compatible release
+identifier, and ownership fencing token. `submit-async-callback` supplies this
+evidence through `--authentication-verified`,
+`--resume-policy-decision-id`, `--resume-budget-reservation-id`,
+`--resume-compatible-release-id`, and `--resume-ownership-fence-token`; the
+four valued options MUST be supplied together. A successful authorization is
+recorded as `CallbackResumeAuthorized` before `shouldResume` becomes true.
+
 ## Checkpoint resume
 
 A checkpoint binds run, graph/plan, next work, journal position, operation,
