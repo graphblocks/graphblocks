@@ -428,6 +428,38 @@ fn checkpoint_store_renews_active_checkpoint_claim_without_changing_fence() {
 }
 
 #[test]
+fn checkpoint_store_rejects_renewal_that_shortens_active_claim() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should be accepted");
+
+    let claim = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        )
+        .expect("worker should claim checkpoint")
+        .claim;
+
+    assert_eq!(
+        store.renew_claim(&claim, 1_200, 1_500),
+        Err(CheckpointStoreError::InvalidRecoveryClaim {
+            field: "expires_at_unix_ms",
+        })
+    );
+    store
+        .complete_claim(&claim, 1_900)
+        .expect("rejected renewal should leave original expiry intact");
+}
+
+#[test]
 fn checkpoint_store_rejects_expired_or_stale_checkpoint_claim_renewal() {
     let mut store = InMemoryCheckpointStore::new();
     store
@@ -544,6 +576,41 @@ fn sqlite_checkpoint_store_persists_renewed_recovery_claim_across_reopen() {
     reopened
         .complete_claim(&renewed, 1_900)
         .expect("renewed persisted claim should complete");
+}
+
+#[test]
+fn sqlite_checkpoint_store_rejects_renewal_that_shortens_active_claim() {
+    let path = sqlite_checkpoint_path("claim-renewal-shortens");
+    let claim = {
+        let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+        store
+            .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+            .expect("checkpoint should persist");
+        store
+            .claim_latest_compatible(
+                "run-000001",
+                "release-2026-06-23",
+                "deployment-rev-1",
+                "sha256:plan",
+                "worker-a",
+                "lease-a",
+                1_000,
+                2_000,
+            )
+            .expect("worker should claim checkpoint")
+            .claim
+    };
+
+    let mut reopened = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    assert_eq!(
+        reopened.renew_claim(&claim, 1_200, 1_500),
+        Err(CheckpointStoreError::InvalidRecoveryClaim {
+            field: "expires_at_unix_ms",
+        })
+    );
+    reopened
+        .complete_claim(&claim, 1_900)
+        .expect("rejected renewal should leave original expiry persisted");
 }
 
 #[test]

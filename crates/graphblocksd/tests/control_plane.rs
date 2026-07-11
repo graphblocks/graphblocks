@@ -667,6 +667,107 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
 }
 
 #[test]
+fn graphblocksd_rejects_checkpoint_claim_renewal_that_shortens_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("graphblocksd-checkpoint-shorten-{unique}.sqlite3"));
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(CheckpointBarrier {
+            checkpoint_id: "checkpoint-000001".to_owned(),
+            run_id: "run-000001".to_owned(),
+            release_id: "release-2026-07-11".to_owned(),
+            deployment_revision_id: "deployment-rev-1".to_owned(),
+            plan_hash: "sha256:plan".to_owned(),
+            checkpoint_schema: SchemaRef::new("graphblocks.ai/Checkpoint", 1),
+            state_revision: 1,
+            completed_nodes: vec!["begin".to_owned()],
+            pending_nodes: vec!["resume".to_owned()],
+            source_cursors: BTreeMap::from([(
+                "events".to_owned(),
+                SourceCursor::new("events", 0, 7),
+            )]),
+            operator_state: BTreeMap::new(),
+            sink_commit_metadata: BTreeMap::new(),
+            schema_versions: BTreeMap::from([("checkpoint".to_owned(), 1)]),
+            created_at_unix_ms: 1_820_000_000_000,
+        })
+        .expect("checkpoint should persist");
+    drop(store);
+
+    let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "claim-checkpoint",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--release-id",
+            "release-2026-07-11",
+            "--deployment-revision-id",
+            "deployment-rev-1",
+            "--plan-hash",
+            "sha256:plan",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--now-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "3000",
+        ])
+        .output()?;
+    assert!(claim_output.status.success());
+
+    let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "renew-checkpoint-claim",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--checkpoint-id",
+            "checkpoint-000001",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--fencing-epoch",
+            "1",
+            "--claimed-at-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "3000",
+            "--now-unix-ms",
+            "1500",
+            "--new-expires-at-unix-ms",
+            "2000",
+        ])
+        .output()?;
+    assert!(!renew_output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&renew_output.stderr)?;
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.checkpoint.invalid_recovery_claim"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/field")
+            .and_then(|value| value.as_str()),
+        Some("expires_at_unix_ms"),
+    );
+    Ok(())
+}
+
+#[test]
 fn graphblocksd_reports_active_checkpoint_claim_as_structured_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()

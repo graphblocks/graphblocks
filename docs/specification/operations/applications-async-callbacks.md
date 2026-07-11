@@ -79,13 +79,14 @@ re-evaluation, budget reservation, release compatibility, and ownership fence.
 `RunResuming` is emitted only when an executor claims the checkpoint. Durable
 runtime implementations MUST claim the latest compatible checkpoint with a
 lease and fencing epoch before resuming; active claims MAY be renewed without
-changing their fencing epoch; stale or expired claims MUST NOT renew or
-complete resume. Claim renewal and completion MUST bind the run, checkpoint,
-worker, lease, and fencing epoch recorded by the active claim. Restart-durable
-stores MUST preserve active claims and the next fencing epoch across coordinator
-restart. Control-plane claim, renewal, and completion APIs SHOULD expose
-active-claim, missing-checkpoint, stale-fence, and expired-claim failures as
-structured machine-readable errors.
+changing their fencing epoch, but renewal MUST extend rather than shorten the
+active lease; stale or expired claims MUST NOT renew or complete resume. Claim
+renewal and completion MUST bind the run, checkpoint, worker, lease, and
+fencing epoch recorded by the active claim. Restart-durable stores MUST
+preserve active claims and the next fencing epoch across coordinator restart.
+Control-plane claim, renewal, and completion APIs SHOULD expose active-claim,
+missing-checkpoint, stale-fence, and expired-claim failures as structured
+machine-readable errors.
 
 If no executor is available, a valid receipt remains recorded and the run may
 project a paused callback-delivery state for explicit retry. The Python

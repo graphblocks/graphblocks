@@ -1342,6 +1342,11 @@ impl InMemoryCheckpointStore {
                 now_unix_ms,
             });
         }
+        if expires_at_unix_ms <= active.expires_at_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
+            });
+        }
         let renewed = CheckpointRecoveryClaim {
             expires_at_unix_ms,
             ..active.clone()
@@ -1795,6 +1800,11 @@ impl SqliteCheckpointStore {
                 lease_id: claim.lease_id.clone(),
                 expires_at_unix_ms: active.expires_at_unix_ms,
                 now_unix_ms,
+            });
+        }
+        if expires_at_unix_ms <= active.expires_at_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
             });
         }
         let renewed = CheckpointRecoveryClaim {
