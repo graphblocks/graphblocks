@@ -78,6 +78,46 @@ def test_local_blob_store_rejects_non_standard_metadata_json_constants(tmp_path)
         store.head(key)
 
 
+def test_local_blob_store_rejects_malformed_metadata_structure(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    store._metadata_path_for(key).write_text(
+        json.dumps({"etag": "sha256:missing-artifact"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BlobStoreError, match="valid artifact record"):
+        store.head(key)
+
+
+def test_local_blob_store_rejects_content_that_does_not_match_metadata(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    store._path_for(key).write_bytes(b"tampered content")
+
+    with pytest.raises(BlobStoreError, match="does not match recorded checksum"):
+        store.head(key)
+    with pytest.raises(BlobStoreError, match="does not match recorded checksum"):
+        store.get(key)
+
+
+def test_local_blob_store_rejects_metadata_with_incorrect_content_size(tmp_path) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"alpha policy", PutOptions(media_type="text/plain"))
+    metadata_path = store._metadata_path_for(key)
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["artifact"]["size_bytes"] = 1
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(BlobStoreError, match="does not match recorded size"):
+        store.head(key)
+    with pytest.raises(BlobStoreError, match="does not match recorded size"):
+        store.get(key)
+
+
 def test_put_options_rejects_invalid_metadata() -> None:
     with pytest.raises(ValueError, match="put media_type must be a string"):
         PutOptions(media_type=object())  # type: ignore[arg-type]

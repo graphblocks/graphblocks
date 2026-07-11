@@ -228,10 +228,12 @@ class LocalBlobStore:
             raise InvalidBlobKeyError(f"invalid blob key {key.key!r}") from error
         return path
 
-    def _metadata_for(self, key: BlobKey) -> BlobMetadata:
+    def _metadata_for(self, key: BlobKey, data: bytes | None = None) -> BlobMetadata:
         path = self._path_for(key)
         if not path.exists():
             raise BlobNotFoundError(f"blob {key.key!r} does not exist")
+        if data is None:
+            data = path.read_bytes()
         metadata_path = self._metadata_path_for(key)
         if metadata_path.exists():
             try:
@@ -239,13 +241,24 @@ class LocalBlobStore:
                     metadata_path.read_text(encoding="utf-8"),
                     parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
                 )
-            except ValueError as error:
+            except (OSError, UnicodeError, ValueError) as error:
                 raise BlobStoreError("local blob metadata must be valid strict JSON") from error
             if not isinstance(payload, Mapping):
                 raise BlobStoreError("local blob metadata must be a JSON object")
-            artifact = ArtifactRef(**payload["artifact"])
-            return BlobMetadata(key=key, artifact=artifact, etag=payload.get("etag"))
-        data = path.read_bytes()
+            try:
+                artifact_payload = payload["artifact"]
+                if not isinstance(artifact_payload, Mapping):
+                    raise TypeError("artifact must be a mapping")
+                artifact = ArtifactRef(**artifact_payload)
+                metadata = BlobMetadata(key=key, artifact=artifact, etag=payload.get("etag"))
+            except (KeyError, TypeError, ValueError) as error:
+                raise BlobStoreError("local blob metadata must contain a valid artifact record") from error
+            checksum = "sha256:" + hashlib.sha256(data).hexdigest()
+            if artifact.checksum != checksum:
+                raise BlobStoreError(f"blob {key.key!r} does not match recorded checksum")
+            if artifact.size_bytes != len(data):
+                raise BlobStoreError(f"blob {key.key!r} does not match recorded size")
+            return metadata
         checksum = "sha256:" + hashlib.sha256(data).hexdigest()
         artifact = ArtifactRef(
             artifact_id=f"blob:{key.key}",
@@ -286,6 +299,7 @@ class LocalBlobStore:
         if not path.exists():
             raise BlobNotFoundError(f"blob {key.key!r} does not exist")
         data = path.read_bytes()
+        self._metadata_for(key, data)
         if byte_range is None:
             return data
         if byte_range.length is None:

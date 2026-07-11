@@ -75,6 +75,8 @@ pre-release alpha software.
   making the authorization interval issuance-inclusive and expiry-exclusive.
 - Confined local blob sidecar metadata beneath the configured storage root and
   rejected symlink escapes before writing blob content.
+- Made local blob reads reject malformed sidecars and content that no longer
+  matches its recorded checksum or size.
 
 ### Removed
 

@@ -11,6 +11,9 @@ ordered offsets, and inherited access controls through indexing.
 A local blob store MUST resolve both content and sidecar metadata paths beneath
 its configured root before writing either file. Parent traversal and symlink
 resolution MUST NOT redirect metadata or content outside that boundary.
+When sidecar metadata records a content checksum and size, local `head` and
+`get` operations MUST verify the stored bytes against both values. Malformed
+sidecars or mismatched content MUST fail closed as blob-store errors.
 
 ## Ordered parser fallback
 
