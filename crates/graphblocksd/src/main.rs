@@ -1107,6 +1107,7 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
     let mut callback_delivery_store = None;
     let mut delivery_id = None;
     let mut claim_generation = None;
+    let mut claim_started_at_unix_ms = None;
     let mut claim_expires_at_unix_ms = None;
     let mut now_unix_ms = None;
     let mut retry_max_attempts = None;
@@ -1129,6 +1130,14 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
                 claim_generation = Some(value.parse::<u64>().map_err(|error| {
                     CliError::Usage(format!(
                         "--claim-generation requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--claim-started-at-unix-ms" => {
+                let value = next_arg(&mut args, "--claim-started-at-unix-ms")?;
+                claim_started_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--claim-started-at-unix-ms requires an unsigned integer: {error}"
                     ))
                 })?);
             }
@@ -1199,6 +1208,8 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
         delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?;
     let claim_generation = claim_generation
         .ok_or_else(|| CliError::Usage("--claim-generation is required".to_owned()))?;
+    let claim_started_at_unix_ms = claim_started_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--claim-started-at-unix-ms is required".to_owned()))?;
     let claim_expires_at_unix_ms = claim_expires_at_unix_ms
         .ok_or_else(|| CliError::Usage("--claim-expires-at-unix-ms is required".to_owned()))?;
     let now_unix_ms =
@@ -1245,6 +1256,7 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
     let claim = ClaimedCallbackDelivery {
         delivery,
         claim_generation,
+        claim_started_at_unix_ms,
         claim_expires_at_unix_ms,
     };
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(
@@ -1907,6 +1919,7 @@ fn callback_delivery_json(delivery: &CallbackDelivery) -> Value {
 fn claimed_callback_delivery_json(claimed: &ClaimedCallbackDelivery) -> Value {
     json!({
         "claimGeneration": claimed.claim_generation,
+        "claimStartedAtUnixMs": claimed.claim_started_at_unix_ms,
         "claimExpiresAtUnixMs": claimed.claim_expires_at_unix_ms,
         "delivery": callback_delivery_json(&claimed.delivery),
     })

@@ -1892,6 +1892,50 @@ fn sqlite_callback_delivery_rejects_completion_at_claim_expiration() {
 }
 
 #[test]
+fn sqlite_callback_delivery_rejects_completion_before_claim_activation() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event(
+        "event-future-claim",
+        ApplicationProtocolEventKind::ReviewRequested,
+        1,
+    );
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(delivery)
+        .expect("pending delivery persists");
+    let claim = queue
+        .claim_due_deliveries(1_000, 100, 1)
+        .expect("delivery claims")
+        .into_iter()
+        .next()
+        .expect("one delivery claims");
+    let completed = scheduler.record_response(
+        claim.delivery.clone(),
+        CallbackDeliveryResponse::Success,
+        999,
+    );
+
+    let error = queue
+        .complete_claimed_delivery(&claim, completed, 999)
+        .expect_err("claim authority must not begin before acquisition");
+    assert!(
+        matches!(
+            error,
+            CallbackDeliveryError::Storage { ref message }
+                if message == "callback delivery claim not yet active at completion"
+        ),
+        "unexpected error: {error:?}",
+    );
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_rejects_stale_terminal_overwrite() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

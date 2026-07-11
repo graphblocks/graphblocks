@@ -137,6 +137,11 @@ fn complete_daemon_callback_delivery(
         .and_then(|value| value.as_u64())
         .ok_or("claim generation is missing")?
         .to_string();
+    let claim_started_at_unix_ms = claim
+        .pointer("/claimStartedAtUnixMs")
+        .and_then(|value| value.as_u64())
+        .ok_or("claim start is missing")?
+        .to_string();
     let claim_expires_at_unix_ms = claim
         .pointer("/claimExpiresAtUnixMs")
         .and_then(|value| value.as_u64())
@@ -150,6 +155,8 @@ fn complete_daemon_callback_delivery(
         delivery_id,
         "--claim-generation",
         &claim_generation,
+        "--claim-started-at-unix-ms",
+        &claim_started_at_unix_ms,
         "--claim-expires-at-unix-ms",
         &claim_expires_at_unix_ms,
         "--now-unix-ms",

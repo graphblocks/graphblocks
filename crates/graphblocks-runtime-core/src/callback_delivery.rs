@@ -705,6 +705,7 @@ pub struct CallbackDelivery {
 pub struct ClaimedCallbackDelivery {
     pub delivery: CallbackDelivery,
     pub claim_generation: u64,
+    pub claim_started_at_unix_ms: u64,
     pub claim_expires_at_unix_ms: u64,
 }
 
@@ -950,6 +951,7 @@ impl SqliteCallbackDeliveryQueue {
                     sequence INTEGER NOT NULL,
                     delivery_json TEXT NOT NULL,
                     claim_generation INTEGER NOT NULL DEFAULT 0,
+                    claim_started_at_unix_ms INTEGER,
                     claim_expires_at_unix_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS callback_deliveries_due_idx
@@ -983,12 +985,22 @@ impl SqliteCallbackDeliveryQueue {
                 )
                 .map_err(callback_storage_error)?;
         }
+        if !columns.contains("claim_started_at_unix_ms") {
+            connection
+                .execute(
+                    "ALTER TABLE callback_deliveries ADD COLUMN claim_started_at_unix_ms INTEGER",
+                    [],
+                )
+                .map_err(callback_storage_error)?;
+        }
         connection
             .execute(
                 "
                 UPDATE callback_deliveries
-                SET claim_expires_at_unix_ms = 0
-                WHERE status = ? AND claim_expires_at_unix_ms IS NULL
+                SET claim_started_at_unix_ms = COALESCE(claim_started_at_unix_ms, 0),
+                    claim_expires_at_unix_ms = COALESCE(claim_expires_at_unix_ms, 0)
+                WHERE status = ?
+                  AND (claim_started_at_unix_ms IS NULL OR claim_expires_at_unix_ms IS NULL)
                 ",
                 params![callback_delivery_status_as_str(
                     CallbackDeliveryStatus::Delivering
@@ -1082,6 +1094,7 @@ impl SqliteCallbackDeliveryQueue {
                         next_retry_at_unix_ms = ?,
                         sequence = ?,
                         delivery_json = ?,
+                        claim_started_at_unix_ms = NULL,
                         claim_expires_at_unix_ms = NULL
                     WHERE delivery_id = ? AND status = ?
                     ",
@@ -1120,9 +1133,10 @@ impl SqliteCallbackDeliveryQueue {
                         sequence,
                         delivery_json,
                         claim_generation,
+                        claim_started_at_unix_ms,
                         claim_expires_at_unix_ms
                     )
-                    VALUES (?, ?, ?, ?, ?, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
                     ",
                     params![
                         &delivery.delivery_id,
@@ -1344,6 +1358,7 @@ impl SqliteCallbackDeliveryQueue {
                         next_retry_at_unix_ms = NULL,
                         delivery_json = ?,
                         claim_generation = ?,
+                        claim_started_at_unix_ms = ?,
                         claim_expires_at_unix_ms = ?
                     WHERE delivery_id = ? AND status = ? AND claim_generation = ?
                     ",
@@ -1354,6 +1369,7 @@ impl SqliteCallbackDeliveryQueue {
                             claim_generation,
                             "callback delivery claim generation",
                         )?,
+                        callback_u64_to_i64(now_unix_ms, "callback delivery claim start",)?,
                         callback_u64_to_i64(
                             claim_expires_at_unix_ms,
                             "callback delivery claim expiration",
@@ -1375,6 +1391,7 @@ impl SqliteCallbackDeliveryQueue {
             claims.push(ClaimedCallbackDelivery {
                 delivery,
                 claim_generation,
+                claim_started_at_unix_ms: now_unix_ms,
                 claim_expires_at_unix_ms,
             });
         }
@@ -1389,9 +1406,17 @@ impl SqliteCallbackDeliveryQueue {
         completed_at_unix_ms: u64,
     ) -> Result<(), CallbackDeliveryError> {
         validate_callback_delivery(&delivery)?;
-        if claim.claim_generation == 0 || claim.claim_expires_at_unix_ms == 0 {
+        if claim.claim_generation == 0
+            || claim.claim_expires_at_unix_ms == 0
+            || claim.claim_started_at_unix_ms >= claim.claim_expires_at_unix_ms
+        {
             return Err(CallbackDeliveryError::Storage {
                 message: "callback delivery claim fence is invalid".to_owned(),
+            });
+        }
+        if completed_at_unix_ms < claim.claim_started_at_unix_ms {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim not yet active at completion".to_owned(),
             });
         }
         if completed_at_unix_ms >= claim.claim_expires_at_unix_ms {
@@ -1432,10 +1457,12 @@ impl SqliteCallbackDeliveryQueue {
                     next_retry_at_unix_ms = ?,
                     sequence = ?,
                     delivery_json = ?,
+                    claim_started_at_unix_ms = NULL,
                     claim_expires_at_unix_ms = NULL
                 WHERE delivery_id = ?
                   AND status = ?
                   AND claim_generation = ?
+                  AND claim_started_at_unix_ms = ?
                   AND claim_expires_at_unix_ms = ?
                 ",
                 params![
@@ -1451,6 +1478,10 @@ impl SqliteCallbackDeliveryQueue {
                     callback_u64_to_i64(
                         claim.claim_generation,
                         "callback delivery claim generation",
+                    )?,
+                    callback_u64_to_i64(
+                        claim.claim_started_at_unix_ms,
+                        "callback delivery claim start",
                     )?,
                     callback_u64_to_i64(
                         claim.claim_expires_at_unix_ms,
@@ -1546,6 +1577,7 @@ impl SqliteCallbackDeliveryQueue {
                         next_retry_at_unix_ms = ?,
                         sequence = ?,
                         delivery_json = ?,
+                        claim_started_at_unix_ms = NULL,
                         claim_expires_at_unix_ms = NULL
                     WHERE delivery_id = ? AND status = ? AND claim_generation = ?
                     ",
