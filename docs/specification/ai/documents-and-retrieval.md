@@ -8,6 +8,10 @@ parser observes content. A document revision binds source identity, checksum,
 parser lock, metadata, and ACL. Chunks MUST retain document/revision lineage,
 ordered offsets, and inherited access controls through indexing.
 
+A local blob store MUST resolve both content and sidecar metadata paths beneath
+its configured root before writing either file. Parent traversal and symlink
+resolution MUST NOT redirect metadata or content outside that boundary.
+
 ## Ordered parser fallback
 
 A parser candidate chain MUST be non-empty, ordered, and free of duplicate

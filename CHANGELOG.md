@@ -73,6 +73,8 @@ pre-release alpha software.
   on-time/final pane revisions, deadline-bound lateness, and shared TCK coverage.
 - Rejected reviewer credentials before their issuance time in Python and Rust,
   making the authorization interval issuance-inclusive and expiry-exclusive.
+- Confined local blob sidecar metadata beneath the configured storage root and
+  rejected symlink escapes before writing blob content.
 
 ### Removed
 

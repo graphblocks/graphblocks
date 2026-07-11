@@ -192,11 +192,18 @@ def _is_not_found_error(error: BaseException) -> bool:
 @dataclass(slots=True)
 class LocalBlobStore:
     root: str | Path
+    _metadata_root: Path = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / ".graphblocks-metadata").mkdir(parents=True, exist_ok=True)
+        metadata_root = self.root / ".graphblocks-metadata"
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        self._metadata_root = metadata_root.resolve()
+        try:
+            self._metadata_root.relative_to(self.root)
+        except ValueError as error:
+            raise BlobStoreError("local blob metadata root must remain within blob root") from error
 
     def _path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
@@ -209,11 +216,17 @@ class LocalBlobStore:
         return path
 
     def _metadata_path_for(self, key: BlobKey) -> Path:
+        _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
-        path = (self.root / ".graphblocks-metadata" / Path(*parsed.parts)).with_suffix(
+        path = (self._metadata_root / Path(*parsed.parts)).with_suffix(
             Path(parsed.name).suffix + ".json"
         )
-        return path.resolve()
+        path = path.resolve()
+        try:
+            path.relative_to(self._metadata_root)
+        except ValueError as error:
+            raise InvalidBlobKeyError(f"invalid blob key {key.key!r}") from error
+        return path
 
     def _metadata_for(self, key: BlobKey) -> BlobMetadata:
         path = self._path_for(key)
@@ -246,6 +259,7 @@ class LocalBlobStore:
 
     def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
         path = self._path_for(key)
+        metadata_path = self._metadata_path_for(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)
         checksum = "sha256:" + hashlib.sha256(body).hexdigest()
@@ -260,7 +274,6 @@ class LocalBlobStore:
             filename=options.filename,
             metadata=dict(options.metadata),
         )
-        metadata_path = self._metadata_path_for(key)
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         metadata_path.write_text(
             json.dumps({"artifact": asdict(artifact), "etag": checksum}, sort_keys=True),

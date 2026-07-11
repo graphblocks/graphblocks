@@ -212,6 +212,21 @@ def test_local_blob_store_rejects_path_traversal(tmp_path) -> None:
         BlobKey(object())  # type: ignore[arg-type]
 
 
+def test_local_blob_store_rejects_metadata_symlink_escape(tmp_path) -> None:
+    root = tmp_path / "blob-root"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    store = LocalBlobStore(root)
+    metadata_parent = root / ".graphblocks-metadata" / "docs"
+    metadata_parent.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(InvalidBlobKeyError, match="invalid blob key"):
+        store.put(BlobKey("docs/policy.txt"), b"alpha policy", PutOptions())
+
+    assert not (root / "docs" / "policy.txt").exists()
+    assert not (outside / "policy.txt.json").exists()
+
+
 def test_blob_metadata_and_list_page_validate_record_types() -> None:
     key = BlobKey("docs/policy.txt")
     artifact = ArtifactRef("artifact-1", "file:///tmp/policy.txt")
