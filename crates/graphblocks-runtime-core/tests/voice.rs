@@ -165,6 +165,78 @@ fn provider_authority_waits_for_confirmation() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn provider_interruption_does_not_apply_to_playback_started_after_the_decision()
+-> Result<(), Box<dyn Error>> {
+    let speech = VadAuthority::new("vad-local", 0.6)?
+        .evaluate(&AudioFrame::new("mic", 2, 80, 20, 0.9)?, false);
+    let playback = PlaybackLedger::new()
+        .append(
+            PlaybackEntry::new("assistant-audio-old", 1, PlaybackStatus::Started)?
+                .with_started_at_ms(50),
+        )?
+        .append(
+            PlaybackEntry::new("assistant-audio-new", 2, PlaybackStatus::Started)?
+                .with_started_at_ms(110),
+        )?;
+    let classifier =
+        InterruptionClassifier::new("barge-in")?.with_provider_authority_id("provider-realtime")?;
+    let provider_decision = ProviderInterruptionDecision::new(
+        "provider-realtime",
+        "session-1",
+        InterruptionKind::Interrupt,
+        100,
+    )?;
+
+    let decision = classifier.classify_with_provider_decision(
+        "session-1",
+        &speech,
+        &playback,
+        120,
+        Some(&provider_decision),
+    )?;
+
+    assert_eq!(decision.kind, InterruptionKind::Interrupt);
+    assert_eq!(
+        decision.interrupted_playback_ids,
+        vec!["assistant-audio-old"]
+    );
+    Ok(())
+}
+
+#[test]
+fn provider_interruption_decision_after_classification_time_is_rejected()
+-> Result<(), Box<dyn Error>> {
+    let speech = VadAuthority::new("vad-local", 0.6)?
+        .evaluate(&AudioFrame::new("mic", 2, 80, 20, 0.9)?, false);
+    let playback = PlaybackLedger::new().append(
+        PlaybackEntry::new("assistant-audio-1", 1, PlaybackStatus::Started)?.with_started_at_ms(50),
+    )?;
+    let classifier =
+        InterruptionClassifier::new("barge-in")?.with_provider_authority_id("provider-realtime")?;
+    let provider_decision = ProviderInterruptionDecision::new(
+        "provider-realtime",
+        "session-1",
+        InterruptionKind::Interrupt,
+        121,
+    )?;
+
+    assert!(matches!(
+        classifier.classify_with_provider_decision(
+            "session-1",
+            &speech,
+            &playback,
+            120,
+            Some(&provider_decision),
+        ),
+        Err(VoiceContractError::Invalid {
+            field_name: "provider_interruption_decision",
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
 fn playback_ledger_acknowledges_terminal_entries() -> Result<(), Box<dyn Error>> {
     let queued = PlaybackEntry::new("audio-1", 1, PlaybackStatus::Queued)?
         .with_audio_ref("artifact://voice/audio-1")?;

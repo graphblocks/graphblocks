@@ -1006,13 +1006,30 @@ impl InterruptionClassifier {
                     message: "belongs to a different session".to_string(),
                 });
             }
+            if provider_decision.occurred_at_ms > occurred_at_ms {
+                return Err(VoiceContractError::Invalid {
+                    field_name: "provider_interruption_decision",
+                    message: "occurred after interruption classification".to_string(),
+                });
+            }
             if provider_decision.kind == InterruptionKind::Interrupt {
+                let interrupted_playback_ids = playback
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.status == PlaybackStatus::Started
+                            && entry.started_at_ms.is_some_and(|started_at_ms| {
+                                started_at_ms <= provider_decision.occurred_at_ms
+                            })
+                    })
+                    .map(|entry| entry.playback_id.clone())
+                    .collect();
                 return Ok(InterruptionDecision {
                     classifier_id: self.classifier_id.clone(),
                     session_id,
                     kind: InterruptionKind::Interrupt,
                     occurred_at_ms: provider_decision.occurred_at_ms,
-                    interrupted_playback_ids: active_ids,
+                    interrupted_playback_ids,
                     reason: Some(
                         provider_decision
                             .reason
