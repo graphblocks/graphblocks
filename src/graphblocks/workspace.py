@@ -288,7 +288,9 @@ class WorkspaceCommitRequest:
     gate: GateResult
     reviews: tuple[ReviewRecord, ...] = field(default_factory=tuple)
     trial_id: str | None = None
+    required_check_ids: tuple[str, ...] = field(default_factory=tuple)
     required_lease_kinds: tuple[str, ...] = field(default_factory=tuple)
+    required_review_scopes: tuple[str, ...] = field(default_factory=tuple)
     leases: tuple[LeaseGrant, ...] = field(default_factory=tuple)
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -319,6 +321,16 @@ class WorkspaceCommitRequest:
             "required_lease_kinds",
             self.required_lease_kinds,
         )
+        required_check_ids = _validate_string_tuple(
+            "workspace commit request",
+            "required_check_ids",
+            self.required_check_ids,
+        )
+        required_review_scopes = _validate_string_tuple(
+            "workspace commit request",
+            "required_review_scopes",
+            self.required_review_scopes,
+        )
         leases = tuple(self.leases)
         if not all(isinstance(lease, LeaseGrant) for lease in leases):
             raise ValueError("workspace commit request leases must contain LeaseGrant values")
@@ -328,7 +340,9 @@ class WorkspaceCommitRequest:
             raise ValueError("workspace commit request metadata must be a mapping")
         object.__setattr__(self, "reviews", reviews)
         object.__setattr__(self, "trial_id", trial_id)
+        object.__setattr__(self, "required_check_ids", required_check_ids)
         object.__setattr__(self, "required_lease_kinds", required_lease_kinds)
+        object.__setattr__(self, "required_review_scopes", required_review_scopes)
         object.__setattr__(self, "leases", leases)
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -466,7 +480,9 @@ class WorkspaceTrialPlan:
             gate=self.gate,
             reviews=tuple(sorted(selected_reviews, key=lambda review: review.review_id)),
             trial_id=self.trial_id,
+            required_check_ids=self.required_check_ids,
             required_lease_kinds=self.required_lease_kinds,
+            required_review_scopes=self.required_review_scopes,
             leases=selected_leases,
             metadata={
                 "change_set_digest": self.change_set.content_digest(),
@@ -613,12 +629,27 @@ class InMemoryWorkspaceStore:
             raise WorkspaceCommitAuthorizationError("workspace commit mutation decision is denied")
         if request.gate.decision != "pass" or request.gate.subject != request.change_set.candidate:
             raise WorkspaceCommitAuthorizationError("workspace commit gate is not valid for the candidate")
+        for check_id in request.required_check_ids:
+            if check_id not in request.gate.check_ids:
+                raise WorkspaceCommitAuthorizationError(
+                    f"workspace commit is missing required gate check {check_id!r}"
+                )
         if any(
             review.decision not in {"accept", "accept_with_conditions"}
             or not review.is_valid_for(request.change_set.candidate)
             for review in request.reviews
         ):
             raise WorkspaceCommitAuthorizationError("workspace commit contains an invalid review")
+        for scope in request.required_review_scopes:
+            if not any(
+                review.scope == scope
+                and review.decision in {"accept", "accept_with_conditions"}
+                and review.is_valid_for(request.change_set.candidate)
+                for review in request.reviews
+            ):
+                raise WorkspaceCommitAuthorizationError(
+                    f"workspace commit is missing required review scope {scope!r}"
+                )
         for resource_kind in request.required_lease_kinds:
             if not any(
                 lease.resource_kind == resource_kind

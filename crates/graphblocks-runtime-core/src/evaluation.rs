@@ -344,6 +344,17 @@ impl WorkspaceHead {
                 });
             }
         }
+        for check_id in &request.required_check_ids {
+            if !request
+                .gate
+                .as_ref()
+                .is_some_and(|gate| gate.check_ids.contains(check_id))
+            {
+                return Err(WorkspaceCommitError::RequiredGateCheckMissing {
+                    check_id: check_id.clone(),
+                });
+            }
+        }
         for review in &request.reviews {
             if !matches!(
                 review.decision,
@@ -352,6 +363,20 @@ impl WorkspaceHead {
             {
                 return Err(WorkspaceCommitError::ReviewInvalid {
                     review_id: review.review_id.clone(),
+                });
+            }
+        }
+        for scope in &request.required_review_scopes {
+            if !request.reviews.iter().any(|review| {
+                review.scope == *scope
+                    && matches!(
+                        review.decision,
+                        ReviewDecision::Accept | ReviewDecision::AcceptWithConditions
+                    )
+                    && review.is_valid_for(&request.change_set.candidate)
+            }) {
+                return Err(WorkspaceCommitError::RequiredReviewScopeMissing {
+                    scope: scope.clone(),
                 });
             }
         }
@@ -390,7 +415,9 @@ pub struct WorkspaceCommitRequest {
     pub gate: Option<GateResult>,
     pub reviews: Vec<ReviewRecord>,
     pub trial_id: Option<String>,
+    pub required_check_ids: Vec<String>,
     pub required_lease_kinds: Vec<String>,
+    pub required_review_scopes: Vec<String>,
     pub leases: Vec<LeaseGrant>,
     pub metadata: BTreeMap<String, Value>,
 }
@@ -409,7 +436,9 @@ impl WorkspaceCommitRequest {
             gate: None,
             reviews: Vec::new(),
             trial_id: None,
+            required_check_ids: Vec::new(),
             required_lease_kinds: Vec::new(),
+            required_review_scopes: Vec::new(),
             leases: Vec::new(),
             metadata: BTreeMap::new(),
         }
@@ -493,8 +522,14 @@ pub enum WorkspaceCommitError {
         expected_digest: String,
         actual_digest: String,
     },
+    RequiredGateCheckMissing {
+        check_id: String,
+    },
     ReviewInvalid {
         review_id: String,
+    },
+    RequiredReviewScopeMissing {
+        scope: String,
     },
     CommitTimeRequired,
     LeaseInvalid {
@@ -539,12 +574,20 @@ impl fmt::Display for WorkspaceCommitError {
                 formatter,
                 "workspace commit gate subject {gate_id:?} has digest {actual_digest}, expected {expected_digest}"
             ),
+            Self::RequiredGateCheckMissing { check_id } => write!(
+                formatter,
+                "workspace commit is missing required gate check {check_id:?}"
+            ),
             Self::ReviewInvalid { review_id } => {
                 write!(
                     formatter,
                     "workspace review {review_id:?} is not valid for commit"
                 )
             }
+            Self::RequiredReviewScopeMissing { scope } => write!(
+                formatter,
+                "workspace commit is missing required review scope {scope:?}"
+            ),
             Self::CommitTimeRequired => {
                 write!(
                     formatter,
@@ -1348,7 +1391,9 @@ impl WorkspaceTrialPlan {
             request = request.with_review(review.clone());
         }
         request.trial_id = Some(self.trial_id.clone());
+        request.required_check_ids = self.required_check_ids.clone();
         request.required_lease_kinds = self.required_lease_kinds.clone();
+        request.required_review_scopes = self.required_review_scopes.clone();
         request.leases = self
             .leases
             .iter()

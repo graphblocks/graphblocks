@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -637,6 +638,36 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
             resources=candidate_resources,
             committed_by=PrincipalRef("optimizer-1"),
             committed_at="2026-07-02T00:35:00Z",
+        )
+
+    with pytest.raises(WorkspaceCommitAuthorizationError, match="required review scope 'design_intent'"):
+        InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
+            workspace_id="workspace-rtl",
+            request=replace(request, reviews=()),
+            new_snapshot_id="snapshot-candidate",
+            resources=candidate_resources,
+            committed_by=PrincipalRef("optimizer-1"),
+            committed_at="2026-07-02T00:30:00Z",
+        )
+
+    with pytest.raises(WorkspaceCommitAuthorizationError, match="required gate check 'formal'"):
+        InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
+            workspace_id="workspace-rtl",
+            request=replace(
+                request,
+                gate=replace(
+                    request.gate,
+                    check_ids=[
+                        check_id
+                        for check_id in request.gate.check_ids
+                        if check_id != "formal"
+                    ],
+                ),
+            ),
+            new_snapshot_id="snapshot-candidate",
+            resources=candidate_resources,
+            committed_by=PrincipalRef("optimizer-1"),
+            committed_at="2026-07-02T00:30:00Z",
         )
 
 

@@ -14,7 +14,8 @@ Commit authorization requires all of the following:
 - every required review is accepted, in scope, and valid for the unchanged
   candidate; and
 - the request binds its commit identity, expected base revision, and base and
-  candidate digests, plus the exact lease evidence active during the trial.
+  candidate digests, plus the required check IDs, review scopes, and exact
+  lease evidence active during the trial.
 
 The workspace store MUST re-evaluate revision, base digest, candidate identity,
 gate, review, lease, and materialized candidate digest immediately before its
@@ -26,6 +27,8 @@ The workspace head, change-set base, and change-set candidate MUST all name the
 same workspace; matching digests cannot substitute for workspace identity. A
 passing gate MUST bind the complete candidate reference, not merely report a
 passing decision.
+Removing a required check from the gate or removing the last valid review for a
+required scope MUST invalidate the request at commit time.
 Lease-bearing requests MUST be committed with an explicit evaluation time. A
 required lease that is not yet acquired, has expired, belongs to another trial,
 or was not retained by the request MUST reject the commit.

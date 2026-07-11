@@ -87,6 +87,8 @@ pre-release alpha software.
   revalidated required lease kinds at the immediate commit time.
 - Bound native workspace commits to matching head, base, candidate, and gate
   identities instead of accepting digest-only cross-workspace substitutions.
+- Retained required gate-check and review-scope obligations in workspace commit
+  requests and rejected stripped governance evidence at commit time.
 
 ### Removed
 

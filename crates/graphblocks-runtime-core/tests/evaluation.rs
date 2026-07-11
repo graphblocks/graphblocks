@@ -766,7 +766,9 @@ fn workspace_trial_plan_builds_commit_request_from_verified_rtl_trial() {
     assert_eq!(request.mutation_decision, Some(mutation));
     assert_eq!(request.reviews, vec![review]);
     assert_eq!(request.trial_id.as_deref(), Some("trial-rtl-1"));
+    assert_eq!(request.required_check_ids, vec!["formal", "lint"]);
     assert_eq!(request.required_lease_kinds, vec!["eda.formal"]);
+    assert_eq!(request.required_review_scopes, vec!["rtl.owner"]);
     assert_eq!(request.leases, vec![lease]);
     assert_eq!(request.metadata["trial_id"], json!("trial-rtl-1"));
     assert_eq!(request.metadata["lease_ids"], json!(["lease-formal-1"]));
@@ -780,9 +782,28 @@ fn workspace_trial_plan_builds_commit_request_from_verified_rtl_trial() {
     head.commit_at(request.clone(), "2026-07-02T00:29:59Z")
         .expect("active trial lease can authorize commit");
     let error = head
-        .commit_at(request, "2026-07-02T00:30:00Z")
+        .commit_at(request.clone(), "2026-07-02T00:30:00Z")
         .expect_err("expired trial lease must not authorize commit");
     assert!(error.to_string().contains("active lease kind"));
+
+    let mut missing_gate_check = request.clone();
+    missing_gate_check
+        .gate
+        .as_mut()
+        .expect("verified request has a gate")
+        .check_ids
+        .clear();
+    let error = head
+        .commit_at(missing_gate_check, "2026-07-02T00:29:59Z")
+        .expect_err("required gate checks must remain bound at commit");
+    assert!(error.to_string().contains("required gate check"));
+
+    let mut missing_review = request;
+    missing_review.reviews.clear();
+    let error = head
+        .commit_at(missing_review, "2026-07-02T00:29:59Z")
+        .expect_err("required review scopes must remain bound at commit");
+    assert!(error.to_string().contains("required review scope"));
 }
 
 #[test]
