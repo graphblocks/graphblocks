@@ -169,3 +169,126 @@ fn checkpoint_store_rejects_stale_state_revision() {
         }),
     );
 }
+
+#[test]
+fn checkpoint_store_claims_latest_compatible_checkpoint_with_fencing() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("initial checkpoint should be accepted");
+    store
+        .put(checkpoint("checkpoint-000002", 2, "sha256:plan"))
+        .expect("newer checkpoint should be accepted");
+
+    let first = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        )
+        .expect("first worker should claim the latest compatible checkpoint");
+
+    assert_eq!(first.checkpoint.checkpoint_id, "checkpoint-000002");
+    assert_eq!(first.claim.run_id, "run-000001");
+    assert_eq!(first.claim.checkpoint_id, "checkpoint-000002");
+    assert_eq!(first.claim.worker_id, "worker-a");
+    assert_eq!(first.claim.lease_id, "lease-a");
+    assert_eq!(first.claim.fencing_epoch, 1);
+
+    assert_eq!(
+        store.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_500,
+            2_500,
+        ),
+        Err(CheckpointStoreError::ActiveRecoveryClaim {
+            run_id: "run-000001".to_owned(),
+            worker_id: "worker-a".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            expires_at_unix_ms: 2_000,
+        })
+    );
+
+    store
+        .complete_claim(&first.claim, 1_600)
+        .expect("active claim should complete");
+    let second = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_700,
+            2_700,
+        )
+        .expect("worker should claim after previous claim completes");
+
+    assert_eq!(second.claim.fencing_epoch, 2);
+    assert_eq!(
+        store.complete_claim(&first.claim, 1_800),
+        Err(CheckpointStoreError::RecoveryClaimMismatch {
+            run_id: "run-000001".to_owned(),
+            expected_lease_id: "lease-a".to_owned(),
+            expected_fencing_epoch: 1,
+            actual_lease_id: "lease-b".to_owned(),
+            actual_fencing_epoch: 2,
+        })
+    );
+}
+
+#[test]
+fn checkpoint_store_reclaims_expired_checkpoint_claim_with_new_fence() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should be accepted");
+
+    let expired = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            1_100,
+        )
+        .expect("initial claim should be accepted");
+    let replacement = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_101,
+            2_000,
+        )
+        .expect("expired claim should be replaceable");
+
+    assert_eq!(replacement.claim.fencing_epoch, 2);
+    assert_eq!(
+        store.complete_claim(&expired.claim, 1_200),
+        Err(CheckpointStoreError::RecoveryClaimMismatch {
+            run_id: "run-000001".to_owned(),
+            expected_lease_id: "lease-a".to_owned(),
+            expected_fencing_epoch: 1,
+            actual_lease_id: "lease-b".to_owned(),
+            actual_fencing_epoch: 2,
+        })
+    );
+}

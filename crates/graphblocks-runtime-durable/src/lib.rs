@@ -1110,9 +1110,34 @@ pub struct SourceCursorCommitPlan {
     pub cursors: Vec<(String, SourceCursor)>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointRecoveryClaim {
+    pub run_id: String,
+    pub checkpoint_id: String,
+    pub worker_id: String,
+    pub lease_id: String,
+    pub fencing_epoch: u64,
+    pub claimed_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+impl CheckpointRecoveryClaim {
+    pub fn is_active_at(&self, now_unix_ms: u64) -> bool {
+        self.expires_at_unix_ms > now_unix_ms
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckpointRecovery {
+    pub checkpoint: CheckpointBarrier,
+    pub claim: CheckpointRecoveryClaim,
+}
+
 #[derive(Default)]
 pub struct InMemoryCheckpointStore {
     checkpoints_by_run: BTreeMap<String, Vec<CheckpointBarrier>>,
+    active_claims_by_run: BTreeMap<String, CheckpointRecoveryClaim>,
+    next_fencing_epoch_by_run: BTreeMap<String, u64>,
 }
 
 impl InMemoryCheckpointStore {
@@ -1163,6 +1188,99 @@ impl InMemoryCheckpointStore {
                 .cloned()
         })
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_latest_compatible(
+        &mut self,
+        run_id: &str,
+        release_id: &str,
+        deployment_revision_id: &str,
+        plan_hash: &str,
+        worker_id: &str,
+        lease_id: &str,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<CheckpointRecovery, CheckpointStoreError> {
+        if worker_id.trim().is_empty() {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "worker_id" });
+        }
+        if lease_id.trim().is_empty() {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim { field: "lease_id" });
+        }
+        if expires_at_unix_ms <= now_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
+            });
+        }
+        let checkpoint = self
+            .latest_compatible(run_id, release_id, deployment_revision_id, plan_hash)
+            .ok_or_else(|| CheckpointStoreError::CompatibleCheckpointNotFound {
+                run_id: run_id.to_owned(),
+                release_id: release_id.to_owned(),
+                deployment_revision_id: deployment_revision_id.to_owned(),
+                plan_hash: plan_hash.to_owned(),
+            })?;
+        if let Some(active) = self.active_claims_by_run.get(run_id)
+            && active.is_active_at(now_unix_ms)
+        {
+            return Err(CheckpointStoreError::ActiveRecoveryClaim {
+                run_id: run_id.to_owned(),
+                worker_id: active.worker_id.clone(),
+                lease_id: active.lease_id.clone(),
+                expires_at_unix_ms: active.expires_at_unix_ms,
+            });
+        }
+
+        let next_fencing_epoch = self
+            .next_fencing_epoch_by_run
+            .entry(run_id.to_owned())
+            .or_insert(1);
+        let claim = CheckpointRecoveryClaim {
+            run_id: run_id.to_owned(),
+            checkpoint_id: checkpoint.checkpoint_id.clone(),
+            worker_id: worker_id.to_owned(),
+            lease_id: lease_id.to_owned(),
+            fencing_epoch: *next_fencing_epoch,
+            claimed_at_unix_ms: now_unix_ms,
+            expires_at_unix_ms,
+        };
+        *next_fencing_epoch = next_fencing_epoch.saturating_add(1);
+        self.active_claims_by_run
+            .insert(run_id.to_owned(), claim.clone());
+        Ok(CheckpointRecovery { checkpoint, claim })
+    }
+
+    pub fn complete_claim(
+        &mut self,
+        claim: &CheckpointRecoveryClaim,
+        now_unix_ms: u64,
+    ) -> Result<(), CheckpointStoreError> {
+        let active = self
+            .active_claims_by_run
+            .get(&claim.run_id)
+            .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
+                run_id: claim.run_id.clone(),
+            })?;
+        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+            return Err(CheckpointStoreError::RecoveryClaimMismatch {
+                run_id: claim.run_id.clone(),
+                expected_lease_id: claim.lease_id.clone(),
+                expected_fencing_epoch: claim.fencing_epoch,
+                actual_lease_id: active.lease_id.clone(),
+                actual_fencing_epoch: active.fencing_epoch,
+            });
+        }
+        if !active.is_active_at(now_unix_ms) {
+            return Err(CheckpointStoreError::RecoveryClaimExpired {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                expires_at_unix_ms: active.expires_at_unix_ms,
+                now_unix_ms,
+            });
+        }
+        self.active_claims_by_run.remove(&claim.run_id);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1172,5 +1290,36 @@ pub enum CheckpointStoreError {
         run_id: String,
         current: u64,
         attempted: u64,
+    },
+    CompatibleCheckpointNotFound {
+        run_id: String,
+        release_id: String,
+        deployment_revision_id: String,
+        plan_hash: String,
+    },
+    InvalidRecoveryClaim {
+        field: &'static str,
+    },
+    ActiveRecoveryClaim {
+        run_id: String,
+        worker_id: String,
+        lease_id: String,
+        expires_at_unix_ms: u64,
+    },
+    RecoveryClaimNotFound {
+        run_id: String,
+    },
+    RecoveryClaimMismatch {
+        run_id: String,
+        expected_lease_id: String,
+        expected_fencing_epoch: u64,
+        actual_lease_id: String,
+        actual_fencing_epoch: u64,
+    },
+    RecoveryClaimExpired {
+        run_id: String,
+        lease_id: String,
+        expires_at_unix_ms: u64,
+        now_unix_ms: u64,
     },
 }

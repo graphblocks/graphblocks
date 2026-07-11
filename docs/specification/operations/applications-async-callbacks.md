@@ -76,7 +76,10 @@ A checkpoint binds run, graph/plan, next work, journal position, operation,
 node, attempt, provider operation, policy snapshot, release, deadline, and a
 canonical digest. Resume requires all identities to match plus positive policy
 re-evaluation, budget reservation, release compatibility, and ownership fence.
-`RunResuming` is emitted only when an executor claims the checkpoint.
+`RunResuming` is emitted only when an executor claims the checkpoint. Durable
+runtime implementations MUST claim the latest compatible checkpoint with a
+lease and fencing epoch before resuming; stale or expired claims MUST NOT
+complete resume.
 
 If no executor is available, a valid receipt remains recorded and the run may
 project a paused callback-delivery state for explicit retry. The Python
