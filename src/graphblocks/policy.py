@@ -813,7 +813,21 @@ def resolve_policy_snapshot(
     quota_window_ids: tuple[str, ...] = (),
     valid_until: str | None = None,
 ) -> PolicySnapshot:
-    ordered_bundles = sorted(bundles, key=lambda item: item.ref)
+    resolved_bundles: list[PolicyBundle] = []
+    resolved_refs: set[str] = set()
+    for requested_ref in profile.bundle_refs:
+        exact_matches = [bundle for bundle in bundles if bundle.ref == requested_ref]
+        matches = exact_matches or [bundle for bundle in bundles if bundle.bundle_id == requested_ref]
+        if not matches:
+            raise ValueError(f"policy profile bundle reference is missing: {requested_ref}")
+        if len(matches) > 1:
+            raise ValueError(f"policy profile bundle reference is ambiguous: {requested_ref}")
+        resolved_bundle = matches[0]
+        if resolved_bundle.ref in resolved_refs:
+            raise ValueError(f"policy profile resolves the same bundle more than once: {resolved_bundle.ref}")
+        resolved_refs.add(resolved_bundle.ref)
+        resolved_bundles.append(resolved_bundle)
+    ordered_bundles = sorted(resolved_bundles, key=lambda item: item.ref)
     effective_policy_digest = canonical_hash(
         _policy_value(
             {

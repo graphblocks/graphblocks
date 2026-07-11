@@ -5,6 +5,12 @@ principal, policy snapshot, and relevant input digest. Mandatory enforcement
 points fail closed on unavailable or malformed decisions. Advisory results MUST
 not be presented as authorization.
 
+A policy snapshot MUST resolve exactly the bundles declared by its profile.
+Version-qualified bundle references select that exact bundle; an unqualified
+bundle identifier is valid only when it selects one available version. Missing,
+ambiguous, or duplicate selections MUST fail snapshot construction, and bundles
+not referenced by the profile MUST NOT influence the snapshot digest.
+
 Usage entries record observed consumption independently of estimates. Budget
 reservations and permits authorize bounded work before admission; reconciliation
 commits actual usage and releases unused capacity. A child permit MUST not exceed

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.policy import (
     EntitlementSnapshot,
     PolicyBundle,
@@ -89,6 +91,68 @@ def test_resolve_policy_snapshot_pins_effective_policy_identity() -> None:
     assert snapshot.entitlement_snapshot_ref == "ent-1"
     assert snapshot.affinity == "pinned"
     assert snapshot.effective_policy_digest == same_snapshot.effective_policy_digest
+
+
+def test_resolve_policy_snapshot_ignores_bundles_not_declared_by_profile() -> None:
+    expected = PolicyBundle("expected", "1.0.0", rule_language="graphblocks.declarative@1")
+    unrelated = PolicyBundle("unrelated", "1.0.0", rule_language="graphblocks.declarative@1")
+    profile = PolicyProfile(
+        profile_id="profile-1",
+        bundle_refs=("expected",),
+        scope_selectors=("tenant:acme",),
+    )
+
+    snapshot = resolve_policy_snapshot(
+        snapshot_id="snapshot-with-extra",
+        profile=profile,
+        bundles=[unrelated, expected],
+        issued_at="2026-07-12T00:00:00Z",
+    )
+    expected_only = resolve_policy_snapshot(
+        snapshot_id="snapshot-expected-only",
+        profile=profile,
+        bundles=[expected],
+        issued_at="2026-07-12T00:00:00Z",
+    )
+
+    assert snapshot.policy_bundle_refs == ("expected@1.0.0",)
+    assert snapshot.effective_policy_digest == expected_only.effective_policy_digest
+
+
+def test_resolve_policy_snapshot_rejects_missing_profile_bundle() -> None:
+    profile = PolicyProfile(
+        profile_id="profile-1",
+        bundle_refs=("missing",),
+        scope_selectors=("tenant:acme",),
+    )
+
+    with pytest.raises(ValueError, match="missing"):
+        resolve_policy_snapshot(
+            snapshot_id="snapshot-1",
+            profile=profile,
+            bundles=[],
+            issued_at="2026-07-12T00:00:00Z",
+        )
+
+
+def test_resolve_policy_snapshot_rejects_ambiguous_bare_bundle_ref() -> None:
+    profile = PolicyProfile(
+        profile_id="profile-1",
+        bundle_refs=("expected",),
+        scope_selectors=("tenant:acme",),
+    )
+    bundles = [
+        PolicyBundle("expected", "1.0.0", rule_language="graphblocks.declarative@1"),
+        PolicyBundle("expected", "2.0.0", rule_language="graphblocks.declarative@1"),
+    ]
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        resolve_policy_snapshot(
+            snapshot_id="snapshot-1",
+            profile=profile,
+            bundles=bundles,
+            issued_at="2026-07-12T00:00:00Z",
+        )
 
 
 def test_entitlement_digest_is_stable_after_principal_attribute_mutation() -> None:

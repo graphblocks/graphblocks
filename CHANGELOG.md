@@ -56,6 +56,9 @@ pre-release alpha software.
   outcome.
 - Rejected impossible calendar dates in Rust RAG freshness metadata, matching
   Python ISO-datetime validation while preserving valid Gregorian leap days.
+- Bound policy snapshots to the bundle set declared by their profile, rejecting
+  missing, ambiguous, or duplicate references and excluding unrelated bundles
+  from effective-policy identity.
 
 ### Removed
 
