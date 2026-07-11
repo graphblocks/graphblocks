@@ -301,7 +301,11 @@ def test_budget_ledger_release_with_permit_restores_authorized_reservation() -> 
         expires_at=PERMIT_EXPIRES_AT,
     )
 
-    settlement = ledger.release_with_permit(permit.permit_id, reservation.reservation_id)
+    settlement = ledger.release_with_permit(
+        permit.permit_id,
+        reservation.reservation_id,
+        now="2026-06-22T00:30:00Z",
+    )
 
     assert settlement.released == [_tokens("40")]
     assert ledger.balance("budget-1").available == [_tokens("100")]
@@ -698,6 +702,66 @@ def test_budget_ledger_release_with_expired_permit_rejects_without_mutating() ->
 
     assert error.value.permit_id == "permit-1"
     assert ledger.balance("budget-1").reserved == [_tokens("40")]
+
+
+def test_budget_ledger_primary_permit_release_requires_explicit_current_time() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T00:10:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T00:05:00Z",
+    )
+
+    with pytest.raises(TypeError):
+        ledger.release_with_permit(permit.permit_id, reservation.reservation_id)
+
+    assert ledger.balance("budget-1").reserved == [_tokens("40")]
+
+
+def test_sqlite_budget_ledger_release_with_expired_permit_rejects_without_mutating(tmp_path) -> None:
+    path = tmp_path / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T00:10:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T00:05:00Z",
+    )
+
+    with pytest.raises(BudgetPermitExpiredError):
+        ledger.release_with_permit(
+            permit.permit_id,
+            reservation.reservation_id,
+            now="2026-06-22T00:05:00Z",
+        )
+
+    assert ledger.balance("budget-1").reserved == [_tokens("40")]
+    ledger.close()
 
 
 def test_budget_ledger_permit_cannot_settle_unreferenced_reservation() -> None:

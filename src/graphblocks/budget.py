@@ -878,14 +878,13 @@ class InMemoryBudgetLedger:
                 del spent[key]
         return settlement
 
-    def release_with_permit(self, permit_id: str, reservation_id: str) -> BudgetSettlement:
-        self._permit_for_reservation(permit_id, reservation_id)
-        return self.release(reservation_id)
-
-    def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
+    def release_with_permit(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         permit = self._permit_for_reservation(permit_id, reservation_id)
         self._ensure_permit_not_expired(permit, now)
         return self.release(reservation_id)
+
+    def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
+        return self.release_with_permit(permit_id, reservation_id, now=now)
 
     def create_completion_reserve(
         self,
@@ -1497,8 +1496,8 @@ class SQLiteBudgetLedger:
             )
         )
 
-    def release_with_permit(self, permit_id: str, reservation_id: str) -> BudgetSettlement:
-        return self._mutate(lambda ledger: ledger.release_with_permit(permit_id, reservation_id))
+    def release_with_permit(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
+        return self._mutate(lambda ledger: ledger.release_with_permit(permit_id, reservation_id, now=now))
 
     def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
         return self._mutate(lambda ledger: ledger.release_with_permit_at(permit_id, reservation_id, now=now))
