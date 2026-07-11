@@ -609,6 +609,56 @@ fn build_context_pack_rejects_impossible_source_modified_at_dates() {
 }
 
 #[test]
+fn build_context_pack_rejects_malformed_fractional_source_modified_at() {
+    let hits = [
+        ("hit-empty-fraction", "2026-06-22T00:00:00.Z"),
+        ("hit-text-fraction", "2026-06-22T00:00:00.badZ"),
+        ("hit-multiple-fractions", "2026-06-22T00:00:00.123.456Z"),
+        ("hit-valid-fraction", "2026-06-22T00:00:00.123Z"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (hit_id, source_modified_at))| {
+        let mut search_hit = hit(
+            hit_id,
+            &format!("chunk-{index}"),
+            &format!("doc-{index}"),
+            source_modified_at,
+            index + 1,
+        );
+        search_hit
+            .metadata
+            .insert("source_modified_at".to_owned(), json!(source_modified_at));
+        search_hit
+    })
+    .collect();
+
+    let context = build_context_pack(
+        "ctx-fractional-timestamps",
+        hits,
+        ContextBuildOptions::new(10).with_minimum_source_modified_at("2026-06-21T00:00:00Z"),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-valid-fraction"]
+    );
+    assert_eq!(
+        context.metadata["dropped_hit_ids"],
+        json!([
+            "hit-empty-fraction",
+            "hit-text-fraction",
+            "hit-multiple-fractions",
+        ])
+    );
+}
+
+#[test]
 fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
     let keyword_hits = vec![
         hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 1, "keyword"),

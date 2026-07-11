@@ -63,6 +63,8 @@ pre-release alpha software.
   blob stores without emitting an invalid HTTP Range request.
 - Rejected malformed `project.requires-python` constraints during wheel-matrix
   construction instead of emitting empty, falsely unsupported build targets.
+- Rejected malformed fractional seconds in Rust RAG freshness timestamps while
+  retaining valid fractional ISO datetimes.
 
 ### Removed
 

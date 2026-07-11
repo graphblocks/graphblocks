@@ -70,7 +70,15 @@ fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
     if time_parts.next().is_some() {
         return None;
     }
-    let second = second_part.split('.').next()?.parse::<u32>().ok()?;
+    let mut second_parts = second_part.split('.');
+    let second = second_parts.next()?.parse::<u32>().ok()?;
+    if let Some(fraction) = second_parts.next()
+        && (fraction.is_empty()
+            || !fraction.bytes().all(|character| character.is_ascii_digit())
+            || second_parts.next().is_some())
+    {
+        return None;
+    }
     let days_in_month = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

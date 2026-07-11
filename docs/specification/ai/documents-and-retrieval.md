@@ -24,6 +24,10 @@ content. Federation and fusion MUST retain source/index identity, score
 provenance, and deterministic tie behavior. Reranking MUST NOT restore a result
 removed by authorization.
 
+Freshness filtering MUST treat source modification metadata as a complete ISO
+datetime. Fractional seconds, when present, MUST contain one digit-only
+component; malformed timestamps MUST NOT satisfy a freshness threshold.
+
 An answer claiming grounding MUST bind citations to returned chunks and validate
 that source spans, lineage, and access decisions are present. Invalid or
 insufficient context MUST produce explicit diagnostics and the configured
