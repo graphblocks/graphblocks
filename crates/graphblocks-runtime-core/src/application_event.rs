@@ -1669,6 +1669,12 @@ pub struct ApplicationProtocolLog {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationProtocolLogPosition {
+    pub cursor: String,
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationProtocolReplayError {
     CursorExpired {
         requested_cursor: String,
@@ -2056,31 +2062,24 @@ impl SqliteApplicationProtocolLog {
         &self,
         run_id: &str,
     ) -> Result<Option<String>, ApplicationProtocolError> {
-        validate_application_protocol_run_id(run_id)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ApplicationProtocolError::Storage {
-                message: "application protocol log mutex was poisoned".to_owned(),
-            })?;
-        connection
-            .query_row(
-                "SELECT cursor
-                 FROM application_protocol_events
-                 WHERE run_id = ?1
-                 ORDER BY sequence DESC, event_id DESC
-                 LIMIT 1",
-                params![run_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(application_protocol_storage_error)
+        Ok(self
+            .latest_position_for_run(run_id)?
+            .map(|position| position.cursor))
     }
 
     pub fn latest_sequence_for_run(
         &self,
         run_id: &str,
     ) -> Result<Option<u64>, ApplicationProtocolError> {
+        Ok(self
+            .latest_position_for_run(run_id)?
+            .map(|position| position.sequence))
+    }
+
+    pub fn latest_position_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<ApplicationProtocolLogPosition>, ApplicationProtocolError> {
         validate_application_protocol_run_id(run_id)?;
         let connection = self
             .connection
@@ -2088,20 +2087,25 @@ impl SqliteApplicationProtocolLog {
             .map_err(|_| ApplicationProtocolError::Storage {
                 message: "application protocol log mutex was poisoned".to_owned(),
             })?;
-        let sequence: Option<i64> = connection
+        let position: Option<(String, i64)> = connection
             .query_row(
-                "SELECT sequence
+                "SELECT cursor, sequence
                  FROM application_protocol_events
                  WHERE run_id = ?1
                  ORDER BY sequence DESC, event_id DESC
                  LIMIT 1",
                 params![run_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(application_protocol_storage_error)?;
-        sequence
-            .map(|sequence| sqlite_u64_from_i64("sequence", sequence))
+        position
+            .map(|(cursor, sequence)| {
+                Ok(ApplicationProtocolLogPosition {
+                    cursor,
+                    sequence: sqlite_u64_from_i64("sequence", sequence)?,
+                })
+            })
             .transpose()
     }
 

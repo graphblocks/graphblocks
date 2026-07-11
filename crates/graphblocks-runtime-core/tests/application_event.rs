@@ -3,8 +3,9 @@ use graphblocks_runtime_core::application_event::{
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
     ApplicationEventStreamState, ApplicationEventVisibility, ApplicationProtocolCapabilities,
     ApplicationProtocolError, ApplicationProtocolEvent, ApplicationProtocolEventKind,
-    ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolReplayError,
-    ApplicationProtocolStreamState, AttachToRunReplay, SqliteApplicationProtocolLog,
+    ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolLogPosition,
+    ApplicationProtocolReplayError, ApplicationProtocolStreamState, AttachToRunReplay,
+    SqliteApplicationProtocolLog,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -2704,6 +2705,19 @@ fn sqlite_protocol_log_reports_latest_cursor_and_sequence_per_run() {
     assert_eq!(
         log.latest_sequence_for_run("missing-run")
             .expect("missing latest sequence loads"),
+        None
+    );
+    assert_eq!(
+        log.latest_position_for_run("run-1")
+            .expect("run-1 latest position loads"),
+        Some(ApplicationProtocolLogPosition {
+            cursor: "cursor-3".to_owned(),
+            sequence: 3,
+        })
+    );
+    assert_eq!(
+        log.latest_position_for_run("missing-run")
+            .expect("missing latest position loads"),
         None
     );
 }
