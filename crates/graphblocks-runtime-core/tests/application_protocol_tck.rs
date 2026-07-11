@@ -134,6 +134,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
         ApplicationProtocolError::DuplicateCursorConflict { .. } => "duplicate_cursor_conflict",
         ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         ApplicationProtocolError::RunMismatch { .. } => "run_mismatch",
+        ApplicationProtocolError::Storage { .. } => "storage",
     };
     match kind {
         "kind_sets" => Ok(json!({

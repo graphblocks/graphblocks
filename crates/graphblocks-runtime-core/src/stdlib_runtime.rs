@@ -1,12 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
 
+use crate::application_event::{
+    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
+    SqliteApplicationProtocolLog,
+};
 use crate::async_operation::{
     AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
     AsyncOperationState, CallbackArtifactRef, ExternalEffectRecord,
@@ -74,6 +79,17 @@ struct RuntimeBridgePlan {
 struct StdlibExecutor {
     nodes: BTreeMap<String, Value>,
     outputs_by_node: BTreeMap<String, Value>,
+}
+
+struct RuntimeEvidencePersistence<'a> {
+    result: &'a TestRunResult,
+    graph_hash: &'a str,
+    inputs: &'a Value,
+    run_store_path: Option<&'a str>,
+    journal_store_path: Option<&'a str>,
+    application_event_store_path: Option<&'a str>,
+    output_values: &'a Value,
+    deployment_provenance: Option<&'a RunDeploymentProvenance>,
 }
 
 impl NodeExecutor for StdlibExecutor {
@@ -164,6 +180,11 @@ pub fn run_stdlib_graph_with_options_json(
     let run_store_path = optional_options_string(options, "runStorePath", "run_store_path")?;
     let journal_store_path =
         optional_options_string(options, "journalStorePath", "journal_store_path")?;
+    let application_event_store_path = optional_options_string(
+        options,
+        "applicationEventStorePath",
+        "application_event_store_path",
+    )?;
     let deployment_provenance = options
         .get("deploymentProvenance")
         .or_else(|| options.get("deployment_provenance"))
@@ -186,14 +207,16 @@ pub fn run_stdlib_graph_with_options_json(
         &executor.outputs_by_node,
         result.status,
     )?;
-    persist_runtime_evidence(
-        &result,
-        &bridge_plan.graph_hash,
-        &inputs,
+    persist_runtime_evidence(RuntimeEvidencePersistence {
+        result: &result,
+        graph_hash: &bridge_plan.graph_hash,
+        inputs: &inputs,
         run_store_path,
         journal_store_path,
-        deployment_provenance.as_ref(),
-    )?;
+        application_event_store_path,
+        output_values: &output_values,
+        deployment_provenance: deployment_provenance.as_ref(),
+    })?;
     serialize_runtime_result(
         result,
         bridge_plan.graph_hash,
@@ -347,23 +370,18 @@ fn optional_options_string<'a>(
 }
 
 fn persist_runtime_evidence(
-    result: &TestRunResult,
-    graph_hash: &str,
-    inputs: &Value,
-    run_store_path: Option<&str>,
-    journal_store_path: Option<&str>,
-    deployment_provenance: Option<&RunDeploymentProvenance>,
+    evidence: RuntimeEvidencePersistence<'_>,
 ) -> Result<(), StdlibRuntimeError> {
-    if let Some(run_store_path) = run_store_path {
+    if let Some(run_store_path) = evidence.run_store_path {
         let mut store = SqliteRunStore::open(run_store_path).map_err(|error| {
             StdlibRuntimeError::runtime(format!("failed to open SQLite run store: {error:?}"))
         })?;
         store
             .create_run_with_run_id_and_provenance(
-                &result.run_id,
-                graph_hash,
-                inputs.clone(),
-                deployment_provenance.cloned().unwrap_or_default(),
+                &evidence.result.run_id,
+                evidence.graph_hash,
+                evidence.inputs.clone(),
+                evidence.deployment_provenance.cloned().unwrap_or_default(),
             )
             .map_err(|error| {
                 StdlibRuntimeError::runtime(format!(
@@ -371,32 +389,34 @@ fn persist_runtime_evidence(
                 ))
             })?;
         store
-            .set_status(&result.run_id, RunStatus::Running)
+            .set_status(&evidence.result.run_id, RunStatus::Running)
             .map_err(|error| {
                 StdlibRuntimeError::runtime(format!(
                     "failed to persist native runtime run status: {error:?}"
                 ))
             })?;
-        let status = match result.status {
+        let status = match evidence.result.status {
             TestRunStatus::Succeeded => RunStatus::Completed,
             TestRunStatus::Failed => RunStatus::Failed,
             TestRunStatus::Cancelled => RunStatus::Cancelled,
         };
-        store.set_status(&result.run_id, status).map_err(|error| {
-            StdlibRuntimeError::runtime(format!(
-                "failed to persist native runtime terminal status: {error:?}"
-            ))
-        })?;
+        store
+            .set_status(&evidence.result.run_id, status)
+            .map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to persist native runtime terminal status: {error:?}"
+                ))
+            })?;
     }
 
-    if let Some(journal_store_path) = journal_store_path {
-        let mut journal = SqliteExecutionJournal::open(journal_store_path, &result.run_id)
+    if let Some(journal_store_path) = evidence.journal_store_path {
+        let mut journal = SqliteExecutionJournal::open(journal_store_path, &evidence.result.run_id)
             .map_err(|error| {
                 StdlibRuntimeError::runtime(format!(
                     "failed to open SQLite execution journal: {error:?}"
                 ))
             })?;
-        for record in result.journal.records() {
+        for record in evidence.result.journal.records() {
             let metadata = JournalMetadata {
                 causation_id: record.causation_id.clone(),
                 node_id: record.node_id.clone(),
@@ -418,6 +438,86 @@ fn persist_runtime_evidence(
                 ))
             })?;
         }
+    }
+
+    if let Some(application_event_store_path) = evidence.application_event_store_path {
+        let log =
+            SqliteApplicationProtocolLog::open(application_event_store_path).map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to open SQLite application event stream: {error:?}"
+                ))
+            })?;
+        let duration = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| StdlibRuntimeError::runtime(format!("system clock error: {error}")))?;
+        let occurred_at_unix_ms = u64::try_from(duration.as_millis()).map_err(|_| {
+            StdlibRuntimeError::runtime("current timestamp exceeds u64 millisecond range")
+        })?;
+        let started_cursor = "evt-000001";
+        let run_started = ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                event_id: format!("{}:{started_cursor}", evidence.result.run_id),
+                protocol_version: "graphblocks.app.v1".to_owned(),
+                run_id: evidence.result.run_id.clone(),
+                release_id: evidence.graph_hash.to_owned(),
+                turn_id: None,
+                operation_id: None,
+                sequence: 1,
+                cursor: Some(started_cursor.to_owned()),
+                occurred_at_unix_ms,
+            },
+            json!({
+                "status": "running",
+                "graph_hash": evidence.graph_hash,
+            }),
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to build RunStarted application event: {error:?}"
+            ))
+        })?;
+        log.append(run_started).map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to persist RunStarted application event: {error:?}"
+            ))
+        })?;
+
+        let (terminal_kind, status) = match evidence.result.status {
+            TestRunStatus::Succeeded => (ApplicationProtocolEventKind::RunCompleted, "succeeded"),
+            TestRunStatus::Failed => (ApplicationProtocolEventKind::RunFailed, "failed"),
+            TestRunStatus::Cancelled => (ApplicationProtocolEventKind::RunCancelled, "cancelled"),
+        };
+        let terminal_cursor = "evt-000002";
+        let terminal_event = ApplicationProtocolEvent::new(
+            terminal_kind,
+            ApplicationProtocolEventMetadata {
+                event_id: format!("{}:{terminal_cursor}", evidence.result.run_id),
+                protocol_version: "graphblocks.app.v1".to_owned(),
+                run_id: evidence.result.run_id.clone(),
+                release_id: evidence.graph_hash.to_owned(),
+                turn_id: None,
+                operation_id: None,
+                sequence: 2,
+                cursor: Some(terminal_cursor.to_owned()),
+                occurred_at_unix_ms: occurred_at_unix_ms.saturating_add(1),
+            },
+            json!({
+                "status": status,
+                "graph_hash": evidence.graph_hash,
+                "outputs": evidence.output_values,
+            }),
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to build terminal application event: {error:?}"
+            ))
+        })?;
+        log.append(terminal_event).map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to persist terminal application event: {error:?}"
+            ))
+        })?;
     }
 
     Ok(())
@@ -3651,6 +3751,7 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
 mod tests {
     use std::path::PathBuf;
 
+    use crate::application_event::{ApplicationProtocolEventKind, SqliteApplicationProtocolLog};
     use crate::journal::SqliteExecutionJournal;
     use crate::run_store::{RunStatus, SqliteRunStore};
     use serde_json::{Value, json};
@@ -4078,5 +4179,66 @@ mod tests {
 
         let _ = std::fs::remove_file(run_store_path);
         let _ = std::fs::remove_file(journal_store_path);
+    }
+
+    #[test]
+    fn stdlib_runtime_options_persist_sqlite_application_event_stream() {
+        let application_event_store_path = unique_sqlite_path("application-event-store");
+        let graph_json = r#"{
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "stdlib-application-events"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        }"#;
+        let options = serde_json::json!({
+            "runId": "run-native-events-1",
+            "applicationEventStorePath": application_event_store_path.to_string_lossy(),
+        });
+        let result_json = run_stdlib_graph_with_options_json(
+            graph_json,
+            r#"{"message":{"text":"ok"}}"#,
+            &serde_json::to_string(&options).expect("options serialize"),
+        )
+        .expect("stdlib runtime should execute");
+        let result: Value = serde_json::from_str(&result_json).expect("result is JSON");
+
+        let log = SqliteApplicationProtocolLog::open(&application_event_store_path)
+            .expect("application event log reopens");
+        let events = log
+            .replay_after(None, 10)
+            .expect("application events replay");
+
+        assert_eq!(
+            events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+            vec![
+                ApplicationProtocolEventKind::RunStarted,
+                ApplicationProtocolEventKind::RunCompleted,
+            ]
+        );
+        assert_eq!(events[0].metadata.run_id, "run-native-events-1");
+        assert_eq!(events[0].metadata.sequence, 1);
+        assert_eq!(events[0].metadata.cursor.as_deref(), Some("evt-000001"));
+        assert_eq!(events[1].metadata.sequence, 2);
+        assert_eq!(events[1].metadata.cursor.as_deref(), Some("evt-000002"));
+        assert_eq!(events[1].payload["status"], "succeeded");
+        assert_eq!(events[1].payload["outputs"]["prompt"], "Native ok");
+        assert_eq!(events[1].metadata.release_id, result["graphHash"]);
+
+        let replay = log
+            .replay_after(Some("evt-000001"), 10)
+            .expect("cursor replay succeeds");
+        assert_eq!(replay.len(), 1);
+        assert_eq!(replay[0].kind, ApplicationProtocolEventKind::RunCompleted);
+
+        let _ = std::fs::remove_file(application_event_store_path);
     }
 }

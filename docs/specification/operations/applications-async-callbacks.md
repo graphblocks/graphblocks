@@ -32,6 +32,11 @@ rules remain identical across process restarts. Cursor replay MUST use the
 persisted stream; retained replay that cannot satisfy an old cursor MUST report
 the requested cursor, earliest retained cursor, last cursor, and last sequence.
 
+The native stdlib runtime exposes this through the
+`applicationEventStorePath` runtime option. When set, graph execution persists a
+per-run SQLite application event stream containing `RunStarted` and the terminal
+run event before clients attach or replay from that store.
+
 Example durable event-stream configuration:
 
 ```yaml
