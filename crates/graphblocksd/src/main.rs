@@ -61,11 +61,13 @@ fn main() {
         Some("set-run-status-with-lease") => run_set_run_status_with_lease(args.collect()),
         Some("register-async-operation") => run_register_async_operation(args.collect()),
         Some("submit-async-callback") => run_submit_async_callback(args.collect()),
+        Some("cancel-async-operation") => run_cancel_async_operation(args.collect()),
+        Some("expire-async-operation") => run_expire_async_operation(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -689,6 +691,112 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
             }).collect::<Vec<_>>(),
         },
     }))
+}
+
+fn run_cancel_async_operation(args: Vec<String>) -> Result<Value, CliError> {
+    let options = parse_terminal_async_operation_options(args, "--cancelled-at-unix-ms")?;
+    let store = SqliteAsyncOperationStore::open(&options.async_operation_store)
+        .map_err(CliError::AsyncOperation)?;
+    store
+        .cancel_operation(&options.operation_id, options.occurred_at_unix_ms)
+        .map_err(CliError::AsyncOperation)?;
+    terminal_async_operation_response(
+        &store,
+        options.operation_id,
+        "cancelledAtUnixMs",
+        options.occurred_at_unix_ms,
+    )
+}
+
+fn run_expire_async_operation(args: Vec<String>) -> Result<Value, CliError> {
+    let options = parse_terminal_async_operation_options(args, "--expired-at-unix-ms")?;
+    let store = SqliteAsyncOperationStore::open(&options.async_operation_store)
+        .map_err(CliError::AsyncOperation)?;
+    store
+        .expire_operation(&options.operation_id, options.occurred_at_unix_ms)
+        .map_err(CliError::AsyncOperation)?;
+    terminal_async_operation_response(
+        &store,
+        options.operation_id,
+        "expiredAtUnixMs",
+        options.occurred_at_unix_ms,
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TerminalAsyncOperationOptions {
+    async_operation_store: String,
+    operation_id: String,
+    occurred_at_unix_ms: u64,
+}
+
+fn parse_terminal_async_operation_options(
+    args: Vec<String>,
+    timestamp_flag: &'static str,
+) -> Result<TerminalAsyncOperationOptions, CliError> {
+    let mut async_operation_store = None;
+    let mut operation_id = None;
+    let mut occurred_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--async-operation-store" => {
+                async_operation_store = Some(next_arg(&mut args, "--async-operation-store")?);
+            }
+            "--operation-id" => {
+                operation_id = Some(next_arg(&mut args, "--operation-id")?);
+            }
+            flag if flag == timestamp_flag => {
+                let value = next_arg(&mut args, timestamp_flag)?;
+                occurred_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "{timestamp_flag} requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    Ok(TerminalAsyncOperationOptions {
+        async_operation_store: async_operation_store
+            .ok_or_else(|| CliError::Usage("--async-operation-store is required".to_owned()))?,
+        operation_id: operation_id
+            .ok_or_else(|| CliError::Usage("--operation-id is required".to_owned()))?,
+        occurred_at_unix_ms: occurred_at_unix_ms
+            .ok_or_else(|| CliError::Usage(format!("{timestamp_flag} is required")))?,
+    })
+}
+
+fn terminal_async_operation_response(
+    store: &SqliteAsyncOperationStore,
+    operation_id: String,
+    terminal_timestamp_name: &'static str,
+    occurred_at_unix_ms: u64,
+) -> Result<Value, CliError> {
+    let state = store.operation_state(&operation_id).ok_or_else(|| {
+        CliError::AsyncOperation(AsyncOperationError::OperationNotFound {
+            operation_id: operation_id.clone(),
+        })
+    })?;
+    let mut payload = json!({
+        "ok": true,
+        "operation": {
+            "operationId": operation_id,
+            "state": async_operation_state_name(state),
+            "terminalAtUnixMs": occurred_at_unix_ms,
+        },
+    });
+    if let Some(operation) = payload
+        .get_mut("operation")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        operation.insert(
+            terminal_timestamp_name.to_owned(),
+            json!(occurred_at_unix_ms),
+        );
+    }
+    Ok(payload)
 }
 
 fn run_claim_checkpoint(args: Vec<String>) -> Result<Value, CliError> {

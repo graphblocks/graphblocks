@@ -441,6 +441,7 @@ impl AsyncOperation {
         }
         if let (Some(completed_at_unix_ms), Some(expires_at_unix_ms)) =
             (self.completed_at_unix_ms, self.expires_at_unix_ms)
+            && self.state != AsyncOperationState::Expired
             && completed_at_unix_ms > expires_at_unix_ms
         {
             return Err(AsyncOperationError::InvalidOperation {

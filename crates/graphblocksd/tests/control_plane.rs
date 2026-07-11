@@ -49,6 +49,59 @@ fn waiting_daemon_async_operation() -> AsyncOperation {
     .waiting_callback(2_000)
 }
 
+fn submit_daemon_ci_callback(
+    path_text: &str,
+    callback_id: &str,
+    idempotency_key: &str,
+    received_at_unix_ms: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "submit-async-callback",
+            "--async-operation-store",
+            path_text,
+            "--callback-id",
+            callback_id,
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--idempotency-key",
+            idempotency_key,
+            "--received-at-unix-ms",
+            received_at_unix_ms,
+            "--verified-by",
+            "hmac:callback-endpoint-1",
+            "--policy-snapshot-id",
+            "policy-snapshot-1",
+            "--schema-id",
+            "schemas/CICallback@1",
+            "--schema-json",
+            r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?;
+    stdin.write_all(
+        serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
+            .as_bytes(),
+    )?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?)
+}
+
 #[test]
 fn daemon_config_validates_identity_protocol_and_capacity() {
     assert_eq!(
@@ -1733,6 +1786,176 @@ fn graphblocksd_rejects_waiting_callback_async_operation_without_timeout()
             .map_err(|error| format!("{error:?}"))?
             .operation_state("op-1"),
         None,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_cancels_async_operation_and_records_late_callback_without_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("cancel-callback-wait");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "cancel-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--cancelled-at-unix-ms",
+            "1300",
+        ])
+        .output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/state")
+            .and_then(|value| value.as_str()),
+        Some("cancelled"),
+    );
+
+    let callback_payload =
+        submit_daemon_ci_callback(path_text, "cb-cancelled", "idem-cancelled", "1400")?;
+    assert_eq!(
+        callback_payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        callback_payload
+            .pointer("/accepted/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Cancelled),
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::LateExternalCallbackReceived {
+                        terminal_state: AsyncOperationState::Cancelled,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_expires_async_operation_and_records_late_callback_without_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("expire-callback-wait");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    assert_eq!(
+        SqliteAsyncOperationStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "expire-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--expired-at-unix-ms",
+            "2001",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        payload
+            .pointer("/operation/state")
+            .and_then(|value| value.as_str()),
+        Some("expired"),
+    );
+
+    let callback_payload =
+        submit_daemon_ci_callback(path_text, "cb-expired", "idem-expired", "2100")?;
+    assert_eq!(
+        callback_payload
+            .pointer("/accepted/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        callback_payload
+            .pointer("/accepted/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Expired),
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::LateExternalCallbackReceived {
+                        terminal_state: AsyncOperationState::Expired,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1,
     );
 
     let _ = std::fs::remove_file(&path);

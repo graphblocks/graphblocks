@@ -70,17 +70,21 @@ Ordinary subscription events MUST NOT be promoted to async receipts. Duplicate
 callbacks MUST NOT resume twice. A callback after timeout/cancellation or for a
 stale attempt MUST NOT modify the newer or terminal operation.
 
-The reference daemon exposes `register-async-operation` and
-`submit-async-callback` as SQLite-backed async-operation control-plane
+The reference daemon exposes `register-async-operation`,
+`submit-async-callback`, `cancel-async-operation`, and
+`expire-async-operation` as SQLite-backed async-operation control-plane
 operations. Registration records the operation identity, provider identity,
 schema reference, idempotency key, callback-wait state, and timeout or explicit
 infinite-wait policy through `SqliteAsyncOperationStore`. Callback submission
 reads the payload from standard input, loads the expected callback schema from
 `--schema-json`, and submits the receipt to the same store; it returns whether
-the receipt was a duplicate and whether the operation should resume. These
-commands are control-plane adapters only: durable acceptance, schema
-validation, idempotency, late-callback handling, timeout validation, and
-journal-before-resume ordering remain owned by the Rust runtime store.
+the receipt was a duplicate and whether the operation should resume.
+Cancellation and expiration transition the operation to terminal state through
+the same store so later callbacks are recorded as late receipts without
+resuming execution. These commands are control-plane adapters only: durable
+acceptance, schema validation, idempotency, late-callback handling, timeout
+validation, terminal-state persistence, and journal-before-resume ordering
+remain owned by the Rust runtime store.
 
 ## Checkpoint resume
 

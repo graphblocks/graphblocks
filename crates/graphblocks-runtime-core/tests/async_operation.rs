@@ -2954,6 +2954,41 @@ fn callback_after_timeout_records_late_callback_without_resume() {
 }
 
 #[test]
+fn sqlite_expired_operation_after_deadline_survives_reopen() -> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("expired-after-deadline-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        store.expire_operation("op-1", 2_001)?;
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Expired)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::StateChanged {
+                        to: AsyncOperationState::Expired,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1
+    );
+
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
 fn callback_after_cancellation_records_late_callback_without_committing_result() {
     let store = AsyncOperationStore::new();
     store
