@@ -24,8 +24,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_durable(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    return importlib.import_module("graphblocks_durable")
+    return importlib.import_module("graphblocks.durable")
 
 
 def _order_event(graphblocks_durable, offset: int):
@@ -299,6 +298,55 @@ def test_durable_event_time_window_closes_after_watermark_and_rejects_late_event
     assert [event.cursor.offset for event in closed[0].events] == [100, 900]
     with pytest.raises(graphblocks_durable.LateEventError) as error:
         windows.ingest(_order_event(graphblocks_durable, 999))
+    assert error.value.watermark_unix_ms == 1_820_000_001_250
+
+
+def test_durable_event_time_window_rejects_missing_event_time(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    policy = graphblocks_durable.WindowPolicy.tumbling_event_time(
+        size_ms=1_000,
+        allowed_lateness_ms=250,
+        accumulation_mode="discarding",
+    )
+    windows = graphblocks_durable.WindowAccumulator(policy)
+    cursor = graphblocks_durable.SourceCursor("orders", 0, 100)
+
+    with pytest.raises(graphblocks_durable.MissingEventTimeError) as error:
+        windows.ingest(graphblocks_durable.SourceEvent(cursor, {"orderId": "ord-100"}))
+
+    assert error.value.cursor == cursor
+    assert "MissingEventTimeError" in graphblocks_durable.__all__
+
+
+def test_durable_event_time_window_ignores_processing_time_watermark(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    policy = graphblocks_durable.WindowPolicy.tumbling_event_time(
+        size_ms=1_000,
+        allowed_lateness_ms=250,
+        accumulation_mode="discarding",
+    )
+    windows = graphblocks_durable.WindowAccumulator(policy)
+    windows.ingest(_order_event(graphblocks_durable, 100))
+
+    assert windows.advance_watermark(graphblocks_durable.Watermark.processing_time(2_000_000_000_000)) == []
+    assert windows.watermark is None
+    windows.ingest(_order_event(graphblocks_durable, 50))
+
+
+def test_durable_event_time_window_never_moves_watermark_backward(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    policy = graphblocks_durable.WindowPolicy.tumbling_event_time(
+        size_ms=1_000,
+        allowed_lateness_ms=250,
+        accumulation_mode="discarding",
+    )
+    windows = graphblocks_durable.WindowAccumulator(policy)
+    windows.advance_watermark(graphblocks_durable.Watermark.event_time(1_820_000_001_250))
+
+    assert windows.advance_watermark(graphblocks_durable.Watermark.event_time(1_820_000_000_500)) == []
+    with pytest.raises(graphblocks_durable.LateEventError) as error:
+        windows.ingest(_order_event(graphblocks_durable, 999))
+
     assert error.value.watermark_unix_ms == 1_820_000_001_250
 
 
