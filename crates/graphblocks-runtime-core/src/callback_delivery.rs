@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::Mutex;
@@ -7,6 +8,7 @@ use crate::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolLog,
 };
+use crate::connectors::{SecretProviderError, SecretRef, SecretResolver};
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Value, json};
@@ -2095,14 +2097,32 @@ impl CallbackConfigurationDiagnostic {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct WebhookSigningConfig {
     pub secret_ref: String,
+    pub secret_version: Option<String>,
+    pub secret_provider_kind: Option<String>,
     secret: Vec<u8>,
     pub timestamp_header: String,
     pub signature_header: String,
     pub algorithm_header: String,
     pub replay_window_ms: u64,
+}
+
+impl fmt::Debug for WebhookSigningConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WebhookSigningConfig")
+            .field("secret_ref", &self.secret_ref)
+            .field("secret_version", &self.secret_version)
+            .field("secret_provider_kind", &self.secret_provider_kind)
+            .field("secret", &"<redacted>")
+            .field("timestamp_header", &self.timestamp_header)
+            .field("signature_header", &self.signature_header)
+            .field("algorithm_header", &self.algorithm_header)
+            .field("replay_window_ms", &self.replay_window_ms)
+            .finish()
+    }
 }
 
 impl WebhookSigningConfig {
@@ -2125,12 +2145,34 @@ impl WebhookSigningConfig {
         }
         Ok(Self {
             secret_ref,
+            secret_version: None,
+            secret_provider_kind: None,
             secret: secret.to_vec(),
             timestamp_header: "GraphBlocks-Timestamp".to_owned(),
             signature_header: "GraphBlocks-Signature".to_owned(),
             algorithm_header: "GraphBlocks-Signature-Algorithm".to_owned(),
             replay_window_ms,
         })
+    }
+
+    pub fn hmac_sha256_registered_secret(
+        secret_ref: SecretRef,
+        provider: &impl SecretResolver,
+        requester: impl Into<String>,
+        replay_window_ms: u64,
+    ) -> Result<Self, WebhookSignatureError> {
+        let requester = requester.into();
+        let resolved = provider
+            .resolve(&secret_ref, &requester)
+            .map_err(WebhookSignatureError::SecretResolution)?;
+        let mut signing = Self::hmac_sha256(
+            secret_ref.uri.clone(),
+            resolved.expose_secret().as_bytes(),
+            replay_window_ms,
+        )?;
+        signing.secret_version = secret_ref.version;
+        signing.secret_provider_kind = Some(resolved.access.provider_kind);
+        Ok(signing)
     }
 
     pub fn sign_delivery(
@@ -2561,6 +2603,7 @@ pub enum WebhookSignatureError {
         max_payload_bytes: usize,
         actual_payload_bytes: usize,
     },
+    SecretResolution(SecretProviderError),
     InvalidBody,
     InvalidSecret,
 }

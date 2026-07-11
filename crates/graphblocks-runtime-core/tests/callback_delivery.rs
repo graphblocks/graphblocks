@@ -13,6 +13,9 @@ use graphblocks_runtime_core::callback_delivery::{
     WebhookEndpointError, WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError,
     WebhookSigningConfig,
 };
+use graphblocks_runtime_core::connectors::{
+    InMemorySecretProvider, SecretProviderError, SecretRef,
+};
 use rusqlite::{Connection, params};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -3117,6 +3120,69 @@ fn webhook_envelope_signing_adds_required_headers_and_verifies() {
     signing
         .verify_signed_delivery(&signed, 2_050)
         .expect("fresh signature verifies");
+}
+
+#[test]
+fn webhook_signing_resolves_registered_secret_without_leaking_raw_value() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let mut provider = InMemorySecretProvider::new("test-secrets");
+    provider.insert(
+        SecretRef::new("secret://callbacks/ide-relay").with_version("2026-07"),
+        "registered-secret-value",
+    );
+
+    let signing = WebhookSigningConfig::hmac_sha256_registered_secret(
+        SecretRef::new("secret://callbacks/ide-relay").with_version("2026-07"),
+        &provider,
+        "callback.delivery.worker",
+        300,
+    )
+    .expect("registered secret resolves");
+    let signed = signing
+        .sign_delivery(&delivery, &event, 2_000)
+        .expect("delivery signs");
+
+    signing
+        .verify_signed_delivery(&signed, 2_050)
+        .expect("fresh signature verifies");
+    assert_eq!(signing.secret_ref, "secret://callbacks/ide-relay");
+    assert_eq!(signing.secret_version.as_deref(), Some("2026-07"));
+    assert_eq!(
+        signing.secret_provider_kind.as_deref(),
+        Some("test-secrets")
+    );
+    let debug = format!("{signing:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(debug.contains("secret://callbacks/ide-relay"));
+    assert!(!debug.contains("registered-secret-value"));
+}
+
+#[test]
+fn webhook_signing_rejects_missing_registered_secret() {
+    let provider = InMemorySecretProvider::new("test-secrets");
+
+    assert_eq!(
+        WebhookSigningConfig::hmac_sha256_registered_secret(
+            SecretRef::new("secret://callbacks/missing"),
+            &provider,
+            "callback.delivery.worker",
+            300,
+        ),
+        Err(WebhookSignatureError::SecretResolution(
+            SecretProviderError::NotFound {
+                uri: "secret://callbacks/missing".to_owned(),
+                version: None,
+            }
+        ))
+    );
 }
 
 #[test]

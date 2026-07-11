@@ -9,7 +9,7 @@ release compatibility promise.
 | Local runtime, cancellation, tools, budget core | Implemented | Implemented |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
-| Registered-secret signed webhook dispatch | Implemented in optional callback package | Not implemented |
+| Registered-secret signed webhook dispatch | Implemented in optional callback package | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
 | Bounded orchestration | Full acceptance contract, including depth/parallel limits and budget-bound leases | Core task-plan/lease contracts; not full Python parity |
 | Workspace governed commit | Implemented | Evaluation primitives only; not full commit contract |
 | Release attestation, canary, rollback/drain evidence | Implemented | Deployment primitives; not full named reference contract |

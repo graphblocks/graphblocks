@@ -91,6 +91,14 @@ impl fmt::Display for SecretProviderError {
 
 impl Error for SecretProviderError {}
 
+pub trait SecretResolver {
+    fn resolve(
+        &self,
+        reference: &SecretRef,
+        requester: &str,
+    ) -> Result<ResolvedSecret, SecretProviderError>;
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InMemorySecretProvider {
     provider_kind: String,
@@ -137,6 +145,16 @@ impl InMemorySecretProvider {
                 requester: requester.into(),
             },
         })
+    }
+}
+
+impl SecretResolver for InMemorySecretProvider {
+    fn resolve(
+        &self,
+        reference: &SecretRef,
+        requester: &str,
+    ) -> Result<ResolvedSecret, SecretProviderError> {
+        InMemorySecretProvider::resolve(self, reference, requester)
     }
 }
 
