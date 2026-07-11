@@ -2,10 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import tomllib
 
 
 ROOT = Path(__file__).parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+
+
+def test_documented_rust_toolchain_is_pinned_to_workspace_minimum() -> None:
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))
+    rust_version = workspace["workspace"]["package"]["rust-version"]
+    expected_channel = rust_version if rust_version.count(".") == 2 else f"{rust_version}.0"
+
+    assert toolchain["toolchain"]["channel"] == expected_channel
+    assert toolchain["toolchain"]["profile"] == "minimal"
+    assert toolchain["toolchain"]["components"] == ["clippy", "rustfmt"]
 
 
 def test_ci_enforces_documented_rust_quality_and_packaging_gates() -> None:
