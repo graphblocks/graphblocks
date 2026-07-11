@@ -1,6 +1,8 @@
 use std::io::{self, Read};
 
-use graphblocks_cli_native::{NativeCliMode, run_compiler_workflow, run_stdlib_workflow};
+use graphblocks_cli_native::{
+    NativeCliMode, load_single_graph_document, run_compiler_workflow, run_stdlib_workflow,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
 
@@ -33,10 +35,10 @@ fn main() {
         eprintln!("failed to read stdin: {error}");
         std::process::exit(2);
     }
-    let document: Value = match serde_json::from_str(&input) {
+    let document: Value = match load_single_graph_document(&input) {
         Ok(value) => value,
         Err(error) => {
-            eprintln!("failed to parse stdin as JSON: {error}");
+            eprintln!("{error}");
             std::process::exit(2);
         }
     };
@@ -77,7 +79,7 @@ fn main() {
         Some("plan") => NativeCliMode::Plan { expand },
         _ => {
             eprintln!(
-                "usage: graphblocks-native <validate|plan|run> [--expand] [--input-json JSON] < graph.json"
+                "usage: graphblocks-native <validate|plan|run> [--expand] [--input-json JSON] < graph.(json|yaml)"
             );
             std::process::exit(2);
         }

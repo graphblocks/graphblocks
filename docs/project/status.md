@@ -18,8 +18,9 @@ inter-package `~=1.0` constraints still need publication reconciliation.
 Python-only advanced reference contracts are listed in
 [language support](../specification/conformance/language-support.md).
 
-`graphblocks-native` can validate, plan, and execute a single JSON graph without
-Python, using the Rust stdlib runtime. It does not yet load YAML/multi-document
-examples or inject arbitrary integration adapters. Despite its name,
+`graphblocks-native` can validate, plan, and execute a single JSON or YAML graph
+without Python, using the Rust stdlib runtime. It does not yet select graphs
+from multi-document examples or inject arbitrary integration adapters. Despite
+its name,
 `graphblocksd` is currently a one-shot worker control-plane CLI rather than a
 long-running HTTP server.

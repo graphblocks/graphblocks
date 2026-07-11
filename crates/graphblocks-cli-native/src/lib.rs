@@ -1,7 +1,57 @@
 use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Diagnostic;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json;
+use serde::Deserialize;
 use serde_json::Value;
+use std::error::Error;
+use std::fmt;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NativeDocumentError {
+    EmptyInput,
+    ParseFailed { message: String },
+    MultipleDocuments { count: usize },
+}
+
+impl fmt::Display for NativeDocumentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyInput => write!(formatter, "native graph input is empty"),
+            Self::ParseFailed { message } => {
+                write!(formatter, "failed to parse native graph input: {message}")
+            }
+            Self::MultipleDocuments { count } => write!(
+                formatter,
+                "native graph input contains {count} documents; explicit graph selection is required"
+            ),
+        }
+    }
+}
+
+impl Error for NativeDocumentError {}
+
+pub fn load_single_graph_document(input: &str) -> Result<Value, NativeDocumentError> {
+    if input.trim().is_empty() {
+        return Err(NativeDocumentError::EmptyInput);
+    }
+
+    let mut documents = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(input) {
+        let value =
+            Value::deserialize(document).map_err(|error| NativeDocumentError::ParseFailed {
+                message: error.to_string(),
+            })?;
+        if !value.is_null() {
+            documents.push(value);
+        }
+    }
+
+    match documents.len() {
+        0 => Err(NativeDocumentError::EmptyInput),
+        1 => Ok(documents.remove(0)),
+        count => Err(NativeDocumentError::MultipleDocuments { count }),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeCliMode {

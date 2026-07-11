@@ -1,7 +1,10 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use graphblocks_cli_native::{NativeCliMode, run_compiler_workflow, run_stdlib_workflow};
+use graphblocks_cli_native::{
+    NativeCliMode, NativeDocumentError, load_single_graph_document, run_compiler_workflow,
+    run_stdlib_workflow,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use serde_json::{Value, json};
@@ -55,6 +58,64 @@ fn native_plan_can_include_normalized_graph_document() {
             .and_then(serde_json::Value::as_str),
         Some("graphblocks.ai/v1alpha2")
     );
+}
+
+#[test]
+fn native_loader_accepts_single_yaml_graph_document() {
+    let document = load_single_graph_document(
+        r#"
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: yaml-native
+spec:
+  nodes:
+    render:
+      block: prompt.render@1
+      config:
+        template: YAML {message.text}
+      inputs:
+        message: $input.message
+      outputs:
+        prompt: $output.prompt
+"#,
+    )
+    .expect("single YAML graph should load");
+
+    let report = run_compiler_workflow(&document, NativeCliMode::Validate);
+
+    assert!(report.ok);
+    assert_eq!(
+        document
+            .pointer("/metadata/name")
+            .and_then(serde_json::Value::as_str),
+        Some("yaml-native")
+    );
+}
+
+#[test]
+fn native_loader_rejects_multi_document_yaml_without_graph_selection() {
+    let error = load_single_graph_document(
+        r#"
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: first
+spec:
+  nodes: {}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: second
+spec:
+  nodes: {}
+"#,
+    )
+    .expect_err("multi-document YAML requires explicit graph selection");
+
+    assert_eq!(error, NativeDocumentError::MultipleDocuments { count: 2 });
 }
 
 #[test]
@@ -144,6 +205,42 @@ fn native_binary_run_accepts_input_json() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(
         payload.pointer("/outputs/prompt").and_then(Value::as_str),
         Some("CLI ok"),
+    );
+    Ok(())
+}
+
+#[test]
+fn native_binary_validate_accepts_yaml_stdin() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-native"))
+        .arg("validate")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("native binary stdin pipe was not available")?;
+    stdin.write_all(
+        br#"
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: yaml-cli
+spec:
+  nodes: {}
+"#,
+    )?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<Value>(&output.stdout)?;
+
+    assert_eq!(payload.pointer("/ok").and_then(Value::as_bool), Some(true));
+    assert!(
+        payload
+            .pointer("/graphHash")
+            .and_then(Value::as_str)
+            .is_some()
     );
     Ok(())
 }
