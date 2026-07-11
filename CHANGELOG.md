@@ -67,6 +67,8 @@ pre-release alpha software.
   retaining valid fractional ISO datetimes.
 - Reported malformed requested Python matrix versions at their indexed input
   path instead of mislabeling package metadata as unsupported.
+- Made the offline wheelhouse release gate compare the complete installed schema
+  manifest with the checked-in schemas, rejecting omissions and malformed output.
 
 ### Removed
 

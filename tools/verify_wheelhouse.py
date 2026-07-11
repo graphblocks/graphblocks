@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 import tomllib
 import venv
 
+from graphblocks.schema import SchemaManifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,9 +70,13 @@ def main(argv: list[str] | None = None) -> int:
         check=True,
         cwd=ROOT,
     )
+    expected_schema_manifest = SchemaManifest.from_directory(ROOT / "schemas").manifest_payload()
     with TemporaryDirectory(prefix="graphblocks-wheelhouse-") as install_root:
         venv.EnvBuilder(with_pip=True).create(install_root)
         isolated_python = Path(install_root) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        install_environment = dict(os.environ)
+        install_environment.pop("PYTHONHOME", None)
+        install_environment.pop("PYTHONPATH", None)
         subprocess.run(
             [
                 str(isolated_python),
@@ -93,6 +99,22 @@ def main(argv: list[str] | None = None) -> int:
             check=True,
             cwd=ROOT,
         )
+        installed_schema_manifest = subprocess.run(
+            [str(isolated_python), "-m", "graphblocks", "schemas", "manifest"],
+            check=True,
+            cwd=install_root,
+            env=install_environment,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            installed_schema_payload = json.loads(installed_schema_manifest.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("installed schema manifest is not valid JSON") from error
+        if installed_schema_payload != expected_schema_manifest:
+            raise RuntimeError(
+                "installed schema manifest does not match the checked-in source manifest"
+            )
         installed = subprocess.run(
             [str(isolated_python), "-m", "pip", "list", "--format=json"],
             check=True,

@@ -26,6 +26,9 @@ python -m pip install build hatchling maturin
 python tools/verify_wheelhouse.py --wheelhouse dist/wheelhouse
 ```
 
+The verifier requires the installed CLI's complete schema manifest, including
+every entry and digest, to match the checked-in `schemas/` manifest exactly.
+
 The Rust release gate also packages every workspace crate. Path dependencies
 therefore declare both a local path and a publishable version, while crate tests
 consume fixtures shipped inside the crate archive.
