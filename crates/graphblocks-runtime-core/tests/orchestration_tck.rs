@@ -526,12 +526,32 @@ fn lease_request_from(raw: &Map<String, Value>) -> LeaseRequest {
 fn lease_pool_error_code(error: &LeasePoolError) -> &'static str {
     match error {
         LeasePoolError::Capacity { .. } => "lease_pool_capacity",
+        LeasePoolError::InvalidTimestamp { .. } => "lease_invalid_timestamp",
+        LeasePoolError::InvalidInterval { .. } => "lease_invalid_interval",
         LeasePoolError::Exhausted { .. } => "lease_pool_exhausted",
         LeasePoolError::ResourceKindMismatch { .. } => "lease_resource_kind_mismatch",
         LeasePoolError::LeaseAlreadyExists { .. } => "lease_already_exists",
         LeasePoolError::LeaseNotFound { .. } => "lease_not_found",
         LeasePoolError::EpochMismatch { .. } => "lease_epoch_mismatch",
     }
+}
+
+#[test]
+fn lease_pool_error_codes_cover_temporal_validation() {
+    assert_eq!(
+        lease_pool_error_code(&LeasePoolError::InvalidTimestamp {
+            field_name: "acquired_at",
+            value: "not-a-time".to_owned(),
+        }),
+        "lease_invalid_timestamp"
+    );
+    assert_eq!(
+        lease_pool_error_code(&LeasePoolError::InvalidInterval {
+            acquired_at: "2026-06-26T00:00:00Z".to_owned(),
+            expires_at: "2026-06-26T00:00:00Z".to_owned(),
+        }),
+        "lease_invalid_interval"
+    );
 }
 
 fn usage_amount_from(raw: &Map<String, Value>) -> UsageAmount {
