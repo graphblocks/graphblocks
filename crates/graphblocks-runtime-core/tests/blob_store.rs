@@ -167,6 +167,61 @@ fn local_blob_store_rejects_path_traversal() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn local_blob_store_rejects_content_symlink_escape_before_writing()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("content-symlink-root");
+    let outside = temp_root("content-symlink-outside");
+    let store = LocalBlobStore::new(&root)?;
+    fs::create_dir_all(&outside)?;
+    symlink(&outside, root.join("docs"))?;
+
+    assert!(matches!(
+        store.put(
+            &BlobKey::new("docs/policy.txt"),
+            b"alpha policy",
+            PutOptions::new(),
+        ),
+        Err(BlobStoreError::InvalidKey { .. })
+    ));
+    assert!(!outside.join("policy.txt").exists());
+
+    fs::remove_dir_all(root)?;
+    fs::remove_dir_all(outside)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn local_blob_store_rejects_metadata_symlink_escape_before_writing()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("metadata-symlink-root");
+    let outside = temp_root("metadata-symlink-outside");
+    let store = LocalBlobStore::new(&root)?;
+    fs::create_dir_all(&outside)?;
+    symlink(&outside, root.join(".graphblocks-metadata/docs"))?;
+
+    assert!(matches!(
+        store.put(
+            &BlobKey::new("docs/policy.txt"),
+            b"alpha policy",
+            PutOptions::new(),
+        ),
+        Err(BlobStoreError::InvalidKey { .. })
+    ));
+    assert!(!root.join("docs/policy.txt").exists());
+    assert!(!outside.join("policy.txt.json").exists());
+
+    fs::remove_dir_all(root)?;
+    fs::remove_dir_all(outside)?;
+    Ok(())
+}
+
 #[test]
 fn blob_stores_reject_blank_keys() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root("blank-key");

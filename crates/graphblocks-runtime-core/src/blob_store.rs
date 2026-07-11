@@ -421,6 +421,7 @@ impl LocalBlobStore {
         options: PutOptions,
     ) -> Result<ArtifactRef, BlobStoreError> {
         let path = self.path_for(key)?;
+        let metadata_path = self.metadata_path_for(key)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| BlobStoreError::Io {
                 operation: "create blob parent".to_owned(),
@@ -445,7 +446,6 @@ impl LocalBlobStore {
             filename: options.filename,
             metadata: options.metadata,
         };
-        let metadata_path = self.metadata_path_for(key)?;
         if let Some(parent) = metadata_path.parent() {
             fs::create_dir_all(parent).map_err(|error| BlobStoreError::Io {
                 operation: "create blob metadata parent".to_owned(),
@@ -691,12 +691,13 @@ impl LocalBlobStore {
         for part in parts {
             path.push(part);
         }
-        Ok(path)
+        self.confined_path(key, path, &self.root)
     }
 
     fn metadata_path_for(&self, key: &BlobKey) -> Result<PathBuf, BlobStoreError> {
         let parts = self.key_parts(key)?;
-        let mut path = self.root.join(".graphblocks-metadata");
+        let metadata_root = self.root.join(".graphblocks-metadata");
+        let mut path = metadata_root.clone();
         for (index, part) in parts.iter().enumerate() {
             if index + 1 == parts.len() {
                 path.push(format!("{part}.json"));
@@ -704,7 +705,62 @@ impl LocalBlobStore {
                 path.push(part);
             }
         }
-        Ok(path)
+        self.confined_path(key, path, &metadata_root)
+    }
+
+    fn confined_path(
+        &self,
+        key: &BlobKey,
+        path: PathBuf,
+        boundary: &Path,
+    ) -> Result<PathBuf, BlobStoreError> {
+        let resolved_boundary = boundary
+            .canonicalize()
+            .map_err(|error| BlobStoreError::Io {
+                operation: "canonicalize blob path boundary".to_owned(),
+                path: boundary.to_path_buf(),
+                message: error.to_string(),
+            })?;
+        if !resolved_boundary.starts_with(&self.root) {
+            return Err(BlobStoreError::InvalidKey {
+                key: key.key.clone(),
+            });
+        }
+
+        let mut existing_path = path.as_path();
+        loop {
+            match fs::symlink_metadata(existing_path) {
+                Ok(_) => {
+                    let resolved_path =
+                        existing_path
+                            .canonicalize()
+                            .map_err(|_| BlobStoreError::InvalidKey {
+                                key: key.key.clone(),
+                            })?;
+                    if !resolved_path.starts_with(&resolved_boundary) {
+                        return Err(BlobStoreError::InvalidKey {
+                            key: key.key.clone(),
+                        });
+                    }
+                    return Ok(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    existing_path =
+                        existing_path
+                            .parent()
+                            .ok_or_else(|| BlobStoreError::InvalidKey {
+                                key: key.key.clone(),
+                            })?;
+                }
+                Err(error) => {
+                    return Err(BlobStoreError::Io {
+                        operation: "inspect blob path boundary".to_owned(),
+                        path: existing_path.to_path_buf(),
+                        message: error.to_string(),
+                    });
+                }
+            }
+        }
     }
 
     fn key_parts<'a>(&self, key: &'a BlobKey) -> Result<Vec<&'a str>, BlobStoreError> {

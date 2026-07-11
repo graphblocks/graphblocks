@@ -10,7 +10,9 @@ ordered offsets, and inherited access controls through indexing.
 
 A local blob store MUST resolve both content and sidecar metadata paths beneath
 its configured root before writing either file. Parent traversal and symlink
-resolution MUST NOT redirect metadata or content outside that boundary.
+resolution MUST NOT redirect metadata or content outside that boundary. The
+reference and native stores MUST perform this confinement before either write so
+a rejected key cannot leave a partial blob behind.
 When sidecar metadata records a content checksum and size, local `head` and
 `get` operations MUST verify the stored bytes against both values. Malformed
 sidecars or mismatched content MUST fail closed as blob-store errors.
