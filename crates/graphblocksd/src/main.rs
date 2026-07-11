@@ -1,7 +1,9 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
-use graphblocks_runtime_core::run_store::{RunOwnershipLease, RunStoreError, SqliteRunStore};
+use graphblocks_runtime_core::run_store::{
+    RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
+};
 use graphblocks_runtime_durable::{
     CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
 };
@@ -50,11 +52,12 @@ fn main() {
         Some("admit-worker-message") => run_admit_worker_message(args.collect()),
         Some("acquire-run-lease") => run_acquire_run_lease(args.collect()),
         Some("renew-run-lease") => run_renew_run_lease(args.collect()),
+        Some("set-run-status-with-lease") => run_set_run_status_with_lease(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -245,6 +248,97 @@ fn run_renew_run_lease(args: Vec<String>) -> Result<Value, CliError> {
     Ok(json!({
         "ok": true,
         "lease": lease_json,
+    }))
+}
+
+fn run_set_run_status_with_lease(args: Vec<String>) -> Result<Value, CliError> {
+    let mut run_store = None;
+    let mut run_id = None;
+    let mut status = None;
+    let mut owner = None;
+    let mut lease_id = None;
+    let mut fencing_epoch = None;
+    let mut now_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--run-store" => {
+                run_store = Some(next_arg(&mut args, "--run-store")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--status" => {
+                let value = next_arg(&mut args, "--status")?;
+                status = Some(value.parse::<RunStatus>().map_err(|_| {
+                    CliError::Usage(format!("--status uses an unsupported run status: {value}"))
+                })?);
+            }
+            "--owner" => {
+                owner = Some(next_arg(&mut args, "--owner")?);
+            }
+            "--lease-id" => {
+                lease_id = Some(next_arg(&mut args, "--lease-id")?);
+            }
+            "--fencing-epoch" => {
+                let value = next_arg(&mut args, "--fencing-epoch")?;
+                fencing_epoch = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--fencing-epoch requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let run_store =
+        run_store.ok_or_else(|| CliError::Usage("--run-store is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let status = status.ok_or_else(|| CliError::Usage("--status is required".to_owned()))?;
+    let owner = owner.ok_or_else(|| CliError::Usage("--owner is required".to_owned()))?;
+    let lease_id = lease_id.ok_or_else(|| CliError::Usage("--lease-id is required".to_owned()))?;
+    let fencing_epoch =
+        fencing_epoch.ok_or_else(|| CliError::Usage("--fencing-epoch is required".to_owned()))?;
+    let now_unix_ms =
+        now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
+
+    let mut store = SqliteRunStore::open(run_store).map_err(CliError::RunStore)?;
+    let run = store
+        .set_status_with_ownership_lease(
+            &run_id,
+            status,
+            &owner,
+            &lease_id,
+            fencing_epoch,
+            now_unix_ms,
+        )
+        .map_err(CliError::RunStore)?;
+
+    Ok(json!({
+        "ok": true,
+        "run": {
+            "runId": run.run_id,
+            "sequence": run.sequence,
+            "invocationMode": run.invocation_mode.as_str(),
+            "status": run.status.as_str(),
+            "stateRevision": run.state_revision,
+        },
+        "lease": {
+            "runId": run_id,
+            "owner": owner,
+            "leaseId": lease_id,
+            "fencingEpoch": fencing_epoch,
+            "validatedAtUnixMs": now_unix_ms,
+        },
     }))
 }
 

@@ -70,7 +70,7 @@ impl RunStatus {
         )
     }
 
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Created => "created",
             Self::Validating => "validating",
@@ -97,7 +97,7 @@ impl RunStatus {
         }
     }
 
-    fn from_str(status: &str) -> Option<Self> {
+    fn from_status_str(status: &str) -> Option<Self> {
         match status {
             "created" => Some(Self::Created),
             "validating" => Some(Self::Validating),
@@ -123,6 +123,14 @@ impl RunStatus {
             "policy_stopped" => Some(Self::PolicyStopped),
             _ => None,
         }
+    }
+}
+
+impl std::str::FromStr for RunStatus {
+    type Err = ();
+
+    fn from_str(status: &str) -> Result<Self, Self::Err> {
+        Self::from_status_str(status).ok_or(())
     }
 }
 
@@ -2561,7 +2569,7 @@ fn record_from_storage(
         RunInvocationMode::from_str(&invocation_mode).ok_or_else(|| RunStoreError::Storage {
             message: format!("unknown stored run invocation mode {invocation_mode:?}"),
         })?;
-    let status = RunStatus::from_str(&status).ok_or_else(|| RunStoreError::Storage {
+    let status = RunStatus::from_status_str(&status).ok_or_else(|| RunStoreError::Storage {
         message: format!("unknown stored run status {status:?}"),
     })?;
     Ok(RunRecord {

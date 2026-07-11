@@ -9,7 +9,7 @@ use graphblocks_protocol::{
     WorkerInvocationContext, WorkerInvokeRequest, WorkerProtocolErrorPayload,
     WorkerProtocolMessage, WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
 };
-use graphblocks_runtime_core::run_store::{RunInvocationMode, SqliteRunStore};
+use graphblocks_runtime_core::run_store::{RunInvocationMode, RunStatus, SqliteRunStore};
 use graphblocks_runtime_durable::{
     CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
@@ -1392,6 +1392,163 @@ fn graphblocksd_reports_forged_run_lease_renewal_as_structured_json()
             .pointer("/error/actualFencingEpoch")
             .and_then(|value| value.as_u64()),
         Some(1),
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_sets_run_status_only_with_current_ownership_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("graphblocksd-run-status-{unique}.sqlite3"));
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let run = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({"task": "background"}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .acquire_ownership_lease(&run.run_id, "coordinator-a", 1000, 2000)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "set-run-status-with-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--status",
+            "running",
+            "--owner",
+            "coordinator-a",
+            "--lease-id",
+            "run-000001:1",
+            "--fencing-epoch",
+            "1",
+            "--now-unix-ms",
+            "1200",
+        ])
+        .output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload
+            .pointer("/run/runId")
+            .and_then(|value| value.as_str()),
+        Some("run-000001"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/run/status")
+            .and_then(|value| value.as_str()),
+        Some("running"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/lease/leaseId")
+            .and_then(|value| value.as_str()),
+        Some("run-000001:1"),
+    );
+    assert_eq!(
+        SqliteRunStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .get_run("run-000001")
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::Running,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_rejects_forged_run_status_lease_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after epoch")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("graphblocksd-run-status-forged-{unique}.sqlite3"));
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let run = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({"task": "background"}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .acquire_ownership_lease(&run.run_id, "coordinator-a", 1000, 2000)
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "set-run-status-with-lease",
+            "--run-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--status",
+            "running",
+            "--owner",
+            "coordinator-forged",
+            "--lease-id",
+            "run-000001:1",
+            "--fencing-epoch",
+            "1",
+            "--now-unix-ms",
+            "1200",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stderr)?;
+
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.run_lease.mismatch"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/expectedOwner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-a"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/error/actualOwner")
+            .and_then(|value| value.as_str()),
+        Some("coordinator-forged"),
+    );
+    assert_eq!(
+        SqliteRunStore::open(&path)
+            .map_err(|error| format!("{error:?}"))?
+            .get_run("run-000001")
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::Created,
     );
 
     let _ = std::fs::remove_file(&path);
