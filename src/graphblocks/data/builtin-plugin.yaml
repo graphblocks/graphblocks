@@ -27,6 +27,24 @@ spec:
         - {name: prompt, type: graphblocks.ai/Prompt@1}
       outputs:
         - {name: response, type: graphblocks.ai/ModelResponse@1}
+    - typeId: model.structured_generate
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.model.structured_generate
+      inputs:
+        - {name: response, type: Any, required: false}
+        - {name: diagnosis, type: Any, required: false}
+        - {name: prompt, type: Any, required: false}
+        - {name: context, type: Any, required: false}
+      outputs:
+        - {name: value, type: Any}
+        - {name: response, type: Any}
+        - {name: items, type: List<Any>, required: false}
+        - {name: schemaId, type: String}
+        - {name: schemaRef, type: String}
+        - {name: contentDigest, type: String}
+      resourceSlots:
+        - {name: model, type: resources/Model@1, optional: true}
     - typeId: tools.resolve
       version: 1
       role: builder
@@ -86,9 +104,32 @@ spec:
       role: builder
       implementation: graphblocks.stdlib.retrieve.fuse
       inputs:
-        - {name: sources, type: List<graphblocks.ai/SearchHit@1>}
+        - {name: sources, type: Any}
       outputs:
         - {name: hits, type: List<graphblocks.ai/SearchHit@1>}
+    - typeId: retrieve.execute_plan
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.retrieve.execute_plan
+      inputs:
+        - {name: query, type: Any}
+        - {name: auth, type: Any, required: false}
+        - {name: sources, type: Any, required: false}
+      outputs:
+        - {name: result, type: Any}
+      resourceSlots:
+        - {name: retrievers, type: resources/RetrieverSet@1, optional: true}
+    - typeId: rank.documents
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.rank.documents
+      inputs:
+        - {name: query, type: Any}
+        - {name: hits, type: List<graphblocks.ai/SearchHit@1>}
+      outputs:
+        - {name: hits, type: List<graphblocks.ai/SearchHit@1>}
+      resourceSlots:
+        - {name: reranker, type: resources/Reranker@1, optional: true}
     - typeId: context.build
       version: 1
       role: builder
@@ -99,5 +140,75 @@ spec:
         - {name: currentMessage, type: graphblocks.ai/Message@1, required: false}
       outputs:
         - {name: pack, type: graphblocks.ai/ContextPack@1}
+    - typeId: answer.validate_grounding
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.answer.validate_grounding
+      inputs:
+        - {name: response, type: Any}
+        - {name: context, type: graphblocks.ai/ContextPack@1}
+      outputs:
+        - {name: candidate, type: Any}
+        - {name: response, type: Any}
+        - {name: result, type: Any}
+        - {name: validation, type: Any}
+    - typeId: check.run_suite
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.check.run_suite
+      inputs:
+        - {name: subject, type: Any}
+        - {name: evidence, type: Any, required: false}
+      outputs:
+        - {name: results, type: Any}
+        - {name: checks, type: Any}
+        - {name: diagnostics, type: Any}
+        - {name: passed, type: Boolean}
+        - {name: hardGatePassed, type: Boolean}
+      resourceSlots:
+        - {name: checks, type: resources/CheckProviderSet@1, optional: true}
+    - typeId: gate.evaluate
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.gate.evaluate
+      inputs:
+        - {name: checks, type: Any}
+        - {name: metrics, type: Any, required: false}
+      outputs:
+        - {name: result, type: Any}
+        - {name: decision, type: String}
+        - {name: passed, type: Boolean}
+        - {name: violations, type: Any}
+    - typeId: review.request
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.review.request
+      inputs:
+        - {name: subject, type: Any}
+        - {name: gate, type: Any, required: false}
+        - {name: review, type: Any, required: false}
+      outputs:
+        - {name: request, type: Any}
+        - {name: record, type: Any, required: false}
+        - {name: accepted, type: Boolean}
+        - {name: approved, type: Boolean}
+        - {name: status, type: String}
+        - {name: waitMode, type: String, required: false}
+      resourceSlots:
+        - {name: reviewer, type: resources/Reviewer@1, optional: true}
+    - typeId: result.bundle
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.result.bundle
+      inputs:
+        - {name: outputs, type: Any}
+        - {name: evidence, type: Any, required: false}
+        - {name: checks, type: Any, required: false}
+        - {name: reviews, type: Any, required: false}
+        - {name: gate, type: Any, required: false}
+      outputs:
+        - {name: result, type: Any}
+        - {name: bundle, type: Any}
+        - {name: contentDigest, type: String}
   connectorFactories: []
   adapters: []

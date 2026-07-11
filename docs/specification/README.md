@@ -16,6 +16,7 @@ claim.
 - [Canonical data model](core/canonical-data-model.md)
 - [Graph, compiler, and runtime](core/graph-compilation-runtime.md)
 - [Packages and plugins](core/packages-and-plugins.md)
+- [Portable domain blocks](core/portable-domain-blocks.md)
 - [Tools and output policy](core/tools-and-output-policy.md)
 
 ## AI application contracts

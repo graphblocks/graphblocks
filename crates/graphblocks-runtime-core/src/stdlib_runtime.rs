@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
@@ -584,6 +585,16 @@ fn execute_stdlib_block(
         "conversation.begin_turn@1" => execute_begin_turn(inputs, config),
         "prompt.render@1" => execute_prompt_render(inputs, config),
         "model.generate@1" => execute_scripted_generate(inputs, config),
+        "model.structured_generate@1" => execute_structured_generate(inputs, config),
+        "retrieve.execute_plan@1" => execute_retrieval_plan(inputs, config),
+        "retrieve.fuse@1" => execute_retrieval_fusion(inputs, config),
+        "rank.documents@1" => execute_document_ranking(inputs, config),
+        "context.build@1" => execute_context_build(inputs, config),
+        "answer.validate_grounding@1" => execute_grounding_validation(inputs, config),
+        "check.run_suite@1" => execute_check_suite(inputs, config),
+        "gate.evaluate@1" => execute_gate_evaluation(inputs, config),
+        "review.request@1" => execute_review_request(inputs, config),
+        "result.bundle@1" => execute_result_bundle(inputs, config),
         "tools.resolve@1" => execute_resolve_tools(inputs, config),
         "agent.run@1" => execute_scripted_agent_run(inputs, config),
         "async.start_operation@1" => execute_async_start_operation(inputs, config),
@@ -674,6 +685,778 @@ fn execute_scripted_generate(inputs: &Value, config: &Value) -> Result<Value, Bl
         .unwrap_or(prompt);
 
     Ok(json!({ "response": response }))
+}
+
+fn execute_structured_generate(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let output_schema = config
+        .get("outputSchema")
+        .or_else(|| config.get("output_schema"))
+        .and_then(Value::as_str)
+        .filter(|schema| !schema.trim().is_empty())
+        .ok_or_else(|| {
+            BlockError::new(
+                "model.structured_generate.missing_output_schema",
+                ErrorCategory::Configuration,
+                "model.structured_generate@1 requires config.outputSchema",
+                false,
+            )
+        })?;
+    let response = config
+        .get("response")
+        .or_else(|| inputs.get("response"))
+        .or_else(|| inputs.get("diagnosis"))
+        .cloned()
+        .unwrap_or_else(|| inputs.clone());
+    if !response.is_object() && !response.is_array() {
+        return Err(BlockError::new(
+            "model.structured_generate.invalid_response",
+            ErrorCategory::Validation,
+            "model.structured_generate@1 response must be an object or array",
+            false,
+        ));
+    }
+    let items = response
+        .get("items")
+        .cloned()
+        .or_else(|| response.as_array().map(|items| Value::Array(items.clone())))
+        .unwrap_or_else(|| json!([response.clone()]));
+    let content_digest = canonical_hash(&response);
+    Ok(json!({
+        "value": response.clone(),
+        "response": response,
+        "items": items,
+        "schemaId": output_schema,
+        "schemaRef": output_schema,
+        "contentDigest": content_digest,
+    }))
+}
+
+fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let query = inputs.get("query").cloned().ok_or_else(|| {
+        BlockError::new(
+            "retrieve.execute_plan.missing_query",
+            ErrorCategory::Configuration,
+            "retrieve.execute_plan@1 requires query input",
+            false,
+        )
+    })?;
+    let raw_sources = inputs
+        .get("sources")
+        .or_else(|| config.get("sources"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let sources = normalize_named_values(&raw_sources, "sourceId").map_err(|message| {
+        BlockError::new(
+            "retrieve.execute_plan.invalid_sources",
+            ErrorCategory::Configuration,
+            message,
+            false,
+        )
+    })?;
+    let minimum_successful = config
+        .get("minimumSuccessfulSources")
+        .or_else(|| config.get("minimum_successful_sources"))
+        .and_then(Value::as_u64)
+        .unwrap_or(1) as usize;
+    let mut normalized = Vec::new();
+    let mut successful = Vec::new();
+    let mut failed = Vec::new();
+    for (index, source) in sources.into_iter().enumerate() {
+        let source_id = source
+            .get("sourceId")
+            .or_else(|| source.get("source_id"))
+            .or_else(|| source.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("source-{}", index + 1));
+        let error = source
+            .get("error")
+            .filter(|error| !error.is_null())
+            .cloned();
+        let hits = source
+            .get("hits")
+            .or_else(|| source.pointer("/result/hits"))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        if !hits.is_array() {
+            return Err(BlockError::new(
+                "retrieve.execute_plan.invalid_source_hits",
+                ErrorCategory::Validation,
+                format!("retrieve source {source_id:?} hits must be an array"),
+                false,
+            ));
+        }
+        if let Some(error) = error {
+            failed.push(json!({"sourceId": source_id, "error": error}));
+            normalized.push(json!({
+                "sourceId": source_id,
+                "status": "failed",
+                "hits": hits,
+                "error": error,
+            }));
+        } else {
+            successful.push(Value::String(source_id.clone()));
+            normalized.push(json!({
+                "sourceId": source_id,
+                "status": "succeeded",
+                "hits": hits,
+            }));
+        }
+    }
+    if successful.len() < minimum_successful {
+        return Err(BlockError::new(
+            "retrieve.execute_plan.insufficient_sources",
+            ErrorCategory::Provider,
+            format!(
+                "retrieve.execute_plan@1 required {minimum_successful} successful source(s), got {}",
+                successful.len()
+            ),
+            true,
+        ));
+    }
+    let result = json!({
+        "retrievalId": format!("retrieval-{}", canonical_hash(&json!({"query": query, "sources": normalized}))),
+        "query": query,
+        "sources": normalized,
+        "successfulSources": successful,
+        "failedSources": failed,
+    });
+    Ok(json!({"result": result, "sources": result["sources"]}))
+}
+
+fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let sources = inputs.get("sources").ok_or_else(|| {
+        BlockError::new(
+            "retrieve.fuse.missing_sources",
+            ErrorCategory::Configuration,
+            "retrieve.fuse@1 requires sources input",
+            false,
+        )
+    })?;
+    let source_values = normalize_named_values(sources, "sourceId").map_err(|message| {
+        BlockError::new(
+            "retrieve.fuse.invalid_sources",
+            ErrorCategory::Validation,
+            message,
+            false,
+        )
+    })?;
+    let k = config.get("k").and_then(Value::as_u64).unwrap_or(60);
+    if k == 0 {
+        return Err(BlockError::new(
+            "retrieve.fuse.invalid_k",
+            ErrorCategory::Configuration,
+            "retrieve.fuse@1 config.k must be positive",
+            false,
+        ));
+    }
+    let mut fused: BTreeMap<String, (f64, usize, Value)> = BTreeMap::new();
+    for source in source_values {
+        let hits = source
+            .get("hits")
+            .or_else(|| source.pointer("/result/hits"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                BlockError::new(
+                    "retrieve.fuse.invalid_source_hits",
+                    ErrorCategory::Validation,
+                    "retrieve.fuse@1 each source must contain a hits array",
+                    false,
+                )
+            })?;
+        for (index, hit) in hits.iter().enumerate() {
+            let rank = hit
+                .get("rank")
+                .and_then(Value::as_u64)
+                .unwrap_or((index + 1) as u64);
+            let key = hit
+                .get("canonicalSource")
+                .or_else(|| hit.get("canonical_source"))
+                .or_else(|| hit.pointer("/item/source/sourceId"))
+                .or_else(|| hit.pointer("/item/source/source_id"))
+                .or_else(|| hit.pointer("/item/itemId"))
+                .or_else(|| hit.pointer("/item/item_id"))
+                .or_else(|| hit.get("hitId"))
+                .or_else(|| hit.get("hit_id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| canonical_hash(hit));
+            let score = 1.0 / (k + rank) as f64;
+            fused
+                .entry(key)
+                .and_modify(|entry| {
+                    entry.0 += score;
+                    entry.1 = entry.1.min(rank as usize);
+                })
+                .or_insert((score, rank as usize, hit.clone()));
+        }
+    }
+    let mut fused = fused.into_values().collect::<Vec<_>>();
+    fused.sort_by(|left, right| {
+        right
+            .0
+            .partial_cmp(&left.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| canonical_hash(&left.2).cmp(&canonical_hash(&right.2)))
+    });
+    let hits = fused
+        .into_iter()
+        .enumerate()
+        .map(|(index, (score, _rank, mut hit))| {
+            if !hit.is_object() {
+                hit = json!({"value": hit});
+            }
+            hit["rank"] = json!(index + 1);
+            hit["fusionScore"] = json!(score);
+            hit
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({"hits": hits}))
+}
+
+fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let query = inputs
+        .get("query")
+        .map(json_display)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let terms = query
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    let hits = inputs
+        .get("hits")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BlockError::new(
+                "rank.documents.invalid_hits",
+                ErrorCategory::Configuration,
+                "rank.documents@1 requires a hits array",
+                false,
+            )
+        })?;
+    let input_limit = config
+        .get("inputLimit")
+        .or_else(|| config.get("input_limit"))
+        .and_then(Value::as_u64)
+        .map(|limit| limit as usize)
+        .unwrap_or(hits.len());
+    if input_limit == 0 {
+        return Err(BlockError::new(
+            "rank.documents.invalid_input_limit",
+            ErrorCategory::Configuration,
+            "rank.documents@1 inputLimit must be positive",
+            false,
+        ));
+    }
+    let reranker = config
+        .get("reranker")
+        .and_then(Value::as_str)
+        .unwrap_or("deterministic-term-reranker");
+    let mut ranked = hits
+        .iter()
+        .take(input_limit)
+        .enumerate()
+        .map(|(index, hit)| {
+            let text = hit
+                .pointer("/item/preview")
+                .or_else(|| hit.pointer("/item/text"))
+                .or_else(|| hit.get("text"))
+                .map(json_display)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let score = terms
+                .iter()
+                .map(|term| text.matches(term).count())
+                .sum::<usize>();
+            (score, index, hit.clone())
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let hits = ranked
+        .into_iter()
+        .enumerate()
+        .map(|(index, (score, _original_index, mut hit))| {
+            if !hit.is_object() {
+                hit = json!({"value": hit});
+            }
+            hit["rank"] = json!(index + 1);
+            hit["rerankScore"] = json!(score);
+            hit["reranker"] = json!(reranker);
+            hit
+        })
+        .collect::<Vec<_>>();
+    let result = json!({
+        "hits": hits,
+        "reranker": reranker,
+        "inputCount": inputs["hits"].as_array().map_or(0, Vec::len),
+        "evaluatedCount": hits.len(),
+    });
+    Ok(json!({"hits": result["hits"], "result": result}))
+}
+
+fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let evidence = inputs
+        .get("evidence")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BlockError::new(
+                "context.build.invalid_evidence",
+                ErrorCategory::Configuration,
+                "context.build@1 requires an evidence array",
+                false,
+            )
+        })?;
+    let max_tokens = config
+        .get("maxTokens")
+        .or_else(|| config.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(8_192) as usize;
+    let reserve_tokens = config
+        .get("reserveOutputTokens")
+        .or_else(|| config.get("reserve_output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    if reserve_tokens > max_tokens {
+        return Err(BlockError::new(
+            "context.build.invalid_budget",
+            ErrorCategory::Configuration,
+            "context.build@1 reserveOutputTokens must not exceed maxTokens",
+            false,
+        ));
+    }
+    let available = max_tokens - reserve_tokens;
+    let mut selected = Vec::new();
+    let mut token_count = 0usize;
+    for hit in evidence {
+        let tokens = json_display(hit).split_whitespace().count().max(1);
+        if token_count.saturating_add(tokens) <= available {
+            selected.push(hit.clone());
+            token_count += tokens;
+        }
+    }
+    let pack = json!({
+        "contextId": format!("context-{}", canonical_hash(&json!({"evidence": selected, "history": inputs.get("history"), "currentMessage": inputs.get("currentMessage")}))),
+        "hits": selected,
+        "history": inputs.get("history").cloned().unwrap_or_else(|| json!([])),
+        "currentMessage": inputs.get("currentMessage").cloned().unwrap_or(Value::Null),
+        "tokenBudget": available,
+        "tokenCount": token_count,
+        "droppedCount": evidence.len().saturating_sub(selected.len()),
+    });
+    Ok(json!({"pack": pack}))
+}
+
+fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let response = inputs.get("response").cloned().ok_or_else(|| {
+        BlockError::new(
+            "answer.validate_grounding.missing_response",
+            ErrorCategory::Configuration,
+            "answer.validate_grounding@1 requires response input",
+            false,
+        )
+    })?;
+    let context = inputs.get("context").ok_or_else(|| {
+        BlockError::new(
+            "answer.validate_grounding.missing_context",
+            ErrorCategory::Configuration,
+            "answer.validate_grounding@1 requires context input",
+            false,
+        )
+    })?;
+    let require_citation = config
+        .get("requireCitation")
+        .or_else(|| config.get("require_citation"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let context_hits = context
+        .get("hits")
+        .or_else(|| context.get("evidence"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let citation_count = response
+        .get("citations")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let mut issues = Vec::new();
+    if context_hits == 0 && !json_display(&response).trim().is_empty() {
+        issues.push("grounding.insufficient_context");
+    }
+    if require_citation && citation_count == 0 {
+        issues.push("grounding.citation_required");
+    }
+    let ok = issues.is_empty();
+    let policy = config
+        .get("onInsufficientEvidence")
+        .or_else(|| config.get("on_insufficient_evidence"))
+        .and_then(Value::as_str)
+        .unwrap_or("fail");
+    let abstained = !ok && policy == "abstain";
+    let validated_response = if abstained {
+        json!({
+            "text": "I do not have enough validated source support to answer.",
+            "abstention": {"reason": "insufficient_evidence", "issueCodes": issues},
+        })
+    } else {
+        response.clone()
+    };
+    let result = json!({
+        "ok": ok,
+        "issues": issues,
+        "abstained": abstained,
+        "response": validated_response,
+    });
+    Ok(json!({
+        "candidate": result["response"].clone(),
+        "response": result["response"].clone(),
+        "result": result.clone(),
+        "validation": result,
+    }))
+}
+
+fn execute_check_suite(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let checks = config
+        .get("checks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BlockError::new(
+                "check.run_suite.invalid_checks",
+                ErrorCategory::Configuration,
+                "check.run_suite@1 requires config.checks array",
+                false,
+            )
+        })?;
+    let supplied = inputs
+        .get("checkResults")
+        .or_else(|| inputs.get("check_results"))
+        .or_else(|| config.get("results"));
+    let mut results = Vec::new();
+    for check in checks {
+        let check_id = check.as_str().ok_or_else(|| {
+            BlockError::new(
+                "check.run_suite.invalid_check",
+                ErrorCategory::Configuration,
+                "check.run_suite@1 check names must be strings",
+                false,
+            )
+        })?;
+        let supplied_result = supplied.and_then(|results| {
+            results.get(check_id).or_else(|| {
+                results.as_array().and_then(|results| {
+                    results.iter().find(|result| {
+                        result
+                            .get("checkId")
+                            .or_else(|| result.get("check_id"))
+                            .and_then(Value::as_str)
+                            == Some(check_id)
+                    })
+                })
+            })
+        });
+        let subject_result = inputs
+            .get("subject")
+            .and_then(|subject| subject.get("checks").or(Some(subject)))
+            .and_then(|subject| subject.get(check_id));
+        let value = supplied_result.or(subject_result);
+        let status = match value {
+            Some(Value::Bool(true)) => "passed",
+            Some(Value::Bool(false)) => "failed",
+            Some(Value::String(status)) if matches!(status.as_str(), "pass" | "passed") => "passed",
+            Some(Value::String(status)) if matches!(status.as_str(), "fail" | "failed") => "failed",
+            Some(Value::Object(result)) => result
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("inconclusive"),
+            _ => "inconclusive",
+        };
+        results.push(json!({
+            "checkId": check_id,
+            "status": status,
+            "diagnostics": value.and_then(|value| value.get("diagnostics")).cloned().unwrap_or_else(|| json!([])),
+        }));
+        if config
+            .get("stopOnFailure")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && status == "failed"
+        {
+            break;
+        }
+    }
+    let passed = results
+        .iter()
+        .all(|result| result.get("status") == Some(&json!("passed")));
+    let diagnostics = results
+        .iter()
+        .flat_map(|result| {
+            result
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .cloned()
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "results": results.clone(),
+        "checks": results,
+        "passed": passed,
+        "hardGatePassed": passed,
+        "diagnostics": diagnostics,
+    }))
+}
+
+fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let checks = inputs
+        .get("checks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BlockError::new(
+                "gate.evaluate.invalid_checks",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 requires a checks array",
+                false,
+            )
+        })?;
+    let flattened = checks
+        .iter()
+        .flat_map(|value| {
+            value
+                .as_array()
+                .map_or_else(|| vec![value.clone()], Clone::clone)
+        })
+        .collect::<Vec<_>>();
+    let hard_constraints = config
+        .get("hardConstraints")
+        .or_else(|| config.get("hard_constraints"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| {
+            flattened
+                .iter()
+                .filter_map(|check| {
+                    check
+                        .get("checkId")
+                        .or_else(|| check.get("check_id"))
+                        .cloned()
+                })
+                .collect()
+        });
+    let mut violated = Vec::new();
+    for required in &hard_constraints {
+        let Some(required) = required.as_str() else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_constraint",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 hardConstraints entries must be strings",
+                false,
+            ));
+        };
+        let status = flattened.iter().find_map(|check| {
+            let id = check
+                .get("checkId")
+                .or_else(|| check.get("check_id"))
+                .and_then(Value::as_str);
+            (id == Some(required))
+                .then(|| check.get("status").and_then(Value::as_str))
+                .flatten()
+        });
+        if !matches!(status, Some("pass" | "passed")) {
+            violated.push(format!("check:{required}"));
+        }
+    }
+    let has_inconclusive = flattened.iter().any(|check| {
+        matches!(
+            check.get("status").and_then(Value::as_str),
+            Some("inconclusive" | "error" | "timeout")
+        )
+    });
+    let decision = if !violated.is_empty() {
+        "fail"
+    } else if has_inconclusive {
+        "inconclusive"
+    } else {
+        "pass"
+    };
+    let result = json!({
+        "gateId": format!("gate-{}", canonical_hash(&json!({"checks": flattened, "constraints": hard_constraints}))),
+        "decision": decision,
+        "checkIds": hard_constraints,
+        "violatedConstraints": violated.clone(),
+    });
+    Ok(json!({
+        "result": result,
+        "decision": decision,
+        "passed": decision == "pass",
+        "violations": violated,
+    }))
+}
+
+fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let subject = inputs.get("subject").cloned().ok_or_else(|| {
+        BlockError::new(
+            "review.request.missing_subject",
+            ErrorCategory::Configuration,
+            "review.request@1 requires subject input",
+            false,
+        )
+    })?;
+    let subject_digest = canonical_hash(&subject);
+    let supplied_review = inputs.get("review");
+    if let Some(expected) = supplied_review
+        .and_then(|review| {
+            review
+                .get("subjectDigest")
+                .or_else(|| review.get("subject_digest"))
+        })
+        .or_else(|| inputs.get("subjectDigest"))
+        .or_else(|| inputs.get("subject_digest"))
+        .and_then(Value::as_str)
+        && expected != subject_digest
+    {
+        return Err(BlockError::new(
+            "review.request.subject_digest_mismatch",
+            ErrorCategory::Policy,
+            "review.request@1 subject digest does not match the supplied subject",
+            false,
+        ));
+    }
+    let decision = supplied_review
+        .and_then(|review| review.get("decision"))
+        .or_else(|| inputs.get("decision"))
+        .or_else(|| config.get("decision"))
+        .and_then(Value::as_str)
+        .unwrap_or("pending");
+    if !matches!(
+        decision,
+        "pending" | "accept" | "accept_with_conditions" | "revise" | "reject"
+    ) {
+        return Err(BlockError::new(
+            "review.request.invalid_decision",
+            ErrorCategory::Configuration,
+            "review.request@1 decision is not recognized",
+            false,
+        ));
+    }
+    let required_credential = config
+        .get("requiredCredential")
+        .or_else(|| config.get("required_credential"))
+        .and_then(Value::as_str);
+    let credential_refs = supplied_review
+        .and_then(|review| {
+            review
+                .get("credentialRefs")
+                .or_else(|| review.get("credential_refs"))
+        })
+        .or_else(|| inputs.get("credentialRefs"))
+        .or_else(|| inputs.get("credential_refs"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if decision != "pending"
+        && required_credential.is_some_and(|required| {
+            !credential_refs
+                .iter()
+                .any(|credential| credential.as_str() == Some(required))
+        })
+    {
+        return Err(BlockError::new(
+            "review.request.missing_credential",
+            ErrorCategory::Policy,
+            "review.request@1 decision is missing the required reviewer credential",
+            false,
+        ));
+    }
+    let record = json!({
+        "reviewId": supplied_review
+            .and_then(|review| review.get("reviewId").or_else(|| review.get("review_id")))
+            .cloned()
+            .unwrap_or_else(|| json!(format!("review-{}", canonical_hash(&json!({"subjectDigest": subject_digest, "scope": config.get("scope")}))))),
+        "subject": subject,
+        "subjectDigest": subject_digest,
+        "scope": config.get("scope").cloned().unwrap_or_else(|| json!("general")),
+        "decision": decision,
+        "reviewer": supplied_review
+            .and_then(|review| review.get("reviewer"))
+            .or_else(|| inputs.get("reviewer"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "credentialRefs": credential_refs,
+        "invalidateOnSubjectChange": config.get("invalidateOnSubjectChange").and_then(Value::as_bool).unwrap_or(true),
+    });
+    Ok(json!({
+        "request": record.clone(),
+        "record": record,
+        "pending": decision == "pending",
+        "approved": matches!(decision, "accept" | "accept_with_conditions"),
+        "accepted": matches!(decision, "accept" | "accept_with_conditions"),
+        "status": decision,
+        "waitMode": if decision == "pending" { json!("application_event") } else { Value::Null },
+    }))
+}
+
+fn execute_result_bundle(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let outputs = inputs.get("outputs").cloned().unwrap_or_else(|| json!([]));
+    if !outputs.is_array() && !outputs.is_object() {
+        return Err(BlockError::new(
+            "result.bundle.invalid_outputs",
+            ErrorCategory::Configuration,
+            "result.bundle@1 outputs must be an array or object",
+            false,
+        ));
+    }
+    let mut content = serde_json::Map::new();
+    content.insert("outputs".to_owned(), outputs);
+    for name in [
+        "evidence",
+        "checks",
+        "gate",
+        "reviews",
+        "metrics",
+        "artifacts",
+    ] {
+        content.insert(
+            name.to_owned(),
+            inputs.get(name).cloned().unwrap_or_else(|| json!([])),
+        );
+    }
+    let content = Value::Object(content);
+    let digest = canonical_hash(&content);
+    let result = json!({
+        "bundleId": config.get("bundleId").or_else(|| config.get("bundle_id")).cloned().unwrap_or_else(|| json!(format!("bundle-{digest}"))),
+        "runId": config.get("runId").or_else(|| config.get("run_id")).cloned().unwrap_or_else(|| json!("run-unknown")),
+        "releaseId": config.get("releaseId").or_else(|| config.get("release_id")).cloned().unwrap_or_else(|| json!("release-unknown")),
+        "contentDigest": digest.clone(),
+        "content": content,
+    });
+    Ok(json!({
+        "result": result.clone(),
+        "bundle": result,
+        "contentDigest": digest,
+    }))
+}
+
+fn normalize_named_values(value: &Value, identity_key: &str) -> Result<Vec<Value>, String> {
+    if let Some(values) = value.as_array() {
+        return Ok(values.clone());
+    }
+    if let Some(values) = value.as_object() {
+        return Ok(values
+            .iter()
+            .map(|(name, value)| {
+                let mut value = value.clone();
+                if !value.is_object() {
+                    value = json!({"value": value});
+                }
+                if value.get(identity_key).is_none() {
+                    value[identity_key] = json!(name);
+                }
+                value
+            })
+            .collect());
+    }
+    Err("value must be an array or object".to_owned())
 }
 
 fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {

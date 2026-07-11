@@ -1154,6 +1154,9 @@ class InProcessRuntime:
 
 
 def stdlib_registry() -> RuntimeRegistry:
+    from .stdlib_governance import GOVERNANCE_BLOCKS
+    from .stdlib_rag import RAG_BLOCKS
+
     registry = RuntimeRegistry()
 
     def begin_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -2192,4 +2195,6 @@ def stdlib_registry() -> RuntimeRegistry:
     registry.register("async.complete_operation@1", async_complete_operation)
     registry.register("async.cancel_operation@1", async_cancel_operation)
     registry.register("async.expire_operation@1", async_expire_operation)
+    registry.blocks.update(RAG_BLOCKS)
+    registry.blocks.update(GOVERNANCE_BLOCKS)
     return registry

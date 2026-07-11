@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field, replace, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import math
@@ -836,8 +836,8 @@ def _canonical_value(value: object) -> object:
     if isinstance(value, Decimal):
         return str(value)
     if is_dataclass(value):
-        return _canonical_value(asdict(value))
-    if isinstance(value, dict):
+        return {item.name: _canonical_value(getattr(value, item.name)) for item in fields(value)}
+    if isinstance(value, Mapping):
         return {str(key): _canonical_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_canonical_value(item) for item in value]

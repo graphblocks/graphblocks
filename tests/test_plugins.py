@@ -107,6 +107,26 @@ def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
     assert [port.name for port in control_map.outputs] == ["values", "outcomes"]
 
 
+def test_builtin_plugin_describes_all_documented_portable_blocks() -> None:
+    registry = discover_plugins(include_installed=False)
+    catalog = BlockCatalog.from_manifests(registry.manifests)
+
+    expected = {
+        "model.structured_generate@1",
+        "retrieve.execute_plan@1",
+        "retrieve.fuse@1",
+        "rank.documents@1",
+        "context.build@1",
+        "answer.validate_grounding@1",
+        "check.run_suite@1",
+        "gate.evaluate@1",
+        "review.request@1",
+        "result.bundle@1",
+    }
+
+    assert expected <= set(catalog.descriptors)
+
+
 def test_plugin_manifest_validation_rejects_port_without_name() -> None:
     diagnostics = validate_plugin_manifest(
         {
