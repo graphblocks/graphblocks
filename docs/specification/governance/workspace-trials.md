@@ -17,6 +17,10 @@ Commit authorization requires all of the following:
   candidate digests, plus the required check IDs, review scopes, and exact
   lease evidence active during the trial.
 
+A native trial MUST NOT issue a commit request until a mutation decision is
+present and its passing gate includes every required check ID. Missing policy
+or gate-binding evidence is a trial failure, not a deferred commit-time default.
+
 The workspace store MUST re-evaluate revision, base digest, candidate identity,
 gate, review, lease, and materialized candidate digest immediately before its
 compare-and-swap commit. Any mismatch rejects the commit without partially

@@ -89,6 +89,8 @@ pre-release alpha software.
   identities instead of accepting digest-only cross-workspace substitutions.
 - Retained required gate-check and review-scope obligations in workspace commit
   requests and rejected stripped governance evidence at commit time.
+- Made native workspace trials require an explicit mutation decision and a gate
+  that binds every required check before issuing a commit request.
 
 ### Removed
 

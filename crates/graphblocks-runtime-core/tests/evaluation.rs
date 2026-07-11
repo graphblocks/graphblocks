@@ -2,8 +2,8 @@ use graphblocks_runtime_core::evaluation::{
     ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision,
     MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision,
     ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult,
-    WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead, WorkspaceMutationPolicy,
-    WorkspaceTrialError, WorkspaceTrialPlan, evaluate_gate,
+    WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead, WorkspaceMutationDecision,
+    WorkspaceMutationPolicy, WorkspaceTrialError, WorkspaceTrialPlan, evaluate_gate,
 };
 use graphblocks_runtime_core::orchestration::{LeasePool, LeaseRequest};
 use graphblocks_runtime_core::policy::PrincipalRef;
@@ -809,6 +809,10 @@ fn workspace_trial_plan_builds_commit_request_from_verified_rtl_trial() {
 #[test]
 fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
     let (change_set, lint, formal, lease, review) = rtl_trial_inputs();
+    let allowed_mutation = WorkspaceMutationDecision {
+        allowed: true,
+        reason_codes: Vec::new(),
+    };
     let gate = evaluate_gate(
         "rtl-quality",
         change_set.candidate.clone(),
@@ -826,6 +830,7 @@ fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
         .with_check(lint.clone())
         .with_check(formal.clone())
         .with_gate(gate.clone())
+        .with_mutation_decision(allowed_mutation.clone())
         .with_review(review.clone());
     let failing_gate = WorkspaceTrialPlan::new("trial-rtl-1", change_set.clone(), 7)
         .require_checks(["lint", "formal"])
@@ -858,6 +863,7 @@ fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
             &[],
             None,
         ))
+        .with_mutation_decision(allowed_mutation)
         .with_review(ReviewRecord::new(
             "review-stale",
             ResourceSnapshotRef::new("workspace", "sha256:old-candidate"),
@@ -886,4 +892,55 @@ fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
             scope: "rtl.owner".to_owned(),
         })
     );
+}
+
+#[test]
+fn workspace_trial_plan_requires_mutation_decision() {
+    let (change_set, lint, _, _, _) = rtl_trial_inputs();
+    let gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate.clone(),
+        std::slice::from_ref(&lint),
+        &[],
+        Some(["lint"]),
+        &[],
+        None,
+    );
+    let plan = WorkspaceTrialPlan::new("trial-rtl-1", change_set, 7)
+        .require_checks(["lint"])
+        .with_check(lint)
+        .with_gate(gate);
+
+    let error = plan
+        .to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z")
+        .expect_err("workspace trial requires a mutation decision");
+    assert!(error.to_string().contains("mutation decision"));
+}
+
+#[test]
+fn workspace_trial_plan_requires_gate_to_bind_every_required_check() {
+    let (change_set, lint, _, _, _) = rtl_trial_inputs();
+    let gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate.clone(),
+        &[],
+        &[],
+        None::<[&str; 0]>,
+        &[],
+        None,
+    );
+    assert_eq!(gate.decision, GateDecision::Pass);
+    let plan = WorkspaceTrialPlan::new("trial-rtl-1", change_set, 7)
+        .require_checks(["lint"])
+        .with_check(lint)
+        .with_gate(gate)
+        .with_mutation_decision(WorkspaceMutationDecision {
+            allowed: true,
+            reason_codes: Vec::new(),
+        });
+
+    let error = plan
+        .to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z")
+        .expect_err("workspace trial gate must bind every required check");
+    assert!(error.to_string().contains("required check"));
 }

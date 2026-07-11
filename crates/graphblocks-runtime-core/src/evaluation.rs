@@ -1446,10 +1446,19 @@ impl WorkspaceTrialPlan {
                 decision: gate.decision,
             });
         }
+        for check_id in &self.required_check_ids {
+            if !gate.check_ids.contains(check_id) {
+                return Err(WorkspaceTrialError::GateMissingRequiredCheck {
+                    check_id: check_id.clone(),
+                });
+            }
+        }
 
-        if let Some(mutation_decision) = &self.mutation_decision
-            && !mutation_decision.allowed
-        {
+        let mutation_decision = self
+            .mutation_decision
+            .as_ref()
+            .ok_or(WorkspaceTrialError::MissingMutationDecision)?;
+        if !mutation_decision.allowed {
             return Err(WorkspaceTrialError::MutationDenied {
                 reason_codes: mutation_decision.reason_codes.clone(),
             });
@@ -1519,6 +1528,10 @@ pub enum WorkspaceTrialError {
         gate_id: String,
         decision: GateDecision,
     },
+    GateMissingRequiredCheck {
+        check_id: String,
+    },
+    MissingMutationDecision,
     MissingLeaseKind {
         resource_kind: String,
     },
@@ -1557,6 +1570,13 @@ impl fmt::Display for WorkspaceTrialError {
                     formatter,
                     "workspace trial gate {gate_id:?} did not pass: {decision:?}"
                 )
+            }
+            Self::GateMissingRequiredCheck { check_id } => write!(
+                formatter,
+                "workspace trial gate is missing required check {check_id:?}"
+            ),
+            Self::MissingMutationDecision => {
+                write!(formatter, "workspace trial is missing a mutation decision")
             }
             Self::MissingLeaseKind { resource_kind } => {
                 write!(
