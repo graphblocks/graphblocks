@@ -5,6 +5,9 @@ requests, tool results, and artifacts. Appending or changing a conversation MUST
 use compare-and-swap against the expected revision. Conflicting writers MUST
 fail without silently merging turns.
 
+A message-scoped attachment MUST reference a message in the same conversation
+before it can be persisted or resolved into model context.
+
 Assistant output begins as a draft when policy or tool execution may still
 change the outcome. A draft can be committed, retracted, or replaced only under
 the configured delivery policy. Committed history is immutable; branching MUST

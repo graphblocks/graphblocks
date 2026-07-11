@@ -155,7 +155,12 @@ def test_branch_preserves_lineage_and_copies_messages_through_source_message() -
 
 def test_scoped_attachments_resolve_for_context() -> None:
     store = InMemoryConversationStore()
-    store.create(Conversation(conversation_id="conv-1"))
+    store.create(
+        Conversation(
+            conversation_id="conv-1",
+            messages=(Message(message_id="msg-user", role="user"),),
+        )
+    )
     store.add_attachment(
         "conv-1",
         FileAttachment(
@@ -192,6 +197,36 @@ def test_scoped_attachments_resolve_for_context() -> None:
     attachments = store.resolve_attachments("conv-1", ["msg-user"], include_conversation_scope=True)
 
     assert [attachment.attachment_id for attachment in attachments] == ["att-message", "att-conversation"]
+
+
+def test_message_scoped_attachment_must_reference_a_conversation_message() -> None:
+    message = Message(message_id="msg-1", role="user")
+    orphan = FileAttachment(
+        attachment_id="att-orphan",
+        asset=ArtifactRef("artifact-orphan", "blob://attachments/orphan.pdf"),
+        scope="message",
+        purpose="retrieval",
+        ingestion_status="ready",
+        message_id="msg-other",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="message-scoped conversation attachment must reference a conversation message",
+    ):
+        Conversation("conv-invalid", messages=(message,), attachments=(orphan,))
+
+    store = InMemoryConversationStore()
+    store.create(Conversation("conv-1", messages=(message,)))
+    with pytest.raises(
+        ValueError,
+        match="message-scoped conversation attachment must reference a conversation message",
+    ):
+        store.add_attachment("conv-1", orphan)
+
+    snapshot = store.get("conv-1")
+    assert snapshot.revision == 0
+    assert snapshot.conversation.attachments == ()
 
 
 def test_branch_respects_include_attachments_and_message_scope() -> None:

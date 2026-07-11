@@ -308,6 +308,13 @@ class Conversation:
         attachment_ids = [attachment.attachment_id for attachment in attachments]
         if len(set(attachment_ids)) != len(attachment_ids):
             raise ValueError("conversation attachment_id values must be unique")
+        if any(
+            attachment.scope == "message" and attachment.message_id not in message_ids
+            for attachment in attachments
+        ):
+            raise ValueError(
+                "message-scoped conversation attachment must reference a conversation message"
+            )
         object.__setattr__(self, "attachments", attachments)
         compactions = tuple(self.compactions)
         if any(not isinstance(record, CompactionRecord) for record in compactions):
