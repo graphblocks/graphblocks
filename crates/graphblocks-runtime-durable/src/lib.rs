@@ -1284,6 +1284,49 @@ impl InMemoryCheckpointStore {
         self.active_claims_by_run.remove(&claim.run_id);
         Ok(())
     }
+
+    pub fn renew_claim(
+        &mut self,
+        claim: &CheckpointRecoveryClaim,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<CheckpointRecoveryClaim, CheckpointStoreError> {
+        if expires_at_unix_ms <= now_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
+            });
+        }
+        let active = self
+            .active_claims_by_run
+            .get(&claim.run_id)
+            .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
+                run_id: claim.run_id.clone(),
+            })?;
+        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+            return Err(CheckpointStoreError::RecoveryClaimMismatch {
+                run_id: claim.run_id.clone(),
+                expected_lease_id: claim.lease_id.clone(),
+                expected_fencing_epoch: claim.fencing_epoch,
+                actual_lease_id: active.lease_id.clone(),
+                actual_fencing_epoch: active.fencing_epoch,
+            });
+        }
+        if !active.is_active_at(now_unix_ms) {
+            return Err(CheckpointStoreError::RecoveryClaimExpired {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                expires_at_unix_ms: active.expires_at_unix_ms,
+                now_unix_ms,
+            });
+        }
+        let renewed = CheckpointRecoveryClaim {
+            expires_at_unix_ms,
+            ..active.clone()
+        };
+        self.active_claims_by_run
+            .insert(claim.run_id.clone(), renewed.clone());
+        Ok(renewed)
+    }
 }
 
 pub struct SqliteCheckpointStore {
@@ -1660,6 +1703,92 @@ impl SqliteCheckpointStore {
             .map_err(checkpoint_storage_error)?;
         transaction.commit().map_err(checkpoint_storage_error)?;
         Ok(())
+    }
+
+    pub fn renew_claim(
+        &mut self,
+        claim: &CheckpointRecoveryClaim,
+        now_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<CheckpointRecoveryClaim, CheckpointStoreError> {
+        if expires_at_unix_ms <= now_unix_ms {
+            return Err(CheckpointStoreError::InvalidRecoveryClaim {
+                field: "expires_at_unix_ms",
+            });
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(checkpoint_storage_error)?;
+        let active = transaction
+            .query_row(
+                "
+                SELECT checkpoint_id,
+                       worker_id,
+                       lease_id,
+                       fencing_epoch,
+                       claimed_at_unix_ms,
+                       expires_at_unix_ms
+                  FROM checkpoint_recovery_claims
+                 WHERE run_id = ?1
+                ",
+                params![claim.run_id],
+                |row| {
+                    Ok(CheckpointRecoveryClaim {
+                        run_id: claim.run_id.clone(),
+                        checkpoint_id: row.get(0)?,
+                        worker_id: row.get(1)?,
+                        lease_id: row.get(2)?,
+                        fencing_epoch: sqlite_i64_to_u64(row.get(3)?, "fencing_epoch")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        claimed_at_unix_ms: sqlite_i64_to_u64(row.get(4)?, "claimed_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                        expires_at_unix_ms: sqlite_i64_to_u64(row.get(5)?, "expires_at_unix_ms")
+                            .map_err(rusqlite_error_from_checkpoint)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(checkpoint_storage_error)?
+            .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
+                run_id: claim.run_id.clone(),
+            })?;
+        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+            return Err(CheckpointStoreError::RecoveryClaimMismatch {
+                run_id: claim.run_id.clone(),
+                expected_lease_id: claim.lease_id.clone(),
+                expected_fencing_epoch: claim.fencing_epoch,
+                actual_lease_id: active.lease_id,
+                actual_fencing_epoch: active.fencing_epoch,
+            });
+        }
+        if !active.is_active_at(now_unix_ms) {
+            return Err(CheckpointStoreError::RecoveryClaimExpired {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                expires_at_unix_ms: active.expires_at_unix_ms,
+                now_unix_ms,
+            });
+        }
+        let renewed = CheckpointRecoveryClaim {
+            expires_at_unix_ms,
+            ..active
+        };
+        transaction
+            .execute(
+                "
+                UPDATE checkpoint_recovery_claims
+                   SET expires_at_unix_ms = ?2
+                 WHERE run_id = ?1
+                ",
+                params![
+                    renewed.run_id,
+                    sqlite_u64_to_i64(renewed.expires_at_unix_ms, "expires_at_unix_ms")?,
+                ],
+            )
+            .map_err(checkpoint_storage_error)?;
+        transaction.commit().map_err(checkpoint_storage_error)?;
+        Ok(renewed)
     }
 }
 

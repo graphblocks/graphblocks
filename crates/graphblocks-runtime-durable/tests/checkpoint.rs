@@ -306,6 +306,168 @@ fn checkpoint_store_reclaims_expired_checkpoint_claim_with_new_fence() {
 }
 
 #[test]
+fn checkpoint_store_renews_active_checkpoint_claim_without_changing_fence() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should be accepted");
+
+    let claim = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            1_500,
+        )
+        .expect("worker should claim checkpoint")
+        .claim;
+    let renewed = store
+        .renew_claim(&claim, 1_200, 2_200)
+        .expect("active claim should renew");
+
+    assert_eq!(renewed.fencing_epoch, claim.fencing_epoch);
+    assert_eq!(renewed.claimed_at_unix_ms, claim.claimed_at_unix_ms);
+    assert_eq!(renewed.expires_at_unix_ms, 2_200);
+    assert_eq!(
+        store.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_800,
+            2_800,
+        ),
+        Err(CheckpointStoreError::ActiveRecoveryClaim {
+            run_id: "run-000001".to_owned(),
+            worker_id: "worker-a".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            expires_at_unix_ms: 2_200,
+        })
+    );
+
+    store
+        .complete_claim(&renewed, 2_100)
+        .expect("renewed claim should complete before extended expiry");
+}
+
+#[test]
+fn checkpoint_store_rejects_expired_or_stale_checkpoint_claim_renewal() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should be accepted");
+
+    let expired = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            1_100,
+        )
+        .expect("worker should claim checkpoint")
+        .claim;
+    assert_eq!(
+        store.renew_claim(&expired, 1_101, 2_000),
+        Err(CheckpointStoreError::RecoveryClaimExpired {
+            run_id: "run-000001".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            expires_at_unix_ms: 1_100,
+            now_unix_ms: 1_101,
+        })
+    );
+    let replacement = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_101,
+            2_000,
+        )
+        .expect("expired claim should be replaceable")
+        .claim;
+
+    assert_eq!(
+        store.renew_claim(&expired, 1_200, 2_200),
+        Err(CheckpointStoreError::RecoveryClaimMismatch {
+            run_id: "run-000001".to_owned(),
+            expected_lease_id: "lease-a".to_owned(),
+            expected_fencing_epoch: 1,
+            actual_lease_id: "lease-b".to_owned(),
+            actual_fencing_epoch: 2,
+        })
+    );
+    assert_eq!(
+        store.renew_claim(&replacement, 1_300, 1_300),
+        Err(CheckpointStoreError::InvalidRecoveryClaim {
+            field: "expires_at_unix_ms",
+        })
+    );
+}
+
+#[test]
+fn sqlite_checkpoint_store_persists_renewed_recovery_claim_across_reopen() {
+    let path = sqlite_checkpoint_path("claim-renewal");
+    let renewed = {
+        let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+        store
+            .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+            .expect("checkpoint should persist");
+        let claim = store
+            .claim_latest_compatible(
+                "run-000001",
+                "release-2026-06-23",
+                "deployment-rev-1",
+                "sha256:plan",
+                "worker-a",
+                "lease-a",
+                1_000,
+                1_100,
+            )
+            .expect("worker should claim checkpoint")
+            .claim;
+        store
+            .renew_claim(&claim, 1_050, 2_000)
+            .expect("active claim should renew")
+    };
+
+    let mut reopened = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    assert_eq!(
+        reopened.claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-b",
+            "lease-b",
+            1_500,
+            2_500,
+        ),
+        Err(CheckpointStoreError::ActiveRecoveryClaim {
+            run_id: "run-000001".to_owned(),
+            worker_id: "worker-a".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            expires_at_unix_ms: 2_000,
+        })
+    );
+    reopened
+        .complete_claim(&renewed, 1_900)
+        .expect("renewed persisted claim should complete");
+}
+
+#[test]
 fn sqlite_checkpoint_store_persists_recovery_claim_fencing_across_reopen() {
     let path = sqlite_checkpoint_path("claim-fencing");
     let first_claim = {
