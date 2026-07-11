@@ -257,6 +257,39 @@ impl WorkspaceHead {
         &self,
         request: WorkspaceCommitRequest,
     ) -> Result<(Self, WorkspaceCommitRecord), WorkspaceCommitError> {
+        if !request.required_lease_kinds.is_empty() {
+            return Err(WorkspaceCommitError::CommitTimeRequired);
+        }
+        self.commit_inner(request)
+    }
+
+    pub fn commit_at(
+        &self,
+        request: WorkspaceCommitRequest,
+        now: &str,
+    ) -> Result<(Self, WorkspaceCommitRecord), WorkspaceCommitError> {
+        for resource_kind in &request.required_lease_kinds {
+            let trial_holder = request
+                .trial_id
+                .as_ref()
+                .map(|trial_id| format!("trial:{trial_id}"));
+            if !request.leases.iter().any(|lease| {
+                lease.resource_kind == *resource_kind
+                    && Some(&lease.holder) == trial_holder.as_ref()
+                    && lease.is_active_at(now)
+            }) {
+                return Err(WorkspaceCommitError::LeaseInvalid {
+                    resource_kind: resource_kind.clone(),
+                });
+            }
+        }
+        self.commit_inner(request)
+    }
+
+    fn commit_inner(
+        &self,
+        request: WorkspaceCommitRequest,
+    ) -> Result<(Self, WorkspaceCommitRecord), WorkspaceCommitError> {
         if request.expected_base_revision != self.revision
             || request.change_set.base.digest != self.current.digest
         {
@@ -333,6 +366,9 @@ pub struct WorkspaceCommitRequest {
     pub mutation_decision: Option<WorkspaceMutationDecision>,
     pub gate: Option<GateResult>,
     pub reviews: Vec<ReviewRecord>,
+    pub trial_id: Option<String>,
+    pub required_lease_kinds: Vec<String>,
+    pub leases: Vec<LeaseGrant>,
     pub metadata: BTreeMap<String, Value>,
 }
 
@@ -349,6 +385,9 @@ impl WorkspaceCommitRequest {
             mutation_decision: None,
             gate: None,
             reviews: Vec::new(),
+            trial_id: None,
+            required_lease_kinds: Vec::new(),
+            leases: Vec::new(),
             metadata: BTreeMap::new(),
         }
     }
@@ -424,6 +463,10 @@ pub enum WorkspaceCommitError {
     ReviewInvalid {
         review_id: String,
     },
+    CommitTimeRequired,
+    LeaseInvalid {
+        resource_kind: String,
+    },
 }
 
 impl fmt::Display for WorkspaceCommitError {
@@ -451,6 +494,18 @@ impl fmt::Display for WorkspaceCommitError {
                 write!(
                     formatter,
                     "workspace review {review_id:?} is not valid for commit"
+                )
+            }
+            Self::CommitTimeRequired => {
+                write!(
+                    formatter,
+                    "workspace commit with lease requirements needs an evaluation time"
+                )
+            }
+            Self::LeaseInvalid { resource_kind } => {
+                write!(
+                    formatter,
+                    "workspace commit requires active lease kind {resource_kind:?}"
                 )
             }
         }
@@ -1243,6 +1298,16 @@ impl WorkspaceTrialPlan {
         {
             request = request.with_review(review.clone());
         }
+        request.trial_id = Some(self.trial_id.clone());
+        request.required_lease_kinds = self.required_lease_kinds.clone();
+        request.leases = self
+            .leases
+            .iter()
+            .filter(|lease| {
+                lease.holder == format!("trial:{}", self.trial_id) && lease.is_active_at(now)
+            })
+            .cloned()
+            .collect();
         Ok(request)
     }
 

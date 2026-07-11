@@ -689,8 +689,24 @@ fn workspace_trial_plan_builds_commit_request_from_verified_rtl_trial() {
     assert_eq!(request.gate, Some(gate));
     assert_eq!(request.mutation_decision, Some(mutation));
     assert_eq!(request.reviews, vec![review]);
+    assert_eq!(request.trial_id.as_deref(), Some("trial-rtl-1"));
+    assert_eq!(request.required_lease_kinds, vec!["eda.formal"]);
+    assert_eq!(request.leases, vec![lease]);
     assert_eq!(request.metadata["trial_id"], json!("trial-rtl-1"));
     assert_eq!(request.metadata["lease_ids"], json!(["lease-formal-1"]));
+
+    let head = WorkspaceHead::new("workspace", change_set.base.clone(), 7);
+    assert_eq!(
+        head.commit(request.clone())
+            .expect_err("lease-bearing commit requires an evaluation time"),
+        WorkspaceCommitError::CommitTimeRequired
+    );
+    head.commit_at(request.clone(), "2026-07-02T00:29:59Z")
+        .expect("active trial lease can authorize commit");
+    let error = head
+        .commit_at(request, "2026-07-02T00:30:00Z")
+        .expect_err("expired trial lease must not authorize commit");
+    assert!(error.to_string().contains("active lease kind"));
 }
 
 #[test]

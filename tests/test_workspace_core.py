@@ -629,6 +629,16 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
     assert committed.snapshot.content_digest() == change_set.candidate.digest
     assert committed.snapshot.revision == 8
 
+    with pytest.raises(WorkspaceCommitAuthorizationError, match="active lease kind 'eda.formal'"):
+        InMemoryWorkspaceStore().put_snapshot(base).compare_and_swap_commit_request(
+            workspace_id="workspace-rtl",
+            request=request,
+            new_snapshot_id="snapshot-candidate",
+            resources=candidate_resources,
+            committed_by=PrincipalRef("optimizer-1"),
+            committed_at="2026-07-02T00:35:00Z",
+        )
+
 
 def test_workspace_trial_plan_fails_closed_when_governance_evidence_is_missing_or_stale() -> None:
     base = ResourceSnapshotRef("workspace-rtl", "sha256:base", resource_kind="workspace")

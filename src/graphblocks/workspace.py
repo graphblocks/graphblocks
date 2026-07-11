@@ -287,6 +287,9 @@ class WorkspaceCommitRequest:
     mutation_decision: WorkspaceMutationDecision
     gate: GateResult
     reviews: tuple[ReviewRecord, ...] = field(default_factory=tuple)
+    trial_id: str | None = None
+    required_lease_kinds: tuple[str, ...] = field(default_factory=tuple)
+    leases: tuple[LeaseGrant, ...] = field(default_factory=tuple)
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -306,9 +309,27 @@ class WorkspaceCommitRequest:
         reviews = tuple(self.reviews)
         if not all(isinstance(review, ReviewRecord) for review in reviews):
             raise ValueError("workspace commit request reviews must contain ReviewRecord values")
+        trial_id = _validate_optional_non_empty_string(
+            "workspace commit request",
+            "trial_id",
+            self.trial_id,
+        )
+        required_lease_kinds = _validate_string_tuple(
+            "workspace commit request",
+            "required_lease_kinds",
+            self.required_lease_kinds,
+        )
+        leases = tuple(self.leases)
+        if not all(isinstance(lease, LeaseGrant) for lease in leases):
+            raise ValueError("workspace commit request leases must contain LeaseGrant values")
+        if required_lease_kinds and trial_id is None:
+            raise ValueError("workspace commit request trial_id is required for lease validation")
         if not isinstance(self.metadata, Mapping):
             raise ValueError("workspace commit request metadata must be a mapping")
         object.__setattr__(self, "reviews", reviews)
+        object.__setattr__(self, "trial_id", trial_id)
+        object.__setattr__(self, "required_lease_kinds", required_lease_kinds)
+        object.__setattr__(self, "leases", leases)
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
@@ -426,6 +447,17 @@ class WorkspaceTrialPlan:
                 if lease.holder.resource_id == f"trial:{self.trial_id}" and lease.is_active_at(now)
             }
         )
+        selected_leases = tuple(
+            sorted(
+                (
+                    lease
+                    for lease in self.leases
+                    if lease.holder.resource_id == f"trial:{self.trial_id}"
+                    and lease.is_active_at(now)
+                ),
+                key=lambda lease: lease.lease_id,
+            )
+        )
         return WorkspaceCommitRequest(
             commit_id=commit_id,
             change_set=self.change_set,
@@ -433,6 +465,9 @@ class WorkspaceTrialPlan:
             mutation_decision=self.mutation_decision,
             gate=self.gate,
             reviews=tuple(sorted(selected_reviews, key=lambda review: review.review_id)),
+            trial_id=self.trial_id,
+            required_lease_kinds=self.required_lease_kinds,
+            leases=selected_leases,
             metadata={
                 "change_set_digest": self.change_set.content_digest(),
                 "lease_ids": active_lease_ids,
@@ -584,6 +619,16 @@ class InMemoryWorkspaceStore:
             for review in request.reviews
         ):
             raise WorkspaceCommitAuthorizationError("workspace commit contains an invalid review")
+        for resource_kind in request.required_lease_kinds:
+            if not any(
+                lease.resource_kind == resource_kind
+                and lease.holder.resource_id == f"trial:{request.trial_id}"
+                and lease.is_active_at(committed_at)
+                for lease in request.leases
+            ):
+                raise WorkspaceCommitAuthorizationError(
+                    f"workspace commit requires active lease kind {resource_kind!r}"
+                )
         candidate = WorkspaceSnapshot(
             workspace_id=workspace_id,
             snapshot_id=new_snapshot_id,
