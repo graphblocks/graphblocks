@@ -12,5 +12,8 @@ graphblocks-runtime-core = { version = "0.1.0", path = "../graphblocks-runtime-c
 graphblocks-runtime-durable = { version = "0.1.0", path = "../graphblocks-runtime-durable" }
 serde_json = "1.0"
 
+[dev-dependencies]
+rusqlite = { version = "0.34.0", features = ["bundled"] }
+
 [lints]
 workspace = true

@@ -3870,6 +3870,49 @@ fn sqlite_async_operation_store_rejects_invalid_operation_json_on_reopen() {
 }
 
 #[test]
+fn sqlite_async_operation_store_fallible_reads_report_corrupt_state() {
+    let path = sqlite_async_operation_path("operation-fallible-read-corruption");
+    {
+        let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store opens");
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+    }
+
+    {
+        let connection = Connection::open(&path).expect("sqlite connection opens");
+        connection
+            .execute(
+                "UPDATE async_operations SET operation_json = ?1 WHERE operation_id = ?2",
+                params!["not-json", "op-1"],
+            )
+            .expect("operation row is corrupted");
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path).expect("sqlite store reopens");
+    for error in [
+        store
+            .try_quarantined_callback_count("op-1")
+            .expect_err("quarantine count must expose corrupt storage"),
+        store
+            .try_events_for_operation("op-1")
+            .expect_err("event reads must expose corrupt storage"),
+        store
+            .try_operation_state("op-1")
+            .expect_err("state reads must expose corrupt storage"),
+    ] {
+        assert!(
+            matches!(
+                error,
+                AsyncOperationError::Storage { ref message }
+                    if !message.trim().is_empty()
+            ),
+            "unexpected error: {error:?}"
+        );
+    }
+}
+
+#[test]
 fn sqlite_async_operation_store_rejects_event_row_identity_mismatch_on_reopen() {
     let path = sqlite_async_operation_path("event-row-identity");
     {

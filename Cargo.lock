@@ -218,6 +218,7 @@ dependencies = [
  "graphblocks-protocol",
  "graphblocks-runtime-core",
  "graphblocks-runtime-durable",
+ "rusqlite",
  "serde_json",
 ]
 

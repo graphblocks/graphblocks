@@ -18,6 +18,7 @@ use graphblocks_runtime_durable::{
     CheckpointBarrier, SchemaRef, SourceCursor, SqliteCheckpointStore,
 };
 use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError};
+use rusqlite::Connection;
 use serde_json::json;
 
 const VALID_RESUME_TOKEN_HASH: &str =
@@ -2490,6 +2491,59 @@ fn graphblocksd_cancels_async_operation_and_records_late_callback_without_resume
             })
             .count(),
         1,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_reports_storage_failure_when_terminal_response_reload_is_corrupt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("cancel-corrupt-response-reload");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        store
+            .register(waiting_daemon_async_operation())
+            .map_err(|error| format!("{error:?}"))?;
+    }
+    {
+        let connection = Connection::open(&path)?;
+        connection.execute_batch(
+            "
+            CREATE TRIGGER corrupt_async_operation_after_insert
+            AFTER INSERT ON async_operations
+            BEGIN
+                UPDATE async_operations
+                SET operation_json = 'not-json'
+                WHERE operation_id = NEW.operation_id;
+            END;
+            ",
+        )?;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "cancel-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--cancelled-at-unix-ms",
+            "1300",
+        ])
+        .output()?;
+
+    assert!(!output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stderr)?;
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.async_operation.storage"),
     );
 
     let _ = std::fs::remove_file(&path);

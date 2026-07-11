@@ -1480,11 +1480,14 @@ fn terminal_async_operation_response(
     terminal_timestamp_name: &'static str,
     occurred_at_unix_ms: u64,
 ) -> Result<Value, CliError> {
-    let state = store.operation_state(&operation_id).ok_or_else(|| {
-        CliError::AsyncOperation(AsyncOperationError::OperationNotFound {
-            operation_id: operation_id.clone(),
-        })
-    })?;
+    let state = store
+        .try_operation_state(&operation_id)
+        .map_err(CliError::AsyncOperation)?
+        .ok_or_else(|| {
+            CliError::AsyncOperation(AsyncOperationError::OperationNotFound {
+                operation_id: operation_id.clone(),
+            })
+        })?;
     let mut payload = json!({
         "ok": true,
         "operation": {

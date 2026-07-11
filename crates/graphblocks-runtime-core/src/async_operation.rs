@@ -2883,9 +2883,21 @@ impl SqliteAsyncOperationStore {
         })
     }
 
+    /// Returns the number of quarantined callbacks, preserving storage failures.
+    pub fn try_quarantined_callback_count(
+        &self,
+        operation_id: &str,
+    ) -> Result<usize, AsyncOperationError> {
+        Ok(self
+            .load_memory_store()?
+            .quarantined_callback_count(operation_id))
+    }
+
+    /// Returns the number of quarantined callbacks, or zero if storage cannot be read.
+    ///
+    /// Reliability-sensitive callers should use [`Self::try_quarantined_callback_count`].
     pub fn quarantined_callback_count(&self, operation_id: &str) -> usize {
-        self.load_memory_store()
-            .map(|store| store.quarantined_callback_count(operation_id))
+        self.try_quarantined_callback_count(operation_id)
             .unwrap_or_default()
     }
 
@@ -2960,16 +2972,35 @@ impl SqliteAsyncOperationStore {
         })
     }
 
+    /// Returns operation events while preserving storage and decoding failures.
+    pub fn try_events_for_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Vec<AsyncOperationEvent>, AsyncOperationError> {
+        Ok(self.load_memory_store()?.events_for_operation(operation_id))
+    }
+
+    /// Returns operation events, or an empty list if storage cannot be read.
+    ///
+    /// Reliability-sensitive callers should use [`Self::try_events_for_operation`].
     pub fn events_for_operation(&self, operation_id: &str) -> Vec<AsyncOperationEvent> {
-        self.load_memory_store()
-            .map(|store| store.events_for_operation(operation_id))
+        self.try_events_for_operation(operation_id)
             .unwrap_or_default()
     }
 
+    /// Returns operation state while preserving storage and decoding failures.
+    pub fn try_operation_state(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<AsyncOperationState>, AsyncOperationError> {
+        Ok(self.load_memory_store()?.operation_state(operation_id))
+    }
+
+    /// Returns operation state, or `None` if storage cannot be read.
+    ///
+    /// Reliability-sensitive callers should use [`Self::try_operation_state`].
     pub fn operation_state(&self, operation_id: &str) -> Option<AsyncOperationState> {
-        self.load_memory_store()
-            .ok()
-            .and_then(|store| store.operation_state(operation_id))
+        self.try_operation_state(operation_id).unwrap_or_default()
     }
 
     fn load_memory_store(&self) -> Result<AsyncOperationStore, AsyncOperationError> {
