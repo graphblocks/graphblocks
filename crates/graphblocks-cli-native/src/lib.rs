@@ -11,6 +11,8 @@ pub enum NativeDocumentError {
     EmptyInput,
     ParseFailed { message: String },
     MultipleDocuments { count: usize },
+    GraphNotFound { name: String },
+    MultipleGraphsNamed { name: String, count: usize },
 }
 
 impl fmt::Display for NativeDocumentError {
@@ -24,6 +26,16 @@ impl fmt::Display for NativeDocumentError {
                 formatter,
                 "native graph input contains {count} documents; explicit graph selection is required"
             ),
+            Self::GraphNotFound { name } => {
+                write!(
+                    formatter,
+                    "native graph input does not contain graph {name:?}"
+                )
+            }
+            Self::MultipleGraphsNamed { name, count } => write!(
+                formatter,
+                "native graph input contains {count} graphs named {name:?}; graph selection is ambiguous"
+            ),
         }
     }
 }
@@ -31,6 +43,13 @@ impl fmt::Display for NativeDocumentError {
 impl Error for NativeDocumentError {}
 
 pub fn load_single_graph_document(input: &str) -> Result<Value, NativeDocumentError> {
+    load_graph_document(input, None)
+}
+
+pub fn load_graph_document(
+    input: &str,
+    graph_name: Option<&str>,
+) -> Result<Value, NativeDocumentError> {
     if input.trim().is_empty() {
         return Err(NativeDocumentError::EmptyInput);
     }
@@ -44,6 +63,27 @@ pub fn load_single_graph_document(input: &str) -> Result<Value, NativeDocumentEr
         if !value.is_null() {
             documents.push(value);
         }
+    }
+
+    if let Some(graph_name) = graph_name {
+        let mut selected = documents
+            .into_iter()
+            .filter(|document| {
+                document.get("kind").and_then(Value::as_str) == Some("Graph")
+                    && document.pointer("/metadata/name").and_then(Value::as_str)
+                        == Some(graph_name)
+            })
+            .collect::<Vec<_>>();
+        return match selected.len() {
+            0 => Err(NativeDocumentError::GraphNotFound {
+                name: graph_name.to_owned(),
+            }),
+            1 => Ok(selected.remove(0)),
+            count => Err(NativeDocumentError::MultipleGraphsNamed {
+                name: graph_name.to_owned(),
+                count,
+            }),
+        };
     }
 
     match documents.len() {

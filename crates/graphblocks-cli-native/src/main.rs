@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 
 use graphblocks_cli_native::{
-    NativeCliMode, load_single_graph_document, run_compiler_workflow, run_stdlib_workflow,
+    NativeCliMode, load_graph_document, run_compiler_workflow, run_stdlib_workflow,
 };
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
@@ -10,11 +10,19 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let command = args.next();
     let mut expand = false;
+    let mut graph_name: Option<String> = None;
     let mut input_json = "{}".to_owned();
     while let Some(arg) = args.next() {
         match (command.as_deref(), arg.as_str()) {
             (Some("plan"), "--expand") => {
                 expand = true;
+            }
+            (Some("validate" | "plan" | "run"), "--graph") => {
+                let Some(value) = args.next() else {
+                    eprintln!("--graph requires a graph metadata.name argument");
+                    std::process::exit(2);
+                };
+                graph_name = Some(value);
             }
             (Some("run"), "--input-json") => {
                 let Some(value) = args.next() else {
@@ -35,7 +43,7 @@ fn main() {
         eprintln!("failed to read stdin: {error}");
         std::process::exit(2);
     }
-    let document: Value = match load_single_graph_document(&input) {
+    let document: Value = match load_graph_document(&input, graph_name.as_deref()) {
         Ok(value) => value,
         Err(error) => {
             eprintln!("{error}");
@@ -79,7 +87,7 @@ fn main() {
         Some("plan") => NativeCliMode::Plan { expand },
         _ => {
             eprintln!(
-                "usage: graphblocks-native <validate|plan|run> [--expand] [--input-json JSON] < graph.(json|yaml)"
+                "usage: graphblocks-native <validate|plan|run> [--expand] [--graph NAME] [--input-json JSON] < graph.(json|yaml)"
             );
             std::process::exit(2);
         }

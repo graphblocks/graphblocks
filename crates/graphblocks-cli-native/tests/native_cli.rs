@@ -2,8 +2,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use graphblocks_cli_native::{
-    NativeCliMode, NativeDocumentError, load_single_graph_document, run_compiler_workflow,
-    run_stdlib_workflow,
+    NativeCliMode, NativeDocumentError, load_graph_document, load_single_graph_document,
+    run_compiler_workflow, run_stdlib_workflow,
 };
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
@@ -116,6 +116,75 @@ spec:
     .expect_err("multi-document YAML requires explicit graph selection");
 
     assert_eq!(error, NativeDocumentError::MultipleDocuments { count: 2 });
+}
+
+#[test]
+fn native_loader_selects_named_graph_from_multi_document_yaml() {
+    let document = load_graph_document(
+        r#"
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: PolicyProfile
+metadata:
+  name: support-policy
+spec: {}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: first
+spec:
+  nodes: {}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: selected
+spec:
+  nodes:
+    render:
+      block: prompt.render@1
+"#,
+        Some("selected"),
+    )
+    .expect("named graph should load");
+
+    assert_eq!(
+        document
+            .pointer("/metadata/name")
+            .and_then(serde_json::Value::as_str),
+        Some("selected")
+    );
+}
+
+#[test]
+fn native_loader_reports_missing_named_graph() {
+    let error = load_graph_document(
+        r#"
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: PolicyProfile
+metadata:
+  name: support-policy
+spec: {}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: available
+spec:
+  nodes: {}
+"#,
+        Some("missing"),
+    )
+    .expect_err("missing graph selector should fail");
+
+    assert_eq!(
+        error,
+        NativeDocumentError::GraphNotFound {
+            name: "missing".to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -242,6 +311,44 @@ spec:
             .and_then(Value::as_str)
             .is_some()
     );
+    Ok(())
+}
+
+#[test]
+fn native_binary_validate_selects_named_yaml_graph() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-native"))
+        .args(["validate", "--graph", "selected"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("native binary stdin pipe was not available")?;
+    stdin.write_all(
+        br#"
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: first
+spec:
+  nodes: {}
+---
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: selected
+spec:
+  nodes: {}
+"#,
+    )?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<Value>(&output.stdout)?;
+
+    assert_eq!(payload.pointer("/ok").and_then(Value::as_bool), Some(true));
     Ok(())
 }
 

@@ -46,9 +46,9 @@ cargo build -p graphblocks-cli-native
 target/debug/graphblocks-native run --input-json '{"message":{"text":"hello"}}' < graph.json
 ```
 
-The native CLI currently accepts one JSON or YAML `Graph` from stdin and
-supports the native stdlib block set. The root examples often contain multiple
-resources and use integration blocks, so their runners use the Python authoring
-layer plus deterministic fakes. `graphblocksd` currently processes
-worker-control messages; it does not bind a server socket or expose a `serve`
-command.
+The native CLI currently accepts one JSON or YAML `Graph` from stdin, or selects
+a named `Graph` from a multi-document YAML stream with `--graph NAME`, and
+supports the native stdlib block set. Examples that use integration blocks still
+run through the Python authoring layer plus deterministic fakes. `graphblocksd`
+currently processes worker-control messages; it does not bind a server socket or
+expose a `serve` command.
