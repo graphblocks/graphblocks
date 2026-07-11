@@ -102,6 +102,9 @@ target-gone cancellation, rate-limit retry, server-error retry/dead-letter, or
 client-error failure through the runtime scheduler. Claim generation and lease
 expiration are returned to workers and MUST be presented back on completion, so
 recovered or superseded claims cannot overwrite a newer terminal delivery.
+If a worker claims a delivery but cannot load the authoritative application
+event, it MUST complete the claim with a terminal projection failure instead of
+leaving the delivery in flight.
 Dead-letter movement stores immutable delivery identity, consecutive attempt
 history, error reason, and redrive count in the dead-letter store. Redrive MUST
 preserve the original delivery identity and idempotency key, append operator

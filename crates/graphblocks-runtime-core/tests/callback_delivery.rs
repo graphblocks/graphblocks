@@ -2792,6 +2792,63 @@ fn webhook_delivery_worker_persists_retry_after_server_error() {
 }
 
 #[test]
+fn webhook_delivery_worker_fails_delivery_when_authoritative_event_is_missing() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event(
+        "event-missing",
+        ApplicationProtocolEventKind::ReviewRequested,
+        1,
+    );
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+    let transport_called = std::cell::Cell::new(false);
+
+    let attempts = worker
+        .process_due(
+            2_000,
+            10,
+            |_| {
+                transport_called.set(true);
+                CallbackDeliveryResponse::ServerError(500)
+            },
+            |_| None,
+        )
+        .expect("worker records missing event as a terminal delivery failure");
+    let stored = queue
+        .get_delivery("del_sub-1_event-missing")
+        .expect("delivery loads")
+        .expect("delivery exists");
+
+    assert_eq!(attempts, 1);
+    assert!(
+        !transport_called.get(),
+        "missing authoritative event must not be delivered"
+    );
+    assert_eq!(stored.status, CallbackDeliveryStatus::Failed);
+    assert_eq!(stored.next_retry_at_unix_ms, None);
+    assert_eq!(
+        stored.last_error.as_deref(),
+        Some("event_not_found:event-missing")
+    );
+}
+
+#[test]
 #[allow(
     clippy::panic,
     reason = "the transport callback must remain unreachable for rejected oversized payloads"

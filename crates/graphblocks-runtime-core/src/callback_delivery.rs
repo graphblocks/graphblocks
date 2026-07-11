@@ -2509,11 +2509,18 @@ impl<'a> WebhookDeliveryWorker<'a> {
         let mut outcome = WebhookDeliveryWorkerOutcome::default();
         for claim in due {
             let delivery = claim.delivery.clone();
-            let event = event_lookup(&delivery.event_id).ok_or_else(|| {
-                CallbackDeliveryError::EventNotFound {
-                    event_id: delivery.event_id.clone(),
+            let Some(event) = event_lookup(&delivery.event_id) else {
+                let mut updated = delivery;
+                updated.status = CallbackDeliveryStatus::Failed;
+                updated.next_retry_at_unix_ms = None;
+                updated.last_error = Some(format!("event_not_found:{}", updated.event_id));
+                if let Some(run_action) = self.scheduler.run_action_for_terminal_failure(&updated) {
+                    outcome.run_actions.push(run_action);
                 }
-            })?;
+                self.queue.complete_claimed_delivery(&claim, updated)?;
+                outcome.attempts += 1;
+                continue;
+            };
             let signed = match self.signing.sign_delivery_for_target(
                 self.target,
                 &delivery,
