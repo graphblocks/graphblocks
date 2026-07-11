@@ -1254,7 +1254,7 @@ fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> 
     ));
     let completed = scheduler.record_response(claim.delivery.clone(), response, now_unix_ms);
     queue
-        .complete_claimed_delivery(&claim, completed.clone())
+        .complete_claimed_delivery(&claim, completed.clone(), now_unix_ms)
         .map_err(CliError::CallbackDelivery)?;
 
     Ok(json!({

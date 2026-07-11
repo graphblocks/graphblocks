@@ -1757,7 +1757,7 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
         let queue =
             SqliteCallbackDeliveryQueue::open(completion_path).expect("completion queue opens");
         completion_barrier.wait();
-        queue.complete_claimed_delivery(&claim, completed)
+        queue.complete_claimed_delivery(&claim, completed, 1_500)
     });
 
     barrier.wait();
@@ -1819,7 +1819,7 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
     );
     assert!(
         queue
-            .complete_claimed_delivery(&stale_claim, stale_completion)
+            .complete_claimed_delivery(&stale_claim, stale_completion, 3_500)
             .is_err(),
         "a recovered generation must be fenced from completion",
     );
@@ -1829,8 +1829,66 @@ fn sqlite_callback_delivery_claim_lease_and_generation_fence_live_workers() {
         4_500,
     );
     queue
-        .complete_claimed_delivery(&current_claim, current_completion)
+        .complete_claimed_delivery(&current_claim, current_completion, 4_500)
         .expect("current generation completes");
+}
+
+#[test]
+fn sqlite_callback_delivery_rejects_completion_at_claim_expiration() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event(
+        "event-expired-claim",
+        ApplicationProtocolEventKind::ReviewRequested,
+        1,
+    );
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(delivery)
+        .expect("pending delivery persists");
+    let claim = queue
+        .claim_due_deliveries(1_000, 100, 1)
+        .expect("delivery claims")
+        .into_iter()
+        .next()
+        .expect("one delivery claims");
+    let completed = scheduler.record_response(
+        claim.delivery.clone(),
+        CallbackDeliveryResponse::Success,
+        1_100,
+    );
+
+    let error = queue
+        .complete_claimed_delivery(&claim, completed, 1_100)
+        .expect_err("claim authority ends at its expiration boundary");
+    assert!(
+        matches!(
+            error,
+            CallbackDeliveryError::Storage { ref message }
+                if message == "callback delivery claim expired before completion"
+        ),
+        "unexpected error: {error:?}",
+    );
+    assert_eq!(
+        queue
+            .get_delivery("del_sub-1_event-expired-claim")
+            .expect("delivery reload succeeds")
+            .expect("delivery remains persisted")
+            .status,
+        CallbackDeliveryStatus::Delivering,
+    );
+    assert_eq!(
+        queue
+            .recover_in_flight_deliveries(1_100)
+            .expect("expired delivery recovers"),
+        1,
+    );
 }
 
 #[test]
@@ -2497,7 +2555,7 @@ fn sqlite_callback_delivery_recovery_does_not_overwrite_concurrent_terminal_upda
             delivery.status = CallbackDeliveryStatus::Delivered;
             delivery.delivered_at_unix_ms = Some(2_500);
             if queue
-                .complete_claimed_delivery(&claim, delivery.clone())
+                .complete_claimed_delivery(&claim, delivery.clone(), 2_500)
                 .is_ok()
             {
                 committed.push(delivery.delivery_id);
@@ -2616,7 +2674,7 @@ fn sqlite_callback_delivery_cancellation_does_not_overwrite_concurrent_terminal_
             delivery.status = CallbackDeliveryStatus::Delivered;
             delivery.delivered_at_unix_ms = Some(2_500);
             if queue
-                .complete_claimed_delivery(&claim, delivery.clone())
+                .complete_claimed_delivery(&claim, delivery.clone(), 2_500)
                 .is_ok()
             {
                 committed.push(delivery.delivery_id);

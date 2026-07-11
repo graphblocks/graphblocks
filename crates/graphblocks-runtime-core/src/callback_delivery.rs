@@ -1386,11 +1386,17 @@ impl SqliteCallbackDeliveryQueue {
         &self,
         claim: &ClaimedCallbackDelivery,
         delivery: CallbackDelivery,
+        completed_at_unix_ms: u64,
     ) -> Result<(), CallbackDeliveryError> {
         validate_callback_delivery(&delivery)?;
         if claim.claim_generation == 0 || claim.claim_expires_at_unix_ms == 0 {
             return Err(CallbackDeliveryError::Storage {
                 message: "callback delivery claim fence is invalid".to_owned(),
+            });
+        }
+        if completed_at_unix_ms >= claim.claim_expires_at_unix_ms {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback delivery claim expired before completion".to_owned(),
             });
         }
         if claim.delivery.status != CallbackDeliveryStatus::Delivering
@@ -2517,7 +2523,8 @@ impl<'a> WebhookDeliveryWorker<'a> {
                 if let Some(run_action) = self.scheduler.run_action_for_terminal_failure(&updated) {
                     outcome.run_actions.push(run_action);
                 }
-                self.queue.complete_claimed_delivery(&claim, updated)?;
+                self.queue
+                    .complete_claimed_delivery(&claim, updated, now_unix_ms)?;
                 outcome.attempts += 1;
                 continue;
             };
@@ -2543,7 +2550,8 @@ impl<'a> WebhookDeliveryWorker<'a> {
                     {
                         outcome.run_actions.push(run_action);
                     }
-                    self.queue.complete_claimed_delivery(&claim, updated)?;
+                    self.queue
+                        .complete_claimed_delivery(&claim, updated, now_unix_ms)?;
                     outcome.attempts += 1;
                     continue;
                 }
@@ -2562,7 +2570,8 @@ impl<'a> WebhookDeliveryWorker<'a> {
             if let Some(run_action) = self.scheduler.run_action_for_terminal_failure(&updated) {
                 outcome.run_actions.push(run_action);
             }
-            self.queue.complete_claimed_delivery(&claim, updated)?;
+            self.queue
+                .complete_claimed_delivery(&claim, updated, now_unix_ms)?;
             outcome.attempts += 1;
         }
         Ok(outcome)
