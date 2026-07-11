@@ -1161,6 +1161,53 @@ fn graphblocksd_renews_sqlite_checkpoint_claim_for_worker_recovery()
         .output()?;
     assert!(claim_output.status.success());
 
+    let early_renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "renew-checkpoint-claim",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--checkpoint-id",
+            "checkpoint-000001",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--fencing-epoch",
+            "1",
+            "--claimed-at-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "1500",
+            "--now-unix-ms",
+            "999",
+            "--new-expires-at-unix-ms",
+            "3000",
+        ])
+        .output()?;
+    assert!(!early_renew_output.status.success());
+    let early_renew_payload =
+        serde_json::from_slice::<serde_json::Value>(&early_renew_output.stderr)?;
+    assert_eq!(
+        early_renew_payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("daemon.checkpoint.recovery_claim_not_yet_active"),
+    );
+    assert_eq!(
+        early_renew_payload
+            .pointer("/error/claimedAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(1_000),
+    );
+    assert_eq!(
+        early_renew_payload
+            .pointer("/error/nowUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(999),
+    );
+
     let renew_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
         .args([
             "renew-checkpoint-claim",

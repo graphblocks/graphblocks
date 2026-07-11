@@ -182,7 +182,11 @@ lease and fencing epoch before resuming; active claims MAY be renewed without
 changing their fencing epoch, but renewal MUST extend rather than shorten the
 active lease; stale or expired claims MUST NOT renew or complete resume. Claim
 renewal and completion MUST bind the run, checkpoint, worker, lease, and
-fencing epoch recorded by the active claim. Restart-durable stores MUST
+fencing epoch recorded by the active claim. A recovery claim is usable only
+during its half-open activation interval from `claimed_at` through, but not
+including, `expires_at`; a timestamp before `claimed_at` MUST fail claim use
+without allowing a competing worker to replace the unexpired claim.
+Restart-durable stores MUST
 preserve active claims and the next fencing epoch across coordinator restart.
 Control-plane claim, renewal, and completion APIs SHOULD expose active-claim,
 missing-checkpoint, stale-fence, and expired-claim failures as structured

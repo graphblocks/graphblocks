@@ -2115,6 +2115,18 @@ impl CliError {
                         "expiresAtUnixMs": expires_at_unix_ms,
                         "nowUnixMs": now_unix_ms,
                     }),
+                    CheckpointStoreError::RecoveryClaimNotYetActive {
+                        run_id,
+                        lease_id,
+                        claimed_at_unix_ms,
+                        now_unix_ms,
+                    } => json!({
+                        "code": "daemon.checkpoint.recovery_claim_not_yet_active",
+                        "runId": run_id,
+                        "leaseId": lease_id,
+                        "claimedAtUnixMs": claimed_at_unix_ms,
+                        "nowUnixMs": now_unix_ms,
+                    }),
                     CheckpointStoreError::Storage { message } => json!({
                         "code": "daemon.checkpoint.storage",
                         "message": message,

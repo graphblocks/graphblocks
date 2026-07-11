@@ -1161,7 +1161,7 @@ pub struct CheckpointRecoveryClaim {
 
 impl CheckpointRecoveryClaim {
     pub fn is_active_at(&self, now_unix_ms: u64) -> bool {
-        self.expires_at_unix_ms > now_unix_ms
+        self.claimed_at_unix_ms <= now_unix_ms && self.expires_at_unix_ms > now_unix_ms
     }
 }
 
@@ -1278,7 +1278,7 @@ impl InMemoryCheckpointStore {
                 plan_hash: plan_hash.to_owned(),
             })?;
         if let Some(active) = self.active_claims_by_run.get(run_id)
-            && active.is_active_at(now_unix_ms)
+            && active.expires_at_unix_ms > now_unix_ms
         {
             return Err(CheckpointStoreError::ActiveRecoveryClaim {
                 run_id: run_id.to_owned(),
@@ -1329,6 +1329,14 @@ impl InMemoryCheckpointStore {
                 actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(active)),
             });
         }
+        if now_unix_ms < active.claimed_at_unix_ms {
+            return Err(CheckpointStoreError::RecoveryClaimNotYetActive {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                claimed_at_unix_ms: active.claimed_at_unix_ms,
+                now_unix_ms,
+            });
+        }
         if !active.is_active_at(now_unix_ms) {
             return Err(CheckpointStoreError::RecoveryClaimExpired {
                 run_id: claim.run_id.clone(),
@@ -1367,6 +1375,14 @@ impl InMemoryCheckpointStore {
                 run_id: claim.run_id.clone(),
                 expected: Box::new(CheckpointRecoveryClaimIdentity::from_claim(claim)),
                 actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(active)),
+            });
+        }
+        if now_unix_ms < active.claimed_at_unix_ms {
+            return Err(CheckpointStoreError::RecoveryClaimNotYetActive {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                claimed_at_unix_ms: active.claimed_at_unix_ms,
+                now_unix_ms,
             });
         }
         if !active.is_active_at(now_unix_ms) {
@@ -1640,7 +1656,7 @@ impl SqliteCheckpointStore {
             .optional()
             .map_err(checkpoint_storage_error)?;
         if let Some(active) = active_claim
-            && active.is_active_at(now_unix_ms)
+            && active.expires_at_unix_ms > now_unix_ms
         {
             return Err(CheckpointStoreError::ActiveRecoveryClaim {
                 run_id: run_id.to_owned(),
@@ -1774,6 +1790,14 @@ impl SqliteCheckpointStore {
                 actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(&active)),
             });
         }
+        if now_unix_ms < active.claimed_at_unix_ms {
+            return Err(CheckpointStoreError::RecoveryClaimNotYetActive {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                claimed_at_unix_ms: active.claimed_at_unix_ms,
+                now_unix_ms,
+            });
+        }
         if !active.is_active_at(now_unix_ms) {
             return Err(CheckpointStoreError::RecoveryClaimExpired {
                 run_id: claim.run_id.clone(),
@@ -1851,6 +1875,14 @@ impl SqliteCheckpointStore {
                 actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(&active)),
             });
         }
+        if now_unix_ms < active.claimed_at_unix_ms {
+            return Err(CheckpointStoreError::RecoveryClaimNotYetActive {
+                run_id: claim.run_id.clone(),
+                lease_id: claim.lease_id.clone(),
+                claimed_at_unix_ms: active.claimed_at_unix_ms,
+                now_unix_ms,
+            });
+        }
         if !active.is_active_at(now_unix_ms) {
             return Err(CheckpointStoreError::RecoveryClaimExpired {
                 run_id: claim.run_id.clone(),
@@ -1921,6 +1953,12 @@ pub enum CheckpointStoreError {
         run_id: String,
         lease_id: String,
         expires_at_unix_ms: u64,
+        now_unix_ms: u64,
+    },
+    RecoveryClaimNotYetActive {
+        run_id: String,
+        lease_id: String,
+        claimed_at_unix_ms: u64,
         now_unix_ms: u64,
     },
     Storage {
