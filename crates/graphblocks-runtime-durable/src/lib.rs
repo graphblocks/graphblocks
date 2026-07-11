@@ -1130,6 +1130,25 @@ impl CheckpointRecoveryClaim {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointRecoveryClaimIdentity {
+    pub checkpoint_id: String,
+    pub worker_id: String,
+    pub lease_id: String,
+    pub fencing_epoch: u64,
+}
+
+impl CheckpointRecoveryClaimIdentity {
+    pub fn from_claim(claim: &CheckpointRecoveryClaim) -> Self {
+        Self {
+            checkpoint_id: claim.checkpoint_id.clone(),
+            worker_id: claim.worker_id.clone(),
+            lease_id: claim.lease_id.clone(),
+            fencing_epoch: claim.fencing_epoch,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckpointRecovery {
     pub checkpoint: CheckpointBarrier,
@@ -1264,13 +1283,15 @@ impl InMemoryCheckpointStore {
             .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
                 run_id: claim.run_id.clone(),
             })?;
-        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+        if active.checkpoint_id != claim.checkpoint_id
+            || active.worker_id != claim.worker_id
+            || active.lease_id != claim.lease_id
+            || active.fencing_epoch != claim.fencing_epoch
+        {
             return Err(CheckpointStoreError::RecoveryClaimMismatch {
                 run_id: claim.run_id.clone(),
-                expected_lease_id: claim.lease_id.clone(),
-                expected_fencing_epoch: claim.fencing_epoch,
-                actual_lease_id: active.lease_id.clone(),
-                actual_fencing_epoch: active.fencing_epoch,
+                expected: Box::new(CheckpointRecoveryClaimIdentity::from_claim(claim)),
+                actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(active)),
             });
         }
         if !active.is_active_at(now_unix_ms) {
@@ -1302,13 +1323,15 @@ impl InMemoryCheckpointStore {
             .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
                 run_id: claim.run_id.clone(),
             })?;
-        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+        if active.checkpoint_id != claim.checkpoint_id
+            || active.worker_id != claim.worker_id
+            || active.lease_id != claim.lease_id
+            || active.fencing_epoch != claim.fencing_epoch
+        {
             return Err(CheckpointStoreError::RecoveryClaimMismatch {
                 run_id: claim.run_id.clone(),
-                expected_lease_id: claim.lease_id.clone(),
-                expected_fencing_epoch: claim.fencing_epoch,
-                actual_lease_id: active.lease_id.clone(),
-                actual_fencing_epoch: active.fencing_epoch,
+                expected: Box::new(CheckpointRecoveryClaimIdentity::from_claim(claim)),
+                actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(active)),
             });
         }
         if !active.is_active_at(now_unix_ms) {
@@ -1678,13 +1701,15 @@ impl SqliteCheckpointStore {
             .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
                 run_id: claim.run_id.clone(),
             })?;
-        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+        if active.checkpoint_id != claim.checkpoint_id
+            || active.worker_id != claim.worker_id
+            || active.lease_id != claim.lease_id
+            || active.fencing_epoch != claim.fencing_epoch
+        {
             return Err(CheckpointStoreError::RecoveryClaimMismatch {
                 run_id: claim.run_id.clone(),
-                expected_lease_id: claim.lease_id.clone(),
-                expected_fencing_epoch: claim.fencing_epoch,
-                actual_lease_id: active.lease_id,
-                actual_fencing_epoch: active.fencing_epoch,
+                expected: Box::new(CheckpointRecoveryClaimIdentity::from_claim(claim)),
+                actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(&active)),
             });
         }
         if !active.is_active_at(now_unix_ms) {
@@ -1753,13 +1778,15 @@ impl SqliteCheckpointStore {
             .ok_or_else(|| CheckpointStoreError::RecoveryClaimNotFound {
                 run_id: claim.run_id.clone(),
             })?;
-        if active.lease_id != claim.lease_id || active.fencing_epoch != claim.fencing_epoch {
+        if active.checkpoint_id != claim.checkpoint_id
+            || active.worker_id != claim.worker_id
+            || active.lease_id != claim.lease_id
+            || active.fencing_epoch != claim.fencing_epoch
+        {
             return Err(CheckpointStoreError::RecoveryClaimMismatch {
                 run_id: claim.run_id.clone(),
-                expected_lease_id: claim.lease_id.clone(),
-                expected_fencing_epoch: claim.fencing_epoch,
-                actual_lease_id: active.lease_id,
-                actual_fencing_epoch: active.fencing_epoch,
+                expected: Box::new(CheckpointRecoveryClaimIdentity::from_claim(claim)),
+                actual: Box::new(CheckpointRecoveryClaimIdentity::from_claim(&active)),
             });
         }
         if !active.is_active_at(now_unix_ms) {
@@ -1820,10 +1847,8 @@ pub enum CheckpointStoreError {
     },
     RecoveryClaimMismatch {
         run_id: String,
-        expected_lease_id: String,
-        expected_fencing_epoch: u64,
-        actual_lease_id: String,
-        actual_fencing_epoch: u64,
+        expected: Box<CheckpointRecoveryClaimIdentity>,
+        actual: Box<CheckpointRecoveryClaimIdentity>,
     },
     RecoveryClaimExpired {
         run_id: String,

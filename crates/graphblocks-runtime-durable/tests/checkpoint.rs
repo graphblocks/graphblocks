@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_runtime_durable::{
-    CheckpointBarrier, CheckpointBarrierError, CheckpointStoreError, InMemoryCheckpointStore,
-    SchemaRef, SourceCursor, SourceCursorCommitPlan, SqliteCheckpointStore,
+    CheckpointBarrier, CheckpointBarrierError, CheckpointRecoveryClaim,
+    CheckpointRecoveryClaimIdentity, CheckpointStoreError, InMemoryCheckpointStore, SchemaRef,
+    SourceCursor, SourceCursorCommitPlan, SqliteCheckpointStore,
 };
 use serde_json::json;
 
@@ -252,10 +253,18 @@ fn checkpoint_store_claims_latest_compatible_checkpoint_with_fencing() {
         store.complete_claim(&first.claim, 1_800),
         Err(CheckpointStoreError::RecoveryClaimMismatch {
             run_id: "run-000001".to_owned(),
-            expected_lease_id: "lease-a".to_owned(),
-            expected_fencing_epoch: 1,
-            actual_lease_id: "lease-b".to_owned(),
-            actual_fencing_epoch: 2,
+            expected: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000002".to_owned(),
+                worker_id: "worker-a".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+            }),
+            actual: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000002".to_owned(),
+                worker_id: "worker-b".to_owned(),
+                lease_id: "lease-b".to_owned(),
+                fencing_epoch: 2,
+            }),
         })
     );
 }
@@ -297,12 +306,74 @@ fn checkpoint_store_reclaims_expired_checkpoint_claim_with_new_fence() {
         store.complete_claim(&expired.claim, 1_200),
         Err(CheckpointStoreError::RecoveryClaimMismatch {
             run_id: "run-000001".to_owned(),
-            expected_lease_id: "lease-a".to_owned(),
-            expected_fencing_epoch: 1,
-            actual_lease_id: "lease-b".to_owned(),
-            actual_fencing_epoch: 2,
+            expected: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-a".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+            }),
+            actual: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-b".to_owned(),
+                lease_id: "lease-b".to_owned(),
+                fencing_epoch: 2,
+            }),
         })
     );
+}
+
+#[test]
+fn checkpoint_store_rejects_completion_or_renewal_with_forged_claim_identity() {
+    let mut store = InMemoryCheckpointStore::new();
+    store
+        .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+        .expect("checkpoint should be accepted");
+    let claim = store
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        )
+        .expect("worker should claim checkpoint")
+        .claim;
+    let forged = CheckpointRecoveryClaim {
+        checkpoint_id: "checkpoint-forged".to_owned(),
+        worker_id: "worker-forged".to_owned(),
+        ..claim.clone()
+    };
+
+    let expected_error = CheckpointStoreError::RecoveryClaimMismatch {
+        run_id: "run-000001".to_owned(),
+        expected: Box::new(CheckpointRecoveryClaimIdentity {
+            checkpoint_id: "checkpoint-forged".to_owned(),
+            worker_id: "worker-forged".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            fencing_epoch: 1,
+        }),
+        actual: Box::new(CheckpointRecoveryClaimIdentity {
+            checkpoint_id: "checkpoint-000001".to_owned(),
+            worker_id: "worker-a".to_owned(),
+            lease_id: "lease-a".to_owned(),
+            fencing_epoch: 1,
+        }),
+    };
+
+    assert_eq!(
+        store.complete_claim(&forged, 1_100),
+        Err(expected_error.clone())
+    );
+    assert_eq!(
+        store.renew_claim(&forged, 1_100, 2_500),
+        Err(expected_error)
+    );
+    store
+        .complete_claim(&claim, 1_200)
+        .expect("original claim identity should still complete");
 }
 
 #[test]
@@ -403,10 +474,18 @@ fn checkpoint_store_rejects_expired_or_stale_checkpoint_claim_renewal() {
         store.renew_claim(&expired, 1_200, 2_200),
         Err(CheckpointStoreError::RecoveryClaimMismatch {
             run_id: "run-000001".to_owned(),
-            expected_lease_id: "lease-a".to_owned(),
-            expected_fencing_epoch: 1,
-            actual_lease_id: "lease-b".to_owned(),
-            actual_fencing_epoch: 2,
+            expected: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-a".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+            }),
+            actual: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-b".to_owned(),
+                lease_id: "lease-b".to_owned(),
+                fencing_epoch: 2,
+            }),
         })
     );
     assert_eq!(
@@ -536,10 +615,18 @@ fn sqlite_checkpoint_store_persists_recovery_claim_fencing_across_reopen() {
         final_reopen.complete_claim(&first_claim, 1_200),
         Err(CheckpointStoreError::RecoveryClaimMismatch {
             run_id: "run-000001".to_owned(),
-            expected_lease_id: "lease-a".to_owned(),
-            expected_fencing_epoch: 1,
-            actual_lease_id: "lease-b".to_owned(),
-            actual_fencing_epoch: 2,
+            expected: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-a".to_owned(),
+                lease_id: "lease-a".to_owned(),
+                fencing_epoch: 1,
+            }),
+            actual: Box::new(CheckpointRecoveryClaimIdentity {
+                checkpoint_id: "checkpoint-000001".to_owned(),
+                worker_id: "worker-b".to_owned(),
+                lease_id: "lease-b".to_owned(),
+                fencing_epoch: 2,
+            }),
         })
     );
     final_reopen
