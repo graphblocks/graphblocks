@@ -89,7 +89,7 @@ impl TuiRunView {
             state: status.state,
             release_id: status.release_id,
             last_cursor: Some(status.last_cursor),
-            last_sequence: None,
+            last_sequence: Some(status.last_sequence),
             waiting_count: status.waiting_on.len(),
             active_operations: status.active_operations,
             rows: Vec::new(),
@@ -119,14 +119,15 @@ impl TuiRunView {
                 last_sequence,
                 run_status,
             } => {
-                if let Some(status) = run_status
-                    && status.run_id == self.run_id
-                {
-                    self.state = status.state;
-                    self.release_id = status.release_id;
-                    self.last_cursor = Some(status.last_cursor);
-                    self.waiting_count = status.waiting_on.len();
-                    self.active_operations = status.active_operations;
+                if let Some(status) = run_status {
+                    let status = *status;
+                    if status.run_id == self.run_id {
+                        self.state = status.state;
+                        self.release_id = status.release_id;
+                        self.last_cursor = Some(status.last_cursor);
+                        self.waiting_count = status.waiting_on.len();
+                        self.active_operations = status.active_operations;
+                    }
                 }
                 self.cursor_expired = Some(CursorExpiredProjection {
                     requested_cursor,

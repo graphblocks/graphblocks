@@ -1695,7 +1695,7 @@ pub enum AttachToRunReplay {
         earliest_available_cursor: Option<String>,
         last_cursor: Option<String>,
         last_sequence: Option<u64>,
-        run_status: Option<RunStatusSnapshot>,
+        run_status: Option<Box<RunStatusSnapshot>>,
     },
 }
 
@@ -1868,7 +1868,7 @@ impl ApplicationProtocolLog {
                 earliest_available_cursor,
                 last_cursor,
                 last_sequence,
-                run_status,
+                run_status: run_status.map(Box::new),
             },
         }
     }

@@ -12,6 +12,7 @@ fn status_snapshot() -> RunStatusSnapshot {
         state: RunStatus::Running,
         release_id: "release-2026-07-02".to_owned(),
         last_cursor: "evt-000".to_owned(),
+        last_sequence: 0,
         started_at_unix_ms: 1_800_000,
         updated_at_unix_ms: 1_800_100,
         completed_at_unix_ms: None,
@@ -108,6 +109,7 @@ fn tui_view_records_cursor_expiry_without_losing_status_context() {
     let mut view = TuiRunView::from_status(status_snapshot());
     let recovery_status = RunStatusSnapshot {
         last_cursor: "cursor-030".to_owned(),
+        last_sequence: 30,
         updated_at_unix_ms: 1_800_300,
         active_operations: vec!["op-ci-2".to_owned()],
         ..status_snapshot()
@@ -119,7 +121,7 @@ fn tui_view_records_cursor_expiry_without_losing_status_context() {
             earliest_available_cursor: Some("cursor-010".to_owned()),
             last_cursor: Some("cursor-030".to_owned()),
             last_sequence: Some(30),
-            run_status: Some(recovery_status),
+            run_status: Some(Box::new(recovery_status)),
         }),
         TuiAttachState::CursorExpired
     );

@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Number, Value, json};
 
+use crate::application_event::ApplicationProtocolLogPosition;
 use crate::callback_delivery::CallbackDeliveryRunAction;
 use crate::evaluation::ModelVisibleToolRef;
 
@@ -713,6 +714,7 @@ pub struct RunStatusSnapshot {
     pub state: RunStatus,
     pub release_id: String,
     pub last_cursor: String,
+    pub last_sequence: u64,
     pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
     pub completed_at_unix_ms: Option<u64>,
@@ -731,15 +733,14 @@ pub struct CallbackDeliveryRunUpdate {
 impl RunStatusSnapshot {
     pub fn from_run(
         run: &RunRecord,
-        last_cursor: impl Into<String>,
+        position: ApplicationProtocolLogPosition,
         started_at_unix_ms: u64,
         updated_at_unix_ms: u64,
         completed_at_unix_ms: Option<u64>,
         waiting_on: Vec<RunWaitReason>,
         active_operations: Vec<String>,
     ) -> Result<Self, RunStoreError> {
-        let last_cursor = last_cursor.into();
-        if last_cursor.trim().is_empty() {
+        if position.cursor.trim().is_empty() {
             return Err(RunStoreError::EmptyField {
                 field: "last_cursor",
             });
@@ -922,7 +923,8 @@ impl RunStatusSnapshot {
                 .release_digest
                 .clone()
                 .unwrap_or_else(|| run.graph_hash.clone()),
-            last_cursor,
+            last_cursor: position.cursor,
+            last_sequence: position.sequence,
             started_at_unix_ms,
             updated_at_unix_ms,
             completed_at_unix_ms,
@@ -937,6 +939,7 @@ impl RunStatusSnapshot {
             "state": self.state.as_str(),
             "releaseId": self.release_id,
             "lastCursor": self.last_cursor,
+            "lastSequence": self.last_sequence,
             "startedAtUnixMs": self.started_at_unix_ms,
             "updatedAtUnixMs": self.updated_at_unix_ms,
             "completedAtUnixMs": self.completed_at_unix_ms,

@@ -1,4 +1,5 @@
 use graphblocks_runtime_core::{
+    application_event::ApplicationProtocolLogPosition,
     callback_delivery::CallbackDeliveryRunAction,
     evaluation::ModelVisibleToolRef,
     run_store::{
@@ -21,6 +22,13 @@ fn run_lease_identity(
         lease_id: lease_id.to_owned(),
         fencing_epoch,
     })
+}
+
+fn event_position(cursor: &str, sequence: u64) -> ApplicationProtocolLogPosition {
+    ApplicationProtocolLogPosition {
+        cursor: cursor.to_owned(),
+        sequence,
+    }
 }
 
 #[test]
@@ -111,7 +119,7 @@ fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Resul
 
     let snapshot = RunStatusSnapshot::from_run(
         &waiting,
-        "evt_000042",
+        event_position("evt_000042", 42),
         1_000,
         1_500,
         None,
@@ -123,6 +131,7 @@ fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Resul
     assert_eq!(snapshot.state, RunStatus::WaitingCallback);
     assert_eq!(snapshot.release_id, "release-2026-07-02");
     assert_eq!(snapshot.last_cursor, "evt_000042");
+    assert_eq!(snapshot.last_sequence, 42);
     assert_eq!(snapshot.started_at_unix_ms, 1_000);
     assert_eq!(snapshot.updated_at_unix_ms, 1_500);
     assert_eq!(snapshot.completed_at_unix_ms, None);
@@ -137,6 +146,32 @@ fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Resul
 }
 
 #[test]
+fn run_status_snapshot_accepts_authoritative_event_stream_position() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_provenance(
+        "sha256:graph",
+        json!({"task": "ci"}),
+        RunDeploymentProvenance::new().with_release_digest("release-2026-07-02"),
+    );
+    let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
+
+    let snapshot = RunStatusSnapshot::from_run(
+        &waiting,
+        event_position("evt_000043", 43),
+        1_000,
+        1_500,
+        None,
+        vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+        vec!["op-ci-1".to_owned()],
+    )?;
+
+    assert_eq!(snapshot.last_cursor, "evt_000043");
+    assert_eq!(snapshot.last_sequence, 43);
+    assert_eq!(snapshot.protocol_value()["lastSequence"], json!(43));
+    Ok(())
+}
+
+#[test]
 fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:graph", json!({"task": "ci"}));
@@ -145,7 +180,7 @@ fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), Run
     assert_eq!(
         RunStatusSnapshot::from_run(
             &waiting,
-            "evt_000042",
+            event_position("evt_000042", 42),
             1_000,
             1_500,
             None,
@@ -160,7 +195,7 @@ fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), Run
     assert_eq!(
         RunStatusSnapshot::from_run(
             &waiting,
-            "evt_000043",
+            event_position("evt_000043", 43),
             1_000,
             1_600,
             None,
@@ -184,7 +219,7 @@ fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunSt
     assert_eq!(
         RunStatusSnapshot::from_run(
             &waiting,
-            "evt_000044",
+            event_position("evt_000044", 44),
             1_000,
             1_600,
             None,
@@ -208,7 +243,7 @@ fn run_status_snapshot_rejects_duplicate_wait_reasons() -> Result<(), RunStoreEr
     assert_eq!(
         RunStatusSnapshot::from_run(
             &paused,
-            "evt_000045",
+            event_position("evt_000045", 45),
             1_000,
             1_600,
             None,
@@ -235,7 +270,7 @@ fn run_status_snapshot_rejects_wait_reasons_for_active_states() -> Result<(), Ru
     assert_eq!(
         RunStatusSnapshot::from_run(
             &running,
-            "evt_000045",
+            event_position("evt_000045", 45),
             1_000,
             1_600,
             None,
@@ -260,7 +295,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     assert_eq!(
         RunStatusSnapshot::from_run(
             &waiting_approval,
-            "evt_000050",
+            event_position("evt_000050", 50),
             1_000,
             1_500,
             None,
@@ -277,7 +312,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     let paused_budget = store.set_status(&budget_record.run_id, RunStatus::PausedBudget)?;
     let snapshot = RunStatusSnapshot::from_run(
         &paused_budget,
-        "evt_000060",
+        event_position("evt_000060", 60),
         2_000,
         2_500,
         None,
@@ -300,7 +335,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     assert_eq!(
         RunStatusSnapshot::from_run(
             &paused_callback_delivery,
-            "evt_000070",
+            event_position("evt_000070", 70),
             3_000,
             3_500,
             None,
@@ -314,7 +349,7 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     );
     let snapshot = RunStatusSnapshot::from_run(
         &paused_callback_delivery,
-        "evt_000071",
+        event_position("evt_000071", 71),
         3_000,
         3_500,
         None,
@@ -389,7 +424,7 @@ fn run_status_snapshot_projects_protocol_json() -> Result<(), RunStoreError> {
     let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
     let snapshot = RunStatusSnapshot::from_run(
         &waiting,
-        "evt_000070",
+        event_position("evt_000070", 70),
         1_000,
         1_500,
         None,
@@ -404,6 +439,7 @@ fn run_status_snapshot_projects_protocol_json() -> Result<(), RunStoreError> {
             "state": "waiting_callback",
             "releaseId": "release-2026-07-03",
             "lastCursor": "evt_000070",
+            "lastSequence": 70,
             "startedAtUnixMs": 1_000,
             "updatedAtUnixMs": 1_500,
             "completedAtUnixMs": null,
@@ -428,7 +464,15 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
         .set_status(&record.run_id, RunStatus::Running)
         .expect("run can start");
     assert_eq!(
-        RunStatusSnapshot::from_run(&running, "evt_1", 1_000, 1_200, Some(1_300), vec![], vec![]),
+        RunStatusSnapshot::from_run(
+            &running,
+            event_position("evt_1", 1),
+            1_000,
+            1_200,
+            Some(1_300),
+            vec![],
+            vec![]
+        ),
         Err(RunStoreError::InvalidRunStatusSnapshot {
             run_id: running.run_id.clone(),
             reason: "nonterminal run cannot have completed_at",
@@ -439,7 +483,15 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
         .set_status(&running.run_id, RunStatus::Completed)
         .expect("run can complete");
     assert_eq!(
-        RunStatusSnapshot::from_run(&completed, "evt_2", 1_000, 1_400, None, vec![], vec![]),
+        RunStatusSnapshot::from_run(
+            &completed,
+            event_position("evt_2", 2),
+            1_000,
+            1_400,
+            None,
+            vec![],
+            vec![],
+        ),
         Err(RunStoreError::InvalidRunStatusSnapshot {
             run_id: completed.run_id,
             reason: "terminal run requires completed_at",
@@ -456,14 +508,30 @@ fn run_status_snapshot_rejects_zero_status_timestamps() {
         .expect("run can start");
 
     assert_eq!(
-        RunStatusSnapshot::from_run(&running, "evt_1", 0, 1_200, None, vec![], vec![]),
+        RunStatusSnapshot::from_run(
+            &running,
+            event_position("evt_1", 1),
+            0,
+            1_200,
+            None,
+            vec![],
+            vec![],
+        ),
         Err(RunStoreError::InvalidRunStatusSnapshot {
             run_id: running.run_id.clone(),
             reason: "started_at must be positive",
         })
     );
     assert_eq!(
-        RunStatusSnapshot::from_run(&running, "evt_2", 1_000, 0, None, vec![], vec![]),
+        RunStatusSnapshot::from_run(
+            &running,
+            event_position("evt_2", 2),
+            1_000,
+            0,
+            None,
+            vec![],
+            vec![],
+        ),
         Err(RunStoreError::InvalidRunStatusSnapshot {
             run_id: running.run_id,
             reason: "updated_at must be positive",
@@ -481,7 +549,7 @@ fn terminal_run_status_snapshot_rejects_wait_reasons_and_active_operations()
     assert_eq!(
         RunStatusSnapshot::from_run(
             &cancelled,
-            "evt_3",
+            event_position("evt_3", 3),
             1_000,
             1_400,
             Some(1_500),

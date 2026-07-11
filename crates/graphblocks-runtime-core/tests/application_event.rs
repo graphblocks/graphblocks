@@ -1629,12 +1629,13 @@ fn protocol_event_metadata_for_run(
     metadata
 }
 
-fn protocol_run_status_snapshot(last_cursor: &str) -> RunStatusSnapshot {
+fn protocol_run_status_snapshot(last_cursor: &str, last_sequence: u64) -> RunStatusSnapshot {
     RunStatusSnapshot {
         run_id: "run-1".to_owned(),
         state: RunStatus::Running,
         release_id: "release-1".to_owned(),
         last_cursor: last_cursor.to_owned(),
+        last_sequence,
         started_at_unix_ms: 1_700_200,
         updated_at_unix_ms: 1_700_204,
         completed_at_unix_ms: None,
@@ -2822,7 +2823,7 @@ fn sqlite_protocol_log_attach_reports_expired_cursor_with_status_after_reopen() 
     }
 
     let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
-    let status = protocol_run_status_snapshot("cursor-4");
+    let status = protocol_run_status_snapshot("cursor-4", 4);
 
     assert_eq!(
         log.attach_to_run_with_status(Some("cursor-1"), 10, 2, status.clone())
@@ -2832,7 +2833,7 @@ fn sqlite_protocol_log_attach_reports_expired_cursor_with_status_after_reopen() 
             earliest_available_cursor: Some("cursor-3".to_owned()),
             last_cursor: Some("cursor-4".to_owned()),
             last_sequence: Some(4),
-            run_status: Some(status),
+            run_status: Some(Box::new(status)),
         }
     );
 }
@@ -3000,7 +3001,7 @@ fn attach_to_run_reports_expired_cursor_with_current_run_status() {
         )
         .expect("event appends");
     }
-    let status = protocol_run_status_snapshot("cursor-4");
+    let status = protocol_run_status_snapshot("cursor-4", 4);
 
     let attach = log.attach_to_run_with_status(Some("cursor-1"), 10, 2, status.clone());
 
@@ -3011,7 +3012,7 @@ fn attach_to_run_reports_expired_cursor_with_current_run_status() {
             earliest_available_cursor: Some("cursor-3".to_owned()),
             last_cursor: Some("cursor-4".to_owned()),
             last_sequence: Some(4),
-            run_status: Some(status),
+            run_status: Some(Box::new(status)),
         }
     );
 }
