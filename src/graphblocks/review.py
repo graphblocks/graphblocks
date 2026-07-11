@@ -183,11 +183,22 @@ class ReviewerCredential:
         return self.reviewer.principal_id == reviewer.principal_id and scope in self.scopes
 
     def is_active_at(self, created_at: str) -> bool:
-        if self.expires_at is None:
-            return True
-
         try:
-            return _parse_review_datetime(created_at, owner="review", field_name="created_at") < _parse_review_datetime(
+            created_at_time = _parse_review_datetime(
+                created_at,
+                owner="review",
+                field_name="created_at",
+            )
+            issued_at_time = _parse_review_datetime(
+                self.issued_at,
+                owner="reviewer credential",
+                field_name="issued_at",
+            )
+            if created_at_time < issued_at_time:
+                return False
+            if self.expires_at is None:
+                return True
+            return created_at_time < _parse_review_datetime(
                 self.expires_at,
                 owner="reviewer credential",
                 field_name="expires_at",

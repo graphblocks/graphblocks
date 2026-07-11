@@ -71,6 +71,8 @@ pre-release alpha software.
   manifest with the checked-in schemas, rejecting omissions and malformed output.
 - Implemented observable accumulating event-time windows in Python and Rust with
   on-time/final pane revisions, deadline-bound lateness, and shared TCK coverage.
+- Rejected reviewer credentials before their issuance time in Python and Rust,
+  making the authorization interval issuance-inclusive and expiry-exclusive.
 
 ### Removed
 

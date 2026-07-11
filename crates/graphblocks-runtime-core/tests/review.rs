@@ -214,3 +214,59 @@ fn review_workflow_ignores_expired_credentials() {
         }),
     );
 }
+
+#[test]
+fn review_workflow_ignores_not_yet_issued_credentials() {
+    let request = ReviewRequest::new(
+        "request-1",
+        ResourceSnapshotRef::new("candidate-1", "sha256:subject"),
+        PrincipalRef::new("author-1"),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    );
+    let reviewer = PrincipalRef::new("reviewer-1");
+    let current = ReviewerCredential::new(
+        "cred-current",
+        reviewer.clone(),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    );
+    let future = ReviewerCredential::new(
+        "cred-future",
+        reviewer.clone(),
+        ["quality"],
+        "2026-06-24T00:10:00Z",
+    );
+    let mut workflow = ReviewWorkflow::new(
+        request.clone(),
+        InMemoryReviewerCredentialProvider::new([future.clone(), current]),
+    );
+
+    let review = workflow
+        .record_review(ReviewSubmission::new(
+            "review-1",
+            reviewer.clone(),
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:05:00Z",
+        ))
+        .expect("currently issued credential is accepted");
+
+    assert_eq!(review.credential_refs, vec!["cred-current"]);
+
+    let mut future_only =
+        ReviewWorkflow::new(request, InMemoryReviewerCredentialProvider::new([future]));
+    assert_eq!(
+        future_only.record_review(ReviewSubmission::new(
+            "review-2",
+            reviewer,
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:05:00Z",
+        )),
+        Err(ReviewWorkflowError::CredentialMissing {
+            reviewer_id: "reviewer-1".to_owned(),
+            scope: "quality".to_owned(),
+        })
+    );
+}

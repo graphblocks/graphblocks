@@ -428,6 +428,56 @@ def test_review_workflow_ignores_expired_credentials() -> None:
     assert error.value.scope == "quality"
 
 
+def test_review_workflow_ignores_not_yet_issued_credentials() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    current = ReviewerCredential(
+        "cred-current",
+        reviewer,
+        scopes=("quality",),
+        issued_at="2026-06-24T00:00:00Z",
+    )
+    future = ReviewerCredential(
+        "cred-future",
+        reviewer,
+        scopes=("quality",),
+        issued_at="2026-06-24T00:10:00Z",
+    )
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider([future, current]),
+    )
+
+    review = workflow.record_review(
+        review_id="review-1",
+        reviewer=reviewer,
+        scope="quality",
+        decision="accept",
+        created_at="2026-06-24T00:05:00Z",
+    )
+
+    assert review.credential_refs == ["cred-current"]
+
+    future_only = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider([future]),
+    )
+    with pytest.raises(ReviewCredentialMissingError):
+        future_only.record_review(
+            review_id="review-2",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
+
+
 def test_review_workflow_rejects_changed_subject_and_ignores_invalidated_reviews() -> None:
     request = ReviewRequest(
         request_id="request-1",

@@ -30,4 +30,8 @@ must bind the same subject. Changes to the subject invalidate reviews and gate
 evidence. Evaluation records MUST retain release, plan, policy, dataset, and
 implementation provenance needed to reproduce the decision.
 
+A reviewer credential authorizes a review only when the review timestamp is at
+or after credential issuance and strictly before credential expiry. Credentials
+with malformed temporal bounds or future issuance MUST fail closed.
+
 Canonical example profiles are in `profiles/policy-profiles.yaml`.

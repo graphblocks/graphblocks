@@ -105,15 +105,19 @@ impl ReviewerCredential {
     }
 
     pub fn is_active_at(&self, created_at: &str) -> bool {
-        let Some(expires_at) = self.expires_at.as_deref() else {
-            return true;
-        };
-        match (
+        let (Some(created_at), Some(issued_at)) = (
             parse_policy_datetime_millis(created_at),
-            parse_policy_datetime_millis(expires_at),
-        ) {
-            (Some(created_at), Some(expires_at)) => created_at < expires_at,
-            _ => false,
+            parse_policy_datetime_millis(&self.issued_at),
+        ) else {
+            return false;
+        };
+        if created_at < issued_at {
+            return false;
+        }
+        match self.expires_at.as_deref() {
+            Some(expires_at) => parse_policy_datetime_millis(expires_at)
+                .is_some_and(|expires_at| created_at < expires_at),
+            None => true,
         }
     }
 }
