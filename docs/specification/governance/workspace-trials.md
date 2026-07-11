@@ -27,6 +27,9 @@ compare-and-swap commit. Any mismatch rejects the commit without partially
 applying the candidate. Review or gate evidence from an earlier candidate MUST
 NOT authorize a changed candidate. A successful commit MUST retain the commit
 identity authorized by its request.
+The final commit boundary MUST require an explicit allowed mutation decision
+and passing gate even for requests constructed outside a trial helper; missing
+proof MUST NOT default to authorization.
 The workspace head, change-set base, and change-set candidate MUST all name the
 same workspace; matching digests cannot substitute for workspace identity. A
 passing gate MUST bind the complete candidate reference, not merely report a

@@ -316,40 +316,34 @@ impl WorkspaceHead {
                 actual_digest: self.current.digest.clone(),
             });
         }
-        if !request
+        let mutation_decision = request
             .mutation_decision
             .as_ref()
-            .map(|decision| decision.allowed)
-            .unwrap_or(true)
-        {
+            .ok_or(WorkspaceCommitError::MutationDecisionMissing)?;
+        if !mutation_decision.allowed {
             return Err(WorkspaceCommitError::MutationDenied {
-                reason_codes: request
-                    .mutation_decision
-                    .map(|decision| decision.reason_codes)
-                    .unwrap_or_default(),
+                reason_codes: mutation_decision.reason_codes.clone(),
             });
         }
-        if let Some(gate) = &request.gate {
-            if gate.subject != request.change_set.candidate {
-                return Err(WorkspaceCommitError::GateSubjectMismatch {
-                    gate_id: gate.gate_id.clone(),
-                    expected_digest: request.change_set.candidate.digest.clone(),
-                    actual_digest: gate.subject.digest.clone(),
-                });
-            }
-            if gate.decision != GateDecision::Pass {
-                return Err(WorkspaceCommitError::GateNotPassed {
-                    gate_id: gate.gate_id.clone(),
-                    decision: gate.decision,
-                });
-            }
+        let gate = request
+            .gate
+            .as_ref()
+            .ok_or(WorkspaceCommitError::GateMissing)?;
+        if gate.subject != request.change_set.candidate {
+            return Err(WorkspaceCommitError::GateSubjectMismatch {
+                gate_id: gate.gate_id.clone(),
+                expected_digest: request.change_set.candidate.digest.clone(),
+                actual_digest: gate.subject.digest.clone(),
+            });
+        }
+        if gate.decision != GateDecision::Pass {
+            return Err(WorkspaceCommitError::GateNotPassed {
+                gate_id: gate.gate_id.clone(),
+                decision: gate.decision,
+            });
         }
         for check_id in &request.required_check_ids {
-            if !request
-                .gate
-                .as_ref()
-                .is_some_and(|gate| gate.check_ids.contains(check_id))
-            {
+            if !gate.check_ids.contains(check_id) {
                 return Err(WorkspaceCommitError::RequiredGateCheckMissing {
                     check_id: check_id.clone(),
                 });
@@ -513,6 +507,8 @@ pub enum WorkspaceCommitError {
     MutationDenied {
         reason_codes: Vec<String>,
     },
+    MutationDecisionMissing,
+    GateMissing,
     GateNotPassed {
         gate_id: String,
         decision: GateDecision,
@@ -560,6 +556,10 @@ impl fmt::Display for WorkspaceCommitError {
             Self::MutationDenied { reason_codes } => {
                 write!(formatter, "workspace mutation denied: {reason_codes:?}")
             }
+            Self::MutationDecisionMissing => {
+                write!(formatter, "workspace commit is missing a mutation decision")
+            }
+            Self::GateMissing => write!(formatter, "workspace commit is missing a gate result"),
             Self::GateNotPassed { gate_id, decision } => {
                 write!(
                     formatter,

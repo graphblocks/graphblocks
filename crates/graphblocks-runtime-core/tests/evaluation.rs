@@ -279,6 +279,10 @@ fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
     assert_eq!(
         head.commit(
             WorkspaceCommitRequest::new("commit-failed-gate", change_set.clone(), 7)
+                .with_mutation_decision(WorkspaceMutationDecision {
+                    allowed: true,
+                    reason_codes: Vec::new(),
+                })
                 .with_gate(failed_gate)
         )
         .expect_err("failed gate should fail"),
@@ -296,9 +300,15 @@ fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
         PrincipalRef::new("reviewer-1"),
         ReviewDecision::Accept,
     );
+    let passing_gate = evaluate_gate("quality", candidate, &[], &[], None::<[&str; 0]>, &[], None);
     assert_eq!(
         head.commit(
             WorkspaceCommitRequest::new("commit-stale-review", change_set, 7)
+                .with_mutation_decision(WorkspaceMutationDecision {
+                    allowed: true,
+                    reason_codes: Vec::new(),
+                })
+                .with_gate(passing_gate)
                 .with_review(stale_review)
         )
         .expect_err("stale review should fail"),
@@ -321,6 +331,42 @@ fn workspace_commit_identity_inputs() -> (WorkspaceHead, ChangeSet) {
         summary: None,
     };
     (head, change_set)
+}
+
+#[test]
+fn workspace_commit_requires_mutation_decision() {
+    let (head, change_set) = workspace_commit_identity_inputs();
+    let gate = evaluate_gate(
+        "quality",
+        change_set.candidate.clone(),
+        &[],
+        &[],
+        None::<[&str; 0]>,
+        &[],
+        None,
+    );
+
+    let error = head
+        .commit(WorkspaceCommitRequest::new("commit-no-policy", change_set, 7).with_gate(gate))
+        .expect_err("workspace commit requires a mutation decision");
+    assert!(error.to_string().contains("mutation decision"));
+}
+
+#[test]
+fn workspace_commit_requires_gate() {
+    let (head, change_set) = workspace_commit_identity_inputs();
+
+    let error = head
+        .commit(
+            WorkspaceCommitRequest::new("commit-no-gate", change_set, 7).with_mutation_decision(
+                WorkspaceMutationDecision {
+                    allowed: true,
+                    reason_codes: Vec::new(),
+                },
+            ),
+        )
+        .expect_err("workspace commit requires a gate");
+    assert!(error.to_string().contains("gate result"));
 }
 
 #[test]
@@ -378,7 +424,12 @@ fn workspace_commit_rejects_stale_passing_gate_subject() {
     assert_eq!(stale_gate.decision, GateDecision::Pass);
     let error = head
         .commit(
-            WorkspaceCommitRequest::new("commit-stale-gate", change_set, 7).with_gate(stale_gate),
+            WorkspaceCommitRequest::new("commit-stale-gate", change_set, 7)
+                .with_mutation_decision(WorkspaceMutationDecision {
+                    allowed: true,
+                    reason_codes: Vec::new(),
+                })
+                .with_gate(stale_gate),
         )
         .expect_err("passing gate for another candidate must be rejected");
     assert!(error.to_string().contains("gate subject"));

@@ -91,6 +91,8 @@ pre-release alpha software.
   requests and rejected stripped governance evidence at commit time.
 - Made native workspace trials require an explicit mutation decision and a gate
   that binds every required check before issuing a commit request.
+- Made the native workspace head require an explicit mutation decision and gate
+  for every commit instead of treating absent proof as allowed.
 
 ### Removed
 
