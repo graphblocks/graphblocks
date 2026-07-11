@@ -563,6 +563,30 @@ fn inactive_or_expired_subscription_does_not_schedule_delivery() {
 }
 
 #[test]
+fn subscription_expiration_is_exclusive_at_event_time() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let mut subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    subscription.expires_at_unix_ms = Some(1_002);
+    let before_expiry = protocol_event("event-before", ApplicationProtocolEventKind::RunStarted, 1);
+    let at_expiry = protocol_event("event-at", ApplicationProtocolEventKind::RunStarted, 2);
+
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &before_expiry)
+            .is_some()
+    );
+    assert!(
+        scheduler
+            .schedule_event(&subscription, &at_expiry)
+            .is_none(),
+        "expires_at is an exclusive capability boundary"
+    );
+}
+
+#[test]
 fn callback_subscription_rejects_expiration_not_after_creation() {
     for expires_at_unix_ms in [899, 900] {
         let mut subscription = subscription(

@@ -657,7 +657,7 @@ impl CallbackSubscription {
             && (self.scope != "run" || self.scope_id == event.metadata.run_id)
             && self
                 .expires_at_unix_ms
-                .is_none_or(|expires_at| event.metadata.occurred_at_unix_ms <= expires_at)
+                .is_none_or(|expires_at| event.metadata.occurred_at_unix_ms < expires_at)
             && self.event_filter.matches(event)
     }
 }

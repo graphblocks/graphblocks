@@ -89,6 +89,9 @@ with HMAC-SHA256 and records secret-free identity, attempt, response class, and
 outcome. Missing secrets, signing failure, and transport failure fail closed.
 Delivery is at least once. Dead-letter redrive MUST continue the original
 consecutive attempt history without duplicating the application event.
+Callback subscription `expires_at` is an exclusive capability boundary; events
+whose occurrence time is greater than or equal to `expires_at` MUST NOT schedule
+new callback deliveries.
 The reference daemon exposes `enqueue-callback-delivery`,
 `claim-callback-deliveries`, `complete-callback-delivery`,
 `move-callback-to-dead-letter`, and `redrive-callback-delivery` as
