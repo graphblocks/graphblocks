@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 import importlib
 import json
 import math
 import re
 from pathlib import Path
 import sys
+from threading import Thread
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 import pytest
@@ -2629,6 +2633,120 @@ def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) ->
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("missing run events response was not raised as an HTTP error")
     assert "GraphBlocksHttpError" in graphblocks_client.__all__
+
+
+def test_http_client_does_not_forward_bearer_token_to_redirected_origin() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    received_authorization: dict[str, str | None] = {}
+
+    class RedirectTargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            received_authorization["target"] = self.headers.get("Authorization")
+            body = b'{"ok":true,"runs":[]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    target_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectTargetHandler)
+
+    class RedirectSourceHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            received_authorization["source"] = self.headers.get("Authorization")
+            target_host, target_port = target_server.server_address
+            self.send_response(302)
+            self.send_header("Location", f"http://{target_host}:{target_port}/runs")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    source_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectSourceHandler)
+    target_thread = Thread(target=target_server.serve_forever)
+    source_thread = Thread(target=source_server.serve_forever)
+    target_thread.start()
+    source_thread.start()
+    try:
+        source_host, source_port = source_server.server_address
+        client = graphblocks_client.HttpGraphBlocksClient(
+            f"http://{source_host}:{source_port}",
+            bearer_token="secret-token",
+        )
+
+        assert client.list_runs() == {"ok": True, "runs": []}
+    finally:
+        source_server.shutdown()
+        target_server.shutdown()
+        source_server.server_close()
+        target_server.server_close()
+        source_thread.join()
+        target_thread.join()
+
+    assert received_authorization == {
+        "source": "Bearer secret-token",
+        "target": None,
+    }
+
+
+def test_http_client_translates_urllib_http_error_and_closes_body() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    error_body = BytesIO(b'{"ok":false,"error":"missing run"}')
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise HTTPError(request.full_url, 404, "Not Found", {}, error_body)
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(graphblocks_client.GraphBlocksHttpError) as error:
+        client.list_runs()
+
+    assert error.value.status_code == 404
+    assert error.value.payload == {"ok": False, "error": "missing run"}
+    assert error_body.closed
+
+
+def test_http_client_closes_responses_on_success_invalid_json_and_application_error() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class FakeResponse:
+        def __init__(self, body: bytes, status: int) -> None:
+            self.body = body
+            self.status = status
+            self.closed = False
+
+        def read(self) -> bytes:
+            return self.body
+
+        def close(self) -> None:
+            self.closed = True
+
+    success_response = FakeResponse(b'{"ok":true}', 200)
+    invalid_response = FakeResponse(b"not JSON", 200)
+    error_response = FakeResponse(b'{"ok":false,"error":"denied"}', 403)
+    responses = [success_response, invalid_response, error_response]
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: responses.pop(0),
+    )
+
+    assert client.health() == {"ok": True}
+    assert success_response.closed
+    with pytest.raises(ValueError, match="GraphBlocks health response must be valid JSON"):
+        client.health()
+    assert invalid_response.closed
+    with pytest.raises(graphblocks_client.GraphBlocksHttpError) as error:
+        client.health()
+    assert error.value.payload == {"ok": False, "error": "denied"}
+    assert error_response.closed
+
+    assert responses == []
 
 
 def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None:
