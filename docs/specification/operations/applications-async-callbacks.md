@@ -71,20 +71,26 @@ callbacks MUST NOT resume twice. A callback after timeout/cancellation or for a
 stale attempt MUST NOT modify the newer or terminal operation.
 
 The reference daemon exposes `register-async-operation`,
-`submit-async-callback`, `cancel-async-operation`, and
+`submit-async-callback`, `quarantine-async-callback`,
+`accept-quarantined-async-callbacks`, `cancel-async-operation`, and
 `expire-async-operation` as SQLite-backed async-operation control-plane
 operations. Registration records the operation identity, provider identity,
 schema reference, idempotency key, callback-wait state, and timeout or explicit
 infinite-wait policy through `SqliteAsyncOperationStore`. Callback submission
 reads the payload from standard input, loads the expected callback schema from
 `--schema-json`, and submits the receipt to the same store; it returns whether
-the receipt was a duplicate and whether the operation should resume.
-Cancellation and expiration transition the operation to terminal state through
-the same store so later callbacks are recorded as late receipts without
-resuming execution. These commands are control-plane adapters only: durable
-acceptance, schema validation, idempotency, late-callback handling, timeout
-validation, terminal-state persistence, and journal-before-resume ordering
-remain owned by the Rust runtime store.
+the receipt was a duplicate and whether the operation should resume. Early
+callbacks that arrive before operation commit MAY be quarantined by
+`quarantine-async-callback` and later replayed by
+`accept-quarantined-async-callbacks` once registration has committed; replay
+uses the same schema validation, idempotency, and single-resume behavior as
+normal callback admission. Cancellation and expiration transition the operation
+to terminal state through the same store so later callbacks are recorded as late
+receipts without resuming execution. These commands are control-plane adapters
+only: durable acceptance, schema validation, idempotency, early-callback
+quarantine, late-callback handling, timeout validation, terminal-state
+persistence, and journal-before-resume ordering remain owned by the Rust
+runtime store.
 
 ## Checkpoint resume
 

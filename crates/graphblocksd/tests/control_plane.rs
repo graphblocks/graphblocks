@@ -102,6 +102,115 @@ fn submit_daemon_ci_callback(
     Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?)
 }
 
+fn quarantine_daemon_ci_callback(
+    path_text: &str,
+    callback_id: &str,
+    idempotency_key: &str,
+    quarantine_expires_at_unix_ms: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "quarantine-async-callback",
+            "--async-operation-store",
+            path_text,
+            "--callback-id",
+            callback_id,
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--idempotency-key",
+            idempotency_key,
+            "--received-at-unix-ms",
+            "1200",
+            "--verified-by",
+            "hmac:callback-endpoint-1",
+            "--policy-snapshot-id",
+            "policy-snapshot-1",
+            "--quarantine-expires-at-unix-ms",
+            quarantine_expires_at_unix_ms,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?;
+    stdin.write_all(
+        serde_json::to_string(&json!({"status": "completed", "workflow_run_id": "gha-run-1"}))?
+            .as_bytes(),
+    )?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?)
+}
+
+fn register_daemon_waiting_operation(
+    path_text: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "register-async-operation",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--run-id",
+            "run-1",
+            "--node-id",
+            "node-ci",
+            "--attempt-id",
+            "attempt-1",
+            "--kind",
+            "ci_job",
+            "--resume-token-hash",
+            VALID_RESUME_TOKEN_HASH,
+            "--idempotency-key",
+            "idem-op-1",
+            "--expected-schema",
+            "schemas/CICallback@1",
+            "--created-at-unix-ms",
+            "1000",
+            "--provider-operation-id",
+            "gha-run-1",
+            "--submitted-at-unix-ms",
+            "1050",
+            "--waiting-callback-expires-at-unix-ms",
+            "2000",
+        ])
+        .output()?;
+    assert!(output.status.success());
+    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?)
+}
+
+fn accept_quarantined_daemon_callbacks(
+    path_text: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "accept-quarantined-async-callbacks",
+            "--async-operation-store",
+            path_text,
+            "--operation-id",
+            "op-1",
+            "--schema-id",
+            "schemas/CICallback@1",
+            "--schema-json",
+            r#"{"type":"object","required":["status","workflow_run_id"],"properties":{"status":{"type":"string"},"workflow_run_id":{"type":"string"}}}"#,
+        ])
+        .output()?;
+    assert!(output.status.success());
+    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?)
+}
+
 #[test]
 fn daemon_config_validates_identity_protocol_and_capacity() {
     assert_eq!(
@@ -1786,6 +1895,136 @@ fn graphblocksd_rejects_waiting_callback_async_operation_without_timeout()
             .map_err(|error| format!("{error:?}"))?
             .operation_state("op-1"),
         None,
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_quarantines_early_async_callback_and_accepts_after_registration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("quarantine-callback");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    let quarantined = quarantine_daemon_ci_callback(path_text, "cb-early", "idem-early", "5000")?;
+    assert_eq!(
+        quarantined.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        quarantined
+            .pointer("/quarantined/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        quarantined
+            .pointer("/quarantined/expiresAtUnixMs")
+            .and_then(|value| value.as_u64()),
+        Some(5000),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(store.operation_state("op-1"), None);
+    assert_eq!(store.quarantined_callback_count("op-1"), 1);
+
+    let registered = register_daemon_waiting_operation(path_text)?;
+    assert_eq!(
+        registered
+            .pointer("/operation/state")
+            .and_then(|value| value.as_str()),
+        Some("waiting_callback"),
+    );
+
+    let accepted = accept_quarantined_daemon_callbacks(path_text)?;
+    assert_eq!(
+        accepted
+            .pointer("/acceptedCount")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+    assert_eq!(
+        accepted
+            .pointer("/accepted/0/shouldResume")
+            .and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        accepted
+            .pointer("/accepted/0/receipt/callbackId")
+            .and_then(|value| value.as_str()),
+        Some("cb-early"),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived),
+    );
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn graphblocksd_quarantined_duplicate_callback_replays_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = sqlite_async_operation_path("quarantine-callback-duplicate");
+    let path_text = path.to_str().ok_or("temp path is not utf-8")?;
+    let _ = std::fs::remove_file(&path);
+
+    let first = quarantine_daemon_ci_callback(path_text, "cb-early", "idem-early", "5000")?;
+    let duplicate =
+        quarantine_daemon_ci_callback(path_text, "cb-early-duplicate", "idem-early", "5001")?;
+    assert_eq!(
+        first
+            .pointer("/quarantined/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        duplicate
+            .pointer("/quarantined/duplicate")
+            .and_then(|value| value.as_bool()),
+        Some(true),
+    );
+    assert_eq!(
+        duplicate
+            .pointer("/quarantined/callbackId")
+            .and_then(|value| value.as_str()),
+        Some("cb-early-duplicate"),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(store.quarantined_callback_count("op-1"), 1);
+
+    register_daemon_waiting_operation(path_text)?;
+    let accepted = accept_quarantined_daemon_callbacks(path_text)?;
+    assert_eq!(
+        accepted
+            .pointer("/acceptedCount")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+    assert_eq!(
+        accepted
+            .pointer("/accepted/0/receipt/callbackId")
+            .and_then(|value| value.as_str()),
+        Some("cb-early"),
+    );
+
+    let store = SqliteAsyncOperationStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1,
     );
 
     let _ = std::fs::remove_file(&path);

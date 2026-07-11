@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use graphblocks_protocol::WorkerProtocolMessageKind;
 use graphblocks_runtime_core::async_operation::{
     AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationKind,
-    AsyncOperationState, SqliteAsyncOperationStore,
+    AsyncOperationState, ExternalCallbackReceived, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::run_store::{
     RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
@@ -61,13 +61,17 @@ fn main() {
         Some("set-run-status-with-lease") => run_set_run_status_with_lease(args.collect()),
         Some("register-async-operation") => run_register_async_operation(args.collect()),
         Some("submit-async-callback") => run_submit_async_callback(args.collect()),
+        Some("quarantine-async-callback") => run_quarantine_async_callback(args.collect()),
+        Some("accept-quarantined-async-callbacks") => {
+            run_accept_quarantined_async_callbacks(args.collect())
+        }
         Some("cancel-async-operation") => run_cancel_async_operation(args.collect()),
         Some("expire-async-operation") => run_expire_async_operation(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -627,18 +631,7 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
         .map_err(|error| CliError::ReadStdin(error.to_string()))?;
     let payload = serde_json::from_str::<Value>(&input)
         .map_err(|error| CliError::ParseJson(error.to_string()))?;
-    let schema_value = serde_json::from_str::<Value>(&schema_json).map_err(|error| {
-        CliError::Usage(format!(
-            "--schema-json must be a JSON schema object: {error}"
-        ))
-    })?;
-    let schema = JsonSchema::from_json_schema_value(schema_id, &schema_value).map_err(|error| {
-        CliError::Usage(format!(
-            "--schema-json is not supported by graphblocksd: {error:?}"
-        ))
-    })?;
-    let registry = ToolSchemaRegistry::new([schema])
-        .map_err(|error| CliError::Usage(format!("invalid callback schema registry: {error:?}")))?;
+    let registry = callback_schema_registry_from_json(schema_id, schema_json)?;
 
     let mut submission = AsyncCallbackSubmission::new(
         callback_id,
@@ -668,28 +661,236 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
             "duplicate": accepted.duplicate,
             "shouldResume": accepted.should_resume,
         },
-        "receipt": {
-            "callbackId": accepted.receipt.callback_id,
-            "operationId": accepted.receipt.operation_id,
-            "runId": accepted.receipt.run_id,
-            "nodeId": accepted.receipt.node_id,
-            "attemptId": accepted.receipt.attempt_id,
-            "providerOperationId": accepted.receipt.provider_operation_id,
-            "idempotencyKey": accepted.receipt.idempotency_key,
-            "payloadDigest": accepted.receipt.payload_digest,
-            "payload": accepted.receipt.payload,
-            "receivedAtUnixMs": accepted.receipt.received_at_unix_ms,
-            "verifiedBy": accepted.receipt.verified_by,
-            "policySnapshotId": accepted.receipt.policy_snapshot_id,
-            "artifacts": accepted.receipt.artifacts.into_iter().map(|artifact| {
-                json!({
-                    "artifactId": artifact.artifact_id,
-                    "uri": artifact.uri,
-                    "mediaType": artifact.media_type,
-                    "checksum": artifact.checksum,
-                })
-            }).collect::<Vec<_>>(),
+        "receipt": callback_receipt_json(&accepted.receipt),
+    }))
+}
+
+fn callback_schema_registry_from_json(
+    schema_id: String,
+    schema_json: String,
+) -> Result<ToolSchemaRegistry, CliError> {
+    let schema_value = serde_json::from_str::<Value>(&schema_json).map_err(|error| {
+        CliError::Usage(format!(
+            "--schema-json must be a JSON schema object: {error}"
+        ))
+    })?;
+    let schema = JsonSchema::from_json_schema_value(schema_id, &schema_value).map_err(|error| {
+        CliError::Usage(format!(
+            "--schema-json is not supported by graphblocksd: {error:?}"
+        ))
+    })?;
+    ToolSchemaRegistry::new([schema])
+        .map_err(|error| CliError::Usage(format!("invalid callback schema registry: {error:?}")))
+}
+
+fn callback_receipt_json(receipt: &ExternalCallbackReceived) -> Value {
+    json!({
+        "callbackId": receipt.callback_id,
+        "operationId": receipt.operation_id,
+        "runId": receipt.run_id,
+        "nodeId": receipt.node_id,
+        "attemptId": receipt.attempt_id,
+        "providerOperationId": receipt.provider_operation_id,
+        "idempotencyKey": receipt.idempotency_key,
+        "payloadDigest": receipt.payload_digest,
+        "payload": receipt.payload,
+        "receivedAtUnixMs": receipt.received_at_unix_ms,
+        "verifiedBy": receipt.verified_by,
+        "policySnapshotId": receipt.policy_snapshot_id,
+        "artifacts": receipt.artifacts.iter().map(|artifact| {
+            json!({
+                "artifactId": artifact.artifact_id,
+                "uri": artifact.uri,
+                "mediaType": artifact.media_type,
+                "checksum": artifact.checksum,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn run_quarantine_async_callback(args: Vec<String>) -> Result<Value, CliError> {
+    let mut async_operation_store = None;
+    let mut callback_id = None;
+    let mut operation_id = None;
+    let mut run_id = None;
+    let mut node_id = None;
+    let mut attempt_id = None;
+    let mut provider_operation_id = None;
+    let mut idempotency_key = None;
+    let mut received_at_unix_ms = None;
+    let mut verified_by = None;
+    let mut policy_snapshot_id = None;
+    let mut quarantine_expires_at_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--async-operation-store" => {
+                async_operation_store = Some(next_arg(&mut args, "--async-operation-store")?);
+            }
+            "--callback-id" => {
+                callback_id = Some(next_arg(&mut args, "--callback-id")?);
+            }
+            "--operation-id" => {
+                operation_id = Some(next_arg(&mut args, "--operation-id")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--node-id" => {
+                node_id = Some(next_arg(&mut args, "--node-id")?);
+            }
+            "--attempt-id" => {
+                attempt_id = Some(next_arg(&mut args, "--attempt-id")?);
+            }
+            "--provider-operation-id" => {
+                provider_operation_id = Some(next_arg(&mut args, "--provider-operation-id")?);
+            }
+            "--idempotency-key" => {
+                idempotency_key = Some(next_arg(&mut args, "--idempotency-key")?);
+            }
+            "--received-at-unix-ms" => {
+                let value = next_arg(&mut args, "--received-at-unix-ms")?;
+                received_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--received-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--verified-by" => {
+                verified_by = Some(next_arg(&mut args, "--verified-by")?);
+            }
+            "--policy-snapshot-id" => {
+                policy_snapshot_id = Some(next_arg(&mut args, "--policy-snapshot-id")?);
+            }
+            "--quarantine-expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--quarantine-expires-at-unix-ms")?;
+                quarantine_expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--quarantine-expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let async_operation_store = async_operation_store
+        .ok_or_else(|| CliError::Usage("--async-operation-store is required".to_owned()))?;
+    let callback_id =
+        callback_id.ok_or_else(|| CliError::Usage("--callback-id is required".to_owned()))?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::Usage("--operation-id is required".to_owned()))?;
+    let run_id = run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?;
+    let node_id = node_id.ok_or_else(|| CliError::Usage("--node-id is required".to_owned()))?;
+    let attempt_id =
+        attempt_id.ok_or_else(|| CliError::Usage("--attempt-id is required".to_owned()))?;
+    let idempotency_key = idempotency_key
+        .ok_or_else(|| CliError::Usage("--idempotency-key is required".to_owned()))?;
+    let received_at_unix_ms = received_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--received-at-unix-ms is required".to_owned()))?;
+    let verified_by =
+        verified_by.ok_or_else(|| CliError::Usage("--verified-by is required".to_owned()))?;
+    let policy_snapshot_id = policy_snapshot_id
+        .ok_or_else(|| CliError::Usage("--policy-snapshot-id is required".to_owned()))?;
+    let quarantine_expires_at_unix_ms = quarantine_expires_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--quarantine-expires-at-unix-ms is required".to_owned()))?;
+
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| CliError::ReadStdin(error.to_string()))?;
+    let payload = serde_json::from_str::<Value>(&input)
+        .map_err(|error| CliError::ParseJson(error.to_string()))?;
+
+    let mut submission = AsyncCallbackSubmission::new(
+        callback_id.clone(),
+        operation_id,
+        run_id,
+        node_id,
+        attempt_id,
+        idempotency_key,
+        payload,
+        received_at_unix_ms,
+        verified_by,
+        policy_snapshot_id,
+    );
+    if let Some(provider_operation_id) = provider_operation_id {
+        submission = submission.with_provider_operation_id(provider_operation_id);
+    }
+
+    let store =
+        SqliteAsyncOperationStore::open(async_operation_store).map_err(CliError::AsyncOperation)?;
+    let quarantined = store
+        .quarantine_callback_before_operation_commit(submission, quarantine_expires_at_unix_ms)
+        .map_err(CliError::AsyncOperation)?;
+
+    Ok(json!({
+        "ok": true,
+        "quarantined": {
+            "callbackId": callback_id,
+            "operationId": quarantined.operation_id,
+            "idempotencyKey": quarantined.idempotency_key,
+            "duplicate": quarantined.duplicate,
+            "expiresAtUnixMs": quarantined.expires_at_unix_ms,
         },
+    }))
+}
+
+fn run_accept_quarantined_async_callbacks(args: Vec<String>) -> Result<Value, CliError> {
+    let mut async_operation_store = None;
+    let mut operation_id = None;
+    let mut schema_id = None;
+    let mut schema_json = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--async-operation-store" => {
+                async_operation_store = Some(next_arg(&mut args, "--async-operation-store")?);
+            }
+            "--operation-id" => {
+                operation_id = Some(next_arg(&mut args, "--operation-id")?);
+            }
+            "--schema-id" => {
+                schema_id = Some(next_arg(&mut args, "--schema-id")?);
+            }
+            "--schema-json" => {
+                schema_json = Some(next_arg(&mut args, "--schema-json")?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let async_operation_store = async_operation_store
+        .ok_or_else(|| CliError::Usage("--async-operation-store is required".to_owned()))?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::Usage("--operation-id is required".to_owned()))?;
+    let schema_id =
+        schema_id.ok_or_else(|| CliError::Usage("--schema-id is required".to_owned()))?;
+    let schema_json =
+        schema_json.ok_or_else(|| CliError::Usage("--schema-json is required".to_owned()))?;
+    let registry = callback_schema_registry_from_json(schema_id, schema_json)?;
+
+    let store =
+        SqliteAsyncOperationStore::open(async_operation_store).map_err(CliError::AsyncOperation)?;
+    let accepted = store
+        .accept_quarantined_callbacks(&operation_id, &registry)
+        .map_err(CliError::AsyncOperation)?;
+    let accepted_values = accepted
+        .iter()
+        .map(|accepted| {
+            json!({
+                "duplicate": accepted.duplicate,
+                "shouldResume": accepted.should_resume,
+                "receipt": callback_receipt_json(&accepted.receipt),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "ok": true,
+        "operationId": operation_id,
+        "acceptedCount": accepted_values.len(),
+        "accepted": accepted_values,
     }))
 }
 
