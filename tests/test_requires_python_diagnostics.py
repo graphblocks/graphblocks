@@ -46,3 +46,48 @@ packages = ["src/selected"]
         ("WheelPythonRequiresInvalid", "$.pyproject.toml.project.requires-python")
     ]
     assert matrix.targets == ()
+
+
+def test_wheel_matrix_reports_invalid_requested_python_version(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "selected"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/selected"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        packages,
+        "load_package_catalog",
+        lambda: {
+            "artifacts": [
+                {
+                    "distribution": "selected",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    matrix = packages.build_wheel_matrix(
+        tmp_path,
+        python_versions=("not-a-version",),
+    )
+
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        ("WheelPythonVersionInvalid", "$.python_versions[0]")
+    ]
+    assert matrix.targets == ()

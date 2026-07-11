@@ -513,6 +513,23 @@ def build_wheel_matrix(
             ),
         )
 
+    for index, version in enumerate(python_versions):
+        try:
+            if not isinstance(version, str) or not version.strip():
+                raise InvalidVersion(str(version))
+            Version(version)
+        except InvalidVersion:
+            return WheelMatrix(
+                targets=(),
+                diagnostics=(
+                    Diagnostic(
+                        "WheelPythonVersionInvalid",
+                        f"wheel matrix Python version is invalid: {version!r}",
+                        f"$.python_versions[{index}]",
+                    ),
+                ),
+            )
+
     for manifest_path in _pyproject_paths(root_path):
         if not manifest_path.exists():
             continue

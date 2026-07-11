@@ -65,6 +65,8 @@ pre-release alpha software.
   construction instead of emitting empty, falsely unsupported build targets.
 - Rejected malformed fractional seconds in Rust RAG freshness timestamps while
   retaining valid fractional ISO datetimes.
+- Reported malformed requested Python matrix versions at their indexed input
+  path instead of mislabeling package metadata as unsupported.
 
 ### Removed
 
