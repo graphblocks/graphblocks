@@ -79,6 +79,8 @@ pre-release alpha software.
   matches its recorded checksum or size.
 - Aligned native local blob pagination with canonical decimal cursors and made
   maximum-value cursors overflow-safe.
+- Preserved the authorized workspace commit identity through compare-and-swap
+  materialization instead of replacing it with a generated snapshot identity.
 
 ### Removed
 

@@ -503,6 +503,7 @@ class InMemoryWorkspaceStore:
         policy: WorkspaceMutationPolicy | None = None,
         review_scopes: tuple[str, ...] = (),
         operations: list[dict[str, object]] | None = None,
+        commit_id: str | None = None,
     ) -> WorkspaceCommit:
         current = self.current(workspace_id)
         if current.snapshot_id != expected_snapshot_id:
@@ -535,7 +536,7 @@ class InMemoryWorkspaceStore:
                 raise WorkspaceMutationDeniedError(decision.reason_codes)
 
         commit = WorkspaceCommit(
-            commit_id=f"{workspace_id}:{new_snapshot_id}",
+            commit_id=f"{workspace_id}:{new_snapshot_id}" if commit_id is None else commit_id,
             workspace_id=workspace_id,
             previous_snapshot_id=current.snapshot_id,
             snapshot=candidate,
@@ -605,6 +606,7 @@ class InMemoryWorkspaceStore:
             committed_by=committed_by,
             committed_at=committed_at,
             change_set_id=request.change_set.change_set_id,
+            commit_id=request.commit_id,
         )
 
 

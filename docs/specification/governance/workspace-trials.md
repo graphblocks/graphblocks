@@ -13,10 +13,12 @@ Commit authorization requires all of the following:
 - every required lease is active and owned by `trial:{trial_id}`;
 - every required review is accepted, in scope, and valid for the unchanged
   candidate; and
-- the request binds the expected base revision plus base and candidate digests.
+- the request binds its commit identity, expected base revision, and base and
+  candidate digests.
 
 The workspace store MUST re-evaluate revision, base digest, candidate identity,
 gate, review, lease, and materialized candidate digest immediately before its
 compare-and-swap commit. Any mismatch rejects the commit without partially
 applying the candidate. Review or gate evidence from an earlier candidate MUST
-NOT authorize a changed candidate.
+NOT authorize a changed candidate. A successful commit MUST retain the commit
+identity authorized by its request.

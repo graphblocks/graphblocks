@@ -625,6 +625,7 @@ def test_workspace_trial_plan_materializes_and_enforces_verified_commit_request(
         "lease_ids": ["lease-formal"],
         "trial_id": "rtl-1",
     }
+    assert committed.commit_id == request.commit_id == "commit-rtl-1"
     assert committed.snapshot.content_digest() == change_set.candidate.digest
     assert committed.snapshot.revision == 8
 
