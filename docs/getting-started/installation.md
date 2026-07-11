@@ -50,5 +50,6 @@ The native CLI currently accepts one JSON or YAML `Graph` from stdin, or selects
 a named `Graph` from a multi-document YAML stream with `--graph NAME`, and
 supports the native stdlib block set. Examples that use integration blocks still
 run through the Python authoring layer plus deterministic fakes. `graphblocksd`
-currently processes worker-control messages and SQLite checkpoint recovery
-claims; it does not bind a server socket or expose a `serve` command.
+currently processes worker-control messages and SQLite checkpoint claim
+lifecycle commands; it does not bind a server socket or expose a `serve`
+command.

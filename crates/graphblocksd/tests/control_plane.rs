@@ -386,6 +386,142 @@ fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
 }
 
 #[test]
+fn graphblocksd_completes_sqlite_checkpoint_claim_for_worker_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("graphblocksd-checkpoint-complete-{unique}.sqlite3"));
+    let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+    store
+        .put(CheckpointBarrier {
+            checkpoint_id: "checkpoint-000001".to_owned(),
+            run_id: "run-000001".to_owned(),
+            release_id: "release-2026-07-11".to_owned(),
+            deployment_revision_id: "deployment-rev-1".to_owned(),
+            plan_hash: "sha256:plan".to_owned(),
+            checkpoint_schema: SchemaRef::new("graphblocks.ai/Checkpoint", 1),
+            state_revision: 1,
+            completed_nodes: vec!["begin".to_owned()],
+            pending_nodes: vec!["resume".to_owned()],
+            source_cursors: BTreeMap::from([(
+                "events".to_owned(),
+                SourceCursor::new("events", 0, 7),
+            )]),
+            operator_state: BTreeMap::new(),
+            sink_commit_metadata: BTreeMap::new(),
+            schema_versions: BTreeMap::from([("checkpoint".to_owned(), 1)]),
+            created_at_unix_ms: 1_820_000_000_000,
+        })
+        .expect("checkpoint should persist");
+    drop(store);
+
+    let path_text = path.to_str().ok_or("checkpoint path was not utf-8")?;
+    let claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "claim-checkpoint",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--release-id",
+            "release-2026-07-11",
+            "--deployment-revision-id",
+            "deployment-rev-1",
+            "--plan-hash",
+            "sha256:plan",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--now-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "2000",
+        ])
+        .stdout(Stdio::piped())
+        .output()?;
+    assert!(claim_output.status.success());
+    let claim_payload = serde_json::from_slice::<serde_json::Value>(&claim_output.stdout)?;
+    assert_eq!(
+        claim_payload
+            .pointer("/claim/fencingEpoch")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+
+    let complete_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "complete-checkpoint-claim",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--checkpoint-id",
+            "checkpoint-000001",
+            "--worker-id",
+            "worker-1",
+            "--lease-id",
+            "lease-1",
+            "--fencing-epoch",
+            "1",
+            "--claimed-at-unix-ms",
+            "1000",
+            "--expires-at-unix-ms",
+            "2000",
+            "--now-unix-ms",
+            "1500",
+        ])
+        .stdout(Stdio::piped())
+        .output()?;
+    assert!(complete_output.status.success());
+    let complete_payload = serde_json::from_slice::<serde_json::Value>(&complete_output.stdout)?;
+    assert_eq!(
+        complete_payload
+            .pointer("/ok")
+            .and_then(|value| value.as_bool()),
+        Some(true),
+    );
+
+    let next_claim_output = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "claim-checkpoint",
+            "--checkpoint-store",
+            path_text,
+            "--run-id",
+            "run-000001",
+            "--release-id",
+            "release-2026-07-11",
+            "--deployment-revision-id",
+            "deployment-rev-1",
+            "--plan-hash",
+            "sha256:plan",
+            "--worker-id",
+            "worker-2",
+            "--lease-id",
+            "lease-2",
+            "--now-unix-ms",
+            "1600",
+            "--expires-at-unix-ms",
+            "2600",
+        ])
+        .stdout(Stdio::piped())
+        .output()?;
+    assert!(next_claim_output.status.success());
+    let next_claim_payload =
+        serde_json::from_slice::<serde_json::Value>(&next_claim_output.stdout)?;
+    assert_eq!(
+        next_claim_payload
+            .pointer("/claim/fencingEpoch")
+            .and_then(|value| value.as_u64()),
+        Some(2),
+    );
+    Ok(())
+}
+
+#[test]
 fn worker_registry_allows_admitted_worker_refresh_at_capacity() -> Result<(), DaemonConfigError> {
     let mut registry =
         WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080").with_max_workers(1))?;

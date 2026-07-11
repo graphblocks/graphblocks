@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 
 use graphblocks_protocol::WorkerProtocolMessageKind;
-use graphblocks_runtime_durable::SqliteCheckpointStore;
+use graphblocks_runtime_durable::{CheckpointRecoveryClaim, SqliteCheckpointStore};
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use serde_json::{Value, json};
 
@@ -45,8 +45,9 @@ fn main() {
     let result = match command.as_deref() {
         Some("admit-worker-message") => run_admit_worker_message(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
+        Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|claim-checkpoint> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|claim-checkpoint|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -201,6 +202,109 @@ fn run_claim_checkpoint(args: Vec<String>) -> Result<Value, CliError> {
             "fencingEpoch": recovery.claim.fencing_epoch,
             "claimedAtUnixMs": recovery.claim.claimed_at_unix_ms,
             "expiresAtUnixMs": recovery.claim.expires_at_unix_ms,
+        },
+    }))
+}
+
+fn run_complete_checkpoint_claim(args: Vec<String>) -> Result<Value, CliError> {
+    let mut checkpoint_store = None;
+    let mut run_id = None;
+    let mut checkpoint_id = None;
+    let mut worker_id = None;
+    let mut lease_id = None;
+    let mut fencing_epoch = None;
+    let mut claimed_at_unix_ms = None;
+    let mut expires_at_unix_ms = None;
+    let mut now_unix_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--checkpoint-store" => {
+                checkpoint_store = Some(next_arg(&mut args, "--checkpoint-store")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--checkpoint-id" => {
+                checkpoint_id = Some(next_arg(&mut args, "--checkpoint-id")?);
+            }
+            "--worker-id" => {
+                worker_id = Some(next_arg(&mut args, "--worker-id")?);
+            }
+            "--lease-id" => {
+                lease_id = Some(next_arg(&mut args, "--lease-id")?);
+            }
+            "--fencing-epoch" => {
+                let value = next_arg(&mut args, "--fencing-epoch")?;
+                fencing_epoch = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--fencing-epoch requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--claimed-at-unix-ms" => {
+                let value = next_arg(&mut args, "--claimed-at-unix-ms")?;
+                claimed_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--claimed-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--expires-at-unix-ms")?;
+                expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let checkpoint_store = checkpoint_store
+        .ok_or_else(|| CliError::Usage("--checkpoint-store is required".to_owned()))?;
+    let claim = CheckpointRecoveryClaim {
+        run_id: run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?,
+        checkpoint_id: checkpoint_id
+            .ok_or_else(|| CliError::Usage("--checkpoint-id is required".to_owned()))?,
+        worker_id: worker_id
+            .ok_or_else(|| CliError::Usage("--worker-id is required".to_owned()))?,
+        lease_id: lease_id.ok_or_else(|| CliError::Usage("--lease-id is required".to_owned()))?,
+        fencing_epoch: fencing_epoch
+            .ok_or_else(|| CliError::Usage("--fencing-epoch is required".to_owned()))?,
+        claimed_at_unix_ms: claimed_at_unix_ms
+            .ok_or_else(|| CliError::Usage("--claimed-at-unix-ms is required".to_owned()))?,
+        expires_at_unix_ms: expires_at_unix_ms
+            .ok_or_else(|| CliError::Usage("--expires-at-unix-ms is required".to_owned()))?,
+    };
+    let now_unix_ms =
+        now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
+    let mut store = SqliteCheckpointStore::open(checkpoint_store)
+        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+    store
+        .complete_claim(&claim, now_unix_ms)
+        .map_err(|error| CliError::CheckpointStore(format!("{error:?}")))?;
+
+    Ok(json!({
+        "ok": true,
+        "claim": {
+            "runId": claim.run_id,
+            "checkpointId": claim.checkpoint_id,
+            "workerId": claim.worker_id,
+            "leaseId": claim.lease_id,
+            "fencingEpoch": claim.fencing_epoch,
+            "claimedAtUnixMs": claim.claimed_at_unix_ms,
+            "expiresAtUnixMs": claim.expires_at_unix_ms,
+            "completedAtUnixMs": now_unix_ms,
         },
     }))
 }
