@@ -9350,7 +9350,28 @@ class TckRunner:
                         }
                     )
                 message_ids = [str(message_id) for message_id in raw_message_ids]
-                store.create(Conversation(conversation_id=conversation_id))
+                conversation_message_ids: list[str] = []
+                for raw_attachment in raw_attachments:
+                    attachment_scope = raw_attachment.get("scope", "message")
+                    attachment_message_id = raw_attachment.get(
+                        "messageId",
+                        raw_attachment.get("message_id"),
+                    )
+                    if (
+                        attachment_scope == "message"
+                        and attachment_message_id is not None
+                        and str(attachment_message_id) not in conversation_message_ids
+                    ):
+                        conversation_message_ids.append(str(attachment_message_id))
+                store.create(
+                    Conversation(
+                        conversation_id=conversation_id,
+                        messages=tuple(
+                            Message(message_id=message_id, role="user")
+                            for message_id in conversation_message_ids
+                        ),
+                    )
+                )
                 for raw_attachment in raw_attachments:
                     store.add_attachment(
                         conversation_id,
