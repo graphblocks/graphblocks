@@ -36,7 +36,7 @@ test = [
 packages = ["src/graphblocks"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"schemas" = "schemas"
+"schemas" = "graphblocks/schemas"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

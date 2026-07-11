@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 import hashlib
+from importlib import resources
 import io
 import json
 from pathlib import Path
@@ -213,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         "manifest",
         help="emit a deterministic schema generation manifest",
     )
-    schemas_manifest_parser.add_argument("path", nargs="?", type=Path, default=Path("schemas"))
+    schemas_manifest_parser.add_argument("path", nargs="?", type=Path)
 
     policy_parser = subparsers.add_parser("policy", help="validate and test policy bundles")
     policy_subparsers = policy_parser.add_subparsers(dest="policy_command")
@@ -787,7 +788,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "schemas":
         if args.schemas_command == "manifest":
             try:
-                manifest = SchemaManifest.from_directory(args.path)
+                schema_root = args.path
+                if schema_root is None:
+                    packaged_schema_root = resources.files("graphblocks").joinpath("schemas")
+                    schema_root = (
+                        Path(str(packaged_schema_root))
+                        if packaged_schema_root.is_dir()
+                        else Path("schemas")
+                    )
+                manifest = SchemaManifest.from_directory(schema_root)
             except SchemaManifestError as error:
                 print(str(error))
                 return 1
