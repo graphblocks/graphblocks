@@ -53,6 +53,8 @@ MutableRunStatus = Literal[
     "policy_stopped",
 ]
 TERMINAL_RUN_STATUSES = frozenset({"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"})
+_TERMINAL_RUN_STATUSES_SQL = tuple(sorted(TERMINAL_RUN_STATUSES))
+_TERMINAL_RUN_STATUS_PLACEHOLDERS = ",".join("?" for _ in _TERMINAL_RUN_STATUSES_SQL)
 VALID_RUN_STATUSES = frozenset({
     "created",
     "admitted",
@@ -598,20 +600,24 @@ class SQLiteRunStore:
 
         updated_revision = current.state_revision + 1
         cursor = self.connection.execute(
-            """
+            f"""
             UPDATE runs
             SET state_json = ?, state_revision = ?
             WHERE run_id = ? AND state_revision = ?
+              AND status NOT IN ({_TERMINAL_RUN_STATUS_PLACEHOLDERS})
             """,
             (
                 _dumps_strict_json(next_state),
                 updated_revision,
                 run_id,
                 expected_revision,
+                *_TERMINAL_RUN_STATUSES_SQL,
             ),
         )
         if cursor.rowcount != 1:
             refreshed = self.get_run(run_id)
+            if refreshed.status in TERMINAL_RUN_STATUSES:
+                raise RunTerminalStateError(run_id, refreshed.status)
             raise StateConflictError(run_id, expected_revision, refreshed.state_revision)
         self.connection.commit()
         return self.get_run(run_id)
@@ -626,14 +632,18 @@ class SQLiteRunStore:
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
         cursor = self.connection.execute(
-            """
+            f"""
             UPDATE runs
             SET model_visible_tools_json = ?
             WHERE run_id = ?
+              AND status NOT IN ({_TERMINAL_RUN_STATUS_PLACEHOLDERS})
             """,
-            (_model_visible_tools_json(tools), run_id),
+            (_model_visible_tools_json(tools), run_id, *_TERMINAL_RUN_STATUSES_SQL),
         )
         if cursor.rowcount != 1:
+            refreshed = self.get_run(run_id)
+            if refreshed.status in TERMINAL_RUN_STATUSES:
+                raise RunTerminalStateError(run_id, refreshed.status)
             raise KeyError(run_id)
         self.connection.commit()
         return self.get_run(run_id)
@@ -645,8 +655,19 @@ class SQLiteRunStore:
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
-        cursor = self.connection.execute("UPDATE runs SET status = ? WHERE run_id = ?", (status, run_id))
+        cursor = self.connection.execute(
+            f"""
+            UPDATE runs
+            SET status = ?
+            WHERE run_id = ?
+              AND status NOT IN ({_TERMINAL_RUN_STATUS_PLACEHOLDERS})
+            """,
+            (status, run_id, *_TERMINAL_RUN_STATUSES_SQL),
+        )
         if cursor.rowcount != 1:
+            refreshed = self.get_run(run_id)
+            if refreshed.status in TERMINAL_RUN_STATUSES:
+                raise RunTerminalStateError(run_id, refreshed.status)
             raise KeyError(run_id)
         self.connection.commit()
         return self.get_run(run_id)

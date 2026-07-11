@@ -510,6 +510,48 @@ def test_sqlite_run_store_rejects_state_and_status_mutation_after_terminal_statu
         )
 
 
+@pytest.mark.parametrize("mutation", ("status", "state", "tools"))
+def test_sqlite_run_store_fences_mutation_racing_with_terminal_status(
+    tmp_path,
+    monkeypatch,
+    mutation: str,
+) -> None:
+    database = tmp_path / f"runs-{mutation}.sqlite3"
+    stale_writer = SQLiteRunStore(database)
+    terminal_writer = SQLiteRunStore(database)
+    record = stale_writer.create_run("sha256:test", {})
+    original_get_run = SQLiteRunStore.get_run
+    terminal_committed = False
+
+    def get_run_with_terminal_interleave(store: SQLiteRunStore, run_id: str):
+        nonlocal terminal_committed
+        current = original_get_run(store, run_id)
+        if store is stale_writer and not terminal_committed:
+            terminal_committed = True
+            terminal_writer.set_status(run_id, "succeeded")
+        return current
+
+    monkeypatch.setattr(SQLiteRunStore, "get_run", get_run_with_terminal_interleave)
+
+    with pytest.raises(RunTerminalStateError) as error:
+        if mutation == "status":
+            stale_writer.set_status(record.run_id, "running")
+        elif mutation == "state":
+            stale_writer.patch_state(record.run_id, {"late": True}, expected_revision=0)
+        else:
+            stale_writer.record_model_visible_tools(
+                record.run_id,
+                (_model_visible_tool("knowledge.search", "resolved-search", True),),
+            )
+
+    assert error.value.status == "succeeded"
+    persisted = terminal_writer.get_run(record.run_id)
+    assert persisted.status == "succeeded"
+    assert persisted.state == {}
+    assert persisted.state_revision == 0
+    assert persisted.model_visible_tools == ()
+
+
 def _model_visible_tool(
     tool_name: str,
     resolved_tool_id: str,
