@@ -375,6 +375,40 @@ def test_review_workflow_rejects_missing_credential_for_scope() -> None:
     assert error.value.scope == "security"
 
 
+def test_review_workflow_rejects_credential_from_different_tenant() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1", tenant_id="tenant-a"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    credential_reviewer = PrincipalRef("reviewer-1", tenant_id="tenant-a")
+    submitted_reviewer = PrincipalRef("reviewer-1", tenant_id="tenant-b")
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider(
+            [
+                ReviewerCredential(
+                    "cred-quality",
+                    credential_reviewer,
+                    scopes=("quality",),
+                    issued_at="2026-06-24T00:00:00Z",
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ReviewCredentialMissingError):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=submitted_reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:05:00Z",
+        )
+
+
 def test_review_workflow_ignores_expired_credentials() -> None:
     request = ReviewRequest(
         request_id="request-1",

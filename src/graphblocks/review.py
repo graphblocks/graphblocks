@@ -180,7 +180,11 @@ class ReviewerCredential:
         object.__setattr__(self, "metadata", _freeze_metadata("reviewer credential", self.metadata))
 
     def allows(self, reviewer: PrincipalRef, scope: str) -> bool:
-        return self.reviewer.principal_id == reviewer.principal_id and scope in self.scopes
+        return (
+            self.reviewer.principal_id == reviewer.principal_id
+            and self.reviewer.tenant_id == reviewer.tenant_id
+            and scope in self.scopes
+        )
 
     def is_active_at(self, created_at: str) -> bool:
         try:

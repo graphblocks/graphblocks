@@ -101,6 +101,7 @@ impl ReviewerCredential {
 
     pub fn allows(&self, reviewer: &PrincipalRef, scope: &str) -> bool {
         self.reviewer.principal_id == reviewer.principal_id
+            && self.reviewer.tenant_id == reviewer.tenant_id
             && self.scopes.iter().any(|item| item == scope)
     }
 

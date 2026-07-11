@@ -161,6 +161,42 @@ fn review_workflow_rejects_missing_credential_for_scope() {
 }
 
 #[test]
+fn review_workflow_rejects_credential_from_different_tenant() {
+    let request = ReviewRequest::new(
+        "request-1",
+        ResourceSnapshotRef::new("candidate-1", "sha256:subject"),
+        PrincipalRef::new("author-1").with_tenant_id("tenant-a"),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    );
+    let credential_reviewer = PrincipalRef::new("reviewer-1").with_tenant_id("tenant-a");
+    let submitted_reviewer = PrincipalRef::new("reviewer-1").with_tenant_id("tenant-b");
+    let mut workflow = ReviewWorkflow::new(
+        request,
+        InMemoryReviewerCredentialProvider::new([ReviewerCredential::new(
+            "cred-quality",
+            credential_reviewer,
+            ["quality"],
+            "2026-06-24T00:00:00Z",
+        )]),
+    );
+
+    assert_eq!(
+        workflow.record_review(ReviewSubmission::new(
+            "review-1",
+            submitted_reviewer,
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:05:00Z",
+        )),
+        Err(ReviewWorkflowError::CredentialMissing {
+            reviewer_id: "reviewer-1".to_owned(),
+            scope: "quality".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn review_workflow_ignores_expired_credentials() {
     let request = ReviewRequest::new(
         "request-1",

@@ -32,6 +32,8 @@ implementation provenance needed to reproduce the decision.
 
 A reviewer credential authorizes a review only when the review timestamp is at
 or after credential issuance and strictly before credential expiry. Credentials
-with malformed temporal bounds or future issuance MUST fail closed.
+with malformed temporal bounds or future issuance MUST fail closed. Credentials
+MUST bind both the reviewer principal identifier and tenant; matching principal
+identifiers MUST NOT authorize reviews across tenant boundaries.
 
 Canonical example profiles are in `profiles/policy-profiles.yaml`.
