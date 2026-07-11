@@ -7,6 +7,7 @@ use graphblocks_runtime_durable::{
     CheckpointRecoveryClaimIdentity, CheckpointStoreError, InMemoryCheckpointStore, SchemaRef,
     SourceCursor, SourceCursorCommitPlan, SqliteCheckpointStore,
 };
+use rusqlite::{Connection, params};
 use serde_json::json;
 
 fn sqlite_checkpoint_path(label: &str) -> PathBuf {
@@ -525,6 +526,73 @@ fn checkpoint_store_rejects_expired_or_stale_checkpoint_claim_renewal() {
         Err(CheckpointStoreError::InvalidRecoveryClaim {
             field: "expires_at_unix_ms",
         })
+    );
+}
+
+#[test]
+fn sqlite_checkpoint_store_rejects_mismatched_indexed_barrier_identity() {
+    let path = sqlite_checkpoint_path("barrier-identity-mismatch");
+    {
+        let mut store = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store opens");
+        store
+            .put(checkpoint("checkpoint-000001", 1, "sha256:plan"))
+            .expect("checkpoint should persist");
+    }
+
+    let mut tampered = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    tampered.release_id = "release-tampered".to_owned();
+    Connection::open(&path)
+        .expect("checkpoint database opens for corruption fixture")
+        .execute(
+            "UPDATE checkpoint_barriers SET barrier_json = ?1 WHERE checkpoint_id = ?2",
+            params![
+                serde_json::to_string(&tampered).expect("tampered barrier serializes"),
+                "checkpoint-000001",
+            ],
+        )
+        .expect("checkpoint corruption fixture is installed");
+
+    let mut reopened = SqliteCheckpointStore::open(&path).expect("sqlite checkpoint store reopens");
+    let replay_error = reopened
+        .latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+        )
+        .expect_err("mismatched indexed identity must fail replay");
+    assert!(
+        matches!(
+            replay_error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("release_id")
+                    && message.contains("release-2026-06-23")
+                    && message.contains("release-tampered")
+        ),
+        "unexpected replay error: {replay_error:?}",
+    );
+
+    let claim_error = reopened
+        .claim_latest_compatible(
+            "run-000001",
+            "release-2026-06-23",
+            "deployment-rev-1",
+            "sha256:plan",
+            "worker-a",
+            "lease-a",
+            1_000,
+            2_000,
+        )
+        .expect_err("mismatched indexed identity must fail claim");
+    assert!(
+        matches!(
+            claim_error,
+            CheckpointStoreError::Storage { ref message }
+                if message.contains("release_id")
+                    && message.contains("release-2026-06-23")
+                    && message.contains("release-tampered")
+        ),
+        "unexpected claim error: {claim_error:?}",
     );
 }
 

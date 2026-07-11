@@ -76,6 +76,46 @@ fn event_time_watermark_never_moves_backward() {
 }
 
 #[test]
+fn event_time_window_rejects_events_without_event_time() {
+    let policy = WindowPolicy::tumbling_event_time(1_000, 250, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    let missing_event_time = SourceEvent::new(
+        SourceCursor::new("orders", 0, 1),
+        json!({"offset": 1}),
+        None,
+    );
+
+    assert_eq!(
+        windows.ingest(missing_event_time),
+        Err(DurableError::MissingEventTime {
+            cursor: SourceCursor::new("orders", 0, 1),
+        }),
+    );
+}
+
+#[test]
+fn processing_time_watermark_does_not_advance_event_time_window() {
+    let policy = WindowPolicy::tumbling_event_time(100, 0, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+    windows.ingest(event(1, 110)).expect("first event accepted");
+
+    assert!(
+        windows
+            .advance_watermark(Watermark::processing_time(1_000))
+            .is_empty()
+    );
+    windows
+        .ingest(event(2, 150))
+        .expect("processing time must not make event-time data late");
+
+    let closed = windows.advance_watermark(Watermark::event_time(200));
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].events.len(), 2);
+}
+
+#[test]
 fn window_policy_rejects_size_without_event_time() {
     assert_eq!(
         WindowPolicy::tumbling_event_time(0, 250, AccumulationMode::Accumulating),

@@ -35,6 +35,9 @@ pub enum DurableError {
         cursor: SourceCursor,
     },
     InvalidWindowSize,
+    MissingEventTime {
+        cursor: SourceCursor,
+    },
     LateEvent {
         event_time_unix_ms: u64,
         watermark_unix_ms: u64,
@@ -325,7 +328,11 @@ impl WindowAccumulator {
     }
 
     pub fn ingest(&mut self, event: SourceEvent) -> Result<(), DurableError> {
-        let event_time_unix_ms = event.event_time_unix_ms.unwrap_or(0);
+        let Some(event_time_unix_ms) = event.event_time_unix_ms else {
+            return Err(DurableError::MissingEventTime {
+                cursor: event.cursor,
+            });
+        };
         if let Some(watermark) = self.watermark
             && event_time_unix_ms.saturating_add(self.policy.allowed_lateness_ms)
                 < watermark.unix_ms
@@ -342,6 +349,9 @@ impl WindowAccumulator {
     }
 
     pub fn advance_watermark(&mut self, watermark: Watermark) -> Vec<WindowPane> {
+        if watermark.kind != WatermarkKind::EventTime {
+            return Vec::new();
+        }
         let effective_watermark = match self.watermark {
             Some(current) if current.unix_ms >= watermark.unix_ms => current,
             _ => {
@@ -1468,7 +1478,9 @@ impl SqliteCheckpointStore {
         self.connection
             .query_row(
                 "
-                SELECT barrier_json
+                SELECT checkpoint_id,
+                       state_revision,
+                       barrier_json
                   FROM checkpoint_barriers
                  WHERE run_id = ?1
                    AND release_id = ?2
@@ -1478,17 +1490,26 @@ impl SqliteCheckpointStore {
                  LIMIT 1
                 ",
                 params![run_id, release_id, deployment_revision_id, plan_hash],
-                |row| row.get::<_, String>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()
             .map_err(checkpoint_storage_error)?
-            .map(|raw| {
-                let barrier = serde_json::from_str::<CheckpointBarrier>(&raw)
-                    .map_err(checkpoint_json_error)?;
-                barrier
-                    .validate()
-                    .map_err(CheckpointStoreError::InvalidBarrier)?;
-                Ok(barrier)
+            .map(|(checkpoint_id, state_revision, raw)| {
+                decode_stored_checkpoint_barrier(
+                    &raw,
+                    &checkpoint_id,
+                    run_id,
+                    release_id,
+                    deployment_revision_id,
+                    plan_hash,
+                    sqlite_i64_to_u64(state_revision, "state_revision")?,
+                )
             })
             .transpose()
     }
@@ -1524,7 +1545,9 @@ impl SqliteCheckpointStore {
         let checkpoint = transaction
             .query_row(
                 "
-                SELECT barrier_json
+                SELECT checkpoint_id,
+                       state_revision,
+                       barrier_json
                   FROM checkpoint_barriers
                  WHERE run_id = ?1
                    AND release_id = ?2
@@ -1534,7 +1557,13 @@ impl SqliteCheckpointStore {
                  LIMIT 1
                 ",
                 params![run_id, release_id, deployment_revision_id, plan_hash],
-                |row| row.get::<_, String>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()
             .map_err(checkpoint_storage_error)?
@@ -1544,13 +1573,16 @@ impl SqliteCheckpointStore {
                 deployment_revision_id: deployment_revision_id.to_owned(),
                 plan_hash: plan_hash.to_owned(),
             })
-            .and_then(|raw| {
-                let barrier = serde_json::from_str::<CheckpointBarrier>(&raw)
-                    .map_err(checkpoint_json_error)?;
-                barrier
-                    .validate()
-                    .map_err(CheckpointStoreError::InvalidBarrier)?;
-                Ok(barrier)
+            .and_then(|(checkpoint_id, state_revision, raw)| {
+                decode_stored_checkpoint_barrier(
+                    &raw,
+                    &checkpoint_id,
+                    run_id,
+                    release_id,
+                    deployment_revision_id,
+                    plan_hash,
+                    sqlite_i64_to_u64(state_revision, "state_revision")?,
+                )
             })?;
         let active_claim = transaction
             .query_row(
@@ -1869,6 +1901,58 @@ pub enum CheckpointStoreError {
     Storage {
         message: String,
     },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_stored_checkpoint_barrier(
+    raw: &str,
+    expected_checkpoint_id: &str,
+    expected_run_id: &str,
+    expected_release_id: &str,
+    expected_deployment_revision_id: &str,
+    expected_plan_hash: &str,
+    expected_state_revision: u64,
+) -> Result<CheckpointBarrier, CheckpointStoreError> {
+    let barrier = serde_json::from_str::<CheckpointBarrier>(raw).map_err(checkpoint_json_error)?;
+    barrier
+        .validate()
+        .map_err(CheckpointStoreError::InvalidBarrier)?;
+    for (field, expected, actual) in [
+        (
+            "checkpoint_id",
+            expected_checkpoint_id,
+            barrier.checkpoint_id.as_str(),
+        ),
+        ("run_id", expected_run_id, barrier.run_id.as_str()),
+        (
+            "release_id",
+            expected_release_id,
+            barrier.release_id.as_str(),
+        ),
+        (
+            "deployment_revision_id",
+            expected_deployment_revision_id,
+            barrier.deployment_revision_id.as_str(),
+        ),
+        ("plan_hash", expected_plan_hash, barrier.plan_hash.as_str()),
+    ] {
+        if actual != expected {
+            return Err(CheckpointStoreError::Storage {
+                message: format!(
+                    "checkpoint barrier row/payload mismatch for {field}: expected {expected:?}, got {actual:?}"
+                ),
+            });
+        }
+    }
+    if barrier.state_revision != expected_state_revision {
+        return Err(CheckpointStoreError::Storage {
+            message: format!(
+                "checkpoint barrier row/payload mismatch for state_revision: expected {expected_state_revision}, got {}",
+                barrier.state_revision
+            ),
+        });
+    }
+    Ok(barrier)
 }
 
 fn sqlite_u64_to_i64(value: u64, field: &'static str) -> Result<i64, CheckpointStoreError> {
