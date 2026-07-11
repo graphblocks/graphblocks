@@ -2650,6 +2650,65 @@ fn sqlite_protocol_log_attach_for_run_replays_after_reopen_with_shared_cursors()
 }
 
 #[test]
+fn sqlite_protocol_log_reports_latest_cursor_and_sequence_per_run() {
+    let path = sqlite_application_event_path("latest-cursor");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        for (run_id, sequences) in [("run-1", 1..=3), ("run-2", 1..=2)] {
+            for sequence in sequences {
+                log.append(
+                    ApplicationProtocolEvent::new(
+                        ApplicationProtocolEventKind::JobProgress,
+                        protocol_event_metadata_for_run(
+                            run_id,
+                            &format!("{run_id}:event-{sequence}"),
+                            sequence,
+                            &format!("cursor-{sequence}"),
+                        ),
+                        json!({"message": sequence}),
+                    )
+                    .expect("event is valid"),
+                )
+                .expect("event appends");
+            }
+        }
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+
+    assert_eq!(
+        log.latest_cursor_for_run("run-1")
+            .expect("run-1 latest cursor loads"),
+        Some("cursor-3".to_owned())
+    );
+    assert_eq!(
+        log.latest_sequence_for_run("run-1")
+            .expect("run-1 latest sequence loads"),
+        Some(3)
+    );
+    assert_eq!(
+        log.latest_cursor_for_run("run-2")
+            .expect("run-2 latest cursor loads"),
+        Some("cursor-2".to_owned())
+    );
+    assert_eq!(
+        log.latest_sequence_for_run("run-2")
+            .expect("run-2 latest sequence loads"),
+        Some(2)
+    );
+    assert_eq!(
+        log.latest_cursor_for_run("missing-run")
+            .expect("missing latest cursor loads"),
+        None
+    );
+    assert_eq!(
+        log.latest_sequence_for_run("missing-run")
+            .expect("missing latest sequence loads"),
+        None
+    );
+}
+
+#[test]
 fn sqlite_protocol_log_retained_replay_reports_expired_cursor_after_reopen() {
     let path = sqlite_application_event_path("expired-cursor");
     {

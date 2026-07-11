@@ -19,7 +19,7 @@ use crate::tool_result::{
     ContentPart, ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent,
     ToolResultEventError, ToolResultStatus,
 };
-use rusqlite::{Connection, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2052,6 +2052,59 @@ impl SqliteApplicationProtocolLog {
         sqlite_load_application_protocol_log_for_run(&connection, run_id)
     }
 
+    pub fn latest_cursor_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<String>, ApplicationProtocolError> {
+        validate_application_protocol_run_id(run_id)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ApplicationProtocolError::Storage {
+                message: "application protocol log mutex was poisoned".to_owned(),
+            })?;
+        connection
+            .query_row(
+                "SELECT cursor
+                 FROM application_protocol_events
+                 WHERE run_id = ?1
+                 ORDER BY sequence DESC, event_id DESC
+                 LIMIT 1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(application_protocol_storage_error)
+    }
+
+    pub fn latest_sequence_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<u64>, ApplicationProtocolError> {
+        validate_application_protocol_run_id(run_id)?;
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ApplicationProtocolError::Storage {
+                message: "application protocol log mutex was poisoned".to_owned(),
+            })?;
+        let sequence: Option<i64> = connection
+            .query_row(
+                "SELECT sequence
+                 FROM application_protocol_events
+                 WHERE run_id = ?1
+                 ORDER BY sequence DESC, event_id DESC
+                 LIMIT 1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(application_protocol_storage_error)?;
+        sequence
+            .map(|sequence| sqlite_u64_from_i64("sequence", sequence))
+            .transpose()
+    }
+
     pub fn len(&self) -> Result<usize, ApplicationProtocolError> {
         let connection = self
             .connection
@@ -2127,9 +2180,7 @@ fn sqlite_load_application_protocol_log_for_run(
     connection: &Connection,
     run_id: &str,
 ) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
-    if run_id.trim().is_empty() {
-        return Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" });
-    }
+    validate_application_protocol_run_id(run_id)?;
     let mut statement = connection
         .prepare(
             "SELECT event_id, run_id, sequence, cursor, event_json
@@ -2148,6 +2199,13 @@ fn sqlite_load_application_protocol_log_for_run(
     }
 
     Ok(log)
+}
+
+fn validate_application_protocol_run_id(run_id: &str) -> Result<(), ApplicationProtocolError> {
+    if run_id.trim().is_empty() {
+        return Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" });
+    }
+    Ok(())
 }
 
 fn sqlite_append_application_protocol_event_row(

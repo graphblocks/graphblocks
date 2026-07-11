@@ -39,6 +39,8 @@ run event before clients attach or replay from that store.
 One SQLite store MAY contain multiple run streams. Event sequence and replay
 cursor uniqueness are per run; clients MUST supply the run identity when
 replaying from a shared store.
+`GetRunStatus` SHOULD derive `last_cursor` and `last_sequence` from the
+authoritative event stream, not from callback delivery state.
 Durable attach implementations SHOULD call the same retained cursor replay over
 the persisted stream; if the requested cursor has expired, the response SHOULD
 include the earliest retained cursor, last cursor, last sequence, and current
