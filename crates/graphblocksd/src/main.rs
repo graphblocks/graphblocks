@@ -5,6 +5,11 @@ use graphblocks_runtime_core::async_operation::{
     AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationKind,
     AsyncOperationState, ExternalCallbackReceived, SqliteAsyncOperationStore,
 };
+use graphblocks_runtime_core::callback_delivery::{
+    CallbackDelivery, CallbackDeliveryError, CallbackDeliveryResponse, CallbackDeliveryScheduler,
+    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, ClaimedCallbackDelivery,
+    SqliteCallbackDeliveryQueue,
+};
 use graphblocks_runtime_core::run_store::{
     RunOwnershipLease, RunStatus, RunStoreError, SqliteRunStore,
 };
@@ -47,6 +52,7 @@ enum CliError {
     Registry(WorkerRegistryError),
     RunStore(RunStoreError),
     AsyncOperation(AsyncOperationError),
+    CallbackDelivery(CallbackDeliveryError),
     CheckpointStore(CheckpointStoreError),
     Render(String),
 }
@@ -65,13 +71,16 @@ fn main() {
         Some("accept-quarantined-async-callbacks") => {
             run_accept_quarantined_async_callbacks(args.collect())
         }
+        Some("enqueue-callback-delivery") => run_enqueue_callback_delivery(args.collect()),
+        Some("claim-callback-deliveries") => run_claim_callback_deliveries(args.collect()),
+        Some("complete-callback-delivery") => run_complete_callback_delivery(args.collect()),
         Some("cancel-async-operation") => run_cancel_async_operation(args.collect()),
         Some("expire-async-operation") => run_expire_async_operation(args.collect()),
         Some("claim-checkpoint") => run_claim_checkpoint(args.collect()),
         Some("renew-checkpoint-claim") => run_renew_checkpoint_claim(args.collect()),
         Some("complete-checkpoint-claim") => run_complete_checkpoint_claim(args.collect()),
         _ => Err(CliError::Usage(
-            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
+            "usage: graphblocksd <admit-worker-message|acquire-run-lease|renew-run-lease|set-run-status-with-lease|register-async-operation|submit-async-callback|quarantine-async-callback|accept-quarantined-async-callbacks|enqueue-callback-delivery|claim-callback-deliveries|complete-callback-delivery|cancel-async-operation|expire-async-operation|claim-checkpoint|renew-checkpoint-claim|complete-checkpoint-claim> [options]".to_owned(),
         )),
     };
 
@@ -894,6 +903,314 @@ fn run_accept_quarantined_async_callbacks(args: Vec<String>) -> Result<Value, Cl
     }))
 }
 
+fn run_enqueue_callback_delivery(args: Vec<String>) -> Result<Value, CliError> {
+    let mut callback_delivery_store = None;
+    let mut delivery_id = None;
+    let mut subscription_id = None;
+    let mut event_id = None;
+    let mut run_id = None;
+    let mut sequence = None;
+    let mut cursor = None;
+    let mut idempotency_key = None;
+    let mut failure_policy = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--callback-delivery-store" => {
+                callback_delivery_store = Some(next_arg(&mut args, "--callback-delivery-store")?);
+            }
+            "--delivery-id" => {
+                delivery_id = Some(next_arg(&mut args, "--delivery-id")?);
+            }
+            "--subscription-id" => {
+                subscription_id = Some(next_arg(&mut args, "--subscription-id")?);
+            }
+            "--event-id" => {
+                event_id = Some(next_arg(&mut args, "--event-id")?);
+            }
+            "--run-id" => {
+                run_id = Some(next_arg(&mut args, "--run-id")?);
+            }
+            "--sequence" => {
+                let value = next_arg(&mut args, "--sequence")?;
+                sequence = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!("--sequence requires an unsigned integer: {error}"))
+                })?);
+            }
+            "--cursor" => {
+                cursor = Some(next_arg(&mut args, "--cursor")?);
+            }
+            "--idempotency-key" => {
+                idempotency_key = Some(next_arg(&mut args, "--idempotency-key")?);
+            }
+            "--failure-policy" => {
+                let value = next_arg(&mut args, "--failure-policy")?;
+                failure_policy = Some(callback_failure_policy_from_cli(&value)?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let callback_delivery_store = callback_delivery_store
+        .ok_or_else(|| CliError::Usage("--callback-delivery-store is required".to_owned()))?;
+    let delivery = CallbackDelivery {
+        delivery_id: delivery_id
+            .ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?,
+        subscription_id: subscription_id
+            .ok_or_else(|| CliError::Usage("--subscription-id is required".to_owned()))?,
+        event_id: event_id.ok_or_else(|| CliError::Usage("--event-id is required".to_owned()))?,
+        run_id: run_id.ok_or_else(|| CliError::Usage("--run-id is required".to_owned()))?,
+        sequence: sequence.ok_or_else(|| CliError::Usage("--sequence is required".to_owned()))?,
+        cursor: cursor.ok_or_else(|| CliError::Usage("--cursor is required".to_owned()))?,
+        attempt: 1,
+        idempotency_key: idempotency_key
+            .ok_or_else(|| CliError::Usage("--idempotency-key is required".to_owned()))?,
+        failure_policy: failure_policy
+            .ok_or_else(|| CliError::Usage("--failure-policy is required".to_owned()))?,
+        status: CallbackDeliveryStatus::Pending,
+        next_retry_at_unix_ms: None,
+        delivered_at_unix_ms: None,
+        acknowledged_at_unix_ms: None,
+        last_error: None,
+        redrive_count: 0,
+        last_redrive_operator: None,
+        last_redrive_reason: None,
+    };
+
+    let queue = SqliteCallbackDeliveryQueue::open(callback_delivery_store)
+        .map_err(CliError::CallbackDelivery)?;
+    queue
+        .upsert_delivery(delivery.clone())
+        .map_err(CliError::CallbackDelivery)?;
+
+    Ok(json!({
+        "ok": true,
+        "delivery": callback_delivery_json(&delivery),
+    }))
+}
+
+fn run_claim_callback_deliveries(args: Vec<String>) -> Result<Value, CliError> {
+    let mut callback_delivery_store = None;
+    let mut now_unix_ms = None;
+    let mut claim_lease_ms = None;
+    let mut limit = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--callback-delivery-store" => {
+                callback_delivery_store = Some(next_arg(&mut args, "--callback-delivery-store")?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--claim-lease-ms" => {
+                let value = next_arg(&mut args, "--claim-lease-ms")?;
+                claim_lease_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--claim-lease-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--limit" => {
+                let value = next_arg(&mut args, "--limit")?;
+                limit = Some(value.parse::<usize>().map_err(|error| {
+                    CliError::Usage(format!("--limit requires a positive integer: {error}"))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(
+        callback_delivery_store
+            .ok_or_else(|| CliError::Usage("--callback-delivery-store is required".to_owned()))?,
+    )
+    .map_err(CliError::CallbackDelivery)?;
+    let claimed = queue
+        .claim_due_deliveries(
+            now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?,
+            claim_lease_ms
+                .ok_or_else(|| CliError::Usage("--claim-lease-ms is required".to_owned()))?,
+            limit.ok_or_else(|| CliError::Usage("--limit is required".to_owned()))?,
+        )
+        .map_err(CliError::CallbackDelivery)?;
+    let claimed_values = claimed
+        .iter()
+        .map(claimed_callback_delivery_json)
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "ok": true,
+        "claimedCount": claimed_values.len(),
+        "claimed": claimed_values,
+    }))
+}
+
+fn run_complete_callback_delivery(args: Vec<String>) -> Result<Value, CliError> {
+    let mut callback_delivery_store = None;
+    let mut delivery_id = None;
+    let mut claim_generation = None;
+    let mut claim_expires_at_unix_ms = None;
+    let mut now_unix_ms = None;
+    let mut retry_max_attempts = None;
+    let mut retry_base_delay_ms = None;
+    let mut retry_max_delay_ms = None;
+    let mut response = None;
+    let mut status_code = None;
+    let mut retry_after_ms = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--callback-delivery-store" => {
+                callback_delivery_store = Some(next_arg(&mut args, "--callback-delivery-store")?);
+            }
+            "--delivery-id" => {
+                delivery_id = Some(next_arg(&mut args, "--delivery-id")?);
+            }
+            "--claim-generation" => {
+                let value = next_arg(&mut args, "--claim-generation")?;
+                claim_generation = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--claim-generation requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--claim-expires-at-unix-ms" => {
+                let value = next_arg(&mut args, "--claim-expires-at-unix-ms")?;
+                claim_expires_at_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--claim-expires-at-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--now-unix-ms" => {
+                let value = next_arg(&mut args, "--now-unix-ms")?;
+                now_unix_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--now-unix-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--retry-max-attempts" => {
+                let value = next_arg(&mut args, "--retry-max-attempts")?;
+                retry_max_attempts = Some(value.parse::<u32>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--retry-max-attempts requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--retry-base-delay-ms" => {
+                let value = next_arg(&mut args, "--retry-base-delay-ms")?;
+                retry_base_delay_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--retry-base-delay-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--retry-max-delay-ms" => {
+                let value = next_arg(&mut args, "--retry-max-delay-ms")?;
+                retry_max_delay_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--retry-max-delay-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            "--response" => {
+                response = Some(next_arg(&mut args, "--response")?);
+            }
+            "--status-code" => {
+                let value = next_arg(&mut args, "--status-code")?;
+                status_code = Some(value.parse::<u16>().map_err(|error| {
+                    CliError::Usage(format!("--status-code requires an integer: {error}"))
+                })?);
+            }
+            "--retry-after-ms" => {
+                let value = next_arg(&mut args, "--retry-after-ms")?;
+                retry_after_ms = Some(value.parse::<u64>().map_err(|error| {
+                    CliError::Usage(format!(
+                        "--retry-after-ms requires an unsigned integer: {error}"
+                    ))
+                })?);
+            }
+            _ => return Err(CliError::Usage(format!("unsupported argument: {arg}"))),
+        }
+    }
+
+    let callback_delivery_store = callback_delivery_store
+        .ok_or_else(|| CliError::Usage("--callback-delivery-store is required".to_owned()))?;
+    let delivery_id =
+        delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?;
+    let claim_generation = claim_generation
+        .ok_or_else(|| CliError::Usage("--claim-generation is required".to_owned()))?;
+    let claim_expires_at_unix_ms = claim_expires_at_unix_ms
+        .ok_or_else(|| CliError::Usage("--claim-expires-at-unix-ms is required".to_owned()))?;
+    let now_unix_ms =
+        now_unix_ms.ok_or_else(|| CliError::Usage("--now-unix-ms is required".to_owned()))?;
+    let retry_max_attempts = retry_max_attempts
+        .ok_or_else(|| CliError::Usage("--retry-max-attempts is required".to_owned()))?;
+    let retry_base_delay_ms = retry_base_delay_ms
+        .ok_or_else(|| CliError::Usage("--retry-base-delay-ms is required".to_owned()))?;
+    let retry_max_delay_ms = retry_max_delay_ms
+        .ok_or_else(|| CliError::Usage("--retry-max-delay-ms is required".to_owned()))?;
+    let response = match response
+        .ok_or_else(|| CliError::Usage("--response is required".to_owned()))?
+        .as_str()
+    {
+        "success" => CallbackDeliveryResponse::Success,
+        "duplicate" | "duplicate_already_processed" => {
+            CallbackDeliveryResponse::DuplicateAlreadyProcessed
+        }
+        "target_gone" => CallbackDeliveryResponse::TargetGone,
+        "rate_limited" => CallbackDeliveryResponse::RateLimited { retry_after_ms },
+        "server_error" => CallbackDeliveryResponse::ServerError(status_code.ok_or_else(|| {
+            CliError::Usage("--status-code is required for --response server_error".to_owned())
+        })?),
+        "client_error" => CallbackDeliveryResponse::ClientError(status_code.ok_or_else(|| {
+            CliError::Usage("--status-code is required for --response client_error".to_owned())
+        })?),
+        other => {
+            return Err(CliError::Usage(format!(
+                "--response uses an unsupported callback delivery response: {other}"
+            )));
+        }
+    };
+
+    let queue = SqliteCallbackDeliveryQueue::open(callback_delivery_store)
+        .map_err(CliError::CallbackDelivery)?;
+    let delivery = queue
+        .get_delivery(&delivery_id)
+        .map_err(CliError::CallbackDelivery)?
+        .ok_or_else(|| {
+            CliError::CallbackDelivery(CallbackDeliveryError::Storage {
+                message: format!("callback delivery {delivery_id} was not found"),
+            })
+        })?;
+    let claim = ClaimedCallbackDelivery {
+        delivery,
+        claim_generation,
+        claim_expires_at_unix_ms,
+    };
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(
+        retry_max_attempts,
+        retry_base_delay_ms,
+        retry_max_delay_ms,
+    ));
+    let completed = scheduler.record_response(claim.delivery.clone(), response, now_unix_ms);
+    queue
+        .complete_claimed_delivery(&claim, completed.clone())
+        .map_err(CliError::CallbackDelivery)?;
+
+    Ok(json!({
+        "ok": true,
+        "delivery": callback_delivery_json(&completed),
+    }))
+}
+
 fn run_cancel_async_operation(args: Vec<String>) -> Result<Value, CliError> {
     let options = parse_terminal_async_operation_options(args, "--cancelled-at-unix-ms")?;
     let store = SqliteAsyncOperationStore::open(&options.async_operation_store)
@@ -1374,6 +1691,72 @@ fn next_arg(
         .ok_or_else(|| CliError::Usage(format!("{flag} requires an argument")))
 }
 
+fn callback_delivery_json(delivery: &CallbackDelivery) -> Value {
+    json!({
+        "deliveryId": delivery.delivery_id,
+        "subscriptionId": delivery.subscription_id,
+        "eventId": delivery.event_id,
+        "runId": delivery.run_id,
+        "sequence": delivery.sequence,
+        "cursor": delivery.cursor,
+        "attempt": delivery.attempt,
+        "idempotencyKey": delivery.idempotency_key,
+        "failurePolicy": callback_failure_policy_name(delivery.failure_policy),
+        "status": callback_delivery_status_name(delivery.status),
+        "nextRetryAtUnixMs": delivery.next_retry_at_unix_ms,
+        "deliveredAtUnixMs": delivery.delivered_at_unix_ms,
+        "acknowledgedAtUnixMs": delivery.acknowledged_at_unix_ms,
+        "lastError": delivery.last_error,
+        "redriveCount": delivery.redrive_count,
+        "lastRedriveOperator": delivery.last_redrive_operator,
+        "lastRedriveReason": delivery.last_redrive_reason,
+    })
+}
+
+fn claimed_callback_delivery_json(claimed: &ClaimedCallbackDelivery) -> Value {
+    json!({
+        "claimGeneration": claimed.claim_generation,
+        "claimExpiresAtUnixMs": claimed.claim_expires_at_unix_ms,
+        "delivery": callback_delivery_json(&claimed.delivery),
+    })
+}
+
+fn callback_delivery_status_name(status: CallbackDeliveryStatus) -> &'static str {
+    match status {
+        CallbackDeliveryStatus::Pending => "pending",
+        CallbackDeliveryStatus::Delivering => "delivering",
+        CallbackDeliveryStatus::Delivered => "delivered",
+        CallbackDeliveryStatus::Acknowledged => "acknowledged",
+        CallbackDeliveryStatus::Failed => "failed",
+        CallbackDeliveryStatus::DeadLettered => "dead_lettered",
+        CallbackDeliveryStatus::Cancelled => "cancelled",
+        CallbackDeliveryStatus::Expired => "expired",
+    }
+}
+
+fn callback_failure_policy_name(failure_policy: CallbackFailurePolicy) -> &'static str {
+    match failure_policy {
+        CallbackFailurePolicy::BestEffort => "best_effort",
+        CallbackFailurePolicy::RetryThenDeadLetter => "retry_then_dead_letter",
+        CallbackFailurePolicy::PauseRunOnFailure => "pause_run_on_failure",
+        CallbackFailurePolicy::FailRunOnFailure => "fail_run_on_failure",
+    }
+}
+
+fn callback_failure_policy_from_cli(
+    failure_policy: &str,
+) -> Result<CallbackFailurePolicy, CliError> {
+    match failure_policy {
+        "best_effort" => Ok(CallbackFailurePolicy::BestEffort),
+        "retry_then_dead_letter" => Ok(CallbackFailurePolicy::RetryThenDeadLetter),
+        "pause_run_on_failure" => Ok(CallbackFailurePolicy::PauseRunOnFailure),
+        "fail_run_on_failure" => Ok(CallbackFailurePolicy::FailRunOnFailure),
+        _ => Err(CliError::Usage(format!(
+            "--failure-policy uses an unsupported callback failure policy: {failure_policy}"
+        ))),
+    }
+}
+
 fn daemon_status_json(status: &DaemonStatus) -> Value {
     json!({
         "daemonId": status.daemon_id,
@@ -1416,6 +1799,7 @@ impl CliError {
             Self::Registry(_)
             | Self::RunStore(_)
             | Self::AsyncOperation(_)
+            | Self::CallbackDelivery(_)
             | Self::CheckpointStore(_)
             | Self::Render(_) => 1,
         }
@@ -1443,6 +1827,9 @@ impl CliError {
             }
             Self::AsyncOperation(error) => {
                 json!({"ok": false, "error": async_operation_error_json(error)})
+            }
+            Self::CallbackDelivery(error) => {
+                json!({"ok": false, "error": callback_delivery_error_json(error)})
             }
             Self::CheckpointStore(error) => {
                 let error = match error {
@@ -1531,6 +1918,41 @@ impl CliError {
                 json!({"ok": false, "error": {"code": "json.render_failed", "message": message}})
             }
         }
+    }
+}
+
+fn callback_delivery_error_json(error: &CallbackDeliveryError) -> Value {
+    match error {
+        CallbackDeliveryError::EmptyField { field } => json!({
+            "code": "daemon.callback_delivery.empty_field",
+            "field": field,
+        }),
+        CallbackDeliveryError::InvalidDeliveryStatus {
+            delivery_id,
+            status,
+        } => json!({
+            "code": "daemon.callback_delivery.invalid_status",
+            "deliveryId": delivery_id,
+            "status": callback_delivery_status_name(*status),
+        }),
+        CallbackDeliveryError::DeadLetterNotFound {
+            original_delivery_id,
+        } => json!({
+            "code": "daemon.callback_delivery.dead_letter_not_found",
+            "originalDeliveryId": original_delivery_id,
+        }),
+        CallbackDeliveryError::EventNotFound { event_id } => json!({
+            "code": "daemon.callback_delivery.event_not_found",
+            "eventId": event_id,
+        }),
+        CallbackDeliveryError::WebhookSigning { error } => json!({
+            "code": "daemon.callback_delivery.webhook_signing",
+            "message": format!("{error:?}"),
+        }),
+        CallbackDeliveryError::Storage { message } => json!({
+            "code": "daemon.callback_delivery.storage",
+            "message": message,
+        }),
     }
 }
 

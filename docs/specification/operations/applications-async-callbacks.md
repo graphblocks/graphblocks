@@ -48,6 +48,15 @@ with HMAC-SHA256 and records secret-free identity, attempt, response class, and
 outcome. Missing secrets, signing failure, and transport failure fail closed.
 Delivery is at least once. Dead-letter redrive MUST continue the original
 consecutive attempt history without duplicating the application event.
+The reference daemon exposes `enqueue-callback-delivery`,
+`claim-callback-deliveries`, and `complete-callback-delivery` as
+SQLite-backed callback-delivery queue operations. Enqueue stores a pending
+delivery identity, claim moves due deliveries to `delivering` with a lease and
+claim generation, and completion records success, duplicate acknowledgement,
+target-gone cancellation, rate-limit retry, server-error retry/dead-letter, or
+client-error failure through the runtime scheduler. Claim generation and lease
+expiration are returned to workers and MUST be presented back on completion, so
+recovered or superseded claims cannot overwrite a newer terminal delivery.
 
 ## Async operations and receipt admission
 
