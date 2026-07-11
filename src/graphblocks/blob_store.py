@@ -370,6 +370,9 @@ class S3CompatibleBlobStore:
 
     def get(self, key: BlobKey, byte_range: ByteRange | None = None) -> bytes:
         self._validate_key(key)
+        if byte_range is not None and byte_range.length == 0:
+            self.head(key)
+            return b""
         kwargs: dict[str, object] = {"Bucket": self.bucket, "Key": key.key}
         if byte_range is not None:
             kwargs["Range"] = self._range_header(byte_range)

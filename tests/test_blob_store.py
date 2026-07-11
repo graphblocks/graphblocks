@@ -285,6 +285,9 @@ def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:
     store.put(BlobKey("other/c.txt"), b"charlie", PutOptions(media_type="text/plain", filename="c.txt"))
 
     assert store.get(BlobKey("docs/a.txt"), ByteRange(offset=1, length=3)) == b"lph"
+    range_request_count = len(client.range_headers)
+    assert store.get(BlobKey("docs/a.txt"), ByteRange(offset=1, length=0)) == b""
+    assert len(client.range_headers) == range_request_count
 
     first_page = store.list("docs/", limit=1)
     second_page = store.list("docs/", cursor=first_page.next_cursor, limit=1)

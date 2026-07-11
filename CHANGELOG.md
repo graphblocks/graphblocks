@@ -59,6 +59,8 @@ pre-release alpha software.
 - Bound policy snapshots to the bundle set declared by their profile, rejecting
   missing, ambiguous, or duplicate references and excluding unrelated bundles
   from effective-policy identity.
+- Made zero-length byte-range reads consistent across local and S3-compatible
+  blob stores without emitting an invalid HTTP Range request.
 
 ### Removed
 
