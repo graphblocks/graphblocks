@@ -64,6 +64,58 @@ fn local_blob_store_put_head_and_get_round_trip() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn local_blob_store_rejects_content_that_does_not_match_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("content-integrity");
+    let store = LocalBlobStore::new(&root)?;
+    let key = BlobKey::new("docs/policy.txt");
+    store.put(&key, b"alpha policy", PutOptions::new())?;
+    fs::write(root.join("docs/policy.txt"), b"tampered content")?;
+
+    assert!(matches!(
+        store.head(&key),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("does not match recorded checksum")
+    ));
+    assert!(matches!(
+        store.get(&key, None),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("does not match recorded checksum")
+    ));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn local_blob_store_rejects_metadata_with_incorrect_content_size()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_root("content-size-integrity");
+    let store = LocalBlobStore::new(&root)?;
+    let key = BlobKey::new("docs/policy.txt");
+    store.put(&key, b"alpha policy", PutOptions::new())?;
+    let metadata_path = root.join(".graphblocks-metadata/docs/policy.txt.json");
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&metadata_path)?)?;
+    payload["artifact"]["size_bytes"] = serde_json::json!(1);
+    fs::write(&metadata_path, serde_json::to_string_pretty(&payload)?)?;
+
+    assert!(matches!(
+        store.head(&key),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("does not match recorded size")
+    ));
+    assert!(matches!(
+        store.get(&key, None),
+        Err(BlobStoreError::Metadata { message, .. })
+            if message.contains("does not match recorded size")
+    ));
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn local_blob_store_supports_range_reads() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root("range");
     let store = LocalBlobStore::new(&root)?;

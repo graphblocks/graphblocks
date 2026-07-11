@@ -496,6 +496,7 @@ impl LocalBlobStore {
             path,
             message: error.to_string(),
         })?;
+        self.metadata_for(key, Some(&data))?;
         let Some(byte_range) = byte_range else {
             return Ok(data);
         };
@@ -508,12 +509,32 @@ impl LocalBlobStore {
     }
 
     pub fn head(&self, key: &BlobKey) -> Result<BlobMetadata, BlobStoreError> {
+        self.metadata_for(key, None)
+    }
+
+    fn metadata_for(
+        &self,
+        key: &BlobKey,
+        data: Option<&[u8]>,
+    ) -> Result<BlobMetadata, BlobStoreError> {
         let path = self.path_for(key)?;
         if !path.exists() {
             return Err(BlobStoreError::NotFound {
                 key: key.key.clone(),
             });
         }
+        let loaded_data;
+        let data = match data {
+            Some(data) => data,
+            None => {
+                loaded_data = fs::read(&path).map_err(|error| BlobStoreError::Io {
+                    operation: "read blob".to_owned(),
+                    path: path.clone(),
+                    message: error.to_string(),
+                })?;
+                &loaded_data
+            }
+        };
         let metadata_path = self.metadata_path_for(key)?;
         if metadata_path.exists() {
             let metadata_text =
@@ -545,6 +566,19 @@ impl LocalBlobStore {
                 filename: optional_string(artifact_payload, "filename"),
                 metadata: optional_string_map(key, artifact_payload, "metadata")?,
             };
+            let checksum = sha256_digest(data);
+            if artifact.checksum.as_deref() != Some(checksum.as_str()) {
+                return Err(BlobStoreError::Metadata {
+                    key: key.key.clone(),
+                    message: "content does not match recorded checksum".to_owned(),
+                });
+            }
+            if artifact.size_bytes != Some(data.len()) {
+                return Err(BlobStoreError::Metadata {
+                    key: key.key.clone(),
+                    message: "content does not match recorded size".to_owned(),
+                });
+            }
             return Ok(BlobMetadata {
                 key: key.clone(),
                 artifact,
@@ -554,12 +588,7 @@ impl LocalBlobStore {
                     .map(str::to_owned),
             });
         }
-        let data = fs::read(&path).map_err(|error| BlobStoreError::Io {
-            operation: "read blob".to_owned(),
-            path: path.clone(),
-            message: error.to_string(),
-        })?;
-        let checksum = sha256_digest(&data);
+        let checksum = sha256_digest(data);
         let artifact = ArtifactRef {
             artifact_id: format!("blob:{}", key.key),
             uri: file_uri(&path),
