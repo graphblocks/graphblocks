@@ -186,6 +186,29 @@ fn terminal_approval_records_reject_decisions_outside_request_window() {
 }
 
 #[test]
+fn approval_expiration_is_exclusive_for_decision_and_authorization() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+
+    assert_eq!(
+        ToolApprovalRecord::approve(request.clone(), "admin-1", 2_000).validate(),
+        Err(ToolApprovalError::InvalidDecisionTime {
+            requested_at_unix_ms: 1_000,
+            decided_at_unix_ms: 2_000,
+            expires_at_unix_ms: 2_000,
+        }),
+    );
+
+    let record = ToolApprovalRecord::approve(request, "admin-1", 1_100);
+    assert!(record.is_valid_for(&resolved, &call, "user-1", 1_999));
+    assert!(!record.is_valid_for(&resolved, &call, "user-1", 2_000));
+}
+
+#[test]
 fn invalidated_approval_records_reject_invalidation_before_request() {
     let resolved = resolved_search_tool().expect("resolved tool is valid");
     let mut call = search_call("call-1", "runtime").expect("tool call is valid");

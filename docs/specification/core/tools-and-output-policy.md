@@ -10,6 +10,10 @@ budget, and record an execution plan. Effectful tools MUST use idempotency,
 attempt, and ownership fences appropriate to the effect. Tool results MUST be
 schema-validated before they become authoritative inputs to later nodes.
 
+Tool approval expiration is an exclusive authorization boundary. An approval
+MUST be decided and used before its expiration timestamp; at that timestamp it
+MUST fail closed.
+
 Streaming results MUST preserve chunk order and distinguish provisional output
 from committed output. Diagnostics, artifacts, usage, and terminal status MUST
 not be smuggled into an untyped text result.
