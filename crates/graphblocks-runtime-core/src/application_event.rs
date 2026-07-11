@@ -19,7 +19,7 @@ use crate::tool_result::{
     ContentPart, ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent,
     ToolResultEventError, ToolResultStatus,
 };
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, Row, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1923,7 +1923,8 @@ impl SqliteApplicationProtocolLog {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(application_protocol_storage_error)?;
-        let mut log = sqlite_load_application_protocol_log(&transaction)?;
+        let mut log =
+            sqlite_load_application_protocol_log_for_run(&transaction, &event.metadata.run_id)?;
         let appended = log.append(event.clone())?;
         if !appended {
             transaction
@@ -1964,6 +1965,17 @@ impl SqliteApplicationProtocolLog {
         Ok(self.to_protocol_log()?.replay_after(cursor, limit))
     }
 
+    pub fn replay_after_for_run(
+        &self,
+        run_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ApplicationProtocolEvent>, ApplicationProtocolError> {
+        Ok(self
+            .to_protocol_log_for_run(run_id)?
+            .replay_after(cursor, limit))
+    }
+
     pub fn attach_to_run(
         &self,
         last_cursor: Option<&str>,
@@ -1990,6 +2002,33 @@ impl SqliteApplicationProtocolLog {
         ))
     }
 
+    pub fn attach_to_run_for_run(
+        &self,
+        run_id: &str,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+    ) -> Result<AttachToRunReplay, ApplicationProtocolError> {
+        Ok(self.to_protocol_log_for_run(run_id)?.attach_to_run(
+            last_cursor,
+            replay_limit,
+            retained_event_count,
+        ))
+    }
+
+    pub fn attach_to_run_with_status_for_run(
+        &self,
+        run_id: &str,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+        run_status: RunStatusSnapshot,
+    ) -> Result<AttachToRunReplay, ApplicationProtocolError> {
+        Ok(self
+            .to_protocol_log_for_run(run_id)?
+            .attach_to_run_with_status(last_cursor, replay_limit, retained_event_count, run_status))
+    }
+
     pub fn to_protocol_log(&self) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
         let connection = self
             .connection
@@ -2000,12 +2039,40 @@ impl SqliteApplicationProtocolLog {
         sqlite_load_application_protocol_log(&connection)
     }
 
+    pub fn to_protocol_log_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ApplicationProtocolError::Storage {
+                message: "application protocol log mutex was poisoned".to_owned(),
+            })?;
+        sqlite_load_application_protocol_log_for_run(&connection, run_id)
+    }
+
     pub fn len(&self) -> Result<usize, ApplicationProtocolError> {
-        Ok(self.to_protocol_log()?.len())
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| ApplicationProtocolError::Storage {
+                message: "application protocol log mutex was poisoned".to_owned(),
+            })?;
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM application_protocol_events",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(application_protocol_storage_error)?;
+        usize::try_from(count).map_err(|_| ApplicationProtocolError::Storage {
+            message: format!("stored application protocol event count {count} is invalid"),
+        })
     }
 
     pub fn is_empty(&self) -> Result<bool, ApplicationProtocolError> {
-        Ok(self.to_protocol_log()?.is_empty())
+        Ok(self.len()? == 0)
     }
 }
 
@@ -2022,10 +2089,13 @@ fn initialize_sqlite_application_protocol_log(
                 cursor TEXT NOT NULL,
                 event_json TEXT NOT NULL
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS application_protocol_events_cursor_idx
-                ON application_protocol_events(cursor);
+            DROP INDEX IF EXISTS application_protocol_events_cursor_idx;
+            CREATE UNIQUE INDEX IF NOT EXISTS application_protocol_events_run_cursor_idx
+                ON application_protocol_events(run_id, cursor);
             CREATE INDEX IF NOT EXISTS application_protocol_events_sequence_idx
                 ON application_protocol_events(sequence, event_id);
+            CREATE INDEX IF NOT EXISTS application_protocol_events_run_sequence_idx
+                ON application_protocol_events(run_id, sequence, event_id);
             ",
         )
         .map_err(application_protocol_storage_error)
@@ -2047,39 +2117,73 @@ fn sqlite_load_application_protocol_log(
     let mut log = ApplicationProtocolLog::new();
 
     while let Some(row) = rows.next().map_err(application_protocol_storage_error)? {
-        let event_id: String = row.get(0).map_err(application_protocol_storage_error)?;
-        let run_id: String = row.get(1).map_err(application_protocol_storage_error)?;
-        let sequence = sqlite_u64_from_i64(
-            "sequence",
-            row.get(2).map_err(application_protocol_storage_error)?,
-        )?;
-        let cursor: String = row.get(3).map_err(application_protocol_storage_error)?;
-        let event_json: String = row.get(4).map_err(application_protocol_storage_error)?;
-        let event_value: Value = serde_json::from_str(&event_json).map_err(|error| {
-            ApplicationProtocolError::Storage {
-                message: format!(
-                    "stored application protocol event {event_id:?} is invalid JSON: {error}"
-                ),
-            }
-        })?;
-        let event = application_protocol_event_from_value(event_value)?;
-
-        if event.metadata.event_id != event_id
-            || event.metadata.run_id != run_id
-            || event.metadata.sequence != sequence
-            || event.metadata.cursor.as_deref() != Some(cursor.as_str())
-        {
-            return Err(ApplicationProtocolError::Storage {
-                message: format!(
-                    "stored application protocol event {event_id:?} row metadata does not match decoded event"
-                ),
-            });
-        }
-
-        log.append(event)?;
+        sqlite_append_application_protocol_event_row(row, &mut log)?;
     }
 
     Ok(log)
+}
+
+fn sqlite_load_application_protocol_log_for_run(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
+    if run_id.trim().is_empty() {
+        return Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" });
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT event_id, run_id, sequence, cursor, event_json
+             FROM application_protocol_events
+             WHERE run_id = ?1
+             ORDER BY sequence ASC, event_id ASC",
+        )
+        .map_err(application_protocol_storage_error)?;
+    let mut rows = statement
+        .query(params![run_id])
+        .map_err(application_protocol_storage_error)?;
+    let mut log = ApplicationProtocolLog::new();
+
+    while let Some(row) = rows.next().map_err(application_protocol_storage_error)? {
+        sqlite_append_application_protocol_event_row(row, &mut log)?;
+    }
+
+    Ok(log)
+}
+
+fn sqlite_append_application_protocol_event_row(
+    row: &Row<'_>,
+    log: &mut ApplicationProtocolLog,
+) -> Result<(), ApplicationProtocolError> {
+    let event_id: String = row.get(0).map_err(application_protocol_storage_error)?;
+    let run_id: String = row.get(1).map_err(application_protocol_storage_error)?;
+    let sequence = sqlite_u64_from_i64(
+        "sequence",
+        row.get(2).map_err(application_protocol_storage_error)?,
+    )?;
+    let cursor: String = row.get(3).map_err(application_protocol_storage_error)?;
+    let event_json: String = row.get(4).map_err(application_protocol_storage_error)?;
+    let event_value: Value =
+        serde_json::from_str(&event_json).map_err(|error| ApplicationProtocolError::Storage {
+            message: format!(
+                "stored application protocol event {event_id:?} is invalid JSON: {error}"
+            ),
+        })?;
+    let event = application_protocol_event_from_value(event_value)?;
+
+    if event.metadata.event_id != event_id
+        || event.metadata.run_id != run_id
+        || event.metadata.sequence != sequence
+        || event.metadata.cursor.as_deref() != Some(cursor.as_str())
+    {
+        return Err(ApplicationProtocolError::Storage {
+            message: format!(
+                "stored application protocol event {event_id:?} row metadata does not match decoded event"
+            ),
+        });
+    }
+
+    log.append(event)?;
+    Ok(())
 }
 
 fn application_protocol_event_to_value(event: &ApplicationProtocolEvent) -> Value {

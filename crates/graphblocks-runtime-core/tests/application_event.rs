@@ -1617,6 +1617,17 @@ fn protocol_event_metadata(
     }
 }
 
+fn protocol_event_metadata_for_run(
+    run_id: &str,
+    event_id: &str,
+    sequence: u64,
+    cursor: &str,
+) -> ApplicationProtocolEventMetadata {
+    let mut metadata = protocol_event_metadata(event_id, sequence, cursor);
+    metadata.run_id = run_id.to_owned();
+    metadata
+}
+
 fn protocol_run_status_snapshot(last_cursor: &str) -> RunStatusSnapshot {
     RunStatusSnapshot {
         run_id: "run-1".to_owned(),
@@ -2545,6 +2556,97 @@ fn sqlite_protocol_log_rejects_mutated_duplicate_event_after_reopen() {
         })
     );
     assert_eq!(log.len().expect("len loads"), 1);
+}
+
+#[test]
+fn sqlite_protocol_log_persists_multiple_run_streams_with_same_cursors() {
+    let path = sqlite_application_event_path("multi-run-cursors");
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+
+    assert!(
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::RunStarted,
+                protocol_event_metadata_for_run("run-1", "run-1:event-1", 1, "cursor-1"),
+                json!({"status": "running"}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("run-1 appends")
+    );
+    assert!(
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::RunStarted,
+                protocol_event_metadata_for_run("run-2", "run-2:event-1", 1, "cursor-1"),
+                json!({"status": "running"}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("run-2 appends")
+    );
+
+    assert_eq!(log.len().expect("total len loads"), 2);
+    assert_eq!(
+        log.replay_after_for_run("run-1", None, 10)
+            .expect("run-1 replay loads")
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run-1:event-1"]
+    );
+    assert_eq!(
+        log.replay_after_for_run("run-2", None, 10)
+            .expect("run-2 replay loads")
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run-2:event-1"]
+    );
+}
+
+#[test]
+fn sqlite_protocol_log_attach_for_run_replays_after_reopen_with_shared_cursors() {
+    let path = sqlite_application_event_path("multi-run-attach");
+    {
+        let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+        for run_id in ["run-1", "run-2"] {
+            for sequence in 1..=2 {
+                log.append(
+                    ApplicationProtocolEvent::new(
+                        ApplicationProtocolEventKind::JobProgress,
+                        protocol_event_metadata_for_run(
+                            run_id,
+                            &format!("{run_id}:event-{sequence}"),
+                            sequence,
+                            &format!("cursor-{sequence}"),
+                        ),
+                        json!({"message": sequence}),
+                    )
+                    .expect("event is valid"),
+                )
+                .expect("event appends");
+            }
+        }
+    }
+
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log reopens");
+
+    assert_eq!(
+        log.attach_to_run_for_run("run-2", Some("cursor-1"), 10, 2)
+            .expect("run-2 attach replay loads"),
+        AttachToRunReplay::Attached {
+            replayed_events: vec![
+                ApplicationProtocolEvent::new(
+                    ApplicationProtocolEventKind::JobProgress,
+                    protocol_event_metadata_for_run("run-2", "run-2:event-2", 2, "cursor-2"),
+                    json!({"message": 2}),
+                )
+                .expect("event is valid")
+            ],
+            live_cursor: Some("cursor-2".to_owned()),
+        }
+    );
 }
 
 #[test]

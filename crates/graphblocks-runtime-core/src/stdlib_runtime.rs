@@ -4241,4 +4241,57 @@ mod tests {
 
         let _ = std::fs::remove_file(application_event_store_path);
     }
+
+    #[test]
+    fn stdlib_runtime_options_append_multiple_runs_to_one_application_event_store() {
+        let application_event_store_path = unique_sqlite_path("application-event-store-shared");
+        let graph_json = r#"{
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "stdlib-application-events-shared"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Native {message.text}"},
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        }"#;
+
+        for (run_id, text) in [
+            ("run-native-events-1", "first"),
+            ("run-native-events-2", "second"),
+        ] {
+            let options = serde_json::json!({
+                "runId": run_id,
+                "applicationEventStorePath": application_event_store_path.to_string_lossy(),
+            });
+            run_stdlib_graph_with_options_json(
+                graph_json,
+                &serde_json::to_string(&json!({"message": {"text": text}}))
+                    .expect("inputs serialize"),
+                &serde_json::to_string(&options).expect("options serialize"),
+            )
+            .expect("stdlib runtime should execute");
+        }
+
+        let log = SqliteApplicationProtocolLog::open(&application_event_store_path)
+            .expect("application event log reopens");
+        let second_run = log
+            .replay_after_for_run("run-native-events-2", Some("evt-000001"), 10)
+            .expect("second run cursor replay succeeds");
+
+        assert_eq!(log.len().expect("total event count loads"), 4);
+        assert_eq!(second_run.len(), 1);
+        assert_eq!(
+            second_run[0].kind,
+            ApplicationProtocolEventKind::RunCompleted
+        );
+        assert_eq!(second_run[0].payload["outputs"]["prompt"], "Native second");
+
+        let _ = std::fs::remove_file(application_event_store_path);
+    }
 }
