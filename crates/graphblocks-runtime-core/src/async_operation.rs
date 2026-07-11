@@ -870,6 +870,19 @@ impl CallbackEndpointRef {
         self.auth.sign_headers(timestamp_unix_ms, payload)
     }
 
+    fn ensure_not_expired(&self, received_at_unix_ms: u64) -> Result<(), AsyncOperationError> {
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| received_at_unix_ms >= expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                endpoint_id: self.endpoint_id.clone(),
+                reason: "endpoint_expired".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn authenticate_and_build_submission(
         &self,
@@ -884,15 +897,7 @@ impl CallbackEndpointRef {
         policy_snapshot_id: impl Into<String>,
         headers: &BTreeMap<String, String>,
     ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
-        if self
-            .expires_at_unix_ms
-            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
-        {
-            return Err(AsyncOperationError::CallbackAuthenticationFailed {
-                endpoint_id: self.endpoint_id.clone(),
-                reason: "endpoint_expired".to_owned(),
-            });
-        }
+        self.ensure_not_expired(received_at_unix_ms)?;
         let verified_by =
             self.auth
                 .verify(&self.endpoint_id, headers, &payload, received_at_unix_ms)?;
@@ -928,15 +933,7 @@ impl CallbackEndpointRef {
         headers: &BTreeMap<String, String>,
         verifier: impl FnOnce(&str, &str, &str) -> bool,
     ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
-        if self
-            .expires_at_unix_ms
-            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
-        {
-            return Err(AsyncOperationError::CallbackAuthenticationFailed {
-                endpoint_id: self.endpoint_id.clone(),
-                reason: "endpoint_expired".to_owned(),
-            });
-        }
+        self.ensure_not_expired(received_at_unix_ms)?;
         let verified_by = self.auth.verify_ed25519(
             &self.endpoint_id,
             headers,
@@ -976,15 +973,7 @@ impl CallbackEndpointRef {
         headers: &BTreeMap<String, String>,
         client_identity: Option<&str>,
     ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
-        if self
-            .expires_at_unix_ms
-            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
-        {
-            return Err(AsyncOperationError::CallbackAuthenticationFailed {
-                endpoint_id: self.endpoint_id.clone(),
-                reason: "endpoint_expired".to_owned(),
-            });
-        }
+        self.ensure_not_expired(received_at_unix_ms)?;
         let verified_by = self
             .auth
             .verify_mtls(&self.endpoint_id, headers, client_identity)?;
@@ -1020,15 +1009,7 @@ impl CallbackEndpointRef {
         headers: &BTreeMap<String, String>,
         verifier: impl FnOnce(&str, &str, &str) -> bool,
     ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
-        if self
-            .expires_at_unix_ms
-            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
-        {
-            return Err(AsyncOperationError::CallbackAuthenticationFailed {
-                endpoint_id: self.endpoint_id.clone(),
-                reason: "endpoint_expired".to_owned(),
-            });
-        }
+        self.ensure_not_expired(received_at_unix_ms)?;
         let verified_by = self
             .auth
             .verify_oidc(&self.endpoint_id, headers, verifier)?;

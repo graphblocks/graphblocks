@@ -438,6 +438,43 @@ fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
 }
 
 #[test]
+fn callback_endpoint_expiration_is_exclusive_at_authentication_time() {
+    let auth = CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
+        .expect("hmac auth is valid");
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        auth,
+    )
+    .expect("endpoint is valid")
+    .with_expiration(1_200);
+    let payload = json!({"status": "completed", "workflow_run_id": "gha-run-1"});
+    let headers = endpoint
+        .sign_callback_headers(1_200, &payload)
+        .expect("headers sign");
+
+    assert_eq!(
+        endpoint.authenticate_and_build_submission(
+            "cb-at-endpoint-deadline",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-at-endpoint-deadline",
+            payload,
+            1_200,
+            "policy-snapshot-1",
+            &headers,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-1".to_owned(),
+            reason: "endpoint_expired".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn callback_endpoint_rejects_whitespace_identity_fields_before_building_submission() {
     let endpoint = CallbackEndpointRef::new(
         "callback-endpoint-1",

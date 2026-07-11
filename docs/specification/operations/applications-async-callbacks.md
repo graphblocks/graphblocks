@@ -131,6 +131,8 @@ stale attempt MUST NOT modify the newer or terminal operation.
 Async operation `expires_at` is an exclusive callback admission deadline;
 callbacks received at or after the deadline MUST be rejected before journaling a
 resumable receipt.
+Callback endpoint `expires_at` is also exclusive and MUST be checked before
+authentication creates an `AsyncCallbackSubmission`.
 
 The reference daemon exposes `register-async-operation`,
 `submit-async-callback`, `quarantine-async-callback`,
