@@ -935,6 +935,7 @@ class ChildBudgetDelegation:
 __all__ = [
     "ChildBudgetDelegation",
     "ChildBudgetDelegationError",
+    "ContextAccessMode",
     "LeaseAlreadyExistsError",
     "LeaseBudgetPermitError",
     "LeaseEpochMismatchError",

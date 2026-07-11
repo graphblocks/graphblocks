@@ -13,6 +13,16 @@ from graphblocks.policy import ResourceRef
 ROOT = Path(__file__).parents[1]
 
 
+def test_orchestration_package_preserves_retired_facade_wildcard_exports() -> None:
+    graphblocks_orchestration = importlib.import_module("graphblocks.orchestration")
+    exported: dict[str, object] = {}
+
+    exec("from graphblocks.orchestration import *", exported)
+
+    assert "ContextAccessMode" in graphblocks_orchestration.__all__
+    assert exported["ContextAccessMode"] is graphblocks_orchestration.ContextAccessMode
+
+
 def test_orchestration_package_reexports_task_and_pool_contracts(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-orchestration" / "src"))
     graphblocks_orchestration = importlib.import_module("graphblocks_orchestration")
