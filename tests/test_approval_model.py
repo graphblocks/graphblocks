@@ -241,17 +241,25 @@ def test_approval_record_validity_honors_request_expiration() -> None:
     )
 
     assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-21T19:09:59-05:00") is True
+    assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-22T00:10:00Z") is False
     assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-22T00:10:01Z") is False
+    assert record.is_valid_for(subject, request.arguments_digest) is False
     assert record.is_valid_for(subject, request.arguments_digest, now="not-a-date") is False
     assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-22 00:09:59Z") is False
 
-    with pytest.raises(ValueError, match="approved approval record decided_at must not be after expires_at"):
+    with pytest.raises(ValueError, match="approved approval record decided_at must be before expires_at"):
+        ApprovalRecord.approve(
+            request,
+            approver=PrincipalRef("admin-1"),
+            decided_at="2026-06-22T00:10:00Z",
+        )
+    with pytest.raises(ValueError, match="approved approval record decided_at must be before expires_at"):
         ApprovalRecord.approve(
             request,
             approver=PrincipalRef("admin-1"),
             decided_at="2026-06-22T00:10:01Z",
         )
-    with pytest.raises(ValueError, match="denied approval record decided_at must not be after expires_at"):
+    with pytest.raises(ValueError, match="denied approval record decided_at must be before expires_at"):
         ApprovalRecord.deny(
             request,
             approver=PrincipalRef("admin-1"),

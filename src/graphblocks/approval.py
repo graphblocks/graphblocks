@@ -181,10 +181,10 @@ class ApprovalRecord:
                 raise ValueError(f"{self.status} approval record requires approver")
             if self.decided_at is None:
                 raise ValueError(f"{self.status} approval record requires decided_at")
-            if self.request.expires_at is not None and _parse_datetime(self.decided_at) > _parse_datetime(
+            if self.request.expires_at is not None and _parse_datetime(self.decided_at) >= _parse_datetime(
                 self.request.expires_at
             ):
-                raise ValueError(f"{self.status} approval record decided_at must not be after expires_at")
+                raise ValueError(f"{self.status} approval record decided_at must be before expires_at")
         if self.status == "denied" and self.reason is None:
             raise ValueError("denied approval record requires reason")
         if self.status == "invalidated" and self.invalidated_at is None:
@@ -251,9 +251,11 @@ class ApprovalRecord:
         )
 
     def is_valid_for(self, subject: ResourceSnapshotRef, arguments_digest: str, *, now: str | None = None) -> bool:
-        if self.request.expires_at is not None and now is not None:
+        if self.request.expires_at is not None:
+            if now is None:
+                return False
             try:
-                if _parse_datetime(now) > _parse_datetime(self.request.expires_at):
+                if _parse_datetime(now) >= _parse_datetime(self.request.expires_at):
                     return False
             except ValueError:
                 return False
