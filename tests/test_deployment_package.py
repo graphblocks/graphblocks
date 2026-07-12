@@ -8,8 +8,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
 
     release = graphblocks_deployment.GraphRelease(name="support-agent", version="2026.06.23.1").with_graph(
         "turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan")
@@ -49,8 +48,7 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
 
 
 def test_deployment_package_reexports_rollout_gate_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
 
     plan = graphblocks_deployment.RolloutPlan.canary(
         "rollout-1",
@@ -72,8 +70,7 @@ def test_deployment_package_reexports_rollout_gate_contracts(monkeypatch) -> Non
 
 
 def test_deployment_package_reexports_slo_and_recovery_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
 
     slo_profile = graphblocks_deployment.DeploymentSloProfile("rag-production", ("availability",))
     recovery_profile = graphblocks_deployment.DeploymentRecoveryProfile("production-recovery").with_objective(

@@ -10,9 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_tui_package_builds_run_status_screen_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     screen = graphblocks_tui.run_status_screen(
         run_id="run-1",
@@ -38,10 +36,8 @@ def test_tui_package_builds_run_status_screen_contract(monkeypatch) -> None:
 
 
 def test_tui_package_projects_application_protocol_events_to_workspace_screen(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
         event_payload = dict(payload or {})
@@ -121,10 +117,8 @@ def test_tui_package_projects_application_protocol_events_to_workspace_screen(mo
 
 
 def test_tui_package_projects_standard_tool_approval_and_incomplete_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
         event_payload = dict(payload or {})
@@ -164,10 +158,8 @@ def test_tui_package_projects_standard_tool_approval_and_incomplete_events(monke
 
 
 def test_tui_package_projects_job_progress_from_streaming_tool_results(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
         return graphblocks_client.ApplicationProtocolEvent.new(
@@ -215,10 +207,8 @@ def test_tui_package_projects_job_progress_from_streaming_tool_results(monkeypat
 
 
 def test_tui_package_ignores_boolean_tool_result_sequence_in_job_progress(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     event = graphblocks_client.ApplicationProtocolEvent.new(
         "JobProgress",
@@ -238,10 +228,8 @@ def test_tui_package_ignores_boolean_tool_result_sequence_in_job_progress(monkey
 
 
 def test_tui_package_projects_output_cutoff_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
         return graphblocks_client.ApplicationProtocolEvent.new(
@@ -285,10 +273,8 @@ def test_tui_package_projects_output_cutoff_events(monkeypatch) -> None:
 
 
 def test_tui_package_projects_policy_stopped_run_event(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     event = graphblocks_client.ApplicationProtocolEvent.new(
         "RunPolicyStopped",
@@ -310,10 +296,8 @@ def test_tui_package_projects_policy_stopped_run_event(monkeypatch) -> None:
 
 
 def test_tui_package_projects_expired_run_event(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
-    graphblocks_tui = importlib.import_module("graphblocks_tui")
+    graphblocks_client = importlib.import_module("graphblocks.client")
+    graphblocks_tui = importlib.import_module("graphblocks.tui")
 
     event = graphblocks_client.ApplicationProtocolEvent.new(
         "RunExpired",
@@ -335,9 +319,7 @@ def test_tui_package_projects_expired_run_event(monkeypatch) -> None:
 
 
 def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))
-    graphblocks_devtools = importlib.import_module("graphblocks_devtools")
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
     graph = graphblocks_devtools.DevGraph(
         graph_id="support",
         nodes=(
@@ -373,9 +355,7 @@ def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
 
 
 def test_devtools_package_builds_profile_summary_and_codegen_artifact(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))
-    graphblocks_devtools = importlib.import_module("graphblocks_devtools")
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
     profile = graphblocks_devtools.ProfilingSummary.from_samples(
         profile_id="support-profile",
         samples=(
@@ -403,10 +383,8 @@ def test_devtools_package_builds_profile_summary_and_codegen_artifact(monkeypatc
 
 
 def test_devtools_package_builds_deterministic_diagnostic_bundle(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))
     graphblocks = importlib.import_module("graphblocks")
-    graphblocks_devtools = importlib.import_module("graphblocks_devtools")
+    graphblocks_devtools = importlib.import_module("graphblocks.devtools")
 
     bundle = graphblocks_devtools.DiagnosticBundle(
         bundle_id="release-checks",

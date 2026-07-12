@@ -1,18 +1,9 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-
-CALLBACKS_SRC = Path(__file__).parents[1] / "packages" / "graphblocks-callbacks" / "src"
-if str(CALLBACKS_SRC) not in sys.path:
-    sys.path.insert(0, str(CALLBACKS_SRC))
-
-
-from graphblocks.url_validation import validate_webhook_url  # noqa: E402
-from graphblocks_callbacks import CallbackEndpointAuth, CallbackEndpointRef  # noqa: E402
+from graphblocks.url_validation import validate_webhook_url
+from graphblocks.callbacks import CallbackEndpointAuth, CallbackEndpointRef
 
 
 def test_webhook_url_validation_rejects_malformed_authorities() -> None:

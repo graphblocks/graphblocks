@@ -9,8 +9,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_evaluation_package_exposes_gate_result_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-evaluation" / "src"))
-    graphblocks_evaluation = importlib.import_module("graphblocks_evaluation")
+    graphblocks_evaluation = importlib.import_module("graphblocks.evaluation")
 
     subject = graphblocks_evaluation.ResourceSnapshotRef("candidate-1", "sha256:candidate")
     gate = graphblocks_evaluation.evaluate_gate(
@@ -39,8 +38,7 @@ def test_evaluation_package_exposes_gate_result_contract(monkeypatch) -> None:
 
 
 def test_evaluation_package_exposes_slo_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-evaluation" / "src"))
-    graphblocks_evaluation = importlib.import_module("graphblocks_evaluation")
+    graphblocks_evaluation = importlib.import_module("graphblocks.evaluation")
 
     objective = graphblocks_evaluation.SloObjective.at_most(
         "first-draft",

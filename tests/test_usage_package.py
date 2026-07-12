@@ -14,8 +14,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage" / "src"))
-    graphblocks_usage = importlib.import_module("graphblocks_usage")
+    graphblocks_usage = importlib.import_module("graphblocks.usage")
 
     provisional = graphblocks_usage.UsageRecord(
         record_id="usage-provisional",
@@ -56,8 +55,7 @@ def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypat
 
 
 def test_usage_package_exposes_canonical_literal_sets(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage" / "src"))
-    graphblocks_usage = importlib.import_module("graphblocks_usage")
+    graphblocks_usage = importlib.import_module("graphblocks.usage")
 
     assert graphblocks_usage.VALID_USAGE_SOURCES is VALID_USAGE_SOURCES
     assert graphblocks_usage.VALID_USAGE_CONFIDENCES is VALID_USAGE_CONFIDENCES
@@ -71,7 +69,6 @@ def test_usage_package_exposes_canonical_literal_sets(monkeypatch) -> None:
 
 
 def test_usage_package_lazy_native_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage" / "src"))
     calls: list[tuple[object, str | None]] = []
 
     def evaluate_usage_ledger(operations: object, *, run_id: str | None = None) -> dict[str, object]:
@@ -83,7 +80,7 @@ def test_usage_package_lazy_native_helper_delegates_to_runtime(monkeypatch) -> N
         "graphblocks_runtime",
         SimpleNamespace(evaluate_usage_ledger=evaluate_usage_ledger),
     )
-    graphblocks_usage = importlib.import_module("graphblocks_usage")
+    graphblocks_usage = importlib.import_module("graphblocks.usage")
 
     result = graphblocks_usage.evaluate_native_usage_ledger(
         [{"op": "append", "record": {"recordId": "usage-1"}}],

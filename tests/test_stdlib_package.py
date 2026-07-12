@@ -10,8 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_stdlib_scripted_model_uses_prompt_script_mapping(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-stdlib" / "src"))
-    graphblocks_stdlib = importlib.import_module("graphblocks_stdlib")
+    graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
 
     response = graphblocks_stdlib.scripted_model_generate(
         "Answer: Hello",
@@ -29,8 +28,7 @@ def test_stdlib_scripted_model_uses_prompt_script_mapping(monkeypatch) -> None:
 
 
 def test_stdlib_scripted_model_uses_default_response_then_echo(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-stdlib" / "src"))
-    graphblocks_stdlib = importlib.import_module("graphblocks_stdlib")
+    graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
 
     default_response = graphblocks_stdlib.scripted_model_generate(
         "Answer: Unknown",
@@ -52,7 +50,6 @@ def test_stdlib_scripted_model_uses_default_response_then_echo(monkeypatch) -> N
 
 
 def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-stdlib" / "src"))
     calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
 
     def run_stdlib_graph(
@@ -68,7 +65,7 @@ def test_stdlib_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> 
         "graphblocks_runtime",
         SimpleNamespace(run_stdlib_graph=run_stdlib_graph),
     )
-    graphblocks_stdlib = importlib.import_module("graphblocks_stdlib")
+    graphblocks_stdlib = importlib.import_module("graphblocks.stdlib")
 
     result = graphblocks_stdlib.run_native_stdlib_graph(
         {"kind": "Graph", "metadata": {"name": "stdlib"}},

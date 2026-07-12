@@ -24,8 +24,7 @@ def test_orchestration_package_preserves_retired_facade_wildcard_exports() -> No
 
 
 def test_orchestration_package_reexports_task_and_pool_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-orchestration" / "src"))
-    graphblocks_orchestration = importlib.import_module("graphblocks_orchestration")
+    graphblocks_orchestration = importlib.import_module("graphblocks.orchestration")
 
     plan = graphblocks_orchestration.TaskPlan(
         plan_id="plan-1",
@@ -62,7 +61,6 @@ def test_orchestration_package_reexports_task_and_pool_contracts(monkeypatch) ->
 
 
 def test_orchestration_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-orchestration" / "src"))
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     def evaluate_scheduler(nodes: object, operations: object) -> dict[str, object]:
@@ -91,7 +89,7 @@ def test_orchestration_package_lazy_native_helpers_delegate_to_runtime(monkeypat
             evaluate_task_group=evaluate_task_group,
         ),
     )
-    graphblocks_orchestration = importlib.import_module("graphblocks_orchestration")
+    graphblocks_orchestration = importlib.import_module("graphblocks.orchestration")
 
     scheduler = graphblocks_orchestration.evaluate_native_scheduler(
         [{"nodeId": "render"}],

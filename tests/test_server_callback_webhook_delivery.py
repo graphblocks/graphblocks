@@ -6,9 +6,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CALLBACKS_SRC = ROOT / "packages" / "graphblocks-callbacks" / "src"
-if str(CALLBACKS_SRC) not in sys.path:
-    sys.path.insert(0, str(CALLBACKS_SRC))
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
@@ -19,7 +16,7 @@ from graphblocks.server import (  # noqa: E402
     ServerRequest,
     StaticBearerAuthHook,
 )
-from graphblocks_callbacks import (  # noqa: E402
+from graphblocks.callbacks import (  # noqa: E402
     CallbackEnvelope,
     RegisteredSecretWebhookDispatcher,
     WebhookTransportResponse,

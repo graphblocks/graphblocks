@@ -28,8 +28,7 @@ def test_review_package_preserves_retired_facade_wildcard_exports() -> None:
 
 
 def test_review_package_reexports_workflow_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-review" / "src"))
-    graphblocks_review = importlib.import_module("graphblocks_review")
+    graphblocks_review = importlib.import_module("graphblocks.review")
 
     reviewer = PrincipalRef("reviewer-1")
     request = graphblocks_review.ReviewRequest(

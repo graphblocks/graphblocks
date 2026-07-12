@@ -10,8 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_conversation_package_exposes_turn_transaction_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-conversation" / "src"))
-    graphblocks_conversation = importlib.import_module("graphblocks_conversation")
+    graphblocks_conversation = importlib.import_module("graphblocks.conversation")
 
     store = graphblocks_conversation.InMemoryConversationStore()
     store.create(graphblocks_conversation.Conversation(conversation_id="conv-1"))

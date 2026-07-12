@@ -12,8 +12,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
-    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    graphblocks_worker = importlib.import_module("graphblocks.worker")
 
     advertisement = graphblocks_worker.WorkerAdvertisement.new(
         "worker-local-1",
@@ -80,8 +79,7 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
 
 
 def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
-    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    graphblocks_worker = importlib.import_module("graphblocks.worker")
     calls: list[dict[str, object]] = []
 
     def validate_worker_protocol_message(message: dict[str, object]) -> dict[str, object]:
@@ -116,8 +114,7 @@ def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) 
 
 
 def test_worker_package_native_advertisement_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
-    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    graphblocks_worker = importlib.import_module("graphblocks.worker")
     calls: list[tuple[dict[str, object], str | None]] = []
 
     def validate_worker_advertisement(
@@ -157,8 +154,7 @@ def test_worker_package_native_advertisement_helper_delegates_to_runtime(monkeyp
 
 
 def test_worker_package_native_remote_payload_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
-    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    graphblocks_worker = importlib.import_module("graphblocks.worker")
     calls: list[tuple[dict[str, object], int]] = []
 
     def validate_remote_payload(payload: dict[str, object], *, max_inline_bytes: int) -> dict[str, object]:
@@ -186,8 +182,7 @@ def test_worker_package_native_remote_payload_helper_delegates_to_runtime(monkey
 
 
 def test_worker_package_native_admission_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
-    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    graphblocks_worker = importlib.import_module("graphblocks.worker")
     calls: list[tuple[dict[str, object], dict[str, object] | None, str, int]] = []
 
     def admit_worker_message(

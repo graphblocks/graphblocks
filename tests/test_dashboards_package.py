@@ -8,9 +8,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_dashboards(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-dashboards" / "src"))
-    return importlib.import_module("graphblocks_dashboards")
+    return importlib.import_module("graphblocks.dashboards")
 
 
 def test_dashboards_package_builds_default_generation_dashboard(monkeypatch) -> None:

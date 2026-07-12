@@ -513,3 +513,29 @@ class SQLiteUsageLedger:
             reconciliation_of=row["reconciliation_of"],
             metadata=dict(_loads_strict_json("metadata_json", row["metadata_json"])),
         )
+
+
+def evaluate_native_usage_ledger(
+    operations: object,
+    *,
+    run_id: str | None = None,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_usage_ledger
+
+    return evaluate_usage_ledger(operations, run_id=run_id)
+
+
+__all__ = [
+    "InMemoryUsageLedger",
+    "SQLiteUsageLedger",
+    "UsageAmount",
+    "UsageConfidence",
+    "UsageLedgerError",
+    "UsageRecord",
+    "UsageRecordConflictError",
+    "UsageRecordNotFoundError",
+    "UsageSource",
+    "VALID_USAGE_CONFIDENCES",
+    "VALID_USAGE_SOURCES",
+    "evaluate_native_usage_ledger",
+]

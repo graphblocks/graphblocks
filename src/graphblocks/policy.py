@@ -913,3 +913,155 @@ def _parse_policy_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("policy datetime must be an ISO datetime")
     return parsed.astimezone(timezone.utc)
+
+
+def evaluate_native_output_gate(
+    gate: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_output_gate
+
+    return evaluate_output_gate(gate, operations)
+
+
+def evaluate_native_declarative_output_policy(
+    rules: object,
+    chunk: dict[str, object],
+    *,
+    evaluated_at_unix_ms: int,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_declarative_output_policy
+
+    return evaluate_declarative_output_policy(
+        rules,
+        chunk,
+        evaluated_at_unix_ms=evaluated_at_unix_ms,
+    )
+
+
+def evaluate_native_retry_policy(
+    policy: dict[str, object],
+    request: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_retry_policy
+
+    return evaluate_retry_policy(policy, request)
+
+
+def evaluate_native_provider_limit_policy(
+    policy: dict[str, object],
+    incident: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_provider_limit_policy
+
+    return evaluate_provider_limit_policy(policy, incident)
+
+
+def evaluate_native_timeout_deadline(
+    policy: dict[str, object],
+    request: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_timeout_deadline
+
+    return evaluate_timeout_deadline(policy, request)
+
+
+from .output_policy import (  # noqa: E402
+    DeclarativeOutputPolicyEvaluator,
+    DeclarativeOutputPolicyRule,
+    DeliveryMode,
+    DraftDisposition,
+    FlushBoundary,
+    GenerationChunk,
+    OutputCutoff,
+    OutputDeliveryGate,
+    OutputDeliveryPolicy,
+    OutputDeliveryPolicyError,
+    OutputDisposition,
+    OutputDurableResult,
+    OutputGateError,
+    OutputGateUpdate,
+    OutputPolicyDecision,
+    PendingToolCallsDisposition,
+    ProviderCancellation,
+    TerminalReason,
+    VALID_DELIVERY_MODES,
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_FLUSH_BOUNDARIES,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_PROVIDER_CANCELLATIONS,
+    VALID_TERMINAL_REASONS,
+    VALID_VIOLATION_ACTIONS,
+    ViolationAction,
+)
+
+
+__all__ = [
+    "DeclarativeOutputPolicyEvaluator",
+    "DeclarativeOutputPolicyRule",
+    "DeliveryMode",
+    "DraftDisposition",
+    "EnforcementPoint",
+    "EntitlementSnapshot",
+    "FlushBoundary",
+    "GenerationChunk",
+    "OutputCutoff",
+    "OutputDeliveryGate",
+    "OutputDeliveryPolicy",
+    "OutputDeliveryPolicyError",
+    "OutputDisposition",
+    "OutputDurableResult",
+    "OutputGateError",
+    "OutputGateUpdate",
+    "OutputPolicyDecision",
+    "PendingToolCallsDisposition",
+    "PolicyBundle",
+    "PolicyDecision",
+    "PolicyEffect",
+    "PolicyEnforcementRecord",
+    "PolicyEnforcementResult",
+    "PolicyEnforcementStatus",
+    "PolicyEnforcer",
+    "PolicyFailMode",
+    "PolicyObligation",
+    "PolicyProfile",
+    "PolicyRequest",
+    "PolicyRule",
+    "PolicySnapshot",
+    "PolicyTestCase",
+    "PolicyTestExpectation",
+    "PolicyTestReport",
+    "PolicyTestResult",
+    "PolicyUnavailableError",
+    "PrincipalRef",
+    "ProviderCancellation",
+    "ResourceRef",
+    "RuleEffect",
+    "StaticPolicyEvaluator",
+    "TerminalReason",
+    "VALID_DELIVERY_MODES",
+    "VALID_DRAFT_DISPOSITIONS",
+    "VALID_ENFORCEMENT_POINTS",
+    "VALID_ENFORCEMENT_STATUSES",
+    "VALID_FLUSH_BOUNDARIES",
+    "VALID_OUTPUT_DISPOSITIONS",
+    "VALID_OUTPUT_DURABLE_RESULTS",
+    "VALID_PENDING_TOOL_CALLS_DISPOSITIONS",
+    "VALID_POLICY_EFFECTS",
+    "VALID_POLICY_FAIL_MODES",
+    "VALID_PROVIDER_CANCELLATIONS",
+    "VALID_RULE_EFFECTS",
+    "VALID_TERMINAL_REASONS",
+    "VALID_VIOLATION_ACTIONS",
+    "ViolationAction",
+    "evaluate_native_declarative_output_policy",
+    "evaluate_native_output_gate",
+    "evaluate_native_provider_limit_policy",
+    "evaluate_native_retry_policy",
+    "evaluate_native_timeout_deadline",
+    "resolve_policy_snapshot",
+    "run_policy_tests",
+    "unavailable_policy_decision",
+]

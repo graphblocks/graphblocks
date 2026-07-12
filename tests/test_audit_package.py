@@ -13,8 +13,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     metadata = graphblocks_audit.ApplicationEventMetadata(
         event_id="event-1",
@@ -57,7 +56,6 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
 
 
 def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     calls: list[tuple[str, dict[str, object]]] = []
 
     def record_tool_effect_precondition(
@@ -80,7 +78,7 @@ def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:
             record_tool_effect_precondition=record_tool_effect_precondition,
         ),
     )
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     precondition = graphblocks_audit.record_native_tool_effect_precondition(
         {"resolvedToolId": "resolved-tool-1"},
@@ -134,9 +132,8 @@ def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:
 
 
 def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     graphblocks = importlib.import_module("graphblocks")
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     catalog = graphblocks.ToolCatalog(
         definitions=(
@@ -223,9 +220,8 @@ def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch)
 
 
 def test_audit_package_builds_tool_effect_precondition(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     graphblocks = importlib.import_module("graphblocks")
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     catalog = graphblocks.ToolCatalog(
         definitions=(
@@ -302,9 +298,8 @@ def test_audit_package_builds_tool_effect_precondition(monkeypatch) -> None:
 
 
 def test_audit_package_rejects_precondition_before_admission(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     graphblocks = importlib.import_module("graphblocks")
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     definition = graphblocks.ToolDefinition(
         "knowledge.search",
@@ -344,9 +339,8 @@ def test_audit_package_rejects_precondition_before_admission(monkeypatch) -> Non
 
 
 def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
     graphblocks = importlib.import_module("graphblocks")
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
 
     definition = graphblocks.ToolDefinition(
         "knowledge.search",
@@ -396,8 +390,7 @@ def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch)
 
 
 def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
     path = tmp_path / "audit.sqlite3"
 
     outbox = graphblocks_audit.SQLiteAuditOutbox(path)
@@ -433,8 +426,7 @@ def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
 
 
 def test_audit_outbox_rejects_non_standard_payload_json_on_replay(monkeypatch, tmp_path) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
     outbox._connection.execute(  # noqa: SLF001
@@ -454,8 +446,7 @@ def test_audit_outbox_rejects_non_standard_payload_json_on_replay(monkeypatch, t
 
 
 def test_audit_outbox_rejects_payload_digest_drift_on_replay(monkeypatch, tmp_path) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox(tmp_path / "audit.sqlite3")
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
     outbox._connection.execute(  # noqa: SLF001
@@ -475,8 +466,7 @@ def test_audit_outbox_rejects_payload_digest_drift_on_replay(monkeypatch, tmp_pa
 
 
 def test_audit_package_rejects_duplicate_outbox_record_ids(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
 
@@ -496,8 +486,7 @@ def test_audit_package_rejects_duplicate_outbox_record_ids(monkeypatch) -> None:
 
 
 def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
     published = outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z")

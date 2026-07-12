@@ -63,8 +63,7 @@ def test_standard_policy_profiles_include_assistant_output_streaming_profile() -
 
 
 def test_policy_package_exposes_static_evaluator_and_output_gate_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
-    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    graphblocks_policy = importlib.import_module("graphblocks.policy")
 
     evaluator = graphblocks_policy.StaticPolicyEvaluator(
         rules=[
@@ -102,8 +101,7 @@ def test_policy_package_exposes_static_evaluator_and_output_gate_contract(monkey
 
 
 def test_policy_package_exposes_declarative_output_policy_evaluator(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
-    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    graphblocks_policy = importlib.import_module("graphblocks.policy")
     evaluator = graphblocks_policy.DeclarativeOutputPolicyEvaluator(
         rules=(
             graphblocks_policy.DeclarativeOutputPolicyRule(
@@ -128,8 +126,7 @@ def test_policy_package_exposes_declarative_output_policy_evaluator(monkeypatch)
 
 
 def test_policy_package_exposes_policy_test_dsl(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
-    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    graphblocks_policy = importlib.import_module("graphblocks.policy")
     evaluator = graphblocks_policy.StaticPolicyEvaluator(
         rules=[
             graphblocks_policy.PolicyRule(
@@ -162,8 +159,7 @@ def test_policy_package_exposes_policy_test_dsl(monkeypatch) -> None:
 
 
 def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
-    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    graphblocks_policy = importlib.import_module("graphblocks.policy")
     output_constants = {
         "VALID_DELIVERY_MODES": VALID_DELIVERY_MODES,
         "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
@@ -244,7 +240,6 @@ def test_root_facade_exports_output_policy_literal_contract() -> None:
 
 
 def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
     calls: list[tuple[str, object, object, int | None]] = []
 
     def evaluate_output_gate(gate: dict[str, object], operations: object) -> dict[str, object]:
@@ -291,7 +286,7 @@ def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypat
             evaluate_timeout_deadline=evaluate_timeout_deadline,
         ),
     )
-    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    graphblocks_policy = importlib.import_module("graphblocks.policy")
 
     gate_result = graphblocks_policy.evaluate_native_output_gate(
         {"streamId": "stream-1", "responseId": "response-1"},

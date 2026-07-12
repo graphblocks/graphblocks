@@ -20,8 +20,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_budget_package_exposes_reservation_settlement_and_permit_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
 
     requested = graphblocks_budget.UsageAmount("model_total_tokens", Decimal("40"), "tokens")
     actual = graphblocks_budget.UsageAmount("model_total_tokens", Decimal("25"), "tokens")
@@ -68,8 +67,7 @@ def test_budget_package_exposes_reservation_settlement_and_permit_contract(monke
 
 
 def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
     ledger = graphblocks_budget.InMemoryBudgetLedger()
     amount = graphblocks_budget.UsageAmount("model_total_tokens", Decimal("20"), "tokens")
     ledger.allocate(
@@ -106,8 +104,7 @@ def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None
 
 
 def test_budget_package_exposes_exhaustion_continuation_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
 
     continuation = graphblocks_budget.ContinuationEnvelope(
         allowed_work={"declared_finalization"},
@@ -129,8 +126,7 @@ def test_budget_package_exposes_exhaustion_continuation_contract(monkeypatch) ->
 
 
 def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
     ledger = graphblocks_budget.SQLiteBudgetLedger.in_memory()
 
     ledger.allocate(
@@ -155,7 +151,6 @@ def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
 
 
 def test_budget_package_lazy_native_exhaustion_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
     calls: list[tuple[dict[str, object], dict[str, object]]] = []
 
     def admit_exhaustion_work(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
@@ -167,7 +162,7 @@ def test_budget_package_lazy_native_exhaustion_helper_delegates_to_runtime(monke
         "graphblocks_runtime",
         SimpleNamespace(admit_exhaustion_work=admit_exhaustion_work),
     )
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
 
     result = graphblocks_budget.admit_native_exhaustion_work(
         {"preset": "finish_current_turn", "unit": "turn"},
@@ -189,7 +184,6 @@ def test_budget_package_lazy_native_exhaustion_helper_delegates_to_runtime(monke
 
 
 def test_budget_package_lazy_native_budget_ledger_helper_delegates_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
     calls: list[object] = []
 
     def evaluate_budget_ledger(operations: object) -> dict[str, object]:
@@ -201,7 +195,7 @@ def test_budget_package_lazy_native_budget_ledger_helper_delegates_to_runtime(mo
         "graphblocks_runtime",
         SimpleNamespace(evaluate_budget_ledger=evaluate_budget_ledger),
     )
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
     operations = [{"op": "allocate", "budgetId": "budget-1"}]
 
     result = graphblocks_budget.evaluate_native_budget_ledger(operations)
@@ -215,8 +209,7 @@ def test_budget_package_lazy_native_budget_ledger_helper_delegates_to_runtime(mo
 
 
 def test_budget_package_exposes_canonical_literal_sets(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
 
     assert graphblocks_budget.VALID_BUDGET_STATUSES is VALID_BUDGET_STATUSES
     assert graphblocks_budget.VALID_RESERVATION_PURPOSES is VALID_RESERVATION_PURPOSES

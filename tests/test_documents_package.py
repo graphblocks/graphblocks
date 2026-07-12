@@ -8,8 +8,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_documents_package_exposes_local_text_lineage_helpers(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
-    graphblocks_documents = importlib.import_module("graphblocks_documents")
+    graphblocks_documents = importlib.import_module("graphblocks.documents")
 
     asset, revision = graphblocks_documents.create_local_text_revision(
         "file:///notes/support.txt",
@@ -34,8 +33,7 @@ def test_documents_package_exposes_local_text_lineage_helpers(monkeypatch) -> No
 
 
 def test_documents_package_exposes_ingestion_manifest_facade(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
-    graphblocks_documents = importlib.import_module("graphblocks_documents")
+    graphblocks_documents = importlib.import_module("graphblocks.documents")
 
     for name in (
         "IndexRecordRef",
@@ -50,8 +48,7 @@ def test_documents_package_exposes_ingestion_manifest_facade(monkeypatch) -> Non
 
 
 def test_documents_package_exposes_parser_spi_and_ocr_fallback(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
-    graphblocks_documents = importlib.import_module("graphblocks_documents")
+    graphblocks_documents = importlib.import_module("graphblocks.documents")
 
     registry = graphblocks_documents.DocumentParserRegistry()
     registry.register(graphblocks_documents.plain_text_parser_descriptor())
@@ -94,8 +91,7 @@ def test_documents_package_exposes_parser_spi_and_ocr_fallback(monkeypatch) -> N
 
 
 def test_documents_package_exposes_blob_store_adapters(monkeypatch, tmp_path) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
-    graphblocks_documents = importlib.import_module("graphblocks_documents")
+    graphblocks_documents = importlib.import_module("graphblocks.documents")
 
     store = graphblocks_documents.LocalBlobStore(tmp_path)
     artifact = store.put(

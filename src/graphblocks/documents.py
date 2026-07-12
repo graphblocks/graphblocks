@@ -539,3 +539,73 @@ def chunk_document_by_lines(
             )
         )
     return chunks
+
+
+from .blob_store import (  # noqa: E402
+    BlobKey,
+    BlobListItem,
+    BlobMetadata,
+    BlobNotFoundError,
+    BlobStoreError,
+    ByteRange,
+    ListPage,
+    LocalBlobStore,
+    PutOptions,
+    S3CompatibleBlobStore,
+)
+from .document_parsers import (  # noqa: E402
+    DocumentParserError,
+    DocumentParserNotFoundError,
+    DocumentParserRegistry,
+    ParserDescriptor,
+    ParserSelectionLock,
+    plain_text_parser_descriptor,
+)
+from .ingestion import (  # noqa: E402
+    InMemoryIngestionManifestStore,
+    IndexRecordRef,
+    IngestionDeletePolicy,
+    IngestionError,
+    IngestionManifest,
+    IngestionStatus,
+    ProcessorRef,
+)
+
+
+__all__ = [
+    "ArtifactRef",
+    "AssetRevision",
+    "BlobKey",
+    "BlobListItem",
+    "BlobMetadata",
+    "BlobNotFoundError",
+    "BlobStoreError",
+    "ByteRange",
+    "DocumentChunk",
+    "DocumentElement",
+    "DocumentParserError",
+    "DocumentParserNotFoundError",
+    "DocumentParserRegistry",
+    "DocumentSpan",
+    "InMemoryIngestionManifestStore",
+    "IndexRecordRef",
+    "IngestionDeletePolicy",
+    "IngestionError",
+    "IngestionManifest",
+    "IngestionStatus",
+    "ListPage",
+    "LocalBlobStore",
+    "ParsedDocument",
+    "ParserDescriptor",
+    "ParserSelectionLock",
+    "ProcessorRef",
+    "PutOptions",
+    "S3CompatibleBlobStore",
+    "SourceAsset",
+    "SourceLocation",
+    "SourceRef",
+    "chunk_document_by_lines",
+    "create_local_text_revision",
+    "parse_plain_text_document",
+    "plain_text_parser_descriptor",
+]

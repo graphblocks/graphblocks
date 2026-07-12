@@ -89,8 +89,7 @@ def _remote_output_registry() -> ToolSchemaRegistry:
 
 
 def test_client_package_exposes_application_event_protocol(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     metadata = graphblocks_client.ApplicationEventMetadata(
         event_id="event-1",
@@ -146,8 +145,7 @@ def test_client_package_exposes_application_event_protocol(monkeypatch) -> None:
 
 
 def test_client_package_preserves_authoritative_event_metadata_from_payloads(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     events = graphblocks_client._application_events_from_payloads(
         [
@@ -201,8 +199,7 @@ def test_client_package_preserves_authoritative_event_metadata_from_payloads(mon
 
 
 def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     command = graphblocks_client.ApplicationCommand.new(
         "InvokeGraph",
@@ -282,7 +279,6 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
 
 
 def test_client_package_lazy_native_application_stream_helpers_delegate_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     calls: list[tuple[str, object, object]] = []
 
     def evaluate_application_event_stream(state: dict[str, object], operations: object) -> dict[str, object]:
@@ -314,7 +310,7 @@ def test_client_package_lazy_native_application_stream_helpers_delegate_to_runti
             negotiate_application_protocol_capabilities=negotiate_application_protocol_capabilities,
         ),
     )
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     event_stream = graphblocks_client.evaluate_native_application_event_stream(
         {"acceptedThrough": 1},
@@ -366,8 +362,7 @@ def test_client_package_lazy_native_application_stream_helpers_delegate_to_runti
 
 
 def test_client_package_builds_remote_tool_definition_binding_and_invocation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     arguments = {"query": "billing", "limit": 5}
     admitted, resolved = _remote_admitted_call(arguments=arguments)
 
@@ -450,8 +445,7 @@ def test_client_package_builds_remote_tool_definition_binding_and_invocation(mon
 
 
 def test_client_package_remote_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
     object.__setattr__(admitted.call, "arguments", {"query": "mutated"})
 
@@ -460,8 +454,7 @@ def test_client_package_remote_adapter_rejects_stale_argument_digest(monkeypatch
 
 
 def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
 
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="not allowed for principal"):
@@ -501,8 +494,7 @@ def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeyp
 
 
 def test_client_package_remote_adapter_requires_required_idempotency_key(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(
         arguments={"query": "billing"},
         idempotency="required",
@@ -514,8 +506,7 @@ def test_client_package_remote_adapter_requires_required_idempotency_key(monkeyp
 
 
 def test_client_package_remote_adapter_validates_result_before_model_return(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(
         arguments={"query": "billing"},
         output_schema="schemas/SearchResult@1",
@@ -555,8 +546,7 @@ def test_client_package_remote_adapter_validates_result_before_model_return(monk
 
 
 def test_client_package_remote_adapter_builds_streaming_and_terminal_results(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
 
     started = graphblocks_client.remote_tool_result_started(
@@ -651,8 +641,7 @@ def test_client_package_remote_adapter_builds_streaming_and_terminal_results(mon
 
 
 def test_client_package_remote_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
 
     delta = graphblocks_client.remote_tool_result_delta(
@@ -680,8 +669,7 @@ def test_client_package_remote_adapter_forces_streaming_delta_output_to_untruste
 
 
 def test_client_package_remote_adapter_terminal_events_require_validation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     admitted, resolved = _remote_admitted_call(
         arguments={"query": "billing"},
         output_schema="schemas/SearchResult@1",
@@ -719,8 +707,7 @@ def test_client_package_remote_adapter_terminal_events_require_validation(monkey
 
 
 def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -763,8 +750,7 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
 
 
 def test_client_package_local_client_rejects_background_response_modes(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     client = graphblocks_client.LocalGraphBlocksClient()
 
     with pytest.raises(ValueError, match="LocalGraphBlocksClient supports only sync response_mode"):
@@ -823,8 +809,7 @@ def test_client_package_rejects_malformed_run_graph_command(
     command_kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     kwargs: dict[str, object] = {
         "graph": {"kind": "Graph", "metadata": {"name": "remote-run"}},
     }
@@ -835,8 +820,7 @@ def test_client_package_rejects_malformed_run_graph_command(
 
 
 def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     outputs = {"answer": {"text": "ok"}}
 
     response = graphblocks_client.RunGraphResponse(
@@ -853,8 +837,7 @@ def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> No
 
 @pytest.mark.parametrize("status", ("accepted", "background"))
 def test_client_package_durable_response_requires_handle_fields(monkeypatch, status: str) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     with pytest.raises(ValueError, match=f"run graph response {status} requires event_stream_url"):
         graphblocks_client.RunGraphResponse(
@@ -881,8 +864,7 @@ def test_client_package_durable_response_validates_initial_cursor(
     initial_cursor: str,
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     with pytest.raises(ValueError, match=re.escape(message)):
         graphblocks_client.RunGraphResponse(
@@ -911,8 +893,7 @@ def test_client_package_rejects_malformed_run_graph_response_fields(
     response_kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     kwargs: dict[str, object] = {
         "run_id": "run-1",
         "status": "succeeded",
@@ -927,8 +908,7 @@ def test_client_package_rejects_malformed_run_graph_response_fields(
 
 
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []
 
     class FakeResponse:
@@ -1000,8 +980,7 @@ def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
 
 
 def test_client_package_posts_accepted_run_graph_command_over_http(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []
 
     class FakeResponse:
@@ -1050,8 +1029,7 @@ def test_client_package_posts_accepted_run_graph_command_over_http(monkeypatch) 
 
 
 def test_client_package_rejects_malformed_run_handle_links(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1097,8 +1075,7 @@ def test_client_package_rejects_malformed_run_handle_initial_cursor(
     initial_cursor: str,
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1130,8 +1107,7 @@ def test_client_package_rejects_malformed_run_handle_initial_cursor(
 
 
 def test_client_package_rejects_mismatched_run_graph_response_id(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1162,8 +1138,7 @@ def test_client_package_rejects_mismatched_run_graph_response_id(monkeypatch) ->
 
 @pytest.mark.parametrize("status", ("accepted", "background"))
 def test_client_package_rejects_incomplete_durable_run_handle(monkeypatch, status: str) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1194,8 +1169,7 @@ def test_client_package_rejects_incomplete_durable_run_handle(monkeypatch, statu
 
 
 def test_client_package_encodes_http_path_identifiers(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []
 
     class FakeResponse:
@@ -1271,8 +1245,7 @@ def test_client_package_rejects_mismatched_run_snapshot_response_id(
     payload: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1332,8 +1305,7 @@ def test_client_package_rejects_replayed_events_for_wrong_run(
     payload: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     wrong_run_event = {
         "kind": "RunStarted",
@@ -1424,8 +1396,7 @@ def test_client_package_rejects_mismatched_control_response_run_id(
     payload: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1475,8 +1446,7 @@ def test_client_package_rejects_mismatched_subscription_response_id(
     payload: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1507,8 +1477,7 @@ def test_client_package_rejects_malformed_http_event_metadata(
     metadata_override: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1569,8 +1538,7 @@ def test_client_package_rejects_malformed_http_event_payloads(
     payload_override: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     valid_metadata = {
         "eventId": "event-1",
@@ -1631,8 +1599,7 @@ def test_client_package_rejects_malformed_http_run_response(
     payload_override: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1660,8 +1627,7 @@ def test_client_package_rejects_malformed_http_run_response(
 
 
 def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1683,8 +1649,7 @@ def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> N
 
 
 def test_client_package_rejects_non_standard_http_json_constants(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -1701,8 +1666,7 @@ def test_client_package_rejects_non_standard_http_json_constants(monkeypatch) ->
 
 @pytest.mark.parametrize("status_code", (True, "500"))
 def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_code: object) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         status = status_code
@@ -1742,8 +1706,7 @@ def test_client_package_rejects_malformed_http_run_id_arguments(
     method_name: str,
     run_id: object,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed run_id")
@@ -1787,8 +1750,7 @@ def test_client_package_rejects_malformed_http_cursor_arguments(
     field_name: str,
     cursor: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed run cursor")
@@ -1829,8 +1791,7 @@ def test_client_package_rejects_malformed_http_cursor_arguments(
 
 
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.server import GraphBlocksServerApp, ServerHealth, ServerRequest
 
     app = GraphBlocksServerApp(
@@ -1871,8 +1832,7 @@ def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> 
 
 
 def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -1924,8 +1884,7 @@ def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> Non
 
 
 def test_client_package_reads_run_status_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -1979,8 +1938,7 @@ def test_client_package_reads_run_status_over_http_transport(monkeypatch) -> Non
 
 
 def test_client_package_lists_runs_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2046,8 +2004,7 @@ def test_client_package_lists_runs_over_http_transport(monkeypatch) -> None:
 
 
 def test_client_package_controls_run_lifecycle_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2172,8 +2129,7 @@ def test_client_package_rejects_malformed_run_control_arguments(
     kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed run control arguments")
@@ -2188,8 +2144,7 @@ def test_client_package_rejects_malformed_run_control_arguments(
 
 
 def test_client_package_submits_async_callback_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2309,8 +2264,7 @@ def test_client_package_rejects_mismatched_async_callback_response_identity(
     response_update: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -2350,8 +2304,7 @@ def test_client_package_rejects_mismatched_async_callback_response_identity(
 
 
 def test_client_package_rejects_mismatched_async_callback_response_payload_digest(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -2479,8 +2432,7 @@ def test_client_package_rejects_malformed_async_callback_arguments(
     kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed callback arguments")
@@ -2495,8 +2447,7 @@ def test_client_package_rejects_malformed_async_callback_arguments(
 
 
 def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2564,8 +2515,7 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
 
 
 def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     requests: list[object] = []
 
     class FakeResponse:
@@ -2593,8 +2543,7 @@ def test_client_package_reads_run_events_with_cursor_query(monkeypatch) -> None:
 
 
 def test_client_package_raises_http_error_for_missing_run_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2750,8 +2699,7 @@ def test_http_client_closes_responses_on_success_invalid_json_and_application_er
 
 
 def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2835,8 +2783,7 @@ def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None
 
 
 def test_client_package_detaches_from_run_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -2918,8 +2865,7 @@ def test_client_package_detaches_from_run_over_http_transport(monkeypatch) -> No
 
 
 def test_client_package_subscribes_to_run_events_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3010,8 +2956,7 @@ def test_client_package_subscribes_to_run_events_over_http_transport(monkeypatch
 
 
 def test_client_package_unsubscribes_from_run_events_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3101,8 +3046,7 @@ def test_client_package_unsubscribes_from_run_events_over_http_transport(monkeyp
 
 
 def test_client_package_acknowledges_subscription_event_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3220,8 +3164,7 @@ def test_client_package_rejects_mismatched_callback_registration_response_scope(
     payload: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -3241,8 +3184,7 @@ def test_client_package_rejects_mismatched_callback_registration_response_scope(
 
 
 def test_client_package_registers_callback_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3345,8 +3287,7 @@ def test_client_package_registers_callback_over_http_transport(monkeypatch) -> N
 
 
 def test_client_package_revokes_callback_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3410,8 +3351,7 @@ def test_client_package_revokes_callback_over_http_transport(monkeypatch) -> Non
 
 
 def test_client_package_rejects_mismatched_callback_revoke_response_subscription_id(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -3439,8 +3379,7 @@ def test_client_package_rejects_mismatched_callback_revoke_response_subscription
 
 
 def test_client_package_redrives_callback_delivery_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3501,8 +3440,7 @@ def test_client_package_redrives_callback_delivery_over_http_transport(monkeypat
 
 
 def test_client_package_redrives_callback_delivery_with_auth_derived_operator(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3559,8 +3497,7 @@ def test_client_package_redrives_callback_delivery_with_auth_derived_operator(mo
 
 
 def test_client_package_moves_callback_delivery_to_dead_letter_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 
@@ -3646,8 +3583,7 @@ def test_client_package_rejects_mismatched_callback_delivery_control_response_id
     method_name: str,
     response_label: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -3736,8 +3672,7 @@ def test_client_package_rejects_malformed_callback_subscription_config(
     kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed callback subscription config")
@@ -3781,8 +3716,7 @@ def test_client_package_rejects_malformed_callback_delivery_control_arguments(
     kwargs: dict[str, object],
     message: str,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
 
     def transport(request: object, *, timeout: float) -> object:
         raise AssertionError("transport should not be called for malformed delivery control arguments")
@@ -3797,8 +3731,7 @@ def test_client_package_rejects_malformed_callback_delivery_control_arguments(
 
 
 def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef
     from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
 

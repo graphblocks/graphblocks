@@ -29,8 +29,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_rag_package_exposes_in_memory_retrieval_and_context_helpers(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
     asset, revision = create_local_text_revision(
         "file:///kb/support.txt",
         "Billing help\nShipping help\n",
@@ -56,16 +55,14 @@ def test_rag_package_exposes_in_memory_retrieval_and_context_helpers(monkeypatch
 
 
 def test_rag_package_exposes_knowledge_index_facade(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.InMemoryKnowledgeIndex is InMemoryKnowledgeIndex
     assert graphblocks_rag.KnowledgeDeleteMode is KnowledgeDeleteMode
 
 
 def test_rag_package_exposes_result_bundle_profile(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.QueryPlan is QueryPlan
     assert graphblocks_rag.RagResultPayload is RagResultPayload
@@ -73,8 +70,7 @@ def test_rag_package_exposes_result_bundle_profile(monkeypatch) -> None:
 
 
 def test_rag_package_exposes_evaluation_helpers(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.evaluate_context_metrics is evaluate_context_metrics
     assert graphblocks_rag.evaluate_rag_answer_metrics is evaluate_rag_answer_metrics
@@ -82,15 +78,13 @@ def test_rag_package_exposes_evaluation_helpers(monkeypatch) -> None:
 
 
 def test_rag_package_exposes_context_renderer(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.render_context_pack is render_context_pack
 
 
 def test_rag_package_exposes_federated_retrieval_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.FederatedRetrievalSource is FederatedRetrievalSource
     assert graphblocks_rag.FederatedRetrievalError is FederatedRetrievalError
@@ -98,15 +92,13 @@ def test_rag_package_exposes_federated_retrieval_contract(monkeypatch) -> None:
 
 
 def test_rag_package_exposes_grounding_validator(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.validate_answer_grounding is validate_answer_grounding
 
 
 def test_rag_package_exposes_answer_builder(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    graphblocks_rag = importlib.import_module("graphblocks_rag")
+    graphblocks_rag = importlib.import_module("graphblocks.rag")
 
     assert graphblocks_rag.build_answer_from_model_response is build_answer_from_model_response
     assert graphblocks_rag.build_abstention_answer is build_abstention_answer

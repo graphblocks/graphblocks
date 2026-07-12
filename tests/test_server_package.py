@@ -9,8 +9,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-server" / "src"))
-    graphblocks_server = importlib.import_module("graphblocks_server")
+    graphblocks_server = importlib.import_module("graphblocks.server")
 
     manifest = graphblocks_server.default_server_route_manifest()
     capabilities = graphblocks_server.ApplicationProtocolCapabilities("graphblocks.app.v1").with_commands(
@@ -92,8 +91,7 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
 
 
 def test_server_package_rejects_malformed_run_metadata(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-server" / "src"))
-    graphblocks_server = importlib.import_module("graphblocks_server")
+    graphblocks_server = importlib.import_module("graphblocks.server")
 
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

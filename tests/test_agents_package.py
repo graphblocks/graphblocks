@@ -32,8 +32,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
 
     catalog = graphblocks_agents.ToolCatalog(
         definitions=(
@@ -87,8 +86,7 @@ def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(mon
 
 
 def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
     expected_constants = {
         "FINAL_TOOL_RESULT_EVENT_STATUSES": FINAL_TOOL_RESULT_EVENT_STATUSES,
         "VALID_PENDING_TOOL_CALLS_DISPOSITIONS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
@@ -118,7 +116,6 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
 
 
 def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     def evaluate_tool_execution_plan(plan: dict[str, object], operations: object) -> dict[str, object]:
@@ -220,7 +217,7 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
             prepare_tool_result_for_model=prepare_tool_result_for_model,
         ),
     )
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
 
     plan = graphblocks_agents.evaluate_native_tool_execution_plan(
         {"planId": "plan-1"},
@@ -376,8 +373,7 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
 
 
 def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
 
     catalog = graphblocks_agents.ToolCatalog(
         definitions=(
@@ -468,8 +464,7 @@ def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> 
 
 
 def test_agents_package_exposes_streaming_tool_result_state(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
 
     stream = graphblocks_agents.ToolResultStreamState()
     started = graphblocks_agents.ToolResultEvent.started(
@@ -509,8 +504,7 @@ def test_agents_package_exposes_streaming_tool_result_state(monkeypatch) -> None
 
 
 def test_agents_package_exposes_agent_loop_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
-    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    graphblocks_agents = importlib.import_module("graphblocks.agents")
 
     controller = graphblocks_agents.AgentLoopController(
         graphblocks_agents.AgentSpec("support-models").with_completion_reserve_units(100)

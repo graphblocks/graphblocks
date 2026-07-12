@@ -11,9 +11,7 @@ ROOT = Path(__file__).parents[1]
 
 @pytest.fixture
 def graphblocks_tui(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
-    return importlib.import_module("graphblocks_tui")
+    return importlib.import_module("graphblocks.tui")
 
 
 def test_admission_ticket_screen_projects_queued_ticket(graphblocks_tui) -> None:

@@ -1592,3 +1592,98 @@ class SQLiteBudgetLedger:
             self._ledger = self._load_snapshot()
             raise
         return result
+
+
+def admit_native_exhaustion_work(
+    policy: dict[str, object],
+    request: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import admit_exhaustion_work
+
+    return admit_exhaustion_work(policy, request)
+
+
+def evaluate_native_budget_ledger(operations: object) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_budget_ledger
+
+    return evaluate_budget_ledger(operations)
+
+
+from .exhaustion import (  # noqa: E402
+    AdmissionDecision,
+    AfterUnitPolicy,
+    ClientDelivery,
+    ContinuationEnvelope,
+    ContinuationWork,
+    DurableResult,
+    EffectPolicy,
+    ExhaustionController,
+    ExhaustionPolicy,
+    ExhaustionPolicyError,
+    ExhaustionPreset,
+    ExhaustionUnit,
+    ForbiddenWork,
+    InFlightPolicy,
+    MissingExhaustionBoundaryError,
+    PartialOutputPolicy,
+    WorkKind,
+    validate_exhaustion_policy,
+)
+
+
+__all__ = [
+    "AdmissionDecision",
+    "AfterUnitPolicy",
+    "BudgetAccount",
+    "BudgetBalance",
+    "BudgetCompletionReserveConflictError",
+    "BudgetCompletionReserveNotFoundError",
+    "BudgetCompletionReserveStateError",
+    "BudgetCompletionReserveUnauthorizedError",
+    "BudgetConflictError",
+    "BudgetError",
+    "BudgetExceededError",
+    "BudgetNotFoundError",
+    "BudgetPermit",
+    "BudgetPermitExpiredError",
+    "BudgetPermitFencingError",
+    "BudgetPermitNotFoundError",
+    "BudgetPermitScopeError",
+    "BudgetReservation",
+    "BudgetReservationNotFoundError",
+    "BudgetReservationStateError",
+    "BudgetSettlement",
+    "BudgetStatus",
+    "ClientDelivery",
+    "CompletionReserve",
+    "CompletionReservePurpose",
+    "CompletionReserveStatus",
+    "ContinuationEnvelope",
+    "ContinuationWork",
+    "DurableResult",
+    "EffectPolicy",
+    "ExhaustionController",
+    "ExhaustionPolicy",
+    "ExhaustionPolicyError",
+    "ExhaustionPreset",
+    "ExhaustionUnit",
+    "ForbiddenWork",
+    "InMemoryBudgetLedger",
+    "InFlightPolicy",
+    "MissingExhaustionBoundaryError",
+    "PartialOutputPolicy",
+    "ReservationPurpose",
+    "ReservationStatus",
+    "ResourceRef",
+    "SQLiteBudgetLedger",
+    "UsageAmount",
+    "VALID_BUDGET_STATUSES",
+    "VALID_COMPLETION_RESERVE_PURPOSES",
+    "VALID_COMPLETION_RESERVE_STATUSES",
+    "VALID_RESERVATION_PURPOSES",
+    "VALID_RESERVATION_STATUSES",
+    "WorkKind",
+    "admit_native_exhaustion_work",
+    "evaluate_native_budget_ledger",
+    "validate_exhaustion_policy",
+]

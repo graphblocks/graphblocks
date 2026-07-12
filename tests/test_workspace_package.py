@@ -10,8 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_workspace_package_reexports_snapshot_and_store_contracts(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-workspace" / "src"))
-    graphblocks_workspace = importlib.import_module("graphblocks_workspace")
+    graphblocks_workspace = importlib.import_module("graphblocks.workspace")
 
     snapshot = graphblocks_workspace.WorkspaceSnapshot(
         workspace_id="workspace-1",
