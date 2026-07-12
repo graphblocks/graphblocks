@@ -2859,14 +2859,14 @@ def test_callback_resume_admission_rejects_expired_endpoint() -> None:
         received_at="2026-07-02T00:00:02Z",
     )
 
-    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:30:01Z")
+    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:30:00Z")
 
     assert decision.status == "expired"
     assert decision.can_resume is False
     assert decision.reason == "callback_endpoint_expired"
 
 
-def test_callback_resume_admission_rejects_receipt_after_endpoint_expiration() -> None:
+def test_callback_resume_admission_rejects_receipt_at_endpoint_expiration() -> None:
     endpoint = CallbackEndpointRef(
         endpoint_id="cbep_ci_001",
         url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
@@ -2903,7 +2903,7 @@ def test_callback_resume_admission_rejects_receipt_after_endpoint_expiration() -
         attempt_id="attempt_001",
         verified_by="hmac-sha256:key-current",
         policy_snapshot_id="policy_001",
-        received_at="2026-07-02T00:30:01Z",
+        received_at="2026-07-02T00:30:00Z",
     )
 
     decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:29:59Z")
