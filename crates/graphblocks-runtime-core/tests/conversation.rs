@@ -330,6 +330,53 @@ fn scoped_attachments_resolve_for_context_without_promoting_to_knowledge()
 }
 
 #[test]
+fn message_scoped_attachments_require_an_existing_conversation_message()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages("conv-1", 0, [Message::new("msg-user", MessageRole::User)])?;
+
+    let missing_reference = store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-missing-ref",
+            ArtifactRef::new("artifact-missing-ref", "blob://attachments/missing-ref.pdf"),
+            AttachmentScope::Message,
+            AttachmentPurpose::Retrieval,
+        ),
+    );
+    let unknown_reference = store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-unknown-ref",
+            ArtifactRef::new("artifact-unknown-ref", "blob://attachments/unknown-ref.pdf"),
+            AttachmentScope::Message,
+            AttachmentPurpose::Retrieval,
+        )
+        .with_message_id("msg-unknown"),
+    );
+
+    assert_eq!(
+        missing_reference,
+        Err(ConversationError::AttachmentMessageNotFound {
+            attachment_id: "att-missing-ref".to_owned(),
+            message_id: None,
+        })
+    );
+    assert_eq!(
+        unknown_reference,
+        Err(ConversationError::AttachmentMessageNotFound {
+            attachment_id: "att-unknown-ref".to_owned(),
+            message_id: Some("msg-unknown".to_owned()),
+        })
+    );
+    let snapshot = store.get("conv-1")?;
+    assert!(snapshot.conversation.attachments.is_empty());
+    assert_eq!(snapshot.revision, 1);
+    Ok(())
+}
+
+#[test]
 fn branch_respects_include_attachments_and_message_scope() -> Result<(), Box<dyn std::error::Error>>
 {
     let mut store = InMemoryConversationStore::new();

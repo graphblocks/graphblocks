@@ -6,7 +6,9 @@ use compare-and-swap against the expected revision. Conflicting writers MUST
 fail without silently merging turns.
 
 A message-scoped attachment MUST reference a message in the same conversation
-before it can be persisted or resolved into model context.
+before it can be persisted or resolved into model context. A missing or unknown
+message reference MUST fail without storing the attachment or advancing the
+conversation revision.
 
 Assistant output begins as a draft when policy or tool execution may still
 change the outcome. A draft can be committed, retracted, or replaced only under

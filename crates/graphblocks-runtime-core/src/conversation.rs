@@ -385,6 +385,10 @@ pub enum ConversationError {
         expected: u64,
         actual: u64,
     },
+    AttachmentMessageNotFound {
+        attachment_id: String,
+        message_id: Option<String>,
+    },
 }
 
 impl fmt::Display for ConversationError {
@@ -406,6 +410,13 @@ impl fmt::Display for ConversationError {
             } => write!(
                 formatter,
                 "conversation {conversation_id:?} is at revision {actual}, not {expected}"
+            ),
+            Self::AttachmentMessageNotFound {
+                attachment_id,
+                message_id,
+            } => write!(
+                formatter,
+                "message-scoped attachment {attachment_id:?} references missing conversation message {message_id:?}"
             ),
         }
     }
@@ -970,6 +981,20 @@ impl InMemoryConversationStore {
             return Err(ConversationError::Archived {
                 conversation_id: conversation_id.to_owned(),
             });
+        }
+        if attachment.scope == AttachmentScope::Message {
+            let message_id = attachment.message_id.as_ref();
+            if message_id.is_none_or(|message_id| {
+                !conversation
+                    .messages
+                    .iter()
+                    .any(|message| message.message_id == *message_id)
+            }) {
+                return Err(ConversationError::AttachmentMessageNotFound {
+                    attachment_id: attachment.attachment_id,
+                    message_id: attachment.message_id,
+                });
+            }
         }
         conversation.attachments.push(attachment);
         conversation.revision += 1;
