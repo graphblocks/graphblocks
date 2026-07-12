@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
+import graphblocks.packages as packages_module
 from graphblocks.packages import (
     PackageManifestAuditPolicy,
     _supports_python_version,
@@ -241,6 +244,131 @@ def test_wheel_matrix_does_not_follow_manifest_swapped_after_resolution(
 
     assert len(matrix.targets) == 1
     assert matrix.diagnostics == ()
+
+
+def test_wheel_matrix_reads_manifest_without_descriptor_relative_open(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_valid_wheel_manifest(root / "pyproject.toml")
+    original_open = os.open
+
+    def open_without_dir_fd(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd is unavailable")
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(packages_module.os, "open", open_without_dir_fd)
+    monkeypatch.setattr(packages_module.os, "supports_dir_fd", {open_without_dir_fd})
+
+    matrix = build_wheel_matrix(
+        root,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "escaped-wheel",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert len(matrix.targets) == 1
+    assert matrix.diagnostics == ()
+
+
+def test_wheel_matrix_reads_manifest_without_no_follow_flag(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_valid_wheel_manifest(root / "pyproject.toml")
+    original_open = os.open
+
+    def open_without_no_follow(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is not None:
+            raise AssertionError("descriptor-relative traversal requires O_NOFOLLOW")
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(packages_module.os, "open", open_without_no_follow)
+    monkeypatch.setattr(packages_module.os, "supports_dir_fd", {open_without_no_follow})
+    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+
+    matrix = build_wheel_matrix(
+        root,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "escaped-wheel",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert len(matrix.targets) == 1
+    assert matrix.diagnostics == ()
+
+
+def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    manifest_path = root / "package" / "pyproject.toml"
+    _write_valid_wheel_manifest(manifest_path)
+    outside_directory = tmp_path / "outside"
+    outside_manifest = outside_directory / "pyproject.toml"
+    _write_valid_wheel_manifest(outside_manifest)
+    original_open = os.open
+    original_fdopen = os.fdopen
+    fallback_opened = False
+    outside_manifest_read = False
+
+    def swap_before_fallback_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal fallback_opened
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd is unavailable")
+        if os.fspath(path) == os.fspath(manifest_path) and not fallback_opened:
+            fallback_opened = True
+            manifest_path.unlink()
+            manifest_path.parent.rmdir()
+            manifest_path.parent.symlink_to(outside_directory, target_is_directory=True)
+        return original_open(path, flags, mode)
+
+    def track_outside_manifest_read(fd, *args, **kwargs):
+        nonlocal outside_manifest_read
+        if os.path.samestat(os.fstat(fd), outside_manifest.stat()):
+            outside_manifest_read = True
+        return original_fdopen(fd, *args, **kwargs)
+
+    monkeypatch.setattr(packages_module.os, "open", swap_before_fallback_open)
+    monkeypatch.setattr(packages_module.os, "fdopen", track_outside_manifest_read)
+    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+
+    matrix = build_wheel_matrix(
+        root,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "escaped-wheel",
+                    "kind": "pure_python",
+                    "manifest": "package/pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert matrix.targets == ()
+    assert not outside_manifest_read
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        ("WheelManifestOutsideRoot", "$.artifacts[0].manifest")
+    ]
 
 
 def test_package_catalog_doctor_rejects_manifest_outside_root(tmp_path) -> None:

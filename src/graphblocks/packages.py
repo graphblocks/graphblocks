@@ -582,34 +582,116 @@ def _read_manifest_beneath_root(root_path: Path, manifest_ref: str) -> tuple[Pat
         | getattr(os, "O_CLOEXEC", 0)
     )
     no_follow = getattr(os, "O_NOFOLLOW", 0)
-    directory_fd = os.open(resolved_root, directory_flags | no_follow)
-    opened_directories = [directory_fd]
-    file_fd: int | None = None
-    try:
-        for part in relative_path.parts[:-1]:
-            directory_fd = os.open(
-                part,
-                directory_flags | no_follow,
+    supports_dir_fd = os.open in getattr(os, "supports_dir_fd", set())
+    manifest_text: str | None = None
+    if supports_dir_fd and no_follow:
+        opened_directories: list[int] = []
+        file_fd: int | None = None
+        try:
+            directory_fd = os.open(resolved_root, directory_flags | no_follow)
+            opened_directories.append(directory_fd)
+            for part in relative_path.parts[:-1]:
+                directory_fd = os.open(
+                    part,
+                    directory_flags | no_follow,
+                    dir_fd=directory_fd,
+                )
+                opened_directories.append(directory_fd)
+            if not relative_path.parts:
+                raise IsADirectoryError(str(candidate))
+            file_fd = os.open(
+                relative_path.parts[-1],
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
                 dir_fd=directory_fd,
             )
-            opened_directories.append(directory_fd)
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise OSError(f"manifest is not a regular file: {candidate}")
+            with os.fdopen(file_fd, encoding="utf-8") as manifest_file:
+                file_fd = None
+                manifest_text = manifest_file.read()
+        except (NotImplementedError, TypeError):
+            # Some platforms expose os.open but reject descriptor-relative calls.
+            # Close every partial handle before using the checked portable path.
+            manifest_text = None
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            for opened_fd in reversed(opened_directories):
+                os.close(opened_fd)
+
+    if manifest_text is None:
         if not relative_path.parts:
             raise IsADirectoryError(str(candidate))
-        file_fd = os.open(
-            relative_path.parts[-1],
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
-            dir_fd=directory_fd,
-        )
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-            raise OSError(f"manifest is not a regular file: {candidate}")
-        with os.fdopen(file_fd, encoding="utf-8") as manifest_file:
-            file_fd = None
-            manifest_text = manifest_file.read()
-    finally:
-        if file_fd is not None:
-            os.close(file_fd)
-        for opened_fd in reversed(opened_directories):
-            os.close(opened_fd)
+
+        # Platforms without dir_fd/O_NOFOLLOW cannot make path traversal atomic.
+        # Fail closed by rejecting reparse points and unverifiable identities, and
+        # compare every path component before and after reading. This bounds the
+        # unavoidable TOCTOU window without treating the fallback as equivalent to
+        # descriptor-relative traversal.
+        path_components = [resolved_root]
+        current_path = resolved_root
+        for part in relative_path.parts:
+            current_path /= part
+            path_components.append(current_path)
+
+        component_stats: list[os.stat_result] = []
+        reparse_point_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        for index, path_component in enumerate(path_components):
+            component_stat = os.lstat(path_component)
+            is_reparse_point = bool(
+                getattr(component_stat, "st_file_attributes", 0) & reparse_point_flag
+            )
+            if stat.S_ISLNK(component_stat.st_mode) or is_reparse_point:
+                raise OSError(f"manifest path contains a link or reparse point: {path_component}")
+            if index < len(path_components) - 1:
+                if not stat.S_ISDIR(component_stat.st_mode):
+                    raise NotADirectoryError(str(path_component))
+            elif not stat.S_ISREG(component_stat.st_mode):
+                raise OSError(f"manifest is not a regular file: {candidate}")
+            identity = (component_stat.st_dev, component_stat.st_ino)
+            if identity == (0, 0):
+                raise OSError(f"manifest path identity cannot be verified: {path_component}")
+            component_stats.append(component_stat)
+
+        file_fd = None
+        try:
+            file_fd = os.open(
+                candidate,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+            )
+            opened_stat = os.fstat(file_fd)
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise OSError(f"manifest is not a regular file: {candidate}")
+
+            opened_path = candidate.resolve(strict=True)
+            if not opened_path.is_relative_to(resolved_root):
+                raise _ManifestOutsideRootError(manifest_ref)
+            if opened_path != candidate:
+                raise OSError(f"manifest path changed while it was opened: {candidate}")
+            if not os.path.samestat(component_stats[-1], opened_stat):
+                raise OSError(f"manifest changed while it was opened: {candidate}")
+
+            with os.fdopen(file_fd, encoding="utf-8") as manifest_file:
+                file_fd = None
+                manifest_text = manifest_file.read()
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+
+        final_path = candidate.resolve(strict=True)
+        if not final_path.is_relative_to(resolved_root):
+            raise _ManifestOutsideRootError(manifest_ref)
+        if final_path != candidate:
+            raise OSError(f"manifest path changed while it was read: {candidate}")
+        for path_component, initial_stat in zip(path_components, component_stats, strict=True):
+            final_stat = os.lstat(path_component)
+            is_reparse_point = bool(
+                getattr(final_stat, "st_file_attributes", 0) & reparse_point_flag
+            )
+            if stat.S_ISLNK(final_stat.st_mode) or is_reparse_point:
+                raise OSError(f"manifest path became a link or reparse point: {path_component}")
+            if not os.path.samestat(initial_stat, final_stat):
+                raise OSError(f"manifest path changed while it was read: {path_component}")
     return candidate, manifest_text
 
 
