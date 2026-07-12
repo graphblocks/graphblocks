@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import resources
+import os
 from pathlib import Path
+import stat
 import tomllib
 from typing import Any, Literal
 
@@ -560,22 +562,55 @@ def build_package_lock(
     )
 
 
-def _pyproject_paths(root_path: Path) -> list[Path]:
-    return [root_path / "pyproject.toml", *sorted(root_path.glob("packages/*/pyproject.toml"))]
+class _ManifestOutsideRootError(ValueError):
+    pass
 
 
-def _resolve_manifest_beneath_root(root_path: Path, manifest_ref: str) -> Path | None:
-    try:
-        reference = Path(manifest_ref)
-        if reference.is_absolute():
-            return None
-        resolved_root = root_path.resolve()
-        candidate = (resolved_root / reference).resolve()
-    except (OSError, RuntimeError, ValueError):
-        return None
+def _read_manifest_beneath_root(root_path: Path, manifest_ref: str) -> tuple[Path, str]:
+    reference = Path(manifest_ref)
+    if reference.is_absolute():
+        raise _ManifestOutsideRootError(manifest_ref)
+    resolved_root = root_path.resolve()
+    candidate = (resolved_root / reference).resolve()
     if not candidate.is_relative_to(resolved_root):
-        return None
-    return candidate
+        raise _ManifestOutsideRootError(manifest_ref)
+
+    relative_path = candidate.relative_to(resolved_root)
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(resolved_root, directory_flags | no_follow)
+    opened_directories = [directory_fd]
+    file_fd: int | None = None
+    try:
+        for part in relative_path.parts[:-1]:
+            directory_fd = os.open(
+                part,
+                directory_flags | no_follow,
+                dir_fd=directory_fd,
+            )
+            opened_directories.append(directory_fd)
+        if not relative_path.parts:
+            raise IsADirectoryError(str(candidate))
+        file_fd = os.open(
+            relative_path.parts[-1],
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+            dir_fd=directory_fd,
+        )
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise OSError(f"manifest is not a regular file: {candidate}")
+        with os.fdopen(file_fd, encoding="utf-8") as manifest_file:
+            file_fd = None
+            manifest_text = manifest_file.read()
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for opened_fd in reversed(opened_directories):
+            os.close(opened_fd)
+    return candidate, manifest_text
 
 
 def _supports_python_version(requires_python: str, version: str) -> bool:
@@ -629,6 +664,7 @@ def build_wheel_matrix(
         catalog = load_package_catalog()
     raw_artifacts = catalog.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
+    manifest_owners: dict[Path, str] = {}
     for artifact_index, artifact in enumerate(artifacts):
         if not isinstance(artifact, dict):
             continue
@@ -656,8 +692,9 @@ def build_wheel_matrix(
                 )
             )
             continue
-        manifest_path = _resolve_manifest_beneath_root(root_path, manifest_ref)
-        if manifest_path is None:
+        try:
+            manifest_path, manifest_text = _read_manifest_beneath_root(root_path, manifest_ref)
+        except _ManifestOutsideRootError:
             diagnostics.append(
                 Diagnostic(
                     "WheelManifestOutsideRoot",
@@ -666,19 +703,50 @@ def build_wheel_matrix(
                 )
             )
             continue
-        relative_path = manifest_path.relative_to(root_path.resolve()).as_posix()
-        if not manifest_path.is_file():
+        except (RuntimeError, ValueError):
             diagnostics.append(
                 Diagnostic(
-                    "WheelManifestMissing",
-                    f"wheel artifact {distribution!r} manifest does not exist: {relative_path}",
+                    "WheelManifestInvalid",
+                    f"wheel artifact {distribution!r} manifest path is invalid",
                     f"$.artifacts[{artifact_index}].manifest",
                 )
             )
             continue
+        except (FileNotFoundError, NotADirectoryError):
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestMissing",
+                    f"wheel artifact {distribution!r} manifest does not exist",
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
+        except OSError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestInvalid",
+                    f"wheel artifact {distribution!r} manifest could not be read safely: {error}",
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
+        relative_path = manifest_path.relative_to(root_path.resolve()).as_posix()
+        if manifest_path in manifest_owners:
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestDuplicate",
+                    (
+                        f"wheel artifacts {manifest_owners[manifest_path]!r} and "
+                        f"{distribution!r} use the same manifest"
+                    ),
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
+        manifest_owners[manifest_path] = distribution
         path_prefix = f"$.{relative_path}"
         try:
-            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = tomllib.loads(manifest_text)
         except tomllib.TOMLDecodeError as error:
             diagnostics.append(
                 Diagnostic(
@@ -1570,6 +1638,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 if artifact.get("kind") in {"pure_python", "native_wheel"}
             ]
             manifest_paths: dict[str, Path] = {}
+            manifest_texts: dict[str, str] = {}
             manifest_owners: dict[Path, str] = {}
             for distribution, artifact in python_artifacts:
                 manifest_ref = artifact.get("manifest")
@@ -1582,12 +1651,43 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                         )
                     )
                     continue
-                manifest_path = _resolve_manifest_beneath_root(root_path, manifest_ref)
-                if manifest_path is None:
+                try:
+                    manifest_path, manifest_text = _read_manifest_beneath_root(
+                        root_path,
+                        manifest_ref,
+                    )
+                except _ManifestOutsideRootError:
                     diagnostics.append(
                         Diagnostic(
                             "PackageArtifactManifestOutsideRoot",
                             f"artifact {distribution!r} manifest must remain beneath root",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                except (RuntimeError, ValueError):
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestInvalid",
+                            f"artifact {distribution!r} manifest path is invalid",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                except (FileNotFoundError, NotADirectoryError):
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestMissing",
+                            f"artifact {distribution!r} manifest does not exist",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                except OSError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestInvalid",
+                            f"artifact {distribution!r} manifest could not be read safely: {error}",
                             f"$.artifacts.{distribution}.manifest",
                         )
                     )
@@ -1606,17 +1706,24 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     continue
                 manifest_owners[manifest_path] = distribution
                 manifest_paths[distribution] = manifest_path
+                manifest_texts[distribution] = manifest_text
 
             local_versions: dict[str, str] = {}
+            parsed_manifests: dict[str, dict[str, Any]] = {}
             for distribution, manifest_path in manifest_paths.items():
-                if not manifest_path.is_file():
-                    continue
                 try:
-                    candidate_manifest = tomllib.loads(
-                        manifest_path.read_text(encoding="utf-8")
+                    candidate_manifest = tomllib.loads(manifest_texts[distribution])
+                except tomllib.TOMLDecodeError as error:
+                    relative_path = manifest_path.relative_to(root_path).as_posix()
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageManifestInvalid",
+                            f"invalid Python artifact manifest: {error}",
+                            f"$.{relative_path}",
+                        )
                     )
-                except tomllib.TOMLDecodeError:
                     continue
+                parsed_manifests[distribution] = candidate_manifest
                 candidate_project = candidate_manifest.get("project")
                 if not isinstance(candidate_project, dict):
                     continue
@@ -1637,28 +1744,11 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 for distribution in artifacts_by_distribution
             }
             for distribution, manifest_path in manifest_paths.items():
+                manifest = parsed_manifests.get(distribution)
+                if manifest is None:
+                    continue
                 artifact = artifacts_by_distribution[distribution]
                 relative_path = manifest_path.relative_to(root_path).as_posix()
-                if not manifest_path.is_file():
-                    diagnostics.append(
-                        Diagnostic(
-                            "PackageArtifactManifestMissing",
-                            f"artifact manifest does not exist: {relative_path}",
-                            f"$.artifacts.{distribution}.manifest",
-                        )
-                    )
-                    continue
-                try:
-                    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
-                except tomllib.TOMLDecodeError as error:
-                    diagnostics.append(
-                        Diagnostic(
-                            "PackageManifestInvalid",
-                            f"invalid Python artifact manifest: {error}",
-                            f"$.{relative_path}",
-                        )
-                    )
-                    continue
                 project = manifest.get("project")
                 if not isinstance(project, dict):
                     diagnostics.append(

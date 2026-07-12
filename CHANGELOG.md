@@ -51,6 +51,10 @@ pre-release alpha software.
 - Canonicalized blocked Python dependency names according to PEP 503 so dotted,
   underscored, repeated-separator, and mixed-case spellings cannot bypass
   vulnerability policy.
+- Confined catalog artifact manifests to the declared package root, rejecting
+  absolute paths, traversal that escapes the root, unsafe symlink swaps,
+  malformed paths, and duplicate canonical manifest aliases during
+  wheel-matrix or doctor validation.
 - Fenced SQLite run mutations against concurrent terminal transitions so stale
   state, tool-evidence, or status writers cannot erase an authoritative run
   outcome.
