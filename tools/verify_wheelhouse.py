@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build and verify every first-party Python distribution offline."
+        description="Build and verify the three first-party Python distributions offline."
     )
     parser.add_argument("--wheelhouse", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -32,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{Path(sys.executable).absolute().parent}{os.pathsep}"
         f"{build_environment.get('PATH', '')}"
     )
-    manifests = [ROOT / "pyproject.toml", *sorted((ROOT / "packages").glob("*/pyproject.toml"))]
+    manifests = (
+        ROOT / "pyproject.toml",
+        ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml",
+        ROOT / "packages" / "graphblocks-testing" / "pyproject.toml",
+    )
     expected_distributions: dict[str, str] = {}
     for manifest in manifests:
         project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
@@ -55,21 +60,32 @@ def main(argv: list[str] | None = None) -> int:
             env=build_environment,
         )
 
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "download",
-            "--only-binary=:all:",
-            "--dest",
-            str(wheelhouse),
-            "PyYAML>=6.0",
-            "packaging>=24.0",
-        ],
-        check=True,
-        cwd=ROOT,
-    )
+    built_wheels = tuple(sorted(wheelhouse.glob("*.whl")))
+    if len(built_wheels) != len(manifests):
+        raise RuntimeError(
+            f"expected {len(manifests)} first-party wheel artifacts, found {len(built_wheels)}"
+        )
+
+    with TemporaryDirectory(prefix="graphblocks-wheel-download-") as download_root:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "download",
+                "--only-binary=:all:",
+                "--dest",
+                download_root,
+                *(str(wheel) for wheel in built_wheels),
+            ],
+            check=True,
+            cwd=ROOT,
+        )
+        for downloaded_wheel in sorted(Path(download_root).glob("*.whl")):
+            destination = wheelhouse / downloaded_wheel.name
+            if not destination.exists():
+                shutil.copy2(downloaded_wheel, destination)
+
     expected_schema_manifest = SchemaManifest.from_directory(ROOT / "schemas").manifest_payload()
     with TemporaryDirectory(prefix="graphblocks-wheelhouse-") as install_root:
         venv.EnvBuilder(with_pip=True).create(install_root)
@@ -86,18 +102,34 @@ def main(argv: list[str] | None = None) -> int:
                 "--no-index",
                 "--find-links",
                 str(wheelhouse),
-                *(
-                    f"{distribution}=={version}"
-                    for distribution, version in sorted(expected_distributions.items())
-                ),
+                *(str(wheel) for wheel in built_wheels),
             ],
             check=True,
             cwd=ROOT,
+            env=install_environment,
         )
         subprocess.run(
             [str(isolated_python), "-m", "pip", "check"],
             check=True,
             cwd=ROOT,
+            env=install_environment,
+        )
+        subprocess.run(
+            [
+                str(isolated_python),
+                "-c",
+                (
+                    "import importlib; "
+                    "from graphblocks.packages import load_package_catalog; "
+                    "import graphblocks, graphblocks_runtime, graphblocks_testing; "
+                    "importlib.import_module('graphblocks_runtime._native'); "
+                    "catalog = load_package_catalog(); "
+                    "[importlib.import_module(item['import']) for item in catalog['components'] if item.get('import')]"
+                ),
+            ],
+            check=True,
+            cwd=ROOT,
+            env=install_environment,
         )
         installed_schema_manifest = subprocess.run(
             [str(isolated_python), "-m", "graphblocks", "schemas", "manifest"],
@@ -120,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             check=True,
             cwd=ROOT,
             capture_output=True,
+            env=install_environment,
             text=True,
         )
         installed_distributions = {
@@ -132,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if installed_first_party != expected_distributions:
             raise RuntimeError(
-                "offline wheelhouse installation did not install every first-party distribution: "
+                "offline wheelhouse installation did not install all three first-party distributions: "
                 f"expected {expected_distributions!r}, observed {installed_first_party!r}"
             )
 

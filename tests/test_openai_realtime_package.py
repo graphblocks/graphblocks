@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_openai_realtime(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openai-realtime" / "src"))
-    return importlib.import_module("graphblocks_openai_realtime")
+    return importlib.import_module("graphblocks.integrations.openai_realtime")
 
 
 def test_openai_realtime_session_config_projects_provider_payload(monkeypatch) -> None:
@@ -169,7 +163,9 @@ def test_openai_realtime_package_is_cataloged_as_optional_voice_provider_adapter
 
     assert rows["graphblocks-openai-realtime"] == {
         "distribution": "graphblocks-openai-realtime",
-        "import": "graphblocks_openai_realtime",
+        "artifact": "graphblocks",
+        "component": "graphblocks-openai-realtime",
+        "import": "graphblocks.integrations.openai_realtime",
         "default": False,
         "layer": "voice_provider_adapter",
         "kind": "pure_python",

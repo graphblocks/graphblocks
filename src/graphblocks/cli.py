@@ -292,7 +292,11 @@ def main(argv: list[str] | None = None) -> int:
     lock_parser.add_argument("--output", type=Path, help="write lock JSON to this path instead of stdout")
     lock_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     lock_parser.add_argument("--package", action="append", default=[], help="additional package distribution to lock")
-    lock_parser.add_argument("--no-default", action="store_true", help="do not include the default metapackage closure")
+    lock_parser.add_argument(
+        "--no-default",
+        action="store_true",
+        help="do not include the default component and artifact selection",
+    )
 
     args = parser.parse_args(argv)
     if args.version:
@@ -662,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
             },
             "packageCatalogVersion": package_lock.catalog_version,
             "packageLockHash": package_lock.content_digest(),
+            "artifacts": list(package_lock.artifacts),
             "runtime": {
                 "protocol": 1,
                 "distribution": "graphblocks-runtime",
@@ -1294,7 +1299,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         if args.deploy_command == "render":
             try:
-                from graphblocks_kubernetes import (
+                from .integrations.kubernetes import (
                     KubernetesManifestSet,
                     KubernetesRenderOptions,
                     render_helm_chart,

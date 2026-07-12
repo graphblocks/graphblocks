@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_websocket_media(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-websocket-media" / "src"))
-    return importlib.import_module("graphblocks_websocket_media")
+    return importlib.import_module("graphblocks.integrations.websocket_media")
 
 
 def test_websocket_media_endpoint_builds_voice_transport(monkeypatch) -> None:
@@ -77,7 +71,9 @@ def test_websocket_media_package_is_cataloged_as_optional_voice_adapter(monkeypa
 
     assert rows["graphblocks-websocket-media"] == {
         "distribution": "graphblocks-websocket-media",
-        "import": "graphblocks_websocket_media",
+        "artifact": "graphblocks",
+        "component": "graphblocks-websocket-media",
+        "import": "graphblocks.integrations.websocket_media",
         "default": False,
         "layer": "voice_transport_adapter",
         "kind": "pure_python",

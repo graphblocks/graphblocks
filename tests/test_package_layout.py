@@ -5,7 +5,6 @@ from pathlib import Path
 import tomllib
 
 import pytest
-import yaml
 
 from graphblocks.packages import (
     PackageLock,
@@ -13,9 +12,9 @@ from graphblocks.packages import (
     PackageManifestAuditPolicy,
     WheelBuildTarget,
     WheelMatrix,
-    build_wheel_matrix,
     audit_package_manifests,
     build_package_lock,
+    build_wheel_matrix,
     doctor_package_catalog,
     load_package_catalog,
     package_rows,
@@ -23,6 +22,136 @@ from graphblocks.packages import (
 
 
 ROOT = Path(__file__).parents[1]
+
+EXPECTED_COMPONENTS = {
+    "graphblocks-agents",
+    "graphblocks-audit",
+    "graphblocks-budget",
+    "graphblocks-budget-postgres",
+    "graphblocks-callbacks",
+    "graphblocks-cli",
+    "graphblocks-client",
+    "graphblocks-conversation",
+    "graphblocks-core",
+    "graphblocks-dashboards",
+    "graphblocks-deployment",
+    "graphblocks-devtools",
+    "graphblocks-documents",
+    "graphblocks-durable",
+    "graphblocks-evaluation",
+    "graphblocks-gitops",
+    "graphblocks-haystack",
+    "graphblocks-kafka",
+    "graphblocks-kubernetes",
+    "graphblocks-langfuse",
+    "graphblocks-mcp",
+    "graphblocks-nats",
+    "graphblocks-oci",
+    "graphblocks-openai",
+    "graphblocks-openai-realtime",
+    "graphblocks-openapi",
+    "graphblocks-operator",
+    "graphblocks-orchestration",
+    "graphblocks-otel",
+    "graphblocks-pdf",
+    "graphblocks-policy",
+    "graphblocks-policy-cedar",
+    "graphblocks-policy-opa",
+    "graphblocks-prometheus",
+    "graphblocks-pubsub",
+    "graphblocks-qdrant",
+    "graphblocks-rag",
+    "graphblocks-review",
+    "graphblocks-runtime",
+    "graphblocks-scripted",
+    "graphblocks-server",
+    "graphblocks-silero-vad",
+    "graphblocks-sqs",
+    "graphblocks-stdlib",
+    "graphblocks-telemetry",
+    "graphblocks-terraform",
+    "graphblocks-testing",
+    "graphblocks-tui",
+    "graphblocks-usage",
+    "graphblocks-usage-postgres",
+    "graphblocks-voice",
+    "graphblocks-webrtc",
+    "graphblocks-websocket-media",
+    "graphblocks-worker",
+    "graphblocks-workspace",
+}
+
+INTEGRATION_COMPONENTS = {
+    "graphblocks-budget-postgres",
+    "graphblocks-gitops",
+    "graphblocks-haystack",
+    "graphblocks-kafka",
+    "graphblocks-kubernetes",
+    "graphblocks-langfuse",
+    "graphblocks-mcp",
+    "graphblocks-nats",
+    "graphblocks-oci",
+    "graphblocks-openai",
+    "graphblocks-openai-realtime",
+    "graphblocks-openapi",
+    "graphblocks-otel",
+    "graphblocks-pdf",
+    "graphblocks-policy-cedar",
+    "graphblocks-policy-opa",
+    "graphblocks-prometheus",
+    "graphblocks-pubsub",
+    "graphblocks-qdrant",
+    "graphblocks-scripted",
+    "graphblocks-silero-vad",
+    "graphblocks-sqs",
+    "graphblocks-terraform",
+    "graphblocks-usage-postgres",
+    "graphblocks-webrtc",
+    "graphblocks-websocket-media",
+}
+
+DIRECT_IMPORTS = {
+    "graphblocks-agents": "graphblocks.agents",
+    "graphblocks-audit": "graphblocks.audit",
+    "graphblocks-budget": "graphblocks.budget",
+    "graphblocks-callbacks": "graphblocks.callbacks",
+    "graphblocks-cli": "graphblocks.cli",
+    "graphblocks-client": "graphblocks.client",
+    "graphblocks-conversation": "graphblocks.conversation",
+    "graphblocks-core": "graphblocks",
+    "graphblocks-dashboards": "graphblocks.dashboards",
+    "graphblocks-deployment": "graphblocks.deployment",
+    "graphblocks-devtools": "graphblocks.devtools",
+    "graphblocks-documents": "graphblocks.documents",
+    "graphblocks-durable": "graphblocks.durable",
+    "graphblocks-evaluation": "graphblocks.evaluation",
+    "graphblocks-orchestration": "graphblocks.orchestration",
+    "graphblocks-policy": "graphblocks.policy",
+    "graphblocks-rag": "graphblocks.rag",
+    "graphblocks-review": "graphblocks.review",
+    "graphblocks-runtime": "graphblocks_runtime",
+    "graphblocks-server": "graphblocks.server",
+    "graphblocks-stdlib": "graphblocks.stdlib",
+    "graphblocks-telemetry": "graphblocks.telemetry",
+    "graphblocks-testing": "graphblocks_testing",
+    "graphblocks-tui": "graphblocks.tui",
+    "graphblocks-usage": "graphblocks.usage",
+    "graphblocks-voice": "graphblocks.voice",
+    "graphblocks-worker": "graphblocks.worker",
+    "graphblocks-workspace": "graphblocks.workspace",
+}
+
+DEFAULT_COMPONENTS = {
+    "graphblocks-budget",
+    "graphblocks-cli",
+    "graphblocks-conversation",
+    "graphblocks-core",
+    "graphblocks-documents",
+    "graphblocks-policy",
+    "graphblocks-rag",
+    "graphblocks-stdlib",
+    "graphblocks-usage",
+}
 
 
 def test_wheelhouse_gate_rejects_stale_artifacts_before_build(tmp_path, monkeypatch) -> None:
@@ -35,7 +164,7 @@ def test_wheelhouse_gate_rejects_stale_artifacts_before_build(tmp_path, monkeypa
     spec.loader.exec_module(module)
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
-    (wheelhouse / "graphblocks_core-9.9.9-py3-none-any.whl").write_bytes(b"stale")
+    (wheelhouse / "graphblocks-9.9.9-py3-none-any.whl").write_bytes(b"stale")
     monkeypatch.setattr(
         module.subprocess,
         "run",
@@ -48,121 +177,102 @@ def test_wheelhouse_gate_rejects_stale_artifacts_before_build(tmp_path, monkeypa
         module.main(["--wheelhouse", str(wheelhouse)])
 
 
-def test_graphblocks_python_crate_is_workspace_member() -> None:
-    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-
-    assert "crates/graphblocks-python" in workspace["workspace"]["members"]
-
-    crate = tomllib.loads(
-        (ROOT / "crates" / "graphblocks-python" / "Cargo.toml").read_text(encoding="utf-8")
-    )
-    assert crate["package"]["name"] == "graphblocks-python"
-    assert crate["lib"]["name"] == "graphblocks_python"
-    assert "cdylib" in crate["lib"]["crate-type"]
-    assert crate["dependencies"]["graphblocks-runtime-core"]["path"] == "../graphblocks-runtime-core"
-    assert crate["dependencies"]["graphblocks-protocol"]["path"] == "../graphblocks-protocol"
-    assert "pyo3" in crate["dependencies"]
-
-
-def test_schema_and_types_crates_are_workspace_members() -> None:
-    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-
-    assert "crates/graphblocks-schema" in workspace["workspace"]["members"]
-    assert "crates/graphblocks-types" in workspace["workspace"]["members"]
-
-    schema_crate = tomllib.loads(
-        (ROOT / "crates" / "graphblocks-schema" / "Cargo.toml").read_text(encoding="utf-8")
-    )
-    assert schema_crate["package"]["name"] == "graphblocks-schema"
-
-    types_crate = tomllib.loads(
-        (ROOT / "crates" / "graphblocks-types" / "Cargo.toml").read_text(encoding="utf-8")
-    )
-    assert types_crate["package"]["name"] == "graphblocks-types"
-    assert types_crate["dependencies"]["graphblocks-schema"]["path"] == "../graphblocks-schema"
-    assert "graphblocks-compiler" not in types_crate["dependencies"]
-
-
-def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
-    pyproject = tomllib.loads(
-        (ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml").read_text(encoding="utf-8")
-    )
-
-    assert pyproject["build-system"]["build-backend"] == "maturin"
-    assert pyproject["project"]["name"] == "graphblocks-runtime"
-    assert pyproject["tool"]["maturin"]["manifest-path"] == "../../crates/graphblocks-python/Cargo.toml"
-    assert pyproject["tool"]["maturin"]["module-name"] == "graphblocks_runtime._native"
-    assert pyproject["tool"]["maturin"]["python-source"] == "src"
-    assert pyproject["tool"]["maturin"]["features"] == ["extension-module"]
-    package_root = ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
-    assert (package_root / "__init__.py").exists()
-    assert (package_root / "py.typed").exists()
-    wrapper = (package_root / "__init__.py").read_text(encoding="utf-8")
-    assert "admit_exhaustion_work_json" in wrapper
-    assert "decide_agent_step_json" in wrapper
-    assert "evaluate_declarative_output_policy_json" in wrapper
-    assert "evaluate_output_gate_json" in wrapper
-    assert "finalize_tool_call_json" in wrapper
-    assert "validate_worker_advertisement_json" in wrapper
-    assert "validate_worker_protocol_message_json" in wrapper
-    assert "validate_remote_payload_json" in wrapper
-
-
-def test_graphblocks_core_distribution_owns_graphblocks_import_package() -> None:
+def test_graphblocks_artifact_owns_consolidated_namespace_and_cli() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert pyproject["project"]["name"] == "graphblocks-core"
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/graphblocks"]
-    assert "scripts" not in pyproject["project"]
-
-
-def test_graphblocks_metapackage_is_dependency_only() -> None:
-    package_root = ROOT / "packages" / "graphblocks"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
     assert pyproject["project"]["name"] == "graphblocks"
-    assert pyproject["project"]["dependencies"] == [
-        "graphblocks-core~=0.1",
-        "graphblocks-runtime~=0.1",
-        "graphblocks-stdlib~=0.1",
-        "graphblocks-documents~=0.1",
-        "graphblocks-rag~=0.1",
-        "graphblocks-conversation~=0.1",
-        "graphblocks-policy~=0.1",
-        "graphblocks-budget~=0.1",
-        "graphblocks-usage~=0.1",
-        "graphblocks-cli~=0.1",
+    assert pyproject["project"]["scripts"] == {"graphblocks": "graphblocks.cli:main"}
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks"
     ]
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["only-include"] == [
-        "METAPACKAGE.md"
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"] == {
+        "schemas": "graphblocks/schemas"
+    }
+    assert all(
+        not dependency.startswith("graphblocks-")
+        for dependency in pyproject["project"]["dependencies"]
+    )
+    assert pyproject["project"]["optional-dependencies"]["runtime"] == [
+        "graphblocks-runtime>=0.1,<0.2"
     ]
-    assert (package_root / "METAPACKAGE.md").exists()
-    assert not (package_root / "src" / "graphblocks").exists()
 
 
-def test_load_package_catalog_rejects_invalid_catalog_shape(tmp_path) -> None:
+def test_graphblocks_runtime_artifact_delegates_to_workspace_binding() -> None:
+    pyproject = tomllib.loads(
+        (ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert pyproject["project"]["name"] == "graphblocks-runtime"
+    assert pyproject["project"]["dependencies"] == []
+    assert pyproject["build-system"]["build-backend"] == "maturin"
+    assert pyproject["tool"]["maturin"] == {
+        "manifest-path": "../../crates/graphblocks-python/Cargo.toml",
+        "module-name": "graphblocks_runtime._native",
+        "python-source": "src",
+        "features": ["extension-module"],
+    }
+    package_root = (
+        ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
+    )
+    assert (package_root / "__init__.py").is_file()
+    assert (package_root / "py.typed").is_file()
+
+
+def test_graphblocks_testing_is_the_only_additional_pure_python_artifact() -> None:
+    pyproject = tomllib.loads(
+        (ROOT / "packages" / "graphblocks-testing" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert pyproject["project"]["name"] == "graphblocks-testing"
+    assert pyproject["project"]["dependencies"] == ["graphblocks>=0.1,<0.2"]
+    assert pyproject["project"]["scripts"] == {
+        "graphblocks-tck": "graphblocks_testing:main"
+    }
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_testing"
+    ]
+
+
+def test_load_package_catalog_rejects_invalid_artifact_and_component_shapes(
+    tmp_path,
+) -> None:
     cases = (
         ("[]\n", "package catalog must be a mapping"),
         (
-            "catalogVersion: true\nspecVersion: graphblocks.package-catalog.v1\npackages: []\n",
+            "catalogVersion: true\nspecVersion: '1.0'\nartifacts: []\ncomponents: []\n",
             "package catalog catalogVersion must be a positive integer",
         ),
         (
-            "catalogVersion: 1\nspecVersion: ' '\npackages: []\n",
+            "catalogVersion: 1\nspecVersion: ' '\nartifacts: []\ncomponents: []\n",
             "package catalog specVersion must be a non-empty string",
         ),
         (
-            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages: {}\n",
-            "package catalog packages must be a list",
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts: {}\ncomponents: []\n",
+            "package catalog artifacts must be a list",
         ),
         (
-            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages:\n  - graphblocks-core\n",
-            "package catalog packages entries must be mappings",
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts:\n- graphblocks\ncomponents: []\n",
+            "package catalog artifact entries must be mappings",
         ),
         (
-            "catalogVersion: 1\nspecVersion: graphblocks.package-catalog.v1\npackages:\n  - import: graphblocks\n",
-            "package catalog package distribution must be a non-empty string",
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts:\n- kind: pure_python\ncomponents: []\n",
+            "package catalog artifact distribution must be a non-empty string",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts: []\ncomponents: {}\n",
+            "package catalog components must be a list",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts: []\ncomponents:\n- graphblocks-core\n",
+            "package catalog component entries must be mappings",
+        ),
+        (
+            "catalogVersion: 1\nspecVersion: '1.0'\nartifacts: []\ncomponents:\n- artifact: graphblocks\n",
+            "package catalog component name must be a non-empty string",
         ),
     )
 
@@ -173,1107 +283,393 @@ def test_load_package_catalog_rejects_invalid_catalog_shape(tmp_path) -> None:
             load_package_catalog(catalog_path)
 
 
-def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
-
-    assert rows["graphblocks-mcp"] == {
-        "distribution": "graphblocks-mcp",
-        "import": "graphblocks_mcp",
-        "default": False,
-        "layer": "integration",
-        "kind": "pure_python",
-        "implementationPhase": 2,
-        "stability": "integration",
-    }
-    assert rows["graphblocks-openapi"] == {
-        "distribution": "graphblocks-openapi",
-        "import": "graphblocks_openapi",
-        "default": False,
-        "layer": "integration",
-        "kind": "pure_python",
-        "implementationPhase": 2,
-        "stability": "integration",
-    }
-
-
-def test_tool_adapter_packages_have_pure_python_layouts() -> None:
-    for distribution, import_name in (
-        ("graphblocks-mcp", "graphblocks_mcp"),
-        ("graphblocks-openapi", "graphblocks_openapi"),
-    ):
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_model_provider_adapter_packages_are_cataloged_as_optional_integrations() -> None:
+def test_catalog_declares_three_python_artifacts_and_operator_delivery_artifact() -> None:
     catalog = load_package_catalog()
-    rows = {row["distribution"]: row for row in package_rows(catalog)}
-    manifests = {manifest["distribution"]: manifest for manifest in catalog["packages"]}
-
-    assert rows["graphblocks-openai"] == {
-        "distribution": "graphblocks-openai",
-        "import": "graphblocks_openai",
-        "default": False,
-        "layer": "model_provider_adapter",
-        "kind": "pure_python",
-        "implementationPhase": "integration-defined",
-        "stability": "integration",
-    }
-    assert "OpenAI usage ledger record conversion" in manifests["graphblocks-openai"][
-        "responsibility"
-    ]
-    assert rows["graphblocks-scripted"] == {
-        "distribution": "graphblocks-scripted",
-        "import": "graphblocks_scripted",
-        "default": False,
-        "layer": "model_provider_adapter",
-        "kind": "pure_python",
-        "implementationPhase": "integration-defined",
-        "stability": "integration",
+    artifacts = {
+        artifact["distribution"]: artifact for artifact in catalog["artifacts"]
     }
 
-
-def test_model_provider_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
-    for distribution, import_name in (
-        ("graphblocks-openai", "graphblocks_openai"),
-        ("graphblocks-scripted", "graphblocks_scripted"),
-    ):
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-core~=0.1"]
-        assert not any(
-            provider in dependency.lower()
-            for dependency in dependencies
-            for provider in ("openai", "httpx", "requests", "aiohttp", "anthropic", "google")
-        )
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_stdlib_package_has_pure_python_layout() -> None:
-    package_root = ROOT / "packages" / "graphblocks-stdlib"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-stdlib"
-    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_stdlib"
-    ]
-    assert (package_root / "src" / "graphblocks_stdlib" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_stdlib" / "py.typed").exists()
-
-
-def test_documents_package_has_pure_python_layout_without_parser_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-documents"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-documents"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any("pdf" in dependency.lower() or "ocr" in dependency.lower() for dependency in dependencies)
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_documents"
-    ]
-    assert (package_root / "src" / "graphblocks_documents" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_documents" / "py.typed").exists()
-
-
-def test_document_parser_packages_are_cataloged_as_optional_integrations() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
-
-    assert rows["graphblocks-pdf"] == {
-        "distribution": "graphblocks-pdf",
-        "import": "graphblocks_pdf",
-        "default": False,
-        "layer": "document_parser_adapter",
-        "kind": "pure_python",
-        "implementationPhase": "integration-defined",
-        "stability": "integration",
+    assert catalog["catalogVersion"] == 5
+    assert "defaultMetaPackage" not in catalog
+    assert "packages" not in catalog
+    assert artifacts == {
+        "graphblocks": {
+            "distribution": "graphblocks",
+            "import": "graphblocks",
+            "kind": "pure_python",
+            "manifest": "pyproject.toml",
+            "versionConstraint": "~=0.1",
+            "dependsOn": [],
+        },
+        "graphblocks-runtime": {
+            "distribution": "graphblocks-runtime",
+            "import": "graphblocks_runtime",
+            "kind": "native_wheel",
+            "manifest": "packages/graphblocks-runtime/pyproject.toml",
+            "versionConstraint": "~=0.1",
+            "dependsOn": [],
+        },
+        "graphblocks-testing": {
+            "distribution": "graphblocks-testing",
+            "import": "graphblocks_testing",
+            "kind": "pure_python",
+            "manifest": "packages/graphblocks-testing/pyproject.toml",
+            "versionConstraint": "~=0.1",
+            "dependsOn": ["graphblocks"],
+        },
+        "graphblocks-operator": {
+            "distribution": "graphblocks-operator",
+            "import": None,
+            "kind": "oci_image_and_helm",
+            "manifest": "packages/graphblocks-operator/Chart.yaml",
+            "versionConstraint": "~=0.1",
+            "dependsOn": [],
+        },
     }
 
 
-def test_pdf_parser_package_has_lazy_optional_parser_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-pdf"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-pdf"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any("pypdf" in dependency.lower() or "pdfminer" in dependency.lower() for dependency in dependencies)
-    assert pyproject["project"]["optional-dependencies"]["pypdf"] == ["pypdf>=4.0"]
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_pdf"
-    ]
-    assert (package_root / "src" / "graphblocks_pdf" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_pdf" / "py.typed").exists()
-
-
-def test_rag_package_has_pure_python_layout_without_vector_db_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-rag"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-rag"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        vector_client in dependency.lower()
-        for dependency in dependencies
-        for vector_client in ("qdrant", "pinecone", "weaviate", "opensearch")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_rag"
-    ]
-    assert (package_root / "src" / "graphblocks_rag" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_rag" / "py.typed").exists()
-
-
-def test_vector_store_adapter_packages_are_cataloged_as_optional_integrations() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
-
-    assert rows["graphblocks-qdrant"] == {
-        "distribution": "graphblocks-qdrant",
-        "import": "graphblocks_qdrant",
-        "default": False,
-        "layer": "retrieval_adapter",
-        "kind": "pure_python",
-        "implementationPhase": "integration-defined",
-        "stability": "integration",
+def test_catalog_preserves_logical_component_metadata_and_dependency_graph() -> None:
+    catalog = load_package_catalog()
+    components = {
+        component["name"]: component for component in catalog["components"]
     }
 
-
-def test_vector_store_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-qdrant"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-qdrant"
-    assert dependencies == ["graphblocks-rag~=0.1"]
-    assert not any(
-        vector_client in dependency.lower()
-        for dependency in dependencies
-        for vector_client in ("qdrant", "requests", "httpx", "grpc")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_qdrant"
-    ]
-    assert (package_root / "src" / "graphblocks_qdrant" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_qdrant" / "py.typed").exists()
-
-
-def test_framework_bridge_packages_are_cataloged_as_optional_integrations() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
-
-    assert rows["graphblocks-haystack"] == {
-        "distribution": "graphblocks-haystack",
-        "import": "graphblocks_haystack",
-        "default": False,
-        "layer": "framework_bridge",
-        "kind": "pure_python",
-        "implementationPhase": "integration-defined",
-        "stability": "integration",
+    assert set(components) == EXPECTED_COMPONENTS
+    required_fields = {
+        "name",
+        "artifact",
+        "import",
+        "layer",
+        "default",
+        "kind",
+        "dependsOn",
+        "responsibility",
+        "implementationPhase",
+        "stability",
     }
+    for name, component in components.items():
+        assert required_fields <= component.keys(), name
+        assert all(dependency in components for dependency in component["dependsOn"]), name
 
-
-def test_framework_bridge_packages_have_pure_python_layouts_without_framework_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-haystack"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-haystack"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        framework in dependency.lower()
-        for dependency in dependencies
-        for framework in ("haystack", "farm-haystack", "deepset")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_haystack"
+    assert components["graphblocks-documents"]["forbiddenDependencies"] == [
+        "parser SDKs",
+        "OCR engines",
     ]
-    assert (package_root / "src" / "graphblocks_haystack" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_haystack" / "py.typed").exists()
-
-
-def test_conversation_package_has_pure_python_layout_without_server_or_db_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-conversation"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-conversation"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        forbidden in dependency.lower()
-        for dependency in dependencies
-        for forbidden in ("fastapi", "django", "sqlalchemy", "psycopg", "redis")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_conversation"
-    ]
-    assert (package_root / "src" / "graphblocks_conversation" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_conversation" / "py.typed").exists()
-
-
-def test_budget_package_has_pure_python_layout_without_backend_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-budget"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-budget"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        backend in dependency.lower()
-        for dependency in dependencies
-        for backend in ("sqlalchemy", "psycopg", "asyncpg", "redis")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_budget"
-    ]
-    assert (package_root / "src" / "graphblocks_budget" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_budget" / "py.typed").exists()
-
-
-def test_usage_package_has_pure_python_layout_without_backend_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-usage"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-usage"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        backend in dependency.lower()
-        for dependency in dependencies
-        for backend in ("sqlalchemy", "psycopg", "asyncpg", "redis")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_usage"
-    ]
-    assert (package_root / "src" / "graphblocks_usage" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_usage" / "py.typed").exists()
-
-
-def test_policy_package_has_pure_python_layout_without_external_pdp_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-policy"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-policy"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_policy"
-    ]
-    assert (package_root / "src" / "graphblocks_policy" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_policy" / "py.typed").exists()
-
-
-def test_cli_package_has_python_entrypoint_layout_without_native_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-cli"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-cli"
-    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=0.1"]
-    assert "maturin" not in pyproject
-    assert pyproject["project"]["scripts"] == {"graphblocks": "graphblocks_cli:main"}
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_cli"
-    ]
-    assert (package_root / "src" / "graphblocks_cli" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_cli" / "py.typed").exists()
-
-
-def test_agents_package_has_pure_python_layout_without_provider_sdk_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-agents"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-agents"
-    assert dependencies == [
-        "graphblocks-core~=0.1",
-        "graphblocks-conversation~=0.1",
-        "graphblocks-policy~=0.1",
-    ]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("openai", "anthropic", "boto3", "google")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_agents"
-    ]
-    assert (package_root / "src" / "graphblocks_agents" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_agents" / "py.typed").exists()
-
-
-def test_evaluation_package_has_pure_python_layout_without_model_provider_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-evaluation"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-evaluation"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("openai", "anthropic", "boto3", "google")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_evaluation"
-    ]
-    assert (package_root / "src" / "graphblocks_evaluation" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_evaluation" / "py.typed").exists()
-
-
-def test_testing_package_has_pure_python_layout_without_provider_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-testing"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-testing"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("openai", "anthropic", "boto3", "google")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_testing"
-    ]
-    assert pyproject["project"]["scripts"] == {"graphblocks-tck": "graphblocks_testing:main"}
-    assert (package_root / "src" / "graphblocks_testing" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_testing" / "py.typed").exists()
-
-
-def test_testing_package_production_acceptance_extra_installs_callback_verifier() -> None:
-    package_root = ROOT / "packages" / "graphblocks-testing"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-
-    assert pyproject["project"]["optional-dependencies"]["production"] == [
-        "graphblocks-audit~=0.1",
-        "graphblocks-callbacks~=0.1",
-        "graphblocks-langfuse~=0.1",
-        "graphblocks-otel~=0.1",
-        "graphblocks-telemetry~=0.1",
-        "graphblocks-voice~=0.1",
-    ]
-
-
-def test_devtools_package_has_pure_python_layout_without_graph_or_template_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-devtools"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-devtools"
-    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-cli~=0.1"]
-    assert not any(
-        dependency_name in dependency.lower()
-        for dependency in dependencies
-        for dependency_name in ("graphviz", "jinja", "networkx", "pydot")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_devtools"
-    ]
-    assert (package_root / "src" / "graphblocks_devtools" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_devtools" / "py.typed").exists()
-
-
-def test_client_package_has_pure_python_layout_without_server_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-client"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-client"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        framework in dependency.lower()
-        for dependency in dependencies
-        for framework in ("fastapi", "starlette", "django", "flask", "aiohttp")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_client"
-    ]
-    assert (package_root / "src" / "graphblocks_client" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_client" / "py.typed").exists()
-
-
-def test_tui_package_has_pure_python_layout_without_ui_framework_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-tui"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-tui"
-    assert dependencies == ["graphblocks-client~=0.1"]
-    assert not any(
-        framework in dependency.lower()
-        for dependency in dependencies
-        for framework in ("textual", "rich", "urwid", "prompt-toolkit")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_tui"
-    ]
-    assert (package_root / "src" / "graphblocks_tui" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_tui" / "py.typed").exists()
-
-
-def test_audit_package_has_pure_python_layout_without_backend_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-audit"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-audit"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        backend in dependency.lower()
-        for dependency in dependencies
-        for backend in ("sqlalchemy", "psycopg", "asyncpg", "redis", "kafka")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_audit"
-    ]
-    assert (package_root / "src" / "graphblocks_audit" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_audit" / "py.typed").exists()
-
-
-def test_deployment_package_has_pure_python_layout_without_platform_sdk_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-deployment"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-deployment"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        platform in dependency.lower()
-        for dependency in dependencies
-        for platform in ("kubernetes", "terraform", "boto3", "google-cloud", "azure")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_deployment"
-    ]
-    assert (package_root / "src" / "graphblocks_deployment" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_deployment" / "py.typed").exists()
-
-
-def test_kubernetes_package_has_pure_python_layout_without_client_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-kubernetes"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-kubernetes"
-    assert dependencies == ["graphblocks-deployment~=0.1"]
-    assert not any(
-        client in dependency.lower()
-        for dependency in dependencies
-        for client in ("kubernetes", "openshift", "helm", "pyhelm", "kr8s")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_kubernetes"
-    ]
-    assert (package_root / "src" / "graphblocks_kubernetes" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_kubernetes" / "py.typed").exists()
-
-
-def test_terraform_package_has_pure_python_layout_without_cli_or_hcl_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-terraform"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-terraform"
-    assert dependencies == ["graphblocks-deployment~=0.1"]
-    assert not any(
-        tool in dependency.lower()
-        for dependency in dependencies
-        for tool in ("terraform", "hcl", "pulumi", "boto3", "google-cloud", "azure")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_terraform"
-    ]
-    assert (package_root / "src" / "graphblocks_terraform" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_terraform" / "py.typed").exists()
-
-
-def test_oci_package_has_pure_python_layout_without_registry_client_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-oci"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-oci"
-    assert dependencies == ["graphblocks-deployment~=0.1"]
-    assert not any(
-        client in dependency.lower()
-        for dependency in dependencies
-        for client in ("oras", "docker", "skopeo", "cosign", "cryptography")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_oci"
-    ]
-    assert (package_root / "src" / "graphblocks_oci" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_oci" / "py.typed").exists()
-
-
-def test_gitops_package_has_pure_python_layout_without_controller_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-gitops"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-gitops"
-    assert dependencies == ["graphblocks-deployment~=0.1"]
-    assert not any(
-        client in dependency.lower()
-        for dependency in dependencies
-        for client in ("kubernetes", "argocd", "flux", "gitpython", "dulwich")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_gitops"
-    ]
-    assert (package_root / "src" / "graphblocks_gitops" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_gitops" / "py.typed").exists()
-
-
-def test_worker_package_has_pure_python_layout_without_server_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-worker"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-worker"
-    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-runtime~=0.1"]
-    assert not any(
-        framework in dependency.lower()
-        for dependency in dependencies
-        for framework in ("fastapi", "starlette", "django", "flask", "aiohttp")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_worker"
-    ]
-    assert (package_root / "src" / "graphblocks_worker" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_worker" / "py.typed").exists()
-
-
-def test_server_package_has_pure_python_layout_without_web_framework_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-server"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-server"
-    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-runtime~=0.1"]
-    assert not any(
-        framework in dependency.lower()
-        for dependency in dependencies
-        for framework in ("fastapi", "starlette", "django", "flask", "aiohttp", "uvicorn")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_server"
-    ]
-    assert (package_root / "src" / "graphblocks_server" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_server" / "py.typed").exists()
-
-
-def test_callbacks_package_is_cataloged_as_optional_protocol_projection() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
-    manifests = {manifest["distribution"]: manifest for manifest in load_package_catalog()["packages"]}
-
-    assert rows["graphblocks-callbacks"] == {
-        "distribution": "graphblocks-callbacks",
-        "import": "graphblocks_callbacks",
-        "default": False,
-        "layer": "callback_projection",
-        "kind": "pure_python",
-        "implementationPhase": 4,
-        "stability": "foundation-extension",
-    }
-    assert manifests["graphblocks-callbacks"]["dependsOn"] == ["graphblocks-core"]
-    assert "webhook delivery envelope projection" in manifests["graphblocks-callbacks"]["responsibility"]
-
-
-def test_callbacks_package_has_pure_python_layout_without_http_client_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-callbacks"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-callbacks"
-    assert dependencies == ["graphblocks-core~=0.1"]
-    assert not any(
-        client in dependency.lower()
-        for dependency in dependencies
-        for client in ("httpx", "requests", "aiohttp", "urllib3", "websockets", "fastapi", "starlette")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_callbacks"
-    ]
-    assert (package_root / "src" / "graphblocks_callbacks" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_callbacks" / "py.typed").exists()
-
-
-def test_workspace_package_has_pure_python_layout_without_vcs_or_process_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-workspace"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-workspace"
-    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-policy~=0.1"]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("gitpython", "dulwich", "subprocess", "pytest")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_workspace"
-    ]
-    assert (package_root / "src" / "graphblocks_workspace" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_workspace" / "py.typed").exists()
-
-
-def test_review_package_has_pure_python_layout_without_identity_provider_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-review"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-review"
-    assert dependencies == ["graphblocks-core~=0.1", "graphblocks-policy~=0.1"]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("auth0", "okta", "ldap", "saml", "oauth")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_review"
-    ]
-    assert (package_root / "src" / "graphblocks_review" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_review" / "py.typed").exists()
-
-
-def test_orchestration_package_has_pure_python_layout_without_provider_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-orchestration"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-orchestration"
-    assert dependencies == [
-        "graphblocks-core~=0.1",
-        "graphblocks-policy~=0.1",
-        "graphblocks-budget~=0.1",
-    ]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("openai", "anthropic", "boto3", "google", "kubernetes")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_orchestration"
-    ]
-    assert (package_root / "src" / "graphblocks_orchestration" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_orchestration" / "py.typed").exists()
-
-
-def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
-    for distribution, import_name in (
-        ("graphblocks-policy-opa", "graphblocks_policy_opa"),
-        ("graphblocks-policy-cedar", "graphblocks_policy_cedar"),
-    ):
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-policy~=0.1"]
-        assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_observability_projection_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
-    cases = (
-        ("graphblocks-telemetry", "graphblocks_telemetry", ["graphblocks-core~=0.1"]),
-        ("graphblocks-otel", "graphblocks_otel", ["graphblocks-telemetry~=0.1"]),
-        ("graphblocks-langfuse", "graphblocks_langfuse", ["graphblocks-telemetry~=0.1"]),
-    )
-    for distribution, import_name, expected_dependencies in cases:
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == expected_dependencies
-        assert not any(
-            "opentelemetry" in dependency.lower() or "langfuse" in dependency.lower()
-            for dependency in dependencies
-        )
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_observability_package_catalog_tracks_implemented_projection_surfaces() -> None:
-    manifests = {manifest["distribution"]: manifest for manifest in load_package_catalog()["packages"]}
-
-    assert manifests["graphblocks-telemetry"]["responsibility"] == [
-        "canonical observation model",
-        "output policy and tool execution telemetry records",
-        "capture/redaction",
-        "low-cardinality metric linting",
-        "diagnostic bundle projection",
-        "semantic mapping",
-    ]
-    assert manifests["graphblocks-otel"]["responsibility"] == [
-        "generation/output policy/tool execution span projections",
-        "OTLP exporter contracts",
-        "collector templates",
-    ]
-    assert manifests["graphblocks-langfuse"]["responsibility"] == [
-        "generation/output policy/tool execution event projections",
-        "prompt/evaluation/dataset adapters",
-    ]
-    assert manifests["graphblocks-prometheus"]["responsibility"] == [
-        "generation/output policy/tool execution metric projections",
-        "recording_and_alert_rules",
-        "metric cardinality lint integration",
-    ]
-    assert manifests["graphblocks-dashboards"]["responsibility"] == [
-        "generation and policy/tool dashboard templates",
-        "slo_rules",
-        "runbook_templates",
-    ]
-
-
-def test_prometheus_package_has_pure_python_layout_without_client_dependency() -> None:
-    package_root = ROOT / "packages" / "graphblocks-prometheus"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-prometheus"
-    assert dependencies == ["graphblocks-telemetry~=0.1"]
-    assert not any(
-        client in dependency.lower()
-        for dependency in dependencies
-        for client in ("prometheus-client", "prometheus-api-client", "requests")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_prometheus"
-    ]
-    assert (package_root / "src" / "graphblocks_prometheus" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_prometheus" / "py.typed").exists()
-
-
-def test_dashboards_package_has_data_package_layout_without_vendor_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-dashboards"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
-
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-dashboards"
-    assert dependencies == ["graphblocks-telemetry~=0.1"]
-    assert not any(
-        vendor in dependency.lower()
-        for dependency in dependencies
-        for vendor in ("grafana", "datadog", "newrelic", "requests")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_dashboards"
-    ]
-    assert (package_root / "src" / "graphblocks_dashboards" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_dashboards" / "py.typed").exists()
-
-
-def test_postgres_adapter_packages_have_sql_contract_layouts_without_db_driver_dependencies() -> None:
-    cases = (
-        ("graphblocks-budget-postgres", "graphblocks_budget_postgres", ["graphblocks-budget~=0.1"]),
-        ("graphblocks-usage-postgres", "graphblocks_usage_postgres", ["graphblocks-usage~=0.1"]),
-    )
-    for distribution, import_name, expected_dependencies in cases:
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == expected_dependencies
-        assert not any(
-            driver in dependency.lower()
-            for dependency in dependencies
-            for driver in ("psycopg", "asyncpg", "sqlalchemy", "postgres")
-        )
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_durable_stream_adapter_packages_have_layouts_without_client_dependencies() -> None:
-    cases = (
-        ("graphblocks-kafka", "graphblocks_kafka", ("confluent-kafka", "kafka-python", "aiokafka")),
-        ("graphblocks-nats", "graphblocks_nats", ("nats-py", "pynats", "asyncio-nats")),
-        ("graphblocks-sqs", "graphblocks_sqs", ("boto3", "botocore", "aiobotocore", "aioboto3")),
-        ("graphblocks-pubsub", "graphblocks_pubsub", ("google-cloud-pubsub", "google-api-core", "grpcio")),
-    )
-    for distribution, import_name, forbidden_clients in cases:
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-durable~=0.1"]
-        assert not any(
-            client in dependency.lower()
-            for dependency in dependencies
-            for client in (*forbidden_clients, "requests", "httpx")
-        )
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_voice_adapter_packages_have_layouts_without_media_sdk_dependencies() -> None:
-    cases = (
-        ("graphblocks-webrtc", "graphblocks_webrtc", ("aiortc", "webrtcvad", "av", "pylibsrtp")),
-        ("graphblocks-websocket-media", "graphblocks_websocket_media", ("websockets", "aiohttp", "wsproto")),
-        ("graphblocks-openai-realtime", "graphblocks_openai_realtime", ("openai", "websockets", "aiortc")),
-        ("graphblocks-silero-vad", "graphblocks_silero_vad", ("torch", "onnxruntime", "torchaudio", "silero")),
-    )
-    for distribution, import_name, forbidden_clients in cases:
-        package_root = ROOT / "packages" / distribution
-        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-        dependencies = pyproject["project"]["dependencies"]
-
-        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-        assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-voice~=0.1"]
-        assert not any(
-            client in dependency.lower()
-            for dependency in dependencies
-            for client in (*forbidden_clients, "requests", "httpx", "websockets")
-        )
-        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-            f"src/{import_name}"
-        ]
-        assert (package_root / "src" / import_name / "__init__.py").exists()
-        assert (package_root / "src" / import_name / "py.typed").exists()
-
-
-def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
-    lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
-
-    assert lock.catalog_version == 4
-    assert lock.spec_version == "1.0"
-    assert lock.requested == ("graphblocks",)
-    assert [entry.distribution for entry in lock.entries] == [
-        "graphblocks",
-        "graphblocks-budget",
-        "graphblocks-cli",
-        "graphblocks-conversation",
+    assert components["graphblocks-agents"]["dependsOn"] == [
         "graphblocks-core",
-        "graphblocks-documents",
+        "graphblocks-conversation",
         "graphblocks-policy",
-        "graphblocks-rag",
-        "graphblocks-runtime",
-        "graphblocks-stdlib",
-        "graphblocks-usage",
     ]
-    assert "graphblocks-mcp" not in {entry.distribution for entry in lock.entries}
-    assert "model_provider" in lock.excluded_categories
-    assert lock.entry("graphblocks-core").version_constraint == "~=0.1"
-    assert lock.entry("graphblocks-openapi") is None
+    assert components["graphblocks-operator"]["kind"] == "oci_image_and_helm"
 
 
-def test_package_lock_includes_requested_extension_and_transitive_dependencies() -> None:
-    lock = build_package_lock(load_package_catalog(), requested=("graphblocks-agents",), include_default=False)
+def test_components_map_to_artifacts_and_consolidated_imports() -> None:
+    components = {
+        component["name"]: component for component in load_package_catalog()["components"]
+    }
 
-    assert [entry.distribution for entry in lock.entries] == [
+    for name, component in components.items():
+        if name == "graphblocks-runtime":
+            assert component["artifact"] == "graphblocks-runtime"
+        elif name == "graphblocks-testing":
+            assert component["artifact"] == "graphblocks-testing"
+        elif name == "graphblocks-operator":
+            assert component["artifact"] == "graphblocks-operator"
+            assert component["import"] is None
+        else:
+            assert component["artifact"] == "graphblocks"
+
+        if name in INTEGRATION_COMPONENTS:
+            suffix = name.removeprefix("graphblocks-").replace("-", "_")
+            assert component["import"] == f"graphblocks.integrations.{suffix}"
+        elif name in DIRECT_IMPORTS:
+            assert component["import"] == DIRECT_IMPORTS[name]
+
+    assert set(components) == INTEGRATION_COMPONENTS | set(DIRECT_IMPORTS) | {
+        "graphblocks-operator"
+    }
+
+
+def test_component_import_mappings_resolve_to_owned_artifact_sources() -> None:
+    for component in load_package_catalog()["components"]:
+        import_package = component["import"]
+        if import_package is None or import_package in {"graphblocks", "graphblocks_testing"}:
+            continue
+        if import_package == "graphblocks_runtime":
+            import_path = ROOT / "packages" / "graphblocks-runtime" / "src" / import_package
+        else:
+            import_path = ROOT / "src" / Path(*import_package.split("."))
+        assert import_path.with_suffix(".py").is_file() or (
+            import_path / "__init__.py"
+        ).is_file(), component["name"]
+
+
+def test_default_selection_and_release_conformance_reference_components() -> None:
+    catalog = load_package_catalog()
+    components = {
+        component["name"]: component for component in catalog["components"]
+    }
+    selection = catalog["defaultSelection"]
+
+    assert selection["artifacts"] == ["graphblocks"]
+    assert set(selection["components"]) == DEFAULT_COMPONENTS
+    assert {
+        name for name, component in components.items() if component["default"]
+    } == DEFAULT_COMPONENTS
+    assert "model_provider" in selection["excludedCategories"]
+    assert "voice" in selection["excludedCategories"]
+
+    for train in catalog["releaseTrains"].values():
+        assert all(
+            component in components for component in train.get("components", [])
+        )
+        assert all(
+            isinstance(check, str) and check
+            for check in train.get("compatibilityBy", [])
+        )
+    for extension_group in catalog["extensionComponents"].values():
+        assert all(component in components for component in extension_group)
+
+
+def test_package_rows_project_component_and_artifact_identities() -> None:
+    rows = {
+        row["component"]: row for row in package_rows(load_package_catalog())
+    }
+
+    assert len(rows) == len(EXPECTED_COMPONENTS)
+    assert rows["graphblocks-kafka"] == {
+        "component": "graphblocks-kafka",
+        "artifact": "graphblocks",
+        "distribution": "graphblocks-kafka",
+        "import": "graphblocks.integrations.kafka",
+        "default": False,
+        "layer": "durable_stream_adapter",
+        "kind": "pure_python",
+        "implementationPhase": "integration-defined",
+        "stability": "integration",
+    }
+    assert rows["graphblocks-operator"]["artifact"] == "graphblocks-operator"
+    assert rows["graphblocks-operator"]["import"] is None
+
+
+def test_package_lock_resolves_default_component_and_artifact_selection() -> None:
+    lock = build_package_lock(load_package_catalog())
+    entries = {entry.distribution: entry for entry in lock.entries}
+
+    assert set(entries) == DEFAULT_COMPONENTS
+    assert lock.artifacts == ("graphblocks",)
+    assert entries["graphblocks-core"].artifact == "graphblocks"
+    assert entries["graphblocks-core"].import_package == "graphblocks"
+    assert all(entry.version_constraint == "~=0.1" for entry in lock.entries)
+    assert not (
+        {
+            "graphblocks-openai",
+            "graphblocks-pdf",
+            "graphblocks-server",
+            "graphblocks-voice",
+        }
+        & set(entries)
+    )
+
+
+def test_package_lock_selects_component_closure_and_required_artifacts() -> None:
+    agents_lock = build_package_lock(
+        load_package_catalog(),
+        requested=("graphblocks-agents",),
+        include_default=False,
+    )
+    testing_lock = build_package_lock(
+        load_package_catalog(),
+        requested=("graphblocks-testing",),
+        include_default=False,
+    )
+
+    assert {entry.distribution for entry in agents_lock.entries} == {
         "graphblocks-agents",
         "graphblocks-conversation",
         "graphblocks-core",
         "graphblocks-policy",
-    ]
-    assert lock.entry("graphblocks-agents").default is False
-    assert lock.entry("graphblocks-core").dependencies == ()
-    assert lock.entry("graphblocks-conversation").dependencies == ("graphblocks-core",)
+    }
+    assert agents_lock.artifacts == ("graphblocks",)
+    assert {entry.distribution for entry in testing_lock.entries} == {
+        "graphblocks-core",
+        "graphblocks-testing",
+    }
+    assert set(testing_lock.artifacts) == {"graphblocks", "graphblocks-testing"}
+
+
+def test_package_lock_can_select_an_artifact_without_activating_all_components() -> None:
+    lock = build_package_lock(
+        load_package_catalog(),
+        requested=("graphblocks",),
+        include_default=False,
+    )
+
+    assert lock.artifacts == ("graphblocks",)
+    assert lock.entries == ()
 
 
 def test_package_lock_payload_and_digest_are_canonical() -> None:
     catalog = load_package_catalog()
     left = build_package_lock(
         catalog,
-        requested=("graphblocks-openapi", "graphblocks-mcp"),
+        requested=("graphblocks-mcp", "graphblocks-openapi"),
         include_default=False,
     )
     right = build_package_lock(
         catalog,
-        requested=("graphblocks-mcp", "graphblocks-openapi"),
+        requested=("graphblocks-openapi", "graphblocks-mcp"),
         include_default=False,
     )
 
-    assert left.lock_payload()["packages"] == [
-        {
-            "default": True,
-            "dependencies": [],
-            "distribution": "graphblocks-core",
-            "forbiddenDependencies": [],
-            "import": "graphblocks",
-            "kind": "pure_python",
-            "layer": "schema_authoring",
-            "stability": "foundation",
-            "versionConstraint": "~=0.1",
-        },
-        {
-            "default": False,
-            "dependencies": ["graphblocks-core"],
-            "distribution": "graphblocks-mcp",
-            "forbiddenDependencies": [],
-            "import": "graphblocks_mcp",
-            "kind": "pure_python",
-            "layer": "integration",
-            "stability": "integration",
-            "versionConstraint": None,
-        },
-        {
-            "default": False,
-            "dependencies": ["graphblocks-core"],
-            "distribution": "graphblocks-openapi",
-            "forbiddenDependencies": [],
-            "import": "graphblocks_openapi",
-            "kind": "pure_python",
-            "layer": "integration",
-            "stability": "integration",
-            "versionConstraint": None,
-        },
+    assert left.lock_payload()["artifacts"] == ["graphblocks"]
+    assert [entry["component"] for entry in left.lock_payload()["components"]] == [
+        "graphblocks-core",
+        "graphblocks-mcp",
+        "graphblocks-openapi",
     ]
-    assert left.lock_payload()["requested"] == ["graphblocks-mcp", "graphblocks-openapi"]
+    assert left.lock_payload()["components"][1] == {
+        "artifact": "graphblocks",
+        "component": "graphblocks-mcp",
+        "default": False,
+        "dependencies": ["graphblocks-core"],
+        "forbiddenDependencies": [],
+        "import": "graphblocks.integrations.mcp",
+        "kind": "pure_python",
+        "layer": "integration",
+        "stability": "integration",
+        "versionConstraint": "~=0.1",
+    }
+    assert left.lock_payload()["requested"] == [
+        "graphblocks-mcp",
+        "graphblocks-openapi",
+    ]
     assert left.content_digest().startswith("sha256:")
     assert left.content_digest() == right.content_digest()
 
 
-def test_package_lock_rejects_selected_forbidden_transitive_dependency() -> None:
+def test_package_lock_rejects_unknown_selection_and_component_artifact() -> None:
     catalog = {
         "catalogVersion": 1,
         "specVersion": "1.0",
-        "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
-        "packages": [
-            {"distribution": "graphblocks", "default": True, "dependsOn": []},
+        "defaultSelection": {
+            "artifacts": [],
+            "components": [],
+            "excludedCategories": [],
+        },
+        "artifacts": [
             {
-                "distribution": "graphblocks-documents",
+                "distribution": "graphblocks",
+                "kind": "pure_python",
+                "manifest": "pyproject.toml",
+                "dependsOn": [],
+            }
+        ],
+        "components": [
+            {
+                "name": "graphblocks-core",
+                "artifact": "missing-artifact",
+                "default": False,
+                "dependsOn": [],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="unknown package selection"):
+        build_package_lock(catalog, requested=("missing-component",), include_default=False)
+    with pytest.raises(ValueError, match="maps to unknown artifact"):
+        build_package_lock(
+            catalog,
+            requested=("graphblocks-core",),
+            include_default=False,
+        )
+
+    artifact_cycle_catalog = {
+        **catalog,
+        "artifacts": [
+            {"distribution": "graphblocks", "dependsOn": ["graphblocks-runtime"]},
+            {"distribution": "graphblocks-runtime", "dependsOn": ["graphblocks"]},
+        ],
+        "components": [],
+    }
+    with pytest.raises(ValueError, match="artifact dependency cycle"):
+        build_package_lock(
+            artifact_cycle_catalog,
+            requested=("graphblocks",),
+            include_default=False,
+        )
+
+
+def test_package_lock_rejects_forbidden_and_excluded_component_closures() -> None:
+    forbidden_catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": [],
+            "components": [],
+            "excludedCategories": [],
+        },
+        "artifacts": [
+            {"distribution": "graphblocks", "dependsOn": []},
+        ],
+        "components": [
+            {
+                "name": "graphblocks-documents",
+                "artifact": "graphblocks",
                 "default": False,
                 "dependsOn": ["graphblocks-pdf"],
                 "forbiddenDependencies": ["pypdf"],
             },
-            {"distribution": "graphblocks-pdf", "default": False, "dependsOn": ["pypdf"]},
-            {"distribution": "pypdf", "default": False, "dependsOn": []},
+            {
+                "name": "graphblocks-pdf",
+                "artifact": "graphblocks",
+                "default": False,
+                "dependsOn": ["pypdf"],
+            },
+            {
+                "name": "pypdf",
+                "artifact": "graphblocks",
+                "default": False,
+                "dependsOn": [],
+            },
         ],
     }
-
-    with pytest.raises(ValueError, match="forbidden package dependency"):
-        build_package_lock(catalog, requested=("graphblocks-documents",), include_default=False)
-
-
-def test_package_lock_rejects_default_closure_excluded_categories() -> None:
-    catalog = {
+    excluded_catalog = {
         "catalogVersion": 1,
         "specVersion": "1.0",
-        "defaultMetaPackage": {
-            "distribution": "graphblocks",
-            "dependencies": [],
+        "defaultSelection": {
+            "artifacts": ["graphblocks"],
+            "components": ["graphblocks-openai"],
             "excludedCategories": ["model_provider"],
         },
-        "packages": [
-            {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-openai"]},
+        "artifacts": [
+            {"distribution": "graphblocks", "dependsOn": []},
+        ],
+        "components": [
             {
-                "distribution": "graphblocks-openai",
-                "default": False,
+                "name": "graphblocks-openai",
+                "artifact": "graphblocks",
+                "default": True,
                 "dependsOn": [],
                 "categories": ["model_provider"],
             },
         ],
     }
 
-    with pytest.raises(ValueError, match="excluded category"):
-        build_package_lock(catalog, requested=(), include_default=True)
-
-
-def test_package_catalog_doctor_reports_default_closure_excluded_categories() -> None:
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {
-                "distribution": "graphblocks",
-                "dependencies": [],
-                "excludedCategories": ["model_provider"],
-            },
-            "packages": [
-                {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-openai"]},
-                {
-                    "distribution": "graphblocks-openai",
-                    "default": False,
-                    "dependsOn": [],
-                    "categories": ["model_provider"],
-                },
-            ],
-        }
-    )
-
-    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
-        (
-            "PackageDefaultIncludesExcludedCategory",
-            "default package closure includes excluded category 'model_provider' from package 'graphblocks-openai'",
+    with pytest.raises(ValueError, match="forbidden package dependency"):
+        build_package_lock(
+            forbidden_catalog,
+            requested=("graphblocks-documents",),
+            include_default=False,
         )
-    ]
+    with pytest.raises(ValueError, match="excluded category"):
+        build_package_lock(excluded_catalog)
 
 
-def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
+def test_package_lock_records_validate_component_artifact_and_uniqueness() -> None:
     entry = PackageLockEntry(
         distribution="graphblocks-core",
+        artifact="graphblocks",
         version_constraint="~=0.1",
         import_package="graphblocks",
         default=True,
@@ -1286,99 +682,445 @@ def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
 
     assert entry.dependencies == ("graphblocks-schema",)
     assert entry.forbidden_dependencies == ("requests",)
+    assert entry.component == "graphblocks-core"
     with pytest.raises(ValueError, match="package lock entry distribution must not be empty"):
-        PackageLockEntry(" ", None, None, True, None, None, None)
+        PackageLockEntry(" ", "graphblocks", None, None, True, None, None, None)
+    with pytest.raises(ValueError, match="package lock entry artifact must not be empty"):
+        PackageLockEntry("graphblocks-core", " ", None, None, True, None, None, None)
     with pytest.raises(ValueError, match="package lock entry default must be a boolean"):
-        PackageLockEntry("graphblocks-core", None, None, "yes", None, None, None)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="package lock entry dependencies item must not be empty"):
-        PackageLockEntry("graphblocks-core", None, None, True, None, None, None, dependencies=(" ",))
+        PackageLockEntry(  # type: ignore[arg-type]
+            "graphblocks-core",
+            "graphblocks",
+            None,
+            None,
+            "yes",
+            None,
+            None,
+            None,
+        )
 
-    lock = PackageLock(1, "1.0", requested=["graphblocks-core"], entries=[entry])  # type: ignore[arg-type]
+    lock = PackageLock(
+        1,
+        "1.0",
+        requested=["graphblocks-core"],  # type: ignore[arg-type]
+        entries=[entry],  # type: ignore[arg-type]
+        artifacts=["graphblocks"],  # type: ignore[arg-type]
+    )
 
     assert lock.requested == ("graphblocks-core",)
     assert lock.entries == (entry,)
+    assert lock.artifacts == ("graphblocks",)
     with pytest.raises(ValueError, match="package lock catalog_version must be positive"):
-        PackageLock(0, "1.0", requested=("graphblocks-core",), entries=(entry,))
+        PackageLock(
+            0,
+            "1.0",
+            requested=("graphblocks-core",),
+            entries=(entry,),
+        )
     with pytest.raises(ValueError, match="package lock entries must have unique distributions"):
-        PackageLock(1, "1.0", requested=("graphblocks-core",), entries=(entry, entry))
-    with pytest.raises(ValueError, match="package lock entries must be PackageLockEntry"):
-        PackageLock(1, "1.0", requested=("graphblocks-core",), entries=(object(),))  # type: ignore[arg-type]
+        PackageLock(
+            1,
+            "1.0",
+            requested=("graphblocks-core",),
+            entries=(entry, entry),
+        )
+    with pytest.raises(ValueError, match="package lock artifacts must be unique"):
+        PackageLock(
+            1,
+            "1.0",
+            requested=("graphblocks-core",),
+            entries=(entry,),
+            artifacts=("graphblocks", "graphblocks"),
+        )
 
 
-def test_package_catalog_doctor_accepts_builtin_catalog() -> None:
-    diagnostics = doctor_package_catalog(load_package_catalog())
+def test_package_catalog_doctor_accepts_builtin_catalog_and_artifact_manifests() -> None:
+    assert doctor_package_catalog(load_package_catalog()).diagnostics == ()
 
-    assert diagnostics.ok
-    assert diagnostics.diagnostics == ()
-
-
-def test_package_catalog_doctor_cross_checks_local_pyproject_dependencies() -> None:
     diagnostics = doctor_package_catalog(load_package_catalog(), root=ROOT)
 
     assert diagnostics.ok
     assert diagnostics.diagnostics == ()
 
 
-def test_package_wheel_matrix_covers_first_party_python_distributions() -> None:
+def test_package_catalog_doctor_reports_component_mapping_and_conformance_errors() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultSelection": {
+                "artifacts": ["missing-artifact"],
+                "components": ["missing-component"],
+                "excludedCategories": [],
+            },
+            "artifacts": [
+                {
+                    "distribution": "graphblocks",
+                    "dependsOn": ["missing-artifact"],
+                }
+            ],
+            "components": [
+                {
+                    "name": "graphblocks-core",
+                    "artifact": "missing-artifact",
+                    "import": " ",
+                    "default": True,
+                    "dependsOn": ["missing-component"],
+                }
+            ],
+            "releaseTrains": {
+                "extensions": {
+                    "components": ["missing-component"],
+                    "compatibilityBy": [""],
+                }
+            },
+            "extensionComponents": {"operations": ["missing-component"]},
+        }
+    )
+    codes = {diagnostic.code for diagnostic in diagnostics.diagnostics}
+
+    assert {
+        "PackageArtifactDependencyMissing",
+        "PackageComponentArtifactUnknown",
+        "PackageComponentImportInvalid",
+        "PackageComponentDependencyMissing",
+        "PackageDefaultArtifactMissing",
+        "PackageDefaultComponentMissing",
+        "PackageDefaultComponentMismatch",
+        "PackageReleaseTrainComponentMissing",
+        "PackageReleaseTrainConformanceInvalid",
+        "PackageExtensionComponentMissing",
+    } <= codes
+
+
+def test_package_catalog_doctor_reports_forbidden_closure_and_component_cycle() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultSelection": {
+                "artifacts": [],
+                "components": [],
+                "excludedCategories": [],
+            },
+            "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+            "components": [
+                {
+                    "name": "graphblocks-documents",
+                    "artifact": "graphblocks",
+                    "default": False,
+                    "dependsOn": ["graphblocks-pdf"],
+                    "forbiddenDependencies": ["pypdf"],
+                },
+                {
+                    "name": "graphblocks-pdf",
+                    "artifact": "graphblocks",
+                    "default": False,
+                    "dependsOn": ["pypdf"],
+                },
+                {
+                    "name": "pypdf",
+                    "artifact": "graphblocks",
+                    "default": False,
+                    "dependsOn": ["graphblocks-documents"],
+                },
+            ],
+        }
+    )
+
+    assert {item.code for item in diagnostics.diagnostics} == {
+        "PackageForbiddenDependencySelected",
+        "PackageComponentDependencyCycle",
+    }
+
+
+def test_package_catalog_doctor_reports_default_excluded_component_category() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultSelection": {
+                "artifacts": ["graphblocks"],
+                "components": ["graphblocks-openai"],
+                "excludedCategories": ["model_provider"],
+            },
+            "artifacts": [{"distribution": "graphblocks", "dependsOn": []}],
+            "components": [
+                {
+                    "name": "graphblocks-openai",
+                    "artifact": "graphblocks",
+                    "default": True,
+                    "dependsOn": [],
+                    "categories": ["model_provider"],
+                }
+            ],
+        }
+    )
+
+    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
+        (
+            "PackageDefaultIncludesExcludedCategory",
+            (
+                "default component closure includes excluded category "
+                "'model_provider' from component 'graphblocks-openai'"
+            ),
+        )
+    ]
+
+
+def test_package_catalog_doctor_reports_artifact_manifest_dependency_drift(
+    tmp_path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+name = "graphblocks"
+version = "0.1.0"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    testing_manifest = tmp_path / "testing" / "pyproject.toml"
+    testing_manifest.parent.mkdir()
+    testing_manifest.write_text(
+        """
+[project]
+name = "graphblocks-testing"
+version = "0.1.0"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": [],
+            "components": [],
+            "excludedCategories": [],
+        },
+        "artifacts": [
+            {
+                "distribution": "graphblocks",
+                "kind": "pure_python",
+                "manifest": "pyproject.toml",
+                "dependsOn": [],
+            },
+            {
+                "distribution": "graphblocks-testing",
+                "kind": "pure_python",
+                "manifest": "testing/pyproject.toml",
+                "dependsOn": ["graphblocks"],
+            },
+        ],
+        "components": [],
+    }
+
+    diagnostics = doctor_package_catalog(catalog, root=tmp_path)
+
+    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
+        (
+            "PackageManifestDependencyMissing",
+            (
+                "artifact manifest for 'graphblocks-testing' is missing "
+                "catalog dependency 'graphblocks'"
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("requirement", "expected_code"),
+    [
+        ("graphblocks>=1.0", "PackageManifestDependencyVersionUnsatisfied"),
+        ("graphblocks=>0.1", "PackageManifestDependencyRequirementInvalid"),
+    ],
+)
+def test_package_catalog_doctor_fails_closed_for_artifact_requirements(
+    tmp_path,
+    requirement,
+    expected_code,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+name = "graphblocks"
+version = "0.1.0"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    testing_manifest = tmp_path / "testing" / "pyproject.toml"
+    testing_manifest.parent.mkdir()
+    testing_manifest.write_text(
+        f"""
+[project]
+name = "graphblocks-testing"
+version = "0.1.0"
+dependencies = ["{requirement}"]
+""".strip(),
+        encoding="utf-8",
+    )
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": [],
+            "components": [],
+            "excludedCategories": [],
+        },
+        "artifacts": [
+            {
+                "distribution": "graphblocks",
+                "kind": "pure_python",
+                "manifest": "pyproject.toml",
+                "dependsOn": [],
+            },
+            {
+                "distribution": "graphblocks-testing",
+                "kind": "pure_python",
+                "manifest": "testing/pyproject.toml",
+                "dependsOn": ["graphblocks"],
+            },
+        ],
+        "components": [],
+    }
+
+    diagnostics = doctor_package_catalog(catalog, root=tmp_path)
+
+    assert [item.code for item in diagnostics.diagnostics] == [expected_code]
+
+
+def test_package_wheel_matrix_is_exactly_the_three_python_artifacts() -> None:
     matrix = build_wheel_matrix(ROOT, python_versions=("3.11", "3.12"))
     targets = {target.distribution: target for target in matrix.targets}
 
     assert matrix.ok
     assert matrix.diagnostics == ()
-    assert targets["graphblocks-core"].target_contract() == {
-        "distribution": "graphblocks-core",
+    assert set(targets) == {
+        "graphblocks",
+        "graphblocks-runtime",
+        "graphblocks-testing",
+    }
+    assert targets["graphblocks"].target_contract() == {
+        "distribution": "graphblocks",
         "manifest": "pyproject.toml",
         "backend": "hatchling.build",
         "kind": "pure_python",
         "source_layout": "src/graphblocks",
         "python_versions": ["3.11", "3.12"],
     }
-    assert targets["graphblocks-runtime"].kind == "native_extension"
-    assert targets["graphblocks-runtime"].source_layout == "src"
-    assert matrix.matrix_contract()["target_count"] == len(matrix.targets)
+    assert targets["graphblocks-runtime"].target_contract() == {
+        "distribution": "graphblocks-runtime",
+        "manifest": "packages/graphblocks-runtime/pyproject.toml",
+        "backend": "maturin",
+        "kind": "native_extension",
+        "source_layout": "src",
+        "python_versions": ["3.11", "3.12"],
+    }
+    assert targets["graphblocks-testing"].target_contract() == {
+        "distribution": "graphblocks-testing",
+        "manifest": "packages/graphblocks-testing/pyproject.toml",
+        "backend": "hatchling.build",
+        "kind": "pure_python",
+        "source_layout": "src/graphblocks_testing",
+        "python_versions": ["3.11", "3.12"],
+    }
+    assert matrix.matrix_contract()["target_count"] == 3
     assert matrix.content_digest().startswith("sha256:")
-    assert "WheelMatrix" in __import__("graphblocks").__all__
 
 
-def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
-    target = WheelBuildTarget(
-        distribution="graphblocks-core",
-        manifest="pyproject.toml",
-        backend="hatchling.build",
-        kind="pure_python",
-        source_layout="src/graphblocks",
-        python_versions=["3.11", "3.12"],  # type: ignore[arg-type]
+@pytest.mark.parametrize(
+    ("requires_python", "python_versions", "expected_versions"),
+    [
+        (">=3.11,!=3.12.*", ("3.11", "3.12"), ("3.11",)),
+        ("~=3.11.0", ("3.11", "3.12", "3.13"), ("3.11",)),
+        ("===3.11", ("3.11", "3.12"), ("3.11",)),
+    ],
+)
+def test_wheel_matrix_honors_pep440_python_constraints(
+    tmp_path,
+    requires_python: str,
+    python_versions: tuple[str, ...],
+    expected_versions: tuple[str, ...],
+) -> None:
+    manifest = tmp_path / "pyproject.toml"
+    manifest.write_text(
+        f"""
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "selected"
+version = "0.1.0"
+requires-python = "{requires_python}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/selected"]
+""".strip(),
+        encoding="utf-8",
+    )
+    matrix = build_wheel_matrix(
+        tmp_path,
+        python_versions=python_versions,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "selected",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
+                }
+            ]
+        },
     )
 
-    assert target.python_versions == ("3.11", "3.12")
-    with pytest.raises(ValueError, match="wheel build target distribution must not be empty"):
-        WheelBuildTarget(" ", "pyproject.toml", "hatchling.build", "pure_python", "src/graphblocks", ("3.11",))
-    with pytest.raises(ValueError, match="invalid wheel build target kind"):
-        WheelBuildTarget(
-            "graphblocks-core",
-            "pyproject.toml",
-            "hatchling.build",
-            "binary",  # type: ignore[arg-type]
-            "src/graphblocks",
-            ("3.11",),
-        )
-    with pytest.raises(ValueError, match="wheel build target python_versions item must not be empty"):
-        WheelBuildTarget(
-            "graphblocks-core",
-            "pyproject.toml",
-            "hatchling.build",
-            "pure_python",
-            "src/graphblocks",
-            (" ",),
-        )
+    assert not matrix.ok
+    assert [item.code for item in matrix.diagnostics] == ["WheelPythonVersionUnsupported"]
+    assert matrix.targets[0].python_versions == expected_versions
 
-    matrix = WheelMatrix(targets=[target])  # type: ignore[arg-type]
 
-    assert matrix.targets == (target,)
-    with pytest.raises(ValueError, match="wheel matrix targets must have unique distributions"):
-        WheelMatrix(targets=(target, target))
-    with pytest.raises(ValueError, match="wheel matrix diagnostics must be Diagnostic"):
-        WheelMatrix(targets=(target,), diagnostics=(object(),))  # type: ignore[arg-type]
+def test_wheel_matrix_uses_only_catalog_declared_artifacts(tmp_path) -> None:
+    selected = tmp_path / "selected" / "pyproject.toml"
+    selected.parent.mkdir()
+    selected.write_text(
+        """
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "selected"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/selected"]
+""".strip(),
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "packages" / "legacy" / "pyproject.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("[project]\nname = 'legacy'\n", encoding="utf-8")
+    catalog = {
+        "artifacts": [
+            {
+                "distribution": "selected",
+                "kind": "pure_python",
+                "manifest": "selected/pyproject.toml",
+            },
+            {
+                "distribution": "operator",
+                "kind": "oci_image_and_helm",
+                "manifest": "operator/Chart.yaml",
+            },
+        ]
+    }
+
+    matrix = build_wheel_matrix(tmp_path, catalog=catalog)
+
+    assert matrix.ok
+    assert [target.distribution for target in matrix.targets] == ["selected"]
 
 
 def test_package_wheel_matrix_reports_missing_build_target(tmp_path) -> None:
@@ -1394,12 +1136,24 @@ build-backend = "hatchling.build"
 name = "broken-wheel"
 version = "0.1.0"
 requires-python = ">=3.11"
-license = "Apache-2.0"
 """.strip(),
         encoding="utf-8",
     )
+    catalog = {
+        "artifacts": [
+            {
+                "distribution": "broken-wheel",
+                "kind": "pure_python",
+                "manifest": "packages/broken-wheel/pyproject.toml",
+            }
+        ]
+    }
 
-    matrix = build_wheel_matrix(tmp_path, python_versions=("3.11", "3.12"))
+    matrix = build_wheel_matrix(
+        tmp_path,
+        python_versions=("3.11", "3.12"),
+        catalog=catalog,
+    )
 
     assert not matrix.ok
     assert [(item.code, item.path) for item in matrix.diagnostics] == [
@@ -1407,277 +1161,97 @@ license = "Apache-2.0"
     ]
 
 
-def test_package_catalog_doctor_reports_local_manifest_dependency_drift(tmp_path) -> None:
-    package_root = tmp_path / "packages" / "graphblocks-agents"
-    package_root.mkdir(parents=True)
-    (package_root / "pyproject.toml").write_text(
-        """
-[project]
-name = "graphblocks-agents"
-version = "0.1.0"
-dependencies = ["graphblocks-core~=0.1"]
-""".strip(),
-        encoding="utf-8",
-    )
-
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
-            "packages": [
-                {"distribution": "graphblocks", "default": True, "dependsOn": []},
-                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
-                {"distribution": "graphblocks-policy", "default": True, "dependsOn": ["graphblocks-core"]},
-                {
-                    "distribution": "graphblocks-agents",
-                    "default": False,
-                    "dependsOn": ["graphblocks-policy"],
-                },
-            ],
-        },
-        root=tmp_path,
-    )
-
-    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
-        (
-            "PackageManifestDependencyMissing",
-            "package manifest for 'graphblocks-agents' is missing catalog dependency 'graphblocks-policy'",
-        ),
-        (
-            "PackageManifestDependencyUnexpected",
-            "package manifest for 'graphblocks-agents' declares uncataloged first-party dependency 'graphblocks-core'",
-        ),
-    ]
-
-
-def test_package_catalog_doctor_rejects_unsatisfied_local_version_constraint(tmp_path) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        """
-[project]
-name = "graphblocks-core"
-version = "0.1.0"
-dependencies = []
-""".strip(),
-        encoding="utf-8",
-    )
-    package = tmp_path / "packages" / "graphblocks-agents" / "pyproject.toml"
-    package.parent.mkdir(parents=True)
-    package.write_text(
-        """
-[project]
-name = "graphblocks-agents"
-version = "0.1.0"
-dependencies = ["graphblocks-core~=1.0"]
-""".strip(),
-        encoding="utf-8",
-    )
-
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {
-                "distribution": "graphblocks-agents",
-                "dependencies": [],
-                "excludedCategories": [],
-            },
-            "packages": [
-                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
-                {
-                    "distribution": "graphblocks-agents",
-                    "default": True,
-                    "dependsOn": ["graphblocks-core"],
-                },
-            ],
-        },
-        root=tmp_path,
-    )
-
-    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        (
-            "PackageManifestDependencyVersionUnsatisfied",
-            "$.packages/graphblocks-agents/pyproject.toml.project.dependencies[0]",
-        )
-    ]
-
-
-@pytest.mark.parametrize(
-    ("requirement", "local_version", "expected_code"),
-    [
-        ("graphblocks-core[fast]~=1.0", "0.1.0", "PackageManifestDependencyVersionUnsatisfied"),
-        ("graphblocks-core==1.*", "0.1.0", "PackageManifestDependencyVersionUnsatisfied"),
-        ("graphblocks-core>=0.1", "0.1.0rc1", "PackageManifestDependencyVersionUnsatisfied"),
-        ("graphblocks-core=>0.1", "0.1.0", "PackageManifestDependencyRequirementInvalid"),
-    ],
-)
-def test_package_catalog_doctor_fails_closed_for_pep508_requirements(
+def test_package_wheel_matrix_reports_artifact_manifest_identity_mismatch(
     tmp_path,
-    requirement,
-    local_version,
-    expected_code,
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        f"""
+    manifest = tmp_path / "pyproject.toml"
+    manifest.write_text(
+        """
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
 [project]
-name = "graphblocks-core"
-version = "{local_version}"
-dependencies = []
-""".strip(),
-        encoding="utf-8",
-    )
-    package = tmp_path / "packages" / "graphblocks-agents" / "pyproject.toml"
-    package.parent.mkdir(parents=True)
-    package.write_text(
-        f"""
-[project]
-name = "graphblocks-agents"
+name = "wrong-name"
 version = "0.1.0"
-dependencies = ["{requirement}"]
+requires-python = ">=3.11"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wrong_name"]
 """.strip(),
         encoding="utf-8",
     )
 
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {
-                "distribution": "graphblocks-agents",
-                "dependencies": [],
-                "excludedCategories": [],
-            },
-            "packages": [
-                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
+    matrix = build_wheel_matrix(
+        tmp_path,
+        catalog={
+            "artifacts": [
                 {
-                    "distribution": "graphblocks-agents",
-                    "default": True,
-                    "dependsOn": ["graphblocks-core"],
-                },
-            ],
-        },
-        root=tmp_path,
-    )
-
-    assert [item.code for item in diagnostics.diagnostics] == [expected_code]
-
-
-def test_package_catalog_doctor_reports_unknown_dependency_and_default_constraint() -> None:
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {
-                "distribution": "graphblocks",
-                "dependencies": ["missing-default~=0.1"],
-                "excludedCategories": [],
-            },
-            "packages": [
-                {
-                    "distribution": "graphblocks",
-                    "default": True,
-                    "dependsOn": ["missing-runtime"],
+                    "distribution": "expected-name",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
                 }
-            ],
-        }
-    )
-
-    assert [item.code for item in diagnostics.diagnostics] == [
-        "PackageDefaultDependencyMissing",
-        "PackageDependencyMissing",
-    ]
-
-
-def test_package_catalog_normalizes_parenthesized_default_constraints() -> None:
-    catalog = {
-        "catalogVersion": 1,
-        "specVersion": "1.0",
-        "defaultMetaPackage": {
-            "distribution": "graphblocks",
-            "dependencies": ["graphblocks-core (>=1.0)"],
-            "excludedCategories": [],
+            ]
         },
-        "packages": [
-            {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-core"]},
-            {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
-        ],
-    }
-
-    diagnostics = doctor_package_catalog(catalog)
-    lock = build_package_lock(catalog)
-    core_entry = next(entry for entry in lock.entries if entry.distribution == "graphblocks-core")
-
-    assert diagnostics.diagnostics == ()
-    assert core_entry.version_constraint == ">=1.0"
-
-
-def test_package_catalog_doctor_reports_forbidden_dependency_conflicts() -> None:
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
-            "packages": [
-                {"distribution": "graphblocks", "default": True, "dependsOn": []},
-                {
-                    "distribution": "graphblocks-openai-realtime",
-                    "default": False,
-                    "dependsOn": ["graphblocks-voice", "openai"],
-                    "forbiddenDependencies": ["openai"],
-                },
-                {"distribution": "graphblocks-voice", "default": False, "dependsOn": []},
-                {"distribution": "openai", "default": False, "dependsOn": []},
-            ],
-        }
     )
 
-    assert [item.code for item in diagnostics.diagnostics] == ["PackageForbiddenDependencySelected"]
-    assert "openai" in diagnostics.diagnostics[0].message
-
-
-def test_package_catalog_doctor_reports_forbidden_transitive_dependency_conflicts() -> None:
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
-            "packages": [
-                {"distribution": "graphblocks", "default": True, "dependsOn": []},
-                {
-                    "distribution": "graphblocks-documents",
-                    "default": False,
-                    "dependsOn": ["graphblocks-pdf"],
-                    "forbiddenDependencies": ["pypdf"],
-                },
-                {"distribution": "graphblocks-pdf", "default": False, "dependsOn": ["pypdf"]},
-                {"distribution": "pypdf", "default": False, "dependsOn": []},
-            ],
-        }
-    )
-
-    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
-        (
-            "PackageForbiddenDependencySelected",
-            "package 'graphblocks-documents' transitively selects forbidden dependency 'pypdf'",
-        )
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        ("WheelDistributionMismatch", "$.pyproject.toml.project.name")
     ]
 
 
-def test_package_catalog_doctor_reports_dependency_cycles() -> None:
-    diagnostics = doctor_package_catalog(
-        {
-            "catalogVersion": 1,
-            "specVersion": "1.0",
-            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
-            "packages": [
-                {"distribution": "graphblocks", "default": True, "dependsOn": []},
-                {"distribution": "graphblocks-core", "default": True, "dependsOn": ["graphblocks-runtime"]},
-                {"distribution": "graphblocks-runtime", "default": True, "dependsOn": ["graphblocks-core"]},
-            ],
-        }
+def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
+    target = WheelBuildTarget(
+        distribution="graphblocks",
+        manifest="pyproject.toml",
+        backend="hatchling.build",
+        kind="pure_python",
+        source_layout="src/graphblocks",
+        python_versions=["3.11", "3.12"],  # type: ignore[arg-type]
     )
 
-    assert [item.code for item in diagnostics.diagnostics] == ["PackageDependencyCycle"]
+    assert target.python_versions == ("3.11", "3.12")
+    with pytest.raises(ValueError, match="wheel build target distribution must not be empty"):
+        WheelBuildTarget(
+            " ",
+            "pyproject.toml",
+            "hatchling.build",
+            "pure_python",
+            "src/graphblocks",
+            ("3.11",),
+        )
+    with pytest.raises(ValueError, match="invalid wheel build target kind"):
+        WheelBuildTarget(
+            "graphblocks",
+            "pyproject.toml",
+            "hatchling.build",
+            "binary",  # type: ignore[arg-type]
+            "src/graphblocks",
+            ("3.11",),
+        )
+    with pytest.raises(
+        ValueError,
+        match="wheel build target python_versions item must not be empty",
+    ):
+        WheelBuildTarget(
+            "graphblocks",
+            "pyproject.toml",
+            "hatchling.build",
+            "pure_python",
+            "src/graphblocks",
+            (" ",),
+        )
+
+    matrix = WheelMatrix(targets=[target])  # type: ignore[arg-type]
+
+    assert matrix.targets == (target,)
+    with pytest.raises(ValueError, match="wheel matrix targets must have unique distributions"):
+        WheelMatrix(targets=(target, target))
+    with pytest.raises(ValueError, match="wheel matrix diagnostics must be Diagnostic"):
+        WheelMatrix(
+            targets=(target,),
+            diagnostics=(object(),),  # type: ignore[arg-type]
+        )
 
 
 def test_package_manifest_audit_accepts_repo_manifest_licenses() -> None:
@@ -1687,7 +1261,7 @@ def test_package_manifest_audit_accepts_repo_manifest_licenses() -> None:
     assert diagnostics.diagnostics == ()
 
 
-def test_package_manifest_audit_policy_validates_and_normalizes_string_collections() -> None:
+def test_package_manifest_audit_policy_validates_and_normalizes_collections() -> None:
     policy = PackageManifestAuditPolicy(
         allowed_licenses=("MIT", "Apache-2.0", "MIT"),
         blocked_dependencies=("vulnerable_sdk", "Vulnerable-SDK"),
@@ -1695,151 +1269,75 @@ def test_package_manifest_audit_policy_validates_and_normalizes_string_collectio
 
     assert policy.allowed_licenses == ("Apache-2.0", "MIT")
     assert policy.blocked_dependencies == ("vulnerable-sdk",)
-    with pytest.raises(ValueError, match="package manifest audit policy allowed_licenses item must not be empty"):
+    with pytest.raises(ValueError, match="allowed_licenses item must not be empty"):
         PackageManifestAuditPolicy(allowed_licenses=(" ",))
-    with pytest.raises(ValueError, match="package manifest audit policy blocked_dependencies item must be a string"):
-        PackageManifestAuditPolicy(blocked_dependencies=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="blocked_dependencies must be a collection"):
+        PackageManifestAuditPolicy(blocked_dependencies="requests")  # type: ignore[arg-type]
 
 
-def test_package_manifest_audit_reports_denied_license_and_blocked_dependency(tmp_path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
+def test_package_manifest_audit_reports_denied_license_and_blocked_dependency(
+    tmp_path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
         """
 [project]
 name = "unsafe-python"
 version = "0.1.0"
 license = "Proprietary"
-dependencies = ["safe>=1", "vulnerable-sdk>=0"]
-""".strip(),
-        encoding="utf-8",
-    )
-    crate = tmp_path / "crates" / "unsafe-rust"
-    crate.mkdir(parents=True)
-    (crate / "Cargo.toml").write_text(
-        """
-[package]
-name = "unsafe-rust"
-version = "0.1.0"
-license = "Apache-2.0"
-
-[dependencies]
-vulnerable-crate = "0.1"
+dependencies = ["vulnerable-sdk>=1"]
 """.strip(),
         encoding="utf-8",
     )
 
     diagnostics = audit_package_manifests(
         tmp_path,
-        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-sdk", "vulnerable-crate")),
+        policy=PackageManifestAuditPolicy(
+            allowed_licenses=("Apache-2.0",),
+            blocked_dependencies=("vulnerable-sdk",),
+        ),
     )
 
-    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        ("PackageLicenseDenied", "$.pyproject.toml.project.license"),
-        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[1]"),
-        ("PackageBlockedDependency", "$.crates/unsafe-rust/Cargo.toml.dependencies.vulnerable-crate"),
+    assert [item.code for item in diagnostics.diagnostics] == [
+        "PackageLicenseDenied",
+        "PackageBlockedDependency",
     ]
 
 
-def test_package_manifest_audit_reports_pep508_direct_reference_blocked_dependencies(tmp_path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
-        """
-[project]
-name = "unsafe-python"
-version = "0.1.0"
-license = "Apache-2.0"
-dependencies = ["vulnerable-sdk @ https://packages.example/vulnerable-sdk.whl"]
-
-[project.optional-dependencies]
-pdf = ["Vulnerable_SDK[parser] @ file:///tmp/vulnerable-sdk.whl ; python_version >= '3.11'"]
-""".strip(),
-        encoding="utf-8",
-    )
-
-    diagnostics = audit_package_manifests(
-        tmp_path,
-        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-sdk",)),
-    )
-
-    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]"),
-        ("PackageBlockedDependency", "$.pyproject.toml.project.optional-dependencies.pdf[0]"),
-    ]
-
-
-def test_package_manifest_audit_reports_pep508_parenthesized_blocked_dependencies(tmp_path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
-        """
-[project]
-name = "unsafe-python"
-version = "0.1.0"
-license = "Apache-2.0"
-dependencies = ["vulnerable-sdk (>=1.0)"]
-
-[project.optional-dependencies]
-model = ["Vulnerable_SDK[client] (==2.0)"]
-""".strip(),
-        encoding="utf-8",
-    )
-
-    diagnostics = audit_package_manifests(
-        tmp_path,
-        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-sdk",)),
-    )
-
-    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[0]"),
-        ("PackageBlockedDependency", "$.pyproject.toml.project.optional-dependencies.model[0]"),
-    ]
-
-
-def test_package_manifest_audit_reports_blocked_build_system_dependencies(tmp_path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
+def test_package_manifest_audit_checks_build_and_dependency_group_requirements(
+    tmp_path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
         """
 [build-system]
-requires = ["vulnerable-builder>=1"]
-build-backend = "vulnerable_builder.backend"
+requires = ["unsafe-build>=1"]
+build-backend = "unsafe.build"
 
 [project]
 name = "unsafe-python"
 version = "0.1.0"
 license = "Apache-2.0"
-""".strip(),
-        encoding="utf-8",
-    )
-
-    diagnostics = audit_package_manifests(
-        tmp_path,
-        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-builder",)),
-    )
-
-    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        ("PackageBlockedDependency", "$.pyproject.toml.build-system.requires[0]"),
-    ]
-
-
-def test_package_manifest_audit_reports_blocked_dependency_groups(tmp_path) -> None:
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
-        """
-[project]
-name = "unsafe-python"
-version = "0.1.0"
-license = "Apache-2.0"
+dependencies = []
 
 [dependency-groups]
-dev = ["vulnerable-tool[runner] (>=1.0)"]
+dev = ["unsafe-dev>=1"]
 """.strip(),
         encoding="utf-8",
     )
 
     diagnostics = audit_package_manifests(
         tmp_path,
-        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-tool",)),
+        policy=PackageManifestAuditPolicy(
+            blocked_dependencies=("unsafe-build", "unsafe-dev"),
+        ),
     )
 
     assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
-        ("PackageBlockedDependency", "$.pyproject.toml.dependency-groups.dev[0]"),
+        (
+            "PackageBlockedDependency",
+            "$.pyproject.toml.build-system.requires[0]",
+        ),
+        (
+            "PackageBlockedDependency",
+            "$.pyproject.toml.dependency-groups.dev[0]",
+        ),
     ]

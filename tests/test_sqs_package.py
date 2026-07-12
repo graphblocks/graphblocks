@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_sqs(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-sqs" / "src"))
-    return importlib.import_module("graphblocks_sqs")
+    return importlib.import_module("graphblocks.integrations.sqs")
 
 
 def test_sqs_message_projects_to_durable_source_event(monkeypatch) -> None:
@@ -122,7 +116,9 @@ def test_sqs_package_is_cataloged_as_optional_durable_adapter(monkeypatch) -> No
 
     assert rows["graphblocks-sqs"] == {
         "distribution": "graphblocks-sqs",
-        "import": "graphblocks_sqs",
+        "artifact": "graphblocks",
+        "component": "graphblocks-sqs",
+        "import": "graphblocks.integrations.sqs",
         "default": False,
         "layer": "durable_stream_adapter",
         "kind": "pure_python",

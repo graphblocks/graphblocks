@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_nats(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-nats" / "src"))
-    return importlib.import_module("graphblocks_nats")
+    return importlib.import_module("graphblocks.integrations.nats")
 
 
 def test_nats_message_projects_to_durable_source_event(monkeypatch) -> None:
@@ -91,7 +85,9 @@ def test_nats_package_is_cataloged_as_optional_durable_adapter(monkeypatch) -> N
 
     assert rows["graphblocks-nats"] == {
         "distribution": "graphblocks-nats",
-        "import": "graphblocks_nats",
+        "artifact": "graphblocks",
+        "component": "graphblocks-nats",
+        "import": "graphblocks.integrations.nats",
         "default": False,
         "layer": "durable_stream_adapter",
         "kind": "pure_python",

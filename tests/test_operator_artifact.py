@@ -15,6 +15,8 @@ def test_operator_catalog_entry_is_helm_oci_artifact_not_python_package() -> Non
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
 
     assert rows["graphblocks-operator"] == {
+        "component": "graphblocks-operator",
+        "artifact": "graphblocks-operator",
         "distribution": "graphblocks-operator",
         "import": None,
         "default": False,

@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_pubsub(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-pubsub" / "src"))
-    return importlib.import_module("graphblocks_pubsub")
+    return importlib.import_module("graphblocks.integrations.pubsub")
 
 
 def test_pubsub_message_projects_to_durable_source_event(monkeypatch) -> None:
@@ -132,7 +126,9 @@ def test_pubsub_package_is_cataloged_as_optional_durable_adapter(monkeypatch) ->
 
     assert rows["graphblocks-pubsub"] == {
         "distribution": "graphblocks-pubsub",
-        "import": "graphblocks_pubsub",
+        "artifact": "graphblocks",
+        "component": "graphblocks-pubsub",
+        "import": "graphblocks.integrations.pubsub",
         "default": False,
         "layer": "durable_stream_adapter",
         "kind": "pure_python",

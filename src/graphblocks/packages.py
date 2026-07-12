@@ -59,6 +59,7 @@ def _python_dependency_name(dependency: str) -> str:
 @dataclass(frozen=True, slots=True)
 class PackageLockEntry:
     distribution: str
+    artifact: str
     version_constraint: str | None
     import_package: str | None
     default: bool
@@ -70,6 +71,7 @@ class PackageLockEntry:
 
     def __post_init__(self) -> None:
         _validate_non_empty_string("package lock entry", "distribution", self.distribution)
+        _validate_non_empty_string("package lock entry", "artifact", self.artifact)
         _validate_optional_non_empty_string("package lock entry", "version_constraint", self.version_constraint)
         _validate_optional_non_empty_string("package lock entry", "import_package", self.import_package)
         if not isinstance(self.default, bool):
@@ -87,11 +89,16 @@ class PackageLockEntry:
             _validate_string_tuple("package lock entry", "forbidden_dependencies", self.forbidden_dependencies),
         )
 
+    @property
+    def component(self) -> str:
+        return self.distribution
+
     def lock_payload(self) -> dict[str, object]:
         return {
+            "artifact": self.artifact,
+            "component": self.component,
             "default": self.default,
             "dependencies": list(self.dependencies),
-            "distribution": self.distribution,
             "forbiddenDependencies": list(self.forbidden_dependencies),
             "import": self.import_package,
             "kind": self.kind,
@@ -107,6 +114,7 @@ class PackageLock:
     spec_version: str
     requested: tuple[str, ...]
     entries: tuple[PackageLockEntry, ...]
+    artifacts: tuple[str, ...] = field(default_factory=tuple)
     excluded_categories: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -123,23 +131,28 @@ class PackageLock:
         if len(set(distributions)) != len(distributions):
             raise ValueError("package lock entries must have unique distributions")
         object.__setattr__(self, "entries", entries)
+        artifacts = _validate_string_tuple("package lock", "artifacts", self.artifacts)
+        if len(set(artifacts)) != len(artifacts):
+            raise ValueError("package lock artifacts must be unique")
+        object.__setattr__(self, "artifacts", tuple(sorted(artifacts)))
         object.__setattr__(
             self,
             "excluded_categories",
             _validate_string_tuple("package lock", "excluded_categories", self.excluded_categories),
         )
 
-    def entry(self, distribution: str) -> PackageLockEntry | None:
+    def entry(self, component: str) -> PackageLockEntry | None:
         for entry in self.entries:
-            if entry.distribution == distribution:
+            if entry.component == component:
                 return entry
         return None
 
     def lock_payload(self) -> dict[str, object]:
         return {
+            "artifacts": list(self.artifacts),
             "catalogVersion": self.catalog_version,
+            "components": [entry.lock_payload() for entry in self.entries],
             "excludedCategories": list(self.excluded_categories),
-            "packages": [entry.lock_payload() for entry in self.entries],
             "requested": sorted(set(self.requested)),
             "specVersion": self.spec_version,
         }
@@ -267,34 +280,45 @@ def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
     spec_version = catalog.get("specVersion")
     if not isinstance(spec_version, str) or not spec_version.strip():
         raise ValueError("package catalog specVersion must be a non-empty string")
-    packages = catalog.get("packages")
-    if not isinstance(packages, list):
-        raise ValueError("package catalog packages must be a list")
-    for package in packages:
-        if not isinstance(package, dict):
-            raise ValueError("package catalog packages entries must be mappings")
-        distribution = package.get("distribution")
+    artifacts = catalog.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError("package catalog artifacts must be a list")
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise ValueError("package catalog artifact entries must be mappings")
+        distribution = artifact.get("distribution")
         if not isinstance(distribution, str) or not distribution.strip():
-            raise ValueError("package catalog package distribution must be a non-empty string")
+            raise ValueError("package catalog artifact distribution must be a non-empty string")
+    components = catalog.get("components")
+    if not isinstance(components, list):
+        raise ValueError("package catalog components must be a list")
+    for component in components:
+        if not isinstance(component, dict):
+            raise ValueError("package catalog component entries must be mappings")
+        name = component.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("package catalog component name must be a non-empty string")
     return catalog
 
 
 def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for package in catalog.get("packages", []):
-        if isinstance(package, dict):
+    for component in catalog.get("components", []):
+        if isinstance(component, dict):
             rows.append(
                 {
-                    "distribution": package.get("distribution"),
-                    "import": package.get("import"),
-                    "default": package.get("default", False),
-                    "layer": package.get("layer"),
-                    "kind": package.get("kind"),
-                    "implementationPhase": package.get("implementationPhase"),
-                    "stability": package.get("stability"),
+                    "component": component.get("name"),
+                    "artifact": component.get("artifact"),
+                    "distribution": component.get("name"),
+                    "import": component.get("import"),
+                    "default": component.get("default", False),
+                    "layer": component.get("layer"),
+                    "kind": component.get("kind"),
+                    "implementationPhase": component.get("implementationPhase"),
+                    "stability": component.get("stability"),
                 }
             )
-    return sorted(rows, key=lambda item: str(item.get("distribution")))
+    return sorted(rows, key=lambda item: str(item.get("component")))
 
 
 def _package_categories(package: dict[str, Any]) -> set[str]:
@@ -345,64 +369,73 @@ def build_package_lock(
     requested: tuple[str, ...] = (),
     include_default: bool = True,
 ) -> PackageLock:
-    packages_by_distribution = {
-        package["distribution"]: package
-        for package in catalog.get("packages", [])
-        if isinstance(package, dict) and isinstance(package.get("distribution"), str)
+    artifacts_by_distribution = {
+        artifact["distribution"]: artifact
+        for artifact in catalog.get("artifacts", [])
+        if isinstance(artifact, dict) and isinstance(artifact.get("distribution"), str)
     }
-    default_metapackage = catalog.get("defaultMetaPackage")
-    default_metapackage = default_metapackage if isinstance(default_metapackage, dict) else {}
-    default_distribution = default_metapackage.get("distribution")
+    components_by_name = {
+        component["name"]: component
+        for component in catalog.get("components", [])
+        if isinstance(component, dict) and isinstance(component.get("name"), str)
+    }
+    default_selection = catalog.get("defaultSelection")
+    default_selection = default_selection if isinstance(default_selection, dict) else {}
 
-    default_constraints: dict[str, str] = {}
-    for dependency in default_metapackage.get("dependencies", []):
-        if not isinstance(dependency, str) or not dependency.strip():
-            continue
-        distribution = _python_dependency_name(dependency)
-        constraint = None
-        dependency_text = dependency.strip().split(";", 1)[0].strip()
-        if "@" not in dependency_text:
-            paren_index = dependency_text.find("(")
-            if paren_index > 0:
-                close_index = dependency_text.rfind(")")
-                constraint = dependency_text[
-                    paren_index + 1 : close_index if close_index > paren_index else None
-                ].strip()
-            else:
-                for marker in ("~=", "==", ">=", "<=", "!=", ">", "<"):
-                    marker_index = dependency_text.find(marker)
-                    if marker_index > 0:
-                        constraint = dependency_text[marker_index:].strip()
-                        break
-        if constraint is not None:
-            default_constraints[distribution] = constraint
-
-    roots: list[str] = []
-    if include_default and isinstance(default_distribution, str) and default_distribution:
-        roots.append(default_distribution)
-    for distribution in requested:
-        if distribution not in roots:
-            roots.append(distribution)
+    artifact_roots: list[str] = []
+    component_roots: list[str] = []
+    if include_default:
+        artifact_roots.extend(
+            artifact
+            for artifact in default_selection.get("artifacts", [])
+            if isinstance(artifact, str) and artifact
+        )
+        component_roots.extend(
+            component
+            for component in default_selection.get("components", [])
+            if isinstance(component, str) and component
+        )
+    for selection in requested:
+        matched = False
+        if selection in artifacts_by_distribution:
+            matched = True
+            if selection not in artifact_roots:
+                artifact_roots.append(selection)
+        if selection in components_by_name:
+            matched = True
+            if selection not in component_roots:
+                component_roots.append(selection)
+        if not matched:
+            raise ValueError(f"unknown package selection {selection}")
 
     selected: set[str] = set()
     default_selected: set[str] = set()
     visiting: set[str] = set()
     excluded_categories = tuple(
         category
-        for category in default_metapackage.get("excludedCategories", [])
+        for category in default_selection.get("excludedCategories", [])
         if isinstance(category, str) and category
     )
 
-    for distribution in roots:
-        collecting_default = include_default and distribution == default_distribution
-        stack: list[tuple[str, bool]] = [(distribution, False)]
+    default_component_roots = (
+        {
+            component
+            for component in default_selection.get("components", [])
+            if isinstance(component, str) and component
+        }
+        if include_default
+        else set()
+    )
+    for component_name in component_roots:
+        collecting_default = component_name in default_component_roots
+        stack: list[tuple[str, bool]] = [(component_name, False)]
         while stack:
             current, expanded = stack.pop()
             if current in selected:
                 continue
-            package = packages_by_distribution.get(current)
-            if package is None:
-                raise ValueError(f"unknown package distribution {current}")
+            component = components_by_name.get(current)
+            if component is None:
+                raise ValueError(f"unknown package component {current}")
             if expanded:
                 visiting.discard(current)
                 selected.add(current)
@@ -415,57 +448,103 @@ def build_package_lock(
             stack.append((current, True))
             dependencies = [
                 dependency
-                for dependency in package.get("dependsOn", [])
+                for dependency in component.get("dependsOn", [])
                 if isinstance(dependency, str) and dependency.strip() and dependency not in selected
             ]
             for dependency in reversed(dependencies):
                 stack.append((dependency, False))
 
-    for distribution in sorted(selected):
-        package = packages_by_distribution[distribution]
+    for component_name in sorted(selected):
+        component = components_by_name[component_name]
         forbidden_dependencies = {
             dependency
-            for dependency in package.get("forbiddenDependencies", [])
+            for dependency in component.get("forbiddenDependencies", [])
             if isinstance(dependency, str) and dependency
         }
         selected_forbidden = sorted(forbidden_dependencies & selected)
         if selected_forbidden:
             raise ValueError(
                 "forbidden package dependency "
-                f"{selected_forbidden[0]!r} selected for package {distribution!r}"
+                f"{selected_forbidden[0]!r} selected for component {component_name!r}"
             )
 
     excluded_category_set = set(excluded_categories)
     if excluded_category_set:
-        for distribution in sorted(default_selected):
-            package = packages_by_distribution[distribution]
-            blocked = sorted(_package_categories(package) & excluded_category_set)
+        for component_name in sorted(default_selected):
+            component = components_by_name[component_name]
+            blocked = sorted(_package_categories(component) & excluded_category_set)
             if blocked:
                 raise ValueError(
-                    f"default package closure includes excluded category {blocked[0]!r} "
-                    f"from package {distribution!r}"
+                    f"default component closure includes excluded category {blocked[0]!r} "
+                    f"from component {component_name!r}"
                 )
 
+    selected_artifacts = set(artifact_roots)
+    for component_name in selected:
+        artifact = components_by_name[component_name].get("artifact")
+        if not isinstance(artifact, str) or artifact not in artifacts_by_distribution:
+            raise ValueError(f"component {component_name!r} maps to unknown artifact {artifact!r}")
+        selected_artifacts.add(artifact)
+
+    artifact_roots_to_resolve = set(selected_artifacts)
+    selected_artifacts.clear()
+    artifact_visiting: set[str] = set()
+    for artifact_root in sorted(artifact_roots_to_resolve):
+        artifact_stack = [(artifact_root, False)]
+        while artifact_stack:
+            artifact_name, expanded = artifact_stack.pop()
+            if artifact_name in selected_artifacts:
+                continue
+            artifact = artifacts_by_distribution.get(artifact_name)
+            if artifact is None:
+                raise ValueError(f"unknown package artifact {artifact_name}")
+            if expanded:
+                artifact_visiting.discard(artifact_name)
+                selected_artifacts.add(artifact_name)
+                continue
+            if artifact_name in artifact_visiting:
+                raise ValueError(f"artifact dependency cycle includes {artifact_name}")
+            artifact_visiting.add(artifact_name)
+            artifact_stack.append((artifact_name, True))
+            for dependency in reversed(artifact.get("dependsOn", [])):
+                if isinstance(dependency, str) and dependency not in selected_artifacts:
+                    artifact_stack.append((dependency, False))
+
     entries: list[PackageLockEntry] = []
-    for distribution in sorted(selected):
-        package = packages_by_distribution[distribution]
+    for component_name in sorted(selected):
+        component = components_by_name[component_name]
+        artifact_name = str(component["artifact"])
+        artifact = artifacts_by_distribution[artifact_name]
         dependencies = tuple(
-            dependency for dependency in package.get("dependsOn", []) if isinstance(dependency, str) and dependency
+            dependency
+            for dependency in component.get("dependsOn", [])
+            if isinstance(dependency, str) and dependency
         )
         forbidden_dependencies = tuple(
             dependency
-            for dependency in package.get("forbiddenDependencies", [])
+            for dependency in component.get("forbiddenDependencies", [])
             if isinstance(dependency, str) and dependency
         )
         entries.append(
             PackageLockEntry(
-                distribution=distribution,
-                version_constraint=default_constraints.get(distribution),
-                import_package=package.get("import") if isinstance(package.get("import"), str) else None,
-                default=bool(package.get("default", False)),
-                layer=package.get("layer") if isinstance(package.get("layer"), str) else None,
-                kind=package.get("kind") if isinstance(package.get("kind"), str) else None,
-                stability=package.get("stability") if isinstance(package.get("stability"), str) else None,
+                distribution=component_name,
+                artifact=artifact_name,
+                version_constraint=(
+                    artifact.get("versionConstraint")
+                    if isinstance(artifact.get("versionConstraint"), str)
+                    else None
+                ),
+                import_package=(
+                    component.get("import") if isinstance(component.get("import"), str) else None
+                ),
+                default=bool(component.get("default", False)),
+                layer=component.get("layer") if isinstance(component.get("layer"), str) else None,
+                kind=component.get("kind") if isinstance(component.get("kind"), str) else None,
+                stability=(
+                    component.get("stability")
+                    if isinstance(component.get("stability"), str)
+                    else None
+                ),
                 dependencies=dependencies,
                 forbidden_dependencies=forbidden_dependencies,
             )
@@ -476,12 +555,27 @@ def build_package_lock(
         spec_version=str(catalog.get("specVersion", "")),
         requested=tuple(requested),
         entries=tuple(entries),
+        artifacts=tuple(selected_artifacts),
         excluded_categories=excluded_categories,
     )
 
 
 def _pyproject_paths(root_path: Path) -> list[Path]:
     return [root_path / "pyproject.toml", *sorted(root_path.glob("packages/*/pyproject.toml"))]
+
+
+def _resolve_manifest_beneath_root(root_path: Path, manifest_ref: str) -> Path | None:
+    try:
+        reference = Path(manifest_ref)
+        if reference.is_absolute():
+            return None
+        resolved_root = root_path.resolve()
+        candidate = (resolved_root / reference).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not candidate.is_relative_to(resolved_root):
+        return None
+    return candidate
 
 
 def _supports_python_version(requires_python: str, version: str) -> bool:
@@ -497,6 +591,7 @@ def build_wheel_matrix(
     root: str | Path,
     *,
     python_versions: tuple[str, ...] = ("3.11", "3.12"),
+    catalog: dict[str, Any] | None = None,
 ) -> WheelMatrix:
     root_path = Path(root)
     diagnostics: list[Diagnostic] = []
@@ -530,10 +625,57 @@ def build_wheel_matrix(
                 ),
             )
 
-    for manifest_path in _pyproject_paths(root_path):
-        if not manifest_path.exists():
+    if catalog is None:
+        catalog = load_package_catalog()
+    raw_artifacts = catalog.get("artifacts", [])
+    artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
+    for artifact_index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
             continue
-        relative_path = manifest_path.relative_to(root_path).as_posix()
+        artifact_kind = artifact.get("kind")
+        if artifact_kind not in {"pure_python", "native_wheel"}:
+            continue
+        distribution = artifact.get("distribution")
+        if not isinstance(distribution, str) or not distribution.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelDistributionMissing",
+                    "Python artifact must declare distribution",
+                    f"$.artifacts[{artifact_index}].distribution",
+                )
+            )
+            continue
+        distribution = distribution.strip()
+        manifest_ref = artifact.get("manifest")
+        if not isinstance(manifest_ref, str) or not manifest_ref.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestMissing",
+                    f"wheel artifact {distribution!r} must declare manifest",
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
+        manifest_path = _resolve_manifest_beneath_root(root_path, manifest_ref)
+        if manifest_path is None:
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestOutsideRoot",
+                    f"wheel artifact {distribution!r} manifest must remain beneath root",
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
+        relative_path = manifest_path.relative_to(root_path.resolve()).as_posix()
+        if not manifest_path.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestMissing",
+                    f"wheel artifact {distribution!r} manifest does not exist: {relative_path}",
+                    f"$.artifacts[{artifact_index}].manifest",
+                )
+            )
+            continue
         path_prefix = f"$.{relative_path}"
         try:
             manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
@@ -556,8 +698,8 @@ def build_wheel_matrix(
                 )
             )
             continue
-        distribution = project.get("name")
-        if not isinstance(distribution, str) or not distribution.strip():
+        manifest_distribution = project.get("name")
+        if not isinstance(manifest_distribution, str) or not manifest_distribution.strip():
             diagnostics.append(
                 Diagnostic(
                     "WheelDistributionMissing",
@@ -566,7 +708,19 @@ def build_wheel_matrix(
                 )
             )
             continue
-        distribution = distribution.strip()
+        manifest_distribution = manifest_distribution.strip()
+        if canonicalize_name(manifest_distribution) != canonicalize_name(distribution):
+            diagnostics.append(
+                Diagnostic(
+                    "WheelDistributionMismatch",
+                    (
+                        f"wheel artifact {distribution!r} manifest declares "
+                        f"project.name {manifest_distribution!r}"
+                    ),
+                    f"{path_prefix}.project.name",
+                )
+            )
+            continue
         build_system = manifest.get("build-system")
         if not isinstance(build_system, dict):
             diagnostics.append(
@@ -926,123 +1080,250 @@ def audit_package_manifests(
 
 def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None = None) -> DiagnosticSet:
     diagnostics: list[Diagnostic] = []
-    raw_packages = catalog.get("packages", [])
-    packages = raw_packages if isinstance(raw_packages, list) else []
-    packages_by_distribution: dict[str, dict[str, Any]] = {}
 
-    for index, package in enumerate(packages):
-        if not isinstance(package, dict):
+    raw_artifacts = catalog.get("artifacts", [])
+    artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
+    artifacts_by_distribution: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw_artifacts, list):
+        diagnostics.append(
+            Diagnostic(
+                "PackageArtifactsInvalid",
+                "package catalog artifacts must be a list",
+                "$.artifacts",
+            )
+        )
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
             diagnostics.append(
                 Diagnostic(
-                    "PackageEntryInvalid",
-                    "package catalog entries must be mappings",
-                    f"$.packages[{index}]",
+                    "PackageArtifactEntryInvalid",
+                    "package catalog artifact entries must be mappings",
+                    f"$.artifacts[{index}]",
                 )
             )
             continue
-        distribution = package.get("distribution")
+        distribution = artifact.get("distribution")
         if not isinstance(distribution, str) or not distribution.strip():
             diagnostics.append(
                 Diagnostic(
-                    "PackageDistributionMissing",
-                    "package catalog entries require distribution",
-                    f"$.packages[{index}].distribution",
+                    "PackageArtifactDistributionMissing",
+                    "package catalog artifacts require distribution",
+                    f"$.artifacts[{index}].distribution",
                 )
             )
             continue
-        if distribution in packages_by_distribution:
+        distribution = distribution.strip()
+        if distribution in artifacts_by_distribution:
             diagnostics.append(
                 Diagnostic(
-                    "PackageDuplicateDistribution",
-                    f"duplicate package distribution {distribution!r}",
-                    f"$.packages[{index}].distribution",
+                    "PackageArtifactDuplicateDistribution",
+                    f"duplicate artifact distribution {distribution!r}",
+                    f"$.artifacts[{index}].distribution",
                 )
             )
             continue
-        packages_by_distribution[distribution] = package
+        artifacts_by_distribution[distribution] = artifact
 
-    default_metapackage = catalog.get("defaultMetaPackage")
-    default_metapackage = default_metapackage if isinstance(default_metapackage, dict) else {}
-    default_distribution = default_metapackage.get("distribution")
-    if isinstance(default_distribution, str) and default_distribution and default_distribution not in packages_by_distribution:
+    raw_components = catalog.get("components", [])
+    components = raw_components if isinstance(raw_components, list) else []
+    components_by_name: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw_components, list):
         diagnostics.append(
             Diagnostic(
-                "PackageDefaultMissing",
-                f"default metapackage {default_distribution!r} is not listed in packages",
-                "$.defaultMetaPackage.distribution",
+                "PackageComponentsInvalid",
+                "package catalog components must be a list",
+                "$.components",
             )
         )
-
-    for index, dependency in enumerate(default_metapackage.get("dependencies", [])):
-        if not isinstance(dependency, str) or not dependency.strip():
+    for index, component in enumerate(components):
+        if not isinstance(component, dict):
             diagnostics.append(
                 Diagnostic(
-                    "PackageDefaultDependencyInvalid",
-                    "default metapackage dependencies must be non-empty strings",
-                    f"$.defaultMetaPackage.dependencies[{index}]",
+                    "PackageComponentEntryInvalid",
+                    "package catalog component entries must be mappings",
+                    f"$.components[{index}]",
                 )
             )
             continue
-        distribution = _python_dependency_name(dependency)
-        if distribution not in packages_by_distribution:
+        name = component.get("name")
+        if not isinstance(name, str) or not name.strip():
             diagnostics.append(
                 Diagnostic(
-                    "PackageDefaultDependencyMissing",
-                    f"default dependency {distribution!r} is not listed in packages",
-                    f"$.defaultMetaPackage.dependencies[{index}]",
+                    "PackageComponentNameMissing",
+                    "package catalog components require name",
+                    f"$.components[{index}].name",
                 )
             )
+            continue
+        name = name.strip()
+        if name in components_by_name:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageComponentDuplicateName",
+                    f"duplicate component name {name!r}",
+                    f"$.components[{index}].name",
+                )
+            )
+            continue
+        components_by_name[name] = component
 
-    for distribution in sorted(packages_by_distribution):
-        package = packages_by_distribution[distribution]
-        raw_dependencies = package.get("dependsOn", [])
+    for distribution in sorted(artifacts_by_distribution):
+        artifact = artifacts_by_distribution[distribution]
+        raw_dependencies = artifact.get("dependsOn", [])
         dependencies = raw_dependencies if isinstance(raw_dependencies, list) else []
         if not isinstance(raw_dependencies, list):
             diagnostics.append(
                 Diagnostic(
-                    "PackageDependenciesInvalid",
-                    "package dependsOn must be a list",
-                    f"$.packages.{distribution}.dependsOn",
+                    "PackageArtifactDependenciesInvalid",
+                    "artifact dependsOn must be a list",
+                    f"$.artifacts.{distribution}.dependsOn",
                 )
             )
-            continue
         for index, dependency in enumerate(dependencies):
             if not isinstance(dependency, str) or not dependency.strip():
                 diagnostics.append(
                     Diagnostic(
-                        "PackageDependencyInvalid",
-                        "package dependencies must be non-empty strings",
-                        f"$.packages.{distribution}.dependsOn[{index}]",
+                        "PackageArtifactDependencyInvalid",
+                        "artifact dependencies must be non-empty strings",
+                        f"$.artifacts.{distribution}.dependsOn[{index}]",
                     )
                 )
-            elif dependency not in packages_by_distribution:
+            elif dependency not in artifacts_by_distribution:
                 diagnostics.append(
                     Diagnostic(
-                        "PackageDependencyMissing",
-                        f"package {distribution!r} depends on unknown package {dependency!r}",
-                        f"$.packages.{distribution}.dependsOn[{index}]",
+                        "PackageArtifactDependencyMissing",
+                        f"artifact {distribution!r} depends on unknown artifact {dependency!r}",
+                        f"$.artifacts.{distribution}.dependsOn[{index}]",
                     )
                 )
 
-        raw_forbidden_dependencies = package.get("forbiddenDependencies", [])
-        forbidden_dependencies = raw_forbidden_dependencies if isinstance(raw_forbidden_dependencies, list) else []
+    artifact_states: dict[str, str] = {}
+    artifact_reported_cycles: set[frozenset[str]] = set()
+    for root_distribution in sorted(artifacts_by_distribution):
+        if artifact_states.get(root_distribution) == "done":
+            continue
+        stack: list[tuple[str, int]] = [(root_distribution, 0)]
+        path: list[str] = []
+        while stack:
+            current, next_index = stack[-1]
+            if current not in artifact_states:
+                artifact_states[current] = "visiting"
+                path.append(current)
+            artifact = artifacts_by_distribution[current]
+            dependencies = [
+                dependency
+                for dependency in artifact.get("dependsOn", [])
+                if isinstance(dependency, str) and dependency in artifacts_by_distribution
+            ]
+            if next_index >= len(dependencies):
+                artifact_states[current] = "done"
+                stack.pop()
+                if path and path[-1] == current:
+                    path.pop()
+                elif current in path:
+                    path.remove(current)
+                continue
+            dependency = dependencies[next_index]
+            stack[-1] = (current, next_index + 1)
+            dependency_state = artifact_states.get(dependency)
+            if dependency_state == "visiting":
+                cycle_start = path.index(dependency) if dependency in path else 0
+                cycle = [*path[cycle_start:], dependency]
+                cycle_key = frozenset(cycle)
+                if cycle_key not in artifact_reported_cycles:
+                    artifact_reported_cycles.add(cycle_key)
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactDependencyCycle",
+                            f"artifact dependency cycle detected: {' -> '.join(cycle)}",
+                            f"$.artifacts.{current}.dependsOn",
+                        )
+                    )
+            elif dependency_state != "done":
+                stack.append((dependency, 0))
+
+    for name in sorted(components_by_name):
+        component = components_by_name[name]
+        artifact = component.get("artifact")
+        if not isinstance(artifact, str) or not artifact.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageComponentArtifactMissing",
+                    f"component {name!r} must map to an artifact",
+                    f"$.components.{name}.artifact",
+                )
+            )
+        elif artifact not in artifacts_by_distribution:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageComponentArtifactUnknown",
+                    f"component {name!r} maps to unknown artifact {artifact!r}",
+                    f"$.components.{name}.artifact",
+                )
+            )
+
+        import_package = component.get("import")
+        if import_package is not None and (
+            not isinstance(import_package, str) or not import_package.strip()
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "PackageComponentImportInvalid",
+                    f"component {name!r} import must be null or a non-empty string",
+                    f"$.components.{name}.import",
+                )
+            )
+
+        raw_dependencies = component.get("dependsOn", [])
+        dependencies = raw_dependencies if isinstance(raw_dependencies, list) else []
+        if not isinstance(raw_dependencies, list):
+            diagnostics.append(
+                Diagnostic(
+                    "PackageComponentDependenciesInvalid",
+                    "component dependsOn must be a list",
+                    f"$.components.{name}.dependsOn",
+                )
+            )
+        for index, dependency in enumerate(dependencies):
+            if not isinstance(dependency, str) or not dependency.strip():
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageComponentDependencyInvalid",
+                        "component dependencies must be non-empty strings",
+                        f"$.components.{name}.dependsOn[{index}]",
+                    )
+                )
+            elif dependency not in components_by_name:
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageComponentDependencyMissing",
+                        f"component {name!r} depends on unknown component {dependency!r}",
+                        f"$.components.{name}.dependsOn[{index}]",
+                    )
+                )
+
+        raw_forbidden_dependencies = component.get("forbiddenDependencies", [])
+        forbidden_dependencies = (
+            raw_forbidden_dependencies
+            if isinstance(raw_forbidden_dependencies, list)
+            else []
+        )
         if not isinstance(raw_forbidden_dependencies, list):
             diagnostics.append(
                 Diagnostic(
                     "PackageForbiddenDependenciesInvalid",
-                    "package forbiddenDependencies must be a list",
-                    f"$.packages.{distribution}.forbiddenDependencies",
+                    "component forbiddenDependencies must be a list",
+                    f"$.components.{name}.forbiddenDependencies",
                 )
             )
-            continue
         valid_forbidden_dependencies: set[str] = set()
         for index, dependency in enumerate(forbidden_dependencies):
             if not isinstance(dependency, str) or not dependency.strip():
                 diagnostics.append(
                     Diagnostic(
                         "PackageForbiddenDependencyInvalid",
-                        "package forbidden dependencies must be non-empty strings",
-                        f"$.packages.{distribution}.forbiddenDependencies[{index}]",
+                        "component forbidden dependencies must be non-empty strings",
+                        f"$.components.{name}.forbiddenDependencies[{index}]",
                     )
                 )
             else:
@@ -1052,70 +1333,224 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 diagnostics.append(
                     Diagnostic(
                         "PackageForbiddenDependencySelected",
-                        f"package {distribution!r} depends on forbidden dependency {dependency!r}",
-                        f"$.packages.{distribution}.dependsOn[{index}]",
+                        f"component {name!r} depends on forbidden dependency {dependency!r}",
+                        f"$.components.{name}.dependsOn[{index}]",
                     )
                 )
-        direct_dependencies = {dependency for dependency in dependencies if isinstance(dependency, str)}
+        direct_dependencies = {
+            dependency for dependency in dependencies if isinstance(dependency, str)
+        }
         transitive_forbidden_dependencies = sorted(
-            (valid_forbidden_dependencies & _package_dependency_closure(distribution, packages_by_distribution))
+            (
+                valid_forbidden_dependencies
+                & _package_dependency_closure(name, components_by_name)
+            )
             - direct_dependencies
         )
         for dependency in transitive_forbidden_dependencies:
             diagnostics.append(
                 Diagnostic(
                     "PackageForbiddenDependencySelected",
-                    f"package {distribution!r} transitively selects forbidden dependency {dependency!r}",
-                    f"$.packages.{distribution}.forbiddenDependencies",
+                    f"component {name!r} transitively selects forbidden dependency {dependency!r}",
+                    f"$.components.{name}.forbiddenDependencies",
                 )
             )
 
-    states: dict[str, str] = {}
-    reported_cycles: set[frozenset[str]] = set()
-    for root_distribution in sorted(packages_by_distribution):
-        if states.get(root_distribution) == "done":
+    component_states: dict[str, str] = {}
+    component_reported_cycles: set[frozenset[str]] = set()
+    for root_component in sorted(components_by_name):
+        if component_states.get(root_component) == "done":
             continue
-        stack: list[tuple[str, int]] = [(root_distribution, 0)]
-        path: list[str] = []
+        stack = [(root_component, 0)]
+        path = []
         while stack:
             current, next_index = stack[-1]
-            if current not in states:
-                states[current] = "visiting"
+            if current not in component_states:
+                component_states[current] = "visiting"
                 path.append(current)
-
-            package = packages_by_distribution[current]
+            component = components_by_name[current]
             dependencies = [
                 dependency
-                for dependency in package.get("dependsOn", [])
-                if isinstance(dependency, str) and dependency in packages_by_distribution
+                for dependency in component.get("dependsOn", [])
+                if isinstance(dependency, str) and dependency in components_by_name
             ]
             if next_index >= len(dependencies):
-                states[current] = "done"
+                component_states[current] = "done"
                 stack.pop()
                 if path and path[-1] == current:
                     path.pop()
                 elif current in path:
                     path.remove(current)
                 continue
-
             dependency = dependencies[next_index]
             stack[-1] = (current, next_index + 1)
-            dependency_state = states.get(dependency)
+            dependency_state = component_states.get(dependency)
             if dependency_state == "visiting":
                 cycle_start = path.index(dependency) if dependency in path else 0
                 cycle = [*path[cycle_start:], dependency]
                 cycle_key = frozenset(cycle)
-                if cycle_key not in reported_cycles:
-                    reported_cycles.add(cycle_key)
+                if cycle_key not in component_reported_cycles:
+                    component_reported_cycles.add(cycle_key)
                     diagnostics.append(
                         Diagnostic(
-                            "PackageDependencyCycle",
-                            f"package dependency cycle detected: {' -> '.join(cycle)}",
-                            f"$.packages.{current}.dependsOn",
+                            "PackageComponentDependencyCycle",
+                            f"component dependency cycle detected: {' -> '.join(cycle)}",
+                            f"$.components.{current}.dependsOn",
                         )
                     )
             elif dependency_state != "done":
                 stack.append((dependency, 0))
+
+    default_selection = catalog.get("defaultSelection")
+    default_selection = default_selection if isinstance(default_selection, dict) else {}
+    raw_default_artifacts = default_selection.get("artifacts", [])
+    default_artifacts = (
+        raw_default_artifacts if isinstance(raw_default_artifacts, list) else []
+    )
+    if not isinstance(raw_default_artifacts, list):
+        diagnostics.append(
+            Diagnostic(
+                "PackageDefaultArtifactsInvalid",
+                "default artifact selection must be a list",
+                "$.defaultSelection.artifacts",
+            )
+        )
+    for index, artifact in enumerate(default_artifacts):
+        if not isinstance(artifact, str) or not artifact.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageDefaultArtifactInvalid",
+                    "default artifacts must be non-empty strings",
+                    f"$.defaultSelection.artifacts[{index}]",
+                )
+            )
+        elif artifact not in artifacts_by_distribution:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageDefaultArtifactMissing",
+                    f"default artifact {artifact!r} is not listed in artifacts",
+                    f"$.defaultSelection.artifacts[{index}]",
+                )
+            )
+
+    raw_default_components = default_selection.get("components", [])
+    default_components = (
+        raw_default_components if isinstance(raw_default_components, list) else []
+    )
+    if not isinstance(raw_default_components, list):
+        diagnostics.append(
+            Diagnostic(
+                "PackageDefaultComponentsInvalid",
+                "default component selection must be a list",
+                "$.defaultSelection.components",
+            )
+        )
+    valid_default_components: set[str] = set()
+    for index, component in enumerate(default_components):
+        if not isinstance(component, str) or not component.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageDefaultComponentInvalid",
+                    "default components must be non-empty strings",
+                    f"$.defaultSelection.components[{index}]",
+                )
+            )
+        elif component not in components_by_name:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageDefaultComponentMissing",
+                    f"default component {component!r} is not listed in components",
+                    f"$.defaultSelection.components[{index}]",
+                )
+            )
+        else:
+            valid_default_components.add(component)
+    flagged_default_components = {
+        name
+        for name, component in components_by_name.items()
+        if component.get("default") is True
+    }
+    for component in sorted(flagged_default_components ^ valid_default_components):
+        diagnostics.append(
+            Diagnostic(
+                "PackageDefaultComponentMismatch",
+                (
+                    f"component {component!r} default flag does not match "
+                    "defaultSelection.components"
+                ),
+                f"$.components.{component}.default",
+            )
+        )
+
+    release_trains = catalog.get("releaseTrains", {})
+    if isinstance(release_trains, dict):
+        for train_name, train in release_trains.items():
+            if not isinstance(train, dict):
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageReleaseTrainInvalid",
+                        "release train entries must be mappings",
+                        f"$.releaseTrains.{train_name}",
+                    )
+                )
+                continue
+            if "components" in train:
+                train_components = train.get("components")
+                if not isinstance(train_components, list):
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageReleaseTrainComponentsInvalid",
+                            "release train components must be a list",
+                            f"$.releaseTrains.{train_name}.components",
+                        )
+                    )
+                else:
+                    for index, component in enumerate(train_components):
+                        if not isinstance(component, str) or component not in components_by_name:
+                            diagnostics.append(
+                                Diagnostic(
+                                    "PackageReleaseTrainComponentMissing",
+                                    f"release train references unknown component {component!r}",
+                                    f"$.releaseTrains.{train_name}.components[{index}]",
+                                )
+                            )
+            compatibility_by = train.get("compatibilityBy")
+            if compatibility_by is not None and (
+                not isinstance(compatibility_by, list)
+                or any(
+                    not isinstance(check, str) or not check.strip()
+                    for check in compatibility_by
+                )
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageReleaseTrainConformanceInvalid",
+                        "release train compatibilityBy must contain non-empty strings",
+                        f"$.releaseTrains.{train_name}.compatibilityBy",
+                    )
+                )
+
+    extension_components = catalog.get("extensionComponents", {})
+    if isinstance(extension_components, dict):
+        for group_name, group_components in extension_components.items():
+            if not isinstance(group_components, list):
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageExtensionComponentsInvalid",
+                        "extension component groups must be lists",
+                        f"$.extensionComponents.{group_name}",
+                    )
+                )
+                continue
+            for index, component in enumerate(group_components):
+                if not isinstance(component, str) or component not in components_by_name:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageExtensionComponentMissing",
+                            f"extension group references unknown component {component!r}",
+                            f"$.extensionComponents.{group_name}[{index}]",
+                        )
+                    )
 
     if root is not None:
         root_path = Path(root)
@@ -1128,14 +1563,53 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 )
             )
         else:
-            manifest_paths = [
-                root_path / "pyproject.toml",
-                *sorted(root_path.glob("packages/*/pyproject.toml")),
+            root_path = root_path.resolve()
+            python_artifacts = [
+                (distribution, artifact)
+                for distribution, artifact in artifacts_by_distribution.items()
+                if artifact.get("kind") in {"pure_python", "native_wheel"}
             ]
-            known_distributions = set(packages_by_distribution)
+            manifest_paths: dict[str, Path] = {}
+            manifest_owners: dict[Path, str] = {}
+            for distribution, artifact in python_artifacts:
+                manifest_ref = artifact.get("manifest")
+                if not isinstance(manifest_ref, str) or not manifest_ref.strip():
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestMissing",
+                            f"Python artifact {distribution!r} must declare manifest",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                manifest_path = _resolve_manifest_beneath_root(root_path, manifest_ref)
+                if manifest_path is None:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestOutsideRoot",
+                            f"artifact {distribution!r} manifest must remain beneath root",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                if manifest_path in manifest_owners:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestDuplicate",
+                            (
+                                f"artifacts {manifest_owners[manifest_path]!r} and "
+                                f"{distribution!r} use the same manifest"
+                            ),
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
+                manifest_owners[manifest_path] = distribution
+                manifest_paths[distribution] = manifest_path
+
             local_versions: dict[str, str] = {}
-            for manifest_path in manifest_paths:
-                if not manifest_path.exists():
+            for distribution, manifest_path in manifest_paths.items():
+                if not manifest_path.is_file():
                     continue
                 try:
                     candidate_manifest = tomllib.loads(
@@ -1154,18 +1628,33 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     and isinstance(candidate_version, str)
                     and candidate_version.strip()
                 ):
-                    local_versions[canonicalize_name(candidate_name.strip())] = candidate_version.strip()
-            for manifest_path in manifest_paths:
-                if not manifest_path.exists():
-                    continue
+                    local_versions[canonicalize_name(candidate_name)] = (
+                        candidate_version.strip()
+                    )
+
+            known_artifacts_by_canonical = {
+                canonicalize_name(distribution): distribution
+                for distribution in artifacts_by_distribution
+            }
+            for distribution, manifest_path in manifest_paths.items():
+                artifact = artifacts_by_distribution[distribution]
                 relative_path = manifest_path.relative_to(root_path).as_posix()
+                if not manifest_path.is_file():
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageArtifactManifestMissing",
+                            f"artifact manifest does not exist: {relative_path}",
+                            f"$.artifacts.{distribution}.manifest",
+                        )
+                    )
+                    continue
                 try:
                     manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
                 except tomllib.TOMLDecodeError as error:
                     diagnostics.append(
                         Diagnostic(
                             "PackageManifestInvalid",
-                            f"invalid Python package manifest: {error}",
+                            f"invalid Python artifact manifest: {error}",
                             f"$.{relative_path}",
                         )
                     )
@@ -1175,34 +1664,39 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     diagnostics.append(
                         Diagnostic(
                             "PackageManifestInvalid",
-                            "Python package manifests require a project table",
+                            "Python artifact manifests require a project table",
                             f"$.{relative_path}.project",
                         )
                     )
                     continue
-                distribution = project.get("name")
-                if not isinstance(distribution, str) or not distribution.strip():
+                manifest_distribution = project.get("name")
+                if not isinstance(manifest_distribution, str) or not manifest_distribution.strip():
                     diagnostics.append(
                         Diagnostic(
                             "PackageManifestDistributionMissing",
-                            "Python package manifest must declare project.name",
+                            "Python artifact manifest must declare project.name",
                             f"$.{relative_path}.project.name",
                         )
                     )
                     continue
-                distribution = distribution.strip()
-                package = packages_by_distribution.get(distribution)
-                if package is None:
+                manifest_distribution = manifest_distribution.strip()
+                if canonicalize_name(manifest_distribution) != canonicalize_name(distribution):
                     diagnostics.append(
                         Diagnostic(
-                            "PackageManifestDistributionUnknown",
-                            f"package manifest distribution {distribution!r} is not listed in catalog",
+                            "PackageManifestDistributionMismatch",
+                            (
+                                f"artifact {distribution!r} manifest declares "
+                                f"project.name {manifest_distribution!r}"
+                            ),
                             f"$.{relative_path}.project.name",
                         )
                     )
                     continue
+
                 expected_dependencies = tuple(
-                    dependency for dependency in package.get("dependsOn", []) if isinstance(dependency, str) and dependency
+                    dependency
+                    for dependency in artifact.get("dependsOn", [])
+                    if isinstance(dependency, str) and dependency
                 )
                 dependencies = project.get("dependencies", [])
                 actual_dependencies: list[str] = []
@@ -1218,7 +1712,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                                 Diagnostic(
                                     "PackageManifestDependencyRequirementInvalid",
                                     (
-                                        f"package manifest for {distribution!r} has invalid "
+                                        f"artifact manifest for {distribution!r} has invalid "
                                         f"dependency requirement {dependency_requirement!r}: {error}"
                                     ),
                                     (
@@ -1227,45 +1721,64 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                                     ),
                                 )
                             )
-                            normalized_requirement = dependency_requirement.lower().replace("_", "-")
-                            for known_distribution in known_distributions:
-                                normalized_known = canonicalize_name(known_distribution)
-                                if normalized_requirement.startswith(normalized_known):
-                                    suffix = normalized_requirement[len(normalized_known) : len(normalized_known) + 1]
+                            normalized_requirement = dependency_requirement.lower().replace(
+                                "_", "-"
+                            )
+                            for canonical_name, artifact_name in known_artifacts_by_canonical.items():
+                                if normalized_requirement.startswith(canonical_name):
+                                    suffix = normalized_requirement[
+                                        len(canonical_name) : len(canonical_name) + 1
+                                    ]
                                     if not suffix or suffix in "[<>=!~ @;":
-                                        if normalized_known not in actual_dependencies:
-                                            actual_dependencies.append(normalized_known)
+                                        if artifact_name not in actual_dependencies:
+                                            actual_dependencies.append(artifact_name)
                                         break
                             continue
-                        dependency_name = canonicalize_name(parsed_requirement.name)
-                        if dependency_name in known_distributions and dependency_name not in actual_dependencies:
+                        canonical_name = canonicalize_name(parsed_requirement.name)
+                        dependency_name = known_artifacts_by_canonical.get(canonical_name)
+                        if (
+                            dependency_name is not None
+                            and dependency_name not in actual_dependencies
+                        ):
                             actual_dependencies.append(dependency_name)
-                        local_version = local_versions.get(dependency_name)
-                        if dependency_name in known_distributions and local_version is not None:
+                        local_version = local_versions.get(canonical_name)
+                        if dependency_name is not None and local_version is not None:
                             try:
                                 parsed_local_version = Version(local_version)
                             except InvalidVersion as error:
                                 diagnostics.append(
                                     Diagnostic(
                                         "PackageManifestVersionInvalid",
-                                        f"local package {dependency_name!r} has invalid version {local_version!r}: {error}",
-                                        f"$.{relative_path}.project.dependencies[{dependency_index}]",
+                                        (
+                                            f"local artifact {dependency_name!r} has invalid "
+                                            f"version {local_version!r}: {error}"
+                                        ),
+                                        (
+                                            f"$.{relative_path}.project.dependencies"
+                                            f"[{dependency_index}]"
+                                        ),
                                     )
                                 )
                             else:
-                                if parsed_requirement.specifier and not parsed_requirement.specifier.contains(
-                                    parsed_local_version,
-                                    prereleases=True,
+                                if (
+                                    parsed_requirement.specifier
+                                    and not parsed_requirement.specifier.contains(
+                                        parsed_local_version,
+                                        prereleases=True,
+                                    )
                                 ):
                                     diagnostics.append(
                                         Diagnostic(
                                             "PackageManifestDependencyVersionUnsatisfied",
                                             (
-                                                f"package manifest for {distribution!r} requires "
-                                                f"{dependency_requirement!r}, but the local version is "
-                                                f"{local_version!r}"
+                                                f"artifact manifest for {distribution!r} requires "
+                                                f"{dependency_requirement!r}, but the local version "
+                                                f"is {local_version!r}"
                                             ),
-                                            f"$.{relative_path}.project.dependencies[{dependency_index}]",
+                                            (
+                                                f"$.{relative_path}.project.dependencies"
+                                                f"[{dependency_index}]"
+                                            ),
                                         )
                                     )
                 dependency_path = f"$.{relative_path}.project.dependencies"
@@ -1274,7 +1787,10 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                         diagnostics.append(
                             Diagnostic(
                                 "PackageManifestDependencyMissing",
-                                f"package manifest for {distribution!r} is missing catalog dependency {dependency!r}",
+                                (
+                                    f"artifact manifest for {distribution!r} is missing "
+                                    f"catalog dependency {dependency!r}"
+                                ),
                                 dependency_path,
                             )
                         )
@@ -1283,39 +1799,42 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                         diagnostics.append(
                             Diagnostic(
                                 "PackageManifestDependencyUnexpected",
-                                f"package manifest for {distribution!r} declares uncataloged first-party dependency {dependency!r}",
+                                (
+                                    f"artifact manifest for {distribution!r} declares "
+                                    f"uncataloged artifact dependency {dependency!r}"
+                                ),
                                 dependency_path,
                             )
                         )
 
     excluded_categories = {
         category
-        for category in default_metapackage.get("excludedCategories", [])
+        for category in default_selection.get("excludedCategories", [])
         if isinstance(category, str) and category
     }
-    if excluded_categories and isinstance(default_distribution, str) and default_distribution in packages_by_distribution:
+    if excluded_categories and valid_default_components:
         try:
             default_lock = build_package_lock(catalog, requested=(), include_default=True)
         except ValueError as error:
             default_lock = None
-            if "default package closure includes excluded category" in str(error):
+            if "default component closure includes excluded category" in str(error):
                 diagnostics.append(
                     Diagnostic(
                         "PackageDefaultIncludesExcludedCategory",
                         str(error),
-                        "$.defaultMetaPackage.excludedCategories",
+                        "$.defaultSelection.excludedCategories",
                     )
                 )
         if default_lock is not None:
             for entry in default_lock.entries:
-                package = packages_by_distribution.get(entry.distribution, {})
-                blocked = sorted(_package_categories(package) & excluded_categories)
+                component = components_by_name.get(entry.distribution, {})
+                blocked = sorted(_package_categories(component) & excluded_categories)
                 if blocked:
                     diagnostics.append(
                         Diagnostic(
                             "PackageDefaultIncludesExcludedCategory",
-                            f"default package closure includes excluded category {blocked[0]!r}",
-                            f"$.packages.{entry.distribution}.categories",
+                            f"default component closure includes excluded category {blocked[0]!r}",
+                            f"$.components.{entry.distribution}.categories",
                         )
                     )
 

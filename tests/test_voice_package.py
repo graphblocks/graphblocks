@@ -10,8 +10,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_voice(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
-    return importlib.import_module("graphblocks_voice")
+    return importlib.import_module("graphblocks.voice")
 
 
 def test_voice_package_tracks_duplex_session_and_realtime_request(monkeypatch) -> None:
@@ -276,8 +275,10 @@ def test_voice_package_is_cataloged_as_optional_extension(monkeypatch) -> None:
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
 
     assert rows["graphblocks-voice"] == {
+        "component": "graphblocks-voice",
+        "artifact": "graphblocks",
         "distribution": "graphblocks-voice",
-        "import": "graphblocks_voice",
+        "import": "graphblocks.voice",
         "default": False,
         "layer": "voice",
         "kind": "pure_python",

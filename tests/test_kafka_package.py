@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_kafka(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-kafka" / "src"))
-    return importlib.import_module("graphblocks_kafka")
+    return importlib.import_module("graphblocks.integrations.kafka")
 
 
 def test_kafka_record_projects_to_durable_source_event(monkeypatch) -> None:
@@ -111,7 +105,9 @@ def test_kafka_package_is_cataloged_as_optional_durable_adapter(monkeypatch) -> 
 
     assert rows["graphblocks-kafka"] == {
         "distribution": "graphblocks-kafka",
-        "import": "graphblocks_kafka",
+        "artifact": "graphblocks",
+        "component": "graphblocks-kafka",
+        "import": "graphblocks.integrations.kafka",
         "default": False,
         "layer": "durable_stream_adapter",
         "kind": "pure_python",

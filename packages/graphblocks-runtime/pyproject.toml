@@ -21,7 +21,13 @@ classifiers = [
   "Programming Language :: Rust",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-core~=0.1"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/graphblocks/graphblocks"
+Documentation = "https://github.com/graphblocks/graphblocks/tree/main/docs"
+Source = "https://github.com/graphblocks/graphblocks"
+Issues = "https://github.com/graphblocks/graphblocks/issues"
 
 [tool.maturin]
 manifest-path = "../../crates/graphblocks-python/Cargo.toml"

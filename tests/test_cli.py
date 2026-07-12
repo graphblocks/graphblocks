@@ -8,6 +8,7 @@ import tarfile
 from types import SimpleNamespace
 import yaml
 
+import graphblocks.cli as cli_module
 from graphblocks.cli import _loads_strict_json, main
 from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
 from graphblocks.compiler import compile_graph
@@ -180,6 +181,37 @@ def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
     ]
 
 
+def test_schemas_manifest_cli_defaults_to_packaged_schemas(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    package_root = tmp_path / "installed-graphblocks"
+    schema_root = package_root / "schemas" / "graphblocks.ai" / "v1alpha1"
+    schema_root.mkdir(parents=True)
+    (schema_root / "example.schema.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$id": "graphblocks.ai/v1alpha1/example.schema.json",
+                "type": "object",
+            }
+        ),
+        encoding="utf-8",
+    )
+    working_directory = tmp_path / "outside-repository"
+    working_directory.mkdir()
+    monkeypatch.chdir(working_directory)
+    monkeypatch.setattr(cli_module.resources, "files", lambda package: package_root)
+
+    assert main(["schemas", "manifest"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["schemaId"] for entry in payload["schemas"]] == [
+        "graphblocks.ai/v1alpha1/example.schema.json"
+    ]
+
+
 def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -198,7 +230,8 @@ def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys)
     assert payload["graph"]["graphHash"].startswith("sha256:")
     assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1alpha3"
     assert payload["packageLockHash"].startswith("sha256:")
-    assert payload["packageCatalogVersion"] == 4
+    assert payload["packageCatalogVersion"] == 5
+    assert payload["artifacts"] == ["graphblocks"]
     assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
 
 
@@ -218,7 +251,8 @@ def test_lock_cli_writes_output_file(tmp_path, capsys) -> None:
     assert capsys.readouterr().out == ""
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["graph"]["id"] == "cli-lock-file"
-    assert payload["packages"][0]["name"] == "graphblocks"
+    assert payload["artifacts"] == ["graphblocks"]
+    assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
 
 
 def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
@@ -1441,10 +1475,7 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
     ]
 
 
-def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys, monkeypatch) -> None:
-    root = Path(__file__).parents[1]
-    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-kubernetes" / "src"))
+def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys) -> None:
     plan = {
         "ok": True,
         "deploymentId": "support-production",
@@ -1482,10 +1513,7 @@ def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys, mon
     )
 
 
-def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys, monkeypatch) -> None:
-    root = Path(__file__).parents[1]
-    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-kubernetes" / "src"))
+def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys) -> None:
     plan = {
         "ok": True,
         "deploymentId": "support-production",

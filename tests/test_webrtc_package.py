@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_webrtc(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-webrtc" / "src"))
-    return importlib.import_module("graphblocks_webrtc")
+    return importlib.import_module("graphblocks.integrations.webrtc")
 
 
 def test_webrtc_session_builds_voice_transport_contract(monkeypatch) -> None:
@@ -82,7 +76,9 @@ def test_webrtc_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> N
 
     assert rows["graphblocks-webrtc"] == {
         "distribution": "graphblocks-webrtc",
-        "import": "graphblocks_webrtc",
+        "artifact": "graphblocks",
+        "component": "graphblocks-webrtc",
+        "import": "graphblocks.integrations.webrtc",
         "default": False,
         "layer": "voice_transport_adapter",
         "kind": "pure_python",

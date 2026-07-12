@@ -20,20 +20,21 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks-core~=0.1"]
+dependencies = ["graphblocks>=0.1,<0.2"]
 
 [project.optional-dependencies]
-production = [
-  "graphblocks-audit~=0.1",
-  "graphblocks-callbacks~=0.1",
-  "graphblocks-langfuse~=0.1",
-  "graphblocks-otel~=0.1",
-  "graphblocks-telemetry~=0.1",
-  "graphblocks-voice~=0.1",
+runtime = [
+  "graphblocks-runtime>=0.1,<0.2",
 ]
 
 [project.scripts]
 graphblocks-tck = "graphblocks_testing:main"
+
+[project.urls]
+Homepage = "https://github.com/graphblocks/graphblocks"
+Documentation = "https://github.com/graphblocks/graphblocks/tree/main/docs"
+Source = "https://github.com/graphblocks/graphblocks"
+Issues = "https://github.com/graphblocks/graphblocks/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graphblocks_testing"]

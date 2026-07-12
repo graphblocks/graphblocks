@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks.packages import load_package_catalog, package_rows
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_silero_vad(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-silero-vad" / "src"))
-    return importlib.import_module("graphblocks_silero_vad")
+    return importlib.import_module("graphblocks.integrations.silero_vad")
 
 
 def test_silero_vad_frame_projects_to_core_audio_frame(monkeypatch) -> None:
@@ -92,7 +86,9 @@ def test_silero_vad_package_is_cataloged_as_optional_voice_adapter(monkeypatch) 
 
     assert rows["graphblocks-silero-vad"] == {
         "distribution": "graphblocks-silero-vad",
-        "import": "graphblocks_silero_vad",
+        "artifact": "graphblocks",
+        "component": "graphblocks-silero-vad",
+        "import": "graphblocks.integrations.silero_vad",
         "default": False,
         "layer": "voice_vad_adapter",
         "kind": "pure_python",

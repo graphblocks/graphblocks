@@ -909,8 +909,10 @@ def test_durable_package_is_cataloged_as_optional_extension(monkeypatch) -> None
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
 
     assert rows["graphblocks-durable"] == {
+        "component": "graphblocks-durable",
+        "artifact": "graphblocks",
         "distribution": "graphblocks-durable",
-        "import": "graphblocks_durable",
+        "import": "graphblocks.durable",
         "default": False,
         "layer": "durable_stream",
         "kind": "pure_python",
