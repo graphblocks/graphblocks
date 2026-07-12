@@ -222,7 +222,8 @@ fn policy_enforcement_record_from_decision_validates_obligation_ids() {
             "2026-06-22T00:00:00Z",
         ),
         "2026-06-22T00:00:01Z",
-    );
+    )
+    .expect("valid policy request is evaluated");
 
     let record = PolicyEnforcementRecord::from_decision(
         "enforce-1",
@@ -254,6 +255,52 @@ fn policy_enforcement_record_from_decision_validates_obligation_ids() {
 }
 
 #[test]
+fn static_policy_evaluator_returns_validation_error_for_malformed_request() {
+    let evaluator = StaticPolicyEvaluator::new([]);
+    let request = PolicyRequest::new(
+        "req-invalid",
+        EnforcementPoint::BeforeToolOrEffect,
+        " ",
+        ResourceRef::new("tool:search"),
+        "2026-06-23T00:00:00Z",
+    );
+
+    assert_eq!(
+        evaluator.evaluate(&request, "2026-06-23T00:00:01Z"),
+        Err(PolicyValidationError::EmptyField {
+            owner: "policy request",
+            field: "action",
+        })
+    );
+}
+
+#[test]
+fn unavailable_policy_decision_returns_validation_error_for_malformed_request() {
+    let request = PolicyRequest::new(
+        "req-invalid",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new(" "),
+        "2026-06-23T00:00:00Z",
+    );
+
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::FailClosed,
+            "2026-06-23T00:00:01Z",
+            None,
+        ),
+        Err(PolicyUnavailableError::InvalidRequest(
+            PolicyValidationError::EmptyField {
+                owner: "resource",
+                field: "resource_id",
+            }
+        ))
+    );
+}
+
+#[test]
 fn static_policy_evaluator_gives_explicit_deny_precedence() {
     let evaluator = StaticPolicyEvaluator::new([
         PolicyRule::new("allow-model", RuleEffect::Allow, ["model.generate"], ["*"]),
@@ -270,7 +317,9 @@ fn static_policy_evaluator_gives_explicit_deny_precedence() {
     )
     .with_principal(PrincipalRef::new("user-1"));
 
-    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+    let decision = evaluator
+        .evaluate(&request, "2026-06-22T00:00:01Z")
+        .expect("valid policy request is evaluated");
 
     assert_eq!(decision.effect.as_str(), "deny");
     assert_eq!(decision.reason_codes, vec!["deny-user"]);
@@ -310,7 +359,9 @@ fn static_policy_evaluator_returns_allow_with_obligations() {
         "2026-06-22T00:00:00Z",
     );
 
-    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+    let decision = evaluator
+        .evaluate(&request, "2026-06-22T00:00:01Z")
+        .expect("valid policy request is evaluated");
 
     assert_eq!(decision.effect.as_str(), "allow_with_obligations");
     assert_eq!(decision.reason_codes, vec!["allow-model", "cap-input"]);
@@ -334,7 +385,9 @@ fn static_policy_evaluator_defaults_to_deny_without_matching_rule() {
         "2026-06-22T00:00:00Z",
     );
 
-    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+    let decision = evaluator
+        .evaluate(&request, "2026-06-22T00:00:01Z")
+        .expect("valid policy request is evaluated");
 
     assert_eq!(decision.effect.as_str(), "deny");
     assert_eq!(decision.reason_codes, vec!["default_deny"]);
@@ -571,8 +624,9 @@ fn static_policy_evaluator_can_be_built_from_policy_bundle() {
         "2026-06-22T00:00:00Z",
     );
 
-    let decision =
-        StaticPolicyEvaluator::from_bundles([bundle]).evaluate(&request, "2026-06-22T00:00:01Z");
+    let decision = StaticPolicyEvaluator::from_bundles([bundle])
+        .evaluate(&request, "2026-06-22T00:00:01Z")
+        .expect("valid policy request is evaluated");
 
     assert_eq!(decision.effect.as_str(), "allow_with_obligations");
     assert_eq!(decision.policy_refs, vec!["allow-tools", "sandbox-tools"]);

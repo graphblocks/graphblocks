@@ -930,8 +930,8 @@ impl StaticPolicyEvaluator {
         &self,
         request: &PolicyRequest,
         evaluated_at: impl Into<String>,
-    ) -> PolicyDecision {
-        let digested_request = request.clone().with_input_digest();
+    ) -> Result<PolicyDecision, PolicyValidationError> {
+        let digested_request = request.clone().try_with_input_digest()?;
         let mut matching_deny = Vec::new();
         let mut matching_allow = Vec::new();
         let mut matching_obligate = Vec::new();
@@ -1005,13 +1005,13 @@ impl StaticPolicyEvaluator {
                 .iter()
                 .map(|rule| rule.rule_id.clone())
                 .collect::<Vec<_>>();
-            return policy_decision(
+            return Ok(policy_decision(
                 PolicyEffect::Deny,
                 policy_refs,
                 Vec::new(),
                 evaluated_at.into(),
                 digested_request.input_digest,
-            );
+            ));
         }
 
         if !matching_allow.is_empty() || !matching_obligate.is_empty() {
@@ -1029,22 +1029,22 @@ impl StaticPolicyEvaluator {
             } else {
                 PolicyEffect::AllowWithObligations
             };
-            return policy_decision(
+            return Ok(policy_decision(
                 effect,
                 policy_refs,
                 obligations,
                 evaluated_at.into(),
                 digested_request.input_digest,
-            );
+            ));
         }
 
-        policy_decision(
+        Ok(policy_decision(
             PolicyEffect::Deny,
             vec!["default_deny".to_string()],
             Vec::new(),
             evaluated_at.into(),
             digested_request.input_digest,
-        )
+        ))
     }
 }
 
@@ -1076,6 +1076,7 @@ fn policy_decision(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PolicyUnavailableError {
+    InvalidRequest(PolicyValidationError),
     CachedDecisionRequired,
     CachedDecisionInputDigestMismatch,
     CachedDecisionExpired,
@@ -1088,7 +1089,10 @@ pub fn unavailable_policy_decision(
     cached_decision: Option<&PolicyDecision>,
 ) -> Result<PolicyDecision, PolicyUnavailableError> {
     let evaluated_at = evaluated_at.into();
-    let digested_request = request.clone().with_input_digest();
+    let digested_request = request
+        .clone()
+        .try_with_input_digest()
+        .map_err(PolicyUnavailableError::InvalidRequest)?;
 
     if fail_mode == PolicyFailMode::UseCachedDecision {
         let Some(cached_decision) = cached_decision else {
