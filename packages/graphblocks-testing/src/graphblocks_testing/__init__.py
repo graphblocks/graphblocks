@@ -111,6 +111,12 @@ from graphblocks.exhaustion import (
     MissingExhaustionBoundaryError,
     validate_exhaustion_policy,
 )
+from graphblocks.integrations.pdf import (
+    PdfPageText,
+    PdfParserError,
+    marker_pdf_parser_descriptor,
+    pdf_parser_descriptor,
+)
 from graphblocks.loader import load_documents
 from graphblocks.migration import GRAPH_API_VERSION, migrate_document
 from graphblocks.output_policy import (
@@ -5616,21 +5622,30 @@ def _exercise_document_ingestion(
 
     parser_attempts: list[str] = []
 
-    def primary(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+    def primary(source: io.BytesIO) -> object:
         parser_attempts.append(candidate_pairs[0][0])
-        raise DocumentParserError("primary parser quality gate failed")
+        raise PdfParserError("Marker parser quality gate failed")
 
-    def fallback(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
+    def fallback(body: bytes) -> list[PdfPageText]:
         parser_attempts.append(candidate_pairs[1][0])
-        parsed = parse_plain_text_document(asset, revision, body.decode("utf-8"))
-        return replace(
-            parsed,
-            parser={"processor_id": candidate_pairs[1][0], "version": candidate_pairs[1][1]},
-        )
+        return [PdfPageText(page_number=1, text=body.decode("utf-8"))]
 
     registry = DocumentParserRegistry()
-    registry.register(ParserDescriptor(*candidate_pairs[0], parse=primary))
-    registry.register(ParserDescriptor(*candidate_pairs[1], parse=fallback))
+    registry.register(
+        marker_pdf_parser_descriptor(
+            converter=primary,
+            html_text_extractor=lambda value: value,
+            processor_id=candidate_pairs[0][0],
+            version=candidate_pairs[0][1],
+        )
+    )
+    registry.register(
+        pdf_parser_descriptor(
+            extractor=fallback,
+            processor_id=candidate_pairs[1][0],
+            version=candidate_pairs[1][1],
+        )
+    )
     source_text = "Restricted policy requires approval.\n"
     asset, base_revision = create_local_text_revision(
         "file:///acceptance/restricted.pdf",
@@ -5929,9 +5944,9 @@ def _parser_fallback_check(application: AcceptanceApplication, scenario_path: Pa
     evidence = _exercise_document_ingestion(application, scenario_path)
     parser = evidence["parser"]
     if not isinstance(parser, Mapping) or parser != {
-        "attempts": ["parser.pdf.primary", "parser.pdf.fallback"],
-        "failed": ["parser.pdf.primary"],
-        "selected": "parser.pdf.fallback",
+        "attempts": ["marker-pdf", "pdf-text"],
+        "failed": ["marker-pdf"],
+        "selected": "pdf-text",
         "reason": "candidate_fallback",
     }:
         raise RuntimeError("document-ingestion parser fallback evidence is incomplete")

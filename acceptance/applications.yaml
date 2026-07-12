@@ -46,7 +46,7 @@ spec:
     - graphblocks plan --expand
     - parser fallback check
     - ACL propagation check
-    description: Incremental document ingestion with parser fallback, per-item budget, checkpoint, staging index, publish, delete, and ACL propagation.
+    description: Incremental document ingestion with Marker-first PDF parsing, lightweight parser fallback, per-item budget, checkpoint, staging index, publish, delete, and ACL propagation.
   - id: enterprise-rag
     profiles:
     - GB-C2-AI-APPLICATION

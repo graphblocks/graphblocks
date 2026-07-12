@@ -188,6 +188,7 @@ components:
   responsibility:
   - PDF parser descriptor
   - lazy pypdf text extraction adapter
+  - lazy Marker chunk adapter with page and bounding-box lineage
   - page-level ParsedDocument conversion
   forbiddenDependencies:
   - default parser SDK import

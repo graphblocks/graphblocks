@@ -12,7 +12,7 @@ checked-in Python and Rust implementations directly.
 | Example | Contract focus |
 | --- | --- |
 | [01 Enterprise federated RAG](01-enterprise-federated-rag/README.md) | federation, reranking, grounding, citations |
-| [02 Document ingestion](02-document-ingestion/README.md) | durable ingestion, parser fallback, ACL lineage |
+| [02 Marker document ingestion](02-document-ingestion/README.md) | Marker-first PDF parsing, fallback, ACL lineage |
 | [03 Policy-governed chat](03-policy-governed-chat/README.md) | bounded completion and hard-stop profiles |
 | [04 TUI workspace assistant](04-tui-workspace-assistant/README.md) | application protocol and TUI client boundary |
 | [05 Authority-backed advisory](05-authority-backed-advisory/README.md) | sources, evidence, review, and gated result |

@@ -1,4 +1,4 @@
-# Durable document ingestion with parser fallback and ACL propagation.
+# Durable document ingestion with Marker-first PDF parsing and ACL propagation.
 apiVersion: graphblocks.ai/v1alpha3
 kind: Graph
 metadata:
@@ -89,8 +89,8 @@ spec:
         strategy: locked_auto
         candidates:
           application/pdf:
-            - {implementation: parser.pdf.primary, version: "1"}
-            - {implementation: parser.pdf.fallback, version: "1"}
+            - {implementation: marker-pdf, version: "1"}
+            - {implementation: pdf-text, version: "1"}
         qualityGate: document.default-quality-v1
     quality:
       block: document.assess_quality@1
