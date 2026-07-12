@@ -734,6 +734,41 @@ def test_package_lock_records_validate_component_artifact_and_uniqueness() -> No
         )
 
 
+@pytest.mark.parametrize("duplicate", ("graphblocks_core", "graphblocks.core", "graphblocks---core"))
+def test_package_lock_rejects_canonical_distribution_duplicates(duplicate: str) -> None:
+    entry = PackageLockEntry(
+        "graphblocks-core",
+        "graphblocks",
+        None,
+        None,
+        True,
+        None,
+        None,
+        None,
+    )
+    duplicate_entry = PackageLockEntry(
+        duplicate,
+        "graphblocks",
+        None,
+        None,
+        False,
+        None,
+        None,
+        None,
+    )
+
+    with pytest.raises(ValueError, match="package lock entries must have unique distributions"):
+        PackageLock(1, "1.0", requested=(), entries=(entry, duplicate_entry))
+    with pytest.raises(ValueError, match="package lock artifacts must be unique"):
+        PackageLock(
+            1,
+            "1.0",
+            requested=(),
+            entries=(entry,),
+            artifacts=("graphblocks-core", duplicate),
+        )
+
+
 def test_package_catalog_doctor_accepts_builtin_catalog_and_artifact_manifests() -> None:
     assert doctor_package_catalog(load_package_catalog()).diagnostics == ()
 
@@ -741,6 +776,25 @@ def test_package_catalog_doctor_accepts_builtin_catalog_and_artifact_manifests()
 
     assert diagnostics.ok
     assert diagnostics.diagnostics == ()
+
+
+@pytest.mark.parametrize("duplicate", ("same_wheel", "same.wheel", "same---wheel"))
+def test_package_catalog_doctor_rejects_canonical_distribution_duplicates(
+    duplicate: str,
+) -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "artifacts": [
+                {"distribution": "same-wheel", "dependsOn": []},
+                {"distribution": duplicate, "dependsOn": []},
+            ],
+            "components": [],
+        }
+    )
+
+    assert [item.code for item in diagnostics.diagnostics] == [
+        "PackageArtifactDuplicateDistribution"
+    ]
 
 
 def test_package_catalog_doctor_reports_component_mapping_and_conformance_errors() -> None:
@@ -1252,6 +1306,22 @@ def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
             targets=(target,),
             diagnostics=(object(),),  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("duplicate", ("same_wheel", "same.wheel", "same---wheel"))
+def test_wheel_matrix_rejects_canonical_distribution_duplicates(duplicate: str) -> None:
+    def target(distribution: str) -> WheelBuildTarget:
+        return WheelBuildTarget(
+            distribution=distribution,
+            manifest=f"packages/{distribution}/pyproject.toml",
+            backend="hatchling.build",
+            kind="pure_python",
+            source_layout=f"src/{distribution}",
+            python_versions=("3.11", "3.12"),
+        )
+
+    with pytest.raises(ValueError, match="wheel matrix targets must have unique distributions"):
+        WheelMatrix(targets=(target("same-wheel"), target(duplicate)))
 
 
 def test_package_manifest_audit_accepts_repo_manifest_licenses() -> None:

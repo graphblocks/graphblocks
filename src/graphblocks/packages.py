@@ -129,12 +129,12 @@ class PackageLock:
         entries = tuple(self.entries)
         if any(not isinstance(entry, PackageLockEntry) for entry in entries):
             raise ValueError("package lock entries must be PackageLockEntry")
-        distributions = [entry.distribution for entry in entries]
+        distributions = [canonicalize_name(entry.distribution) for entry in entries]
         if len(set(distributions)) != len(distributions):
             raise ValueError("package lock entries must have unique distributions")
         object.__setattr__(self, "entries", entries)
         artifacts = _validate_string_tuple("package lock", "artifacts", self.artifacts)
-        if len(set(artifacts)) != len(artifacts):
+        if len({canonicalize_name(artifact) for artifact in artifacts}) != len(artifacts):
             raise ValueError("package lock artifacts must be unique")
         object.__setattr__(self, "artifacts", tuple(sorted(artifacts)))
         object.__setattr__(
@@ -203,7 +203,7 @@ class WheelMatrix:
         targets = tuple(self.targets)
         if any(not isinstance(target, WheelBuildTarget) for target in targets):
             raise ValueError("wheel matrix targets must be WheelBuildTarget")
-        distributions = [target.distribution for target in targets]
+        distributions = [canonicalize_name(target.distribution) for target in targets]
         if len(set(distributions)) != len(distributions):
             raise ValueError("wheel matrix targets must have unique distributions")
         object.__setattr__(self, "targets", tuple(sorted(targets, key=lambda item: item.distribution)))
@@ -1152,6 +1152,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
     raw_artifacts = catalog.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
     artifacts_by_distribution: dict[str, dict[str, Any]] = {}
+    canonical_artifact_distributions: set[str] = set()
     if not isinstance(raw_artifacts, list):
         diagnostics.append(
             Diagnostic(
@@ -1181,7 +1182,8 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
             )
             continue
         distribution = distribution.strip()
-        if distribution in artifacts_by_distribution:
+        canonical_distribution = canonicalize_name(distribution)
+        if canonical_distribution in canonical_artifact_distributions:
             diagnostics.append(
                 Diagnostic(
                     "PackageArtifactDuplicateDistribution",
@@ -1191,6 +1193,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
             )
             continue
         artifacts_by_distribution[distribution] = artifact
+        canonical_artifact_distributions.add(canonical_distribution)
 
     raw_components = catalog.get("components", [])
     components = raw_components if isinstance(raw_components, list) else []

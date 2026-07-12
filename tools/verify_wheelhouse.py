@@ -11,6 +11,9 @@ from tempfile import TemporaryDirectory
 import tomllib
 import venv
 
+from packaging.utils import canonicalize_name
+
+from graphblocks.packages import build_wheel_matrix, load_package_catalog
 from graphblocks.schema import SchemaManifest
 
 
@@ -19,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build and verify the three first-party Python distributions offline."
+        description="Build and verify the catalog's first-party Python distributions offline."
     )
     parser.add_argument("--wheelhouse", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -33,17 +36,17 @@ def main(argv: list[str] | None = None) -> int:
         f"{Path(sys.executable).absolute().parent}{os.pathsep}"
         f"{build_environment.get('PATH', '')}"
     )
-    manifests = (
-        ROOT / "pyproject.toml",
-        ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml",
-        ROOT / "packages" / "graphblocks-testing" / "pyproject.toml",
-    )
+    catalog = load_package_catalog()
+    matrix = build_wheel_matrix(ROOT, catalog=catalog)
+    if not matrix.ok:
+        raise RuntimeError(f"first-party wheel matrix is invalid: {matrix.diagnostics!r}")
+    manifests = tuple(ROOT / target.manifest for target in matrix.targets)
     expected_distributions: dict[str, str] = {}
     for manifest in manifests:
         project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
         distribution = str(project["name"])
         version = str(project["version"])
-        expected_distributions[distribution.lower().replace("_", "-")] = version
+        expected_distributions[canonicalize_name(distribution)] = version
         subprocess.run(
             [
                 sys.executable,
@@ -156,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             text=True,
         )
         installed_distributions = {
-            str(distribution["name"]).lower().replace("_", "-"): str(distribution["version"])
+            canonicalize_name(str(distribution["name"])): str(distribution["version"])
             for distribution in json.loads(installed.stdout)
         }
         installed_first_party = {
@@ -165,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if installed_first_party != expected_distributions:
             raise RuntimeError(
-                "offline wheelhouse installation did not install all three first-party distributions: "
+                "offline wheelhouse installation did not install all first-party distributions: "
                 f"expected {expected_distributions!r}, observed {installed_first_party!r}"
             )
 
