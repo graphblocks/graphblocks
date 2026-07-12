@@ -1,0 +1,174 @@
+[
+  {
+    "name": "duplex_session_request_contract_tracks_turn_and_tools",
+    "kind": "session_request",
+    "transport": {
+      "kind": "websocket",
+      "uri": "wss://voice.example.com/session",
+      "codec": "pcm16",
+      "sampleRateHz": 24000,
+      "channels": 1
+    },
+    "session": {
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "startedAtMs": 100,
+      "metadata": {
+        "tenant": "acme",
+        "surface": "support"
+      }
+    },
+    "request": {
+      "model": "realtime-support",
+      "instructions": "Answer with concise support guidance.",
+      "modalities": [
+        "text",
+        "audio"
+      ],
+      "tools": [
+        "ticket.create",
+        "knowledge.search"
+      ]
+    },
+    "expected": {
+      "sessionState": "open",
+      "currentTurnId": "turn-1",
+      "contractSessionId": "session-1",
+      "transportKind": "websocket",
+      "transportSampleRateHz": 24000,
+      "modalities": [
+        "audio",
+        "text"
+      ],
+      "tools": [
+        "knowledge.search",
+        "ticket.create"
+      ]
+    }
+  },
+  {
+    "name": "vad_authority_drives_interruption_classifier",
+    "kind": "vad_interruption",
+    "authority": {
+      "authorityId": "vad-local",
+      "speechThreshold": 0.6
+    },
+    "frames": [
+      {
+        "streamId": "mic",
+        "sequence": 1,
+        "startMs": 0,
+        "durationMs": 20,
+        "speechProbability": 0.2,
+        "alreadyInSpeech": false
+      },
+      {
+        "streamId": "mic",
+        "sequence": 2,
+        "startMs": 20,
+        "durationMs": 20,
+        "speechProbability": 0.9,
+        "alreadyInSpeech": false
+      }
+    ],
+    "playback": [
+      {
+        "playbackId": "assistant-audio-1",
+        "sequence": 1,
+        "status": "started",
+        "startedAtMs": 0
+      }
+    ],
+    "classifier": {
+      "classifierId": "barge-in",
+      "providerAuthorityId": "provider-realtime",
+      "sessionId": "session-1",
+      "occurredAtMs": 25,
+      "providerDecision": {
+        "authorityId": "provider-realtime",
+        "sessionId": "session-1",
+        "kind": "interrupt",
+        "occurredAtMs": 25,
+        "reason": "user_speech_during_playback"
+      }
+    },
+    "expected": {
+      "decisionKinds": [
+        "silence",
+        "speech_start"
+      ],
+      "interruptionKind": "interrupt",
+      "interruptedPlaybackIds": [
+        "assistant-audio-1"
+      ],
+      "interruptionReason": "user_speech_during_playback"
+    }
+  },
+  {
+    "name": "playback_ledger_interrupts_active_items_only",
+    "kind": "playback_interrupt",
+    "entries": [
+      {
+        "playbackId": "audio-1",
+        "sequence": 1,
+        "status": "completed",
+        "startedAtMs": 0,
+        "completedAtMs": 100
+      },
+      {
+        "playbackId": "audio-2",
+        "sequence": 2,
+        "status": "started",
+        "startedAtMs": 110
+      }
+    ],
+    "interrupt": {
+      "occurredAtMs": 150,
+      "reason": "barge_in"
+    },
+    "expected": {
+      "activeBefore": [
+        "audio-2"
+      ],
+      "statuses": [
+        "completed",
+        "interrupted"
+      ],
+      "completedAtMs": [
+        100,
+        150
+      ],
+      "reasons": [
+        null,
+        "barge_in"
+      ],
+      "digestPrefix": "sha256:"
+    }
+  },
+  {
+    "name": "voice_contract_validation_errors_are_explicit",
+    "kind": "validation_errors",
+    "invalidTransport": {
+      "kind": "websocket",
+      "uri": "wss://voice.example.com/session",
+      "sampleRateHz": 0
+    },
+    "invalidSession": {
+      "sessionId": "session-1",
+      "startedAtMs": 100,
+      "closeAtMs": 90
+    },
+    "invalidFrame": {
+      "streamId": "mic",
+      "sequence": 1,
+      "startMs": 0,
+      "durationMs": 20,
+      "speechProbability": 1.5
+    },
+    "expected": {
+      "transportError": "voice_contract_error",
+      "sessionError": "voice_contract_error",
+      "frameError": "voice_contract_error"
+    }
+  }
+]

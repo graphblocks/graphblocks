@@ -250,7 +250,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
 
 #[test]
 fn rust_documents_matches_shared_tck_cases() -> Result<(), String> {
-    let cases: Value = serde_json::from_str(include_str!("../../../tck/documents/cases.json"))
+    let cases: Value = serde_json::from_str(include_str!("fixtures/documents-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

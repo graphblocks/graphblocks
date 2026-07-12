@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 #[test]
 fn approval_review_tck_cases_match_runtime_core() {
     let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    fixture_path.push("../../tck/approval-review/cases.json");
+    fixture_path.push("tests/fixtures/approval-review-cases.json");
     let raw_fixture =
         fs::read_to_string(&fixture_path).expect("approval-review fixture is readable");
     let cases: Vec<Value> =

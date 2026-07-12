@@ -1,0 +1,383 @@
+[
+  {
+    "name": "turn_draft_commits_atomically",
+    "kind": "turn_commit",
+    "conversationId": "conv-turn-commit",
+    "turnId": "turn-commit",
+    "message": {
+      "messageId": "msg-assistant",
+      "role": "assistant",
+      "text": "hello"
+    },
+    "expected": {
+      "draftStatus": "model_running",
+      "draftMessageStatuses": [
+        "draft"
+      ],
+      "preCommitMessageCount": 0,
+      "turnStatus": "completed",
+      "committedRevision": 1,
+      "committedMessageIds": [
+        "msg-assistant"
+      ],
+      "conversationRevision": 1,
+      "conversationMessageIds": [
+        "msg-assistant"
+      ],
+      "conversationMessageStatuses": [
+        "committed"
+      ]
+    }
+  },
+  {
+    "name": "abort_turn_retracts_draft_without_commit",
+    "kind": "abort_turn",
+    "conversationId": "conv-abort",
+    "turnId": "turn-abort",
+    "message": {
+      "messageId": "msg-draft",
+      "role": "assistant",
+      "text": "draft"
+    },
+    "expected": {
+      "turnStatus": "cancelled",
+      "turnMessageStatuses": [
+        "retracted"
+      ],
+      "conversationMessageCount": 0,
+      "terminalCommitDenied": true
+    }
+  },
+  {
+    "name": "policy_stop_retracts_draft_without_commit",
+    "kind": "policy_stop_turn",
+    "conversationId": "conv-policy-stop",
+    "turnId": "turn-policy-stop",
+    "message": {
+      "messageId": "msg-blocked",
+      "role": "assistant",
+      "text": "blocked"
+    },
+    "expected": {
+      "turnStatus": "policy_stopped",
+      "turnMessageStatuses": [
+        "retracted"
+      ],
+      "conversationMessageCount": 0,
+      "terminalCommitDenied": true
+    }
+  },
+  {
+    "name": "commit_conflict_marks_turn_failed",
+    "kind": "commit_conflict",
+    "conversationId": "conv-conflict",
+    "turnId": "turn-conflict",
+    "draftMessage": {
+      "messageId": "msg-draft",
+      "role": "assistant",
+      "text": "draft"
+    },
+    "conflictingMessage": {
+      "messageId": "msg-other",
+      "role": "user",
+      "text": "other"
+    },
+    "expected": {
+      "commitConflict": true,
+      "turnStatus": "failed",
+      "conversationRevision": 1,
+      "conversationMessageIds": [
+        "msg-other"
+      ],
+      "committedMessageIds": []
+    }
+  },
+  {
+    "name": "branch_and_regenerate_preserve_lineage",
+    "kind": "branch_regenerate",
+    "conversationId": "conv-lineage",
+    "messages": [
+      {
+        "messageId": "msg-user",
+        "role": "user",
+        "text": "try again"
+      },
+      {
+        "messageId": "msg-assistant",
+        "role": "assistant",
+        "text": "first answer",
+        "parentMessageId": "msg-user"
+      },
+      {
+        "messageId": "msg-later",
+        "role": "user",
+        "text": "later"
+      }
+    ],
+    "branchFromMessageId": "msg-user",
+    "branchConversationId": "conv-branch",
+    "regenerateAssistantMessageId": "msg-assistant",
+    "regenerateConversationId": "conv-regenerated",
+    "expected": {
+      "branchId": "conv-branch",
+      "branchOf": "conv-lineage",
+      "branchFrom": "msg-user",
+      "branchMessageIds": [
+        "msg-user"
+      ],
+      "branchSourceRevision": 1,
+      "regenerateId": "conv-regenerated",
+      "regenerateBranchOf": "conv-lineage",
+      "regenerateFrom": "msg-user",
+      "regenerateMessageIds": [
+        "msg-user"
+      ],
+      "regeneratedFromMessageId": "msg-assistant",
+      "regenerateSourceRevision": 1,
+      "sourceRevision": 2,
+      "sourceMessageStatuses": [
+        "committed",
+        "superseded",
+        "committed"
+      ]
+    }
+  },
+  {
+    "name": "branch_respects_attachment_scope_and_include_flag",
+    "kind": "branch_attachments",
+    "conversationId": "conv-attachments",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "first"
+      },
+      {
+        "messageId": "msg-2",
+        "role": "user",
+        "text": "second"
+      }
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-1",
+        "artifactId": "artifact-1",
+        "uri": "blob://attachments/one.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-1",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-2",
+        "artifactId": "artifact-2",
+        "uri": "blob://attachments/two.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-2",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-conversation",
+        "artifactId": "artifact-conversation",
+        "uri": "blob://attachments/conversation.pdf",
+        "scope": "conversation",
+        "purpose": "reference",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "branchFromMessageId": "msg-1",
+    "branchConversationId": "conv-branch-with-attachments",
+    "branchWithoutAttachmentsId": "conv-branch-without-attachments",
+    "expected": {
+      "branchAttachmentIds": [
+        "att-1",
+        "att-conversation"
+      ],
+      "branchWithoutAttachmentIds": [],
+      "branchMessageIds": [
+        "msg-1"
+      ],
+      "sourceAttachmentIds": [
+        "att-1",
+        "att-2",
+        "att-conversation"
+      ]
+    }
+  },
+  {
+    "name": "compaction_records_source_output_and_token_delta",
+    "kind": "compaction_record",
+    "conversationId": "conv-compaction",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "long prompt"
+      },
+      {
+        "messageId": "msg-2",
+        "role": "assistant",
+        "text": "long answer"
+      },
+      {
+        "messageId": "msg-summary",
+        "role": "assistant",
+        "text": "summary"
+      }
+    ],
+    "compaction": {
+      "compactionId": "compact-1",
+      "sourceMessageIds": [
+        "msg-1",
+        "msg-2"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 1200,
+      "tokenAfter": 120,
+      "model": "summary-model"
+    },
+    "expected": {
+      "revision": 2,
+      "compactionIds": [
+        "compact-1"
+      ],
+      "sourceMessageIds": [
+        "msg-1",
+        "msg-2"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 1200,
+      "tokenAfter": 120,
+      "model": "summary-model"
+    }
+  },
+  {
+    "name": "delete_retention_distinguishes_tombstone_and_hard_delete",
+    "kind": "delete_retention",
+    "conversationId": "conv-delete",
+    "hardDeleteConversationId": "conv-delete-hard",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "remove me"
+      },
+      {
+        "messageId": "msg-summary",
+        "role": "assistant",
+        "text": "summary"
+      }
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-1",
+        "artifactId": "artifact-1",
+        "uri": "blob://attachments/delete.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-1",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "compaction": {
+      "compactionId": "compact-delete",
+      "sourceMessageIds": [
+        "msg-1"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 100,
+      "tokenAfter": 10
+    },
+    "expected": {
+      "tombstoneRevision": 4,
+      "tombstoneArchived": true,
+      "tombstoneDeleted": true,
+      "tombstoneMessageCount": 0,
+      "tombstoneAttachmentCount": 0,
+      "tombstoneCompactionCount": 0,
+      "hardDeleted": true
+    }
+  },
+  {
+    "name": "attachment_resolution_filters_by_readiness_message_and_conversation_scope",
+    "kind": "attachment_resolution",
+    "conversationId": "conv-resolve-attachments",
+    "messageIds": [
+      "msg-user"
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-message",
+        "artifactId": "artifact-message",
+        "uri": "blob://attachments/message.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-user",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-other-message",
+        "artifactId": "artifact-other-message",
+        "uri": "blob://attachments/other-message.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-other",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-pending",
+        "artifactId": "artifact-pending",
+        "uri": "blob://attachments/pending.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-user",
+        "ingestionStatus": "pending"
+      },
+      {
+        "attachmentId": "att-conversation",
+        "artifactId": "artifact-conversation",
+        "uri": "blob://attachments/conversation.pdf",
+        "scope": "conversation",
+        "purpose": "direct_input",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-user-scope",
+        "artifactId": "artifact-user-scope",
+        "uri": "blob://attachments/user-scope.pdf",
+        "scope": "user",
+        "purpose": "reference",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "expected": {
+      "withConversationScopeIds": [
+        "att-message",
+        "att-conversation"
+      ],
+      "withoutConversationScopeIds": [
+        "att-message"
+      ]
+    }
+  },
+  {
+    "name": "archive_marks_conversation_terminal_for_appends",
+    "kind": "archive_conversation",
+    "conversationId": "conv-archive",
+    "message": {
+      "messageId": "msg-after-archive",
+      "role": "user",
+      "text": "should be rejected"
+    },
+    "expected": {
+      "archiveRevision": 1,
+      "archived": true,
+      "appendRejected": true,
+      "messageCount": 0
+    }
+  }
+]

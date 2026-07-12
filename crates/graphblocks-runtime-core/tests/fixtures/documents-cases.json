@@ -1,0 +1,203 @@
+[
+  {
+    "name": "plain_text_revision_parse_preserves_lineage",
+    "kind": "plain_text_parse",
+    "sourceUri": "file:///tmp/notes.txt",
+    "filename": "notes.txt",
+    "observedAt": "2026-06-22T00:00:00Z",
+    "text": "Title\n\nFirst paragraph.\nSecond paragraph.\n",
+    "expected": {
+      "contentHash": "sha256:43e7a508341d72511b4067cfbfb027dddf18fd91c88951014b4a9a48d229be5d",
+      "assetId": "asset:sha256:4c80d3d61b6d89b76f6782d174548fdc1172c1093dd8e9841ae09237ba8ecd42",
+      "artifactMediaType": "text/plain",
+      "artifactSizeBytes": 42,
+      "parserProcessorId": "plain-text",
+      "elementTexts": [
+        "Title",
+        "First paragraph.",
+        "Second paragraph."
+      ],
+      "elementSpans": [
+        [
+          0,
+          5
+        ],
+        [
+          7,
+          23
+        ],
+        [
+          24,
+          41
+        ]
+      ],
+      "documentLineageConsistent": true,
+      "assetCurrentRevisionMatches": true
+    }
+  },
+  {
+    "name": "line_chunks_preserve_source_spans_and_acl",
+    "kind": "line_chunks",
+    "sourceUri": "file:///tmp/notes.txt",
+    "filename": "notes.txt",
+    "observedAt": "2026-06-22T00:00:00Z",
+    "text": "Title\n\nFirst paragraph.\nSecond paragraph.\n",
+    "maxElements": 2,
+    "acl": {
+      "classification": "internal",
+      "principals": [
+        "group:support"
+      ]
+    },
+    "expected": {
+      "chunkTexts": [
+        "Title\nFirst paragraph.",
+        "Second paragraph."
+      ],
+      "chunkSpans": [
+        [
+          0,
+          23
+        ],
+        [
+          24,
+          41
+        ]
+      ],
+      "chunkElementCounts": [
+        2,
+        1
+      ],
+      "sourceRefKinds": [
+        "document_chunk",
+        "document_chunk"
+      ],
+      "sourceRefDigestMatches": true,
+      "sourceRefLocatorConsistent": true,
+      "chunkAcls": [
+        {
+          "classification": "internal",
+          "principals": [
+            "group:support"
+          ]
+        },
+        {
+          "classification": "internal",
+          "principals": [
+            "group:support"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "parser_selection_lock_is_deterministic_and_records_inputs",
+    "kind": "parser_selection_lock",
+    "artifact": {
+      "artifactId": "artifact-1",
+      "uri": "file:///tmp/POLICY.TXT",
+      "mediaType": "TEXT/PLAIN",
+      "filename": "POLICY.TXT",
+      "checksum": "sha256:content"
+    },
+    "descriptors": [
+      {
+        "processorId": "z-parser",
+        "version": "1",
+        "mediaTypes": ["text/plain"],
+        "priority": 10,
+        "metadata": {
+          "configDigest": "sha256:z-parser"
+        }
+      },
+      {
+        "processorId": "a-parser",
+        "version": "2",
+        "mediaTypes": [" text/plain "],
+        "extensions": ["txt"],
+        "priority": 10,
+        "metadata": {
+          "configDigest": "sha256:a-parser",
+          "profile": "plain-text-default"
+        }
+      }
+    ],
+    "expected": {
+      "processorId": "a-parser",
+      "processorVersion": "2",
+      "reason": "media_type",
+      "mediaType": "text/plain",
+      "filename": "POLICY.TXT",
+      "artifactChecksum": "sha256:content",
+      "metadata": {
+        "configDigest": "sha256:a-parser",
+        "profile": "plain-text-default"
+      },
+      "resolvedMetadata": {
+        "configDigest": "sha256:a-parser",
+        "profile": "plain-text-default"
+      }
+    }
+  },
+  {
+    "name": "parser_selection_ocr_fallback_is_explicit_and_deterministic",
+    "kind": "parser_selection_lock",
+    "allowOcrFallback": true,
+    "artifact": {
+      "artifactId": "artifact-scan",
+      "uri": "file:///tmp/scan.bin",
+      "mediaType": "application/octet-stream",
+      "filename": "scan.bin",
+      "checksum": "sha256:scan"
+    },
+    "descriptors": [
+      {
+        "processorId": "ocr-z",
+        "version": "1",
+        "priority": 10,
+        "supportsOcr": true
+      },
+      {
+        "processorId": "ocr-a",
+        "version": "2",
+        "priority": 10,
+        "supportsOcr": true
+      }
+    ],
+    "expected": {
+      "processorId": "ocr-a",
+      "processorVersion": "2",
+      "reason": "ocr_fallback",
+      "mediaType": "application/octet-stream",
+      "filename": "scan.bin",
+      "artifactChecksum": "sha256:scan",
+      "metadata": {},
+      "resolvedMetadata": {}
+    }
+  },
+  {
+    "name": "parser_locked_parse_rejects_artifact_checksum_mismatch",
+    "kind": "parser_locked_parse",
+    "sourceUri": "file:///tmp/policy.txt",
+    "filename": "policy.txt",
+    "observedAt": "2026-06-22T00:00:00Z",
+    "text": "Alpha\n",
+    "selectedArtifactChecksum": "sha256:selected",
+    "revisionArtifactChecksum": "sha256:current",
+    "expected": {
+      "parsed": false,
+      "error": "artifact_checksum_mismatch"
+    }
+  },
+  {
+    "name": "invalid_chunk_size_is_rejected",
+    "kind": "invalid_chunk_size",
+    "sourceUri": "file:///tmp/notes.txt",
+    "observedAt": "2026-06-22T00:00:00Z",
+    "text": "Title\n",
+    "maxElements": 0,
+    "expected": {
+      "error": "invalid_max_elements"
+    }
+  }
+]

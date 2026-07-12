@@ -33,7 +33,7 @@ def test_ci_enforces_documented_rust_quality_and_packaging_gates() -> None:
     assert '"check"' in wheelhouse_gate
 
 
-def test_rust_packages_declare_publishable_path_versions_and_bundle_schema_fixtures() -> None:
+def test_rust_packages_declare_publishable_path_versions_and_bundle_tck_fixtures() -> None:
     cargo_manifests = sorted((ROOT / "crates").glob("*/Cargo.toml"))
     missing_versions: list[str] = []
     for manifest in cargo_manifests:
@@ -43,15 +43,66 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_schema_fixtu
 
     assert not missing_versions, "path dependencies without publishable versions: " + ", ".join(missing_versions)
 
-    schema_tests = ROOT / "crates" / "graphblocks-schema" / "tests"
-    assert (schema_tests / "fixtures" / "cases.json").read_bytes() == (
-        ROOT / "tck" / "schema" / "cases.json"
-    ).read_bytes()
-    assert (schema_tests / "fixtures" / "typed-values.json").read_bytes() == (
-        ROOT / "tck" / "schema" / "typed-values.json"
-    ).read_bytes()
-    assert "../../../tck/" not in (schema_tests / "tck.rs").read_text(encoding="utf-8")
-    assert "../../../tck/" not in (schema_tests / "typed_value_tck.rs").read_text(encoding="utf-8")
+    fixture_mirrors = {
+        "crates/graphblocks-compiler/tests/fixtures/compiler-cases.json": "tck/compiler/cases.json",
+        "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
+        "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/application-events-cases.json": (
+            "tck/application-events/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/application-protocol-cases.json": (
+            "tck/application-protocol/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/approval-review-cases.json": (
+            "tck/approval-review/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/budget-race-cases.json": (
+            "tck/budget-race/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/conversation-cases.json": (
+            "tck/conversation/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/deployment-cases.json": (
+            "tck/deployment/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/documents-cases.json": "tck/documents/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/exhaustion-cases.json": "tck/exhaustion/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/orchestration-cases.json": (
+            "tck/orchestration/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/policy-cases.json": "tck/policy/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/rag-cases.json": "tck/rag/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/retry-cases.json": "tck/retry/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/tool-execution-cases.json": (
+            "tck/tool-execution/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/tool-lifecycle-cases.json": (
+            "tck/tool-lifecycle/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/tool-result-cases.json": (
+            "tck/tool-result/cases.json"
+        ),
+        "crates/graphblocks-runtime-core/tests/fixtures/usage-cases.json": "tck/usage/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/voice-cases.json": "tck/voice/cases.json",
+        "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json": "tck/durable/cases.json",
+        "crates/graphblocks-runtime-seq/tests/fixtures/sequence-cases.json": "tck/sequence/cases.json",
+        "crates/graphblocks-schema/tests/fixtures/cases.json": "tck/schema/cases.json",
+        "crates/graphblocks-schema/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
+        "crates/graphblocks-types/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
+    }
+    shipped_fixtures = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "crates").glob("*/**/fixtures/*.json")
+    }
+    assert shipped_fixtures == set(fixture_mirrors)
+    for packaged_path, authoritative_path in fixture_mirrors.items():
+        assert (ROOT / packaged_path).read_bytes() == (ROOT / authoritative_path).read_bytes()
+
+    for rust_source in (ROOT / "crates").rglob("*.rs"):
+        source = rust_source.read_text(encoding="utf-8")
+        assert "../../../tck/" not in source
+        assert 'join("../../tck/' not in source
 
 
 def test_project_markdown_links_resolve() -> None:

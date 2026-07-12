@@ -1,0 +1,1864 @@
+[
+  {
+    "name": "ordered_graph",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "ordered"
+      },
+      "spec": {
+        "nodes": {
+          "b": {
+            "block": "text.join@1",
+            "config": {
+              "second": 2,
+              "first": 1
+            }
+          },
+          "a": {
+            "block": "text.literal@1"
+          }
+        },
+        "edges": [
+          {
+            "to": "b.value",
+            "from": "a.value"
+          },
+          {
+            "to": "$output.result",
+            "from": "b.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:0b2636678ee1af1446500624da2f5db0dab238aceb858058a6f3b60f9e06f3a8",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "input_output_shorthand",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "input-output-shorthand"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "message": "graphblocks.ai/Text@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "inputs": {
+              "message": "$input.message",
+              "context": {
+                "current": "lookup.value"
+              }
+            },
+            "outputs": {
+              "value": "$output.result"
+            }
+          },
+          "lookup": {
+            "block": "memory.lookup@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:127f5ee478a61ecd1f8c101c65272ea12796b28ef159e5deb4c966171ab8392b",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "legacy_graph_v1alpha2_migration",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha2",
+      "kind": "Graph",
+      "metadata": {
+        "name": "legacy"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:938ea0b58b94b431fef6780b98eb8434575a699a74a417688072dbefff3ae324",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "unknown_edge_endpoint",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "bad-edge"
+      },
+      "spec": {
+        "nodes": {
+          "consumer": {
+            "block": "text.join@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "missing.value",
+            "to": "consumer.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:691f4527811b77924d9f1aa63093f390c5e049e2089f6f5d484238812faf86e3",
+      "error_codes": ["GB1002"]
+    }
+  },
+  {
+    "name": "dead_node_warning",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "dead-node"
+      },
+      "spec": {
+        "nodes": {
+          "produce": {
+            "block": "text.literal@1"
+          },
+          "orphan": {
+            "block": "text.literal@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "produce.value",
+            "to": "$output.result"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:dd3c33f44503de51d8fd6425524f1e5124e50f39d878e4b0270dea4971cf34d0",
+      "error_codes": [],
+      "warning_codes": ["GB1001"]
+    }
+  },
+  {
+    "name": "required_input_missing",
+    "block_catalog": [
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "required-input"
+      },
+      "spec": {
+        "nodes": {
+          "sink": {
+            "block": "text.sink@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b8992cb689b0d1f222b9b43779524d6ca942a9430f845f19948e9aa335c7e9da",
+      "error_codes": ["GB1003"]
+    }
+  },
+  {
+    "name": "unknown_input_port",
+    "block_catalog": [
+      {
+        "typeId": "text.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Text@1"
+          }
+        ]
+      },
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unknown-input-port"
+      },
+      "spec": {
+        "nodes": {
+          "source": {
+            "block": "text.source@1"
+          },
+          "sink": {
+            "block": "text.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "source.value",
+            "to": "sink.missing"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:f5cccd8dcaaa5ad711d35932e5d84cd02cfffaf59592b62de4c023c7d96516ad",
+      "error_codes": ["GB1013"]
+    }
+  },
+  {
+    "name": "unknown_output_port",
+    "block_catalog": [
+      {
+        "typeId": "text.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Text@1"
+          }
+        ]
+      },
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unknown-output-port"
+      },
+      "spec": {
+        "nodes": {
+          "source": {
+            "block": "text.source@1"
+          },
+          "sink": {
+            "block": "text.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "source.missing",
+            "to": "sink.text"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a85eaa98a166ab3d8f74498128e0b35bca1b5a94413e8e86caa389513c09a9f3",
+      "error_codes": ["GB1014"]
+    }
+  },
+  {
+    "name": "port_type_mismatch",
+    "block_catalog": [
+      {
+        "typeId": "text.source",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Text@1"
+          }
+        ]
+      },
+      {
+        "typeId": "number.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Number@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "port-type-mismatch"
+      },
+      "spec": {
+        "nodes": {
+          "source": {
+            "block": "text.source@1"
+          },
+          "sink": {
+            "block": "number.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "source.value",
+            "to": "sink.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:311dff8d5e57d0357172f2ddd774ec9e298e9b3a16ac4599740b7fcd23fcd25f",
+      "error_codes": ["GB1018"]
+    }
+  },
+  {
+    "name": "optional_output_to_required_input",
+    "block_catalog": [
+      {
+        "typeId": "branch.maybe_text",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Text@1",
+            "required": false
+          }
+        ]
+      },
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "optional-output-required-input"
+      },
+      "spec": {
+        "nodes": {
+          "maybe": {
+            "block": "branch.maybe_text@1"
+          },
+          "sink": {
+            "block": "text.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "maybe.value",
+            "to": "sink.text"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:1ea67fd0eb9257dd4670f0fd4cc9523576ea9052e0c37f9f8460ad81ff67c367",
+      "error_codes": ["GB1015"]
+    }
+  },
+  {
+    "name": "missing_resource_slot_binding",
+    "block_catalog": [
+      {
+        "typeId": "model.generate",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "model",
+            "type": "graphblocks.ai/ChatModel@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "missing-resource"
+      },
+      "spec": {
+        "nodes": {
+          "generate": {
+            "block": "model.generate@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:e653283e2a5485493f31c8944685ce70ee6a4e4d681ba8436d260b5cf4926f59",
+      "error_codes": ["GB1016"]
+    }
+  },
+  {
+    "name": "unknown_resource_slot_binding",
+    "block_catalog": [
+      {
+        "typeId": "model.generate",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "model",
+            "type": "graphblocks.ai/ChatModel@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unknown-resource-slot"
+      },
+      "spec": {
+        "nodes": {
+          "generate": {
+            "block": "model.generate@1",
+            "bindings": {
+              "unknown": "answer-model"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:0661dff13294b471104fc09f63605411fa6182d40362de72b4d350c4b0e0ce5b",
+      "error_codes": ["GB1017"]
+    }
+  },
+  {
+    "name": "optional_resource_slot_unbound",
+    "block_catalog": [
+      {
+        "typeId": "rank.documents",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "reranker",
+            "type": "graphblocks.ai/Reranker@1",
+            "optional": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "optional-resource"
+      },
+      "spec": {
+        "nodes": {
+          "rank": {
+            "block": "rank.documents@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:6e641d6d34652fc0130b906a7f91cd7e93aa70fe4900f906d1ab51f1d8176f13",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "unsafe_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["external_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3ac2bbd205167963308892a0d4ce6bf148cb047de5935a8c006b84f9dc4bf683",
+      "error_codes": ["GB1011"]
+    }
+  },
+  {
+    "name": "unsafe_filesystem_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-filesystem-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["filesystem_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:c4748babce58c05e324b2d5d0560da7d66172be24bf428df1c4e53c8a497b12f",
+      "error_codes": ["GB1011"]
+    }
+  },
+  {
+    "name": "safe_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "safe-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["external_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2,
+                "idempotencyKey": "$input.request_id"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d6fd56a6e08adb2f4afc17733a84d211dca8a5834d161cd41af42a57a0341a2a",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "ambiguous_connection_binding",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "ambiguous-binding"
+      },
+      "spec": {
+        "nodes": {
+          "read": {
+            "block": "storage.read@1",
+            "connection": "primary-db",
+            "bindings": {
+              "default": "replica-db"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b23d9c4866e9f3287e140194f53f3c3e5f04797f7d12c82224de3c17136fad13",
+      "error_codes": ["GB1006"]
+    }
+  },
+  {
+    "name": "tool_missing_definition",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "missing-tool-definition"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:48dfd588f480f4a07b4007f9bae5f7ba4f87f2ae1996812f067759b25830c12b",
+      "error_codes": ["ToolSchemaMissing"]
+    }
+  },
+  {
+    "name": "tool_malformed_implementation",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "malformed-tool-implementation"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search@1"
+              },
+              "implementation": {
+                "kind": "block"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:ed694b4b4009f02cb94978084f5f1fc1d925b44d07fcdcf687136e026ef93c2a",
+      "error_codes": ["ToolBindingMissing"]
+    }
+  },
+  {
+    "name": "invalid_tool_effect",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-tool-effect"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external-write"]
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3461012777b99e9765a1d08a2896700e3f53e7687745e162c7ae258543a39c15",
+      "error_codes": ["InvalidToolEffect"]
+    }
+  },
+  {
+    "name": "invalid_tool_binding_literals",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-tool-binding-literals"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"],
+              "approval": {
+                "mode": "sometimes"
+              },
+              "idempotency": "maybe",
+              "cancellation": "eventually",
+              "resultMode": "firehose"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:4ec120c7e4937e451245ca4bc5f8521eefdc481e5d6e43b9fd2a6a8b276bce74",
+      "error_codes": [
+        "InvalidToolApproval",
+        "InvalidToolIdempotency",
+        "InvalidToolCancellation",
+        "InvalidToolResultMode"
+      ]
+    }
+  },
+  {
+    "name": "string_tool_approval_without_argument_digest",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "string-approval-without-argument-digest"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"],
+              "approval": "always"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:200a329bd8fed1468ff582110fe099d0083c31f820f5183f8abb2cc0ca77b507",
+      "error_codes": ["ApprovalWithoutArgumentDigest"]
+    }
+  },
+  {
+    "name": "invalid_tool_schema_ids",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-tool-schema-ids"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search",
+                "outputSchema": "schemas/SearchResult"
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a03c49a47b8b130eaab0a22d30f4cf9ae813b2cdabc3d211003c3abe8b42a2c3",
+      "error_codes": ["InvalidSchemaId", "InvalidSchemaId"]
+    }
+  },
+  {
+    "name": "invalid_interface_schema_id",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-interface-schema-id"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "request": {
+              "schema": "schemas/Request"
+            }
+          },
+          "outputs": {
+            "result": "schemas/Result"
+          }
+        },
+        "nodes": {},
+        "edges": [
+          {
+            "from": "$input.request",
+            "to": "$output.result"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b13978ab17865c0b9714988b01a7059873765e72432256917d1a7953caed8742",
+      "error_codes": ["InvalidSchemaId", "InvalidSchemaId"]
+    }
+  },
+  {
+    "name": "output_policy_missing_enforcement_points",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-missing-enforcement"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:ac3c094f1af1e4e254d7f5c1ad444f37ae50585205ed71aca7bf6a9258730a4b",
+      "error_codes": ["OutputPolicyBypass"]
+    }
+  },
+  {
+    "name": "invalid_output_policy_literals",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-output-policy-literals"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "stream",
+            "holdbackMaxTokens": 48,
+            "onViolation": "pause",
+            "flushBoundaries": ["sentence", "clause"]
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit",
+              "after_client_delivery"
+            ]
+          },
+          "onViolation": {
+            "disposition": "halt",
+            "providerCancellation": {
+              "mode": "force"
+            },
+            "pendingToolCalls": {
+              "disposition": "pause"
+            },
+            "deliveredDraft": {
+              "disposition": "erase"
+            },
+            "durableResult": {
+              "disposition": "committed"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:f28117350253ed19e2bf54e191e893601283c42beed6a6b74e0ea5de0dda9d97",
+      "error_codes": [
+        "InvalidOutputDeliveryMode",
+        "InvalidViolationAction",
+        "InvalidFlushBoundary",
+        "InvalidOutputEnforcementPoint",
+        "InvalidOutputDisposition",
+        "InvalidProviderCancellation",
+        "InvalidPendingToolCallsDisposition",
+        "InvalidDraftDisposition",
+        "InvalidOutputDurableResult"
+      ]
+    }
+  },
+  {
+    "name": "output_policy_missing_generation_gate",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-missing-generation-gate"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": ["before_client_delivery"]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:c8adaf3110389d45adcf98a93e762950eef669a657826568840abc04d449d55c",
+      "error_codes": ["OutputPolicyBypass"]
+    }
+  },
+  {
+    "name": "output_policy_missing_commit_gate",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-missing-commit-gate"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": ["on_generation_chunk", "before_client_delivery"]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a6527d5d61af79e18ca2593f36b825fce2f47479b676ef39be2d7bb4c2340cfa",
+      "error_codes": ["OutputPolicyBypass"]
+    }
+  },
+  {
+    "name": "unsafe_parallel_tool_effects",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-parallel-tools"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"]
+            }
+          }
+        },
+        "toolExecution": {
+          "maximumParallelism": 4
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:72a5894044a7b432206998578d3c64522c88ad1471dc63f48613d1ab6de22d54",
+      "error_codes": ["UnsafeParallelEffects"]
+    }
+  },
+  {
+    "name": "malformed_tool_definition_identity",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "blank-tool-definition-name"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": " ",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search@1"
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3f97f4eed214d318750a061e7e1eec5919e8521809c2850f00c6d85465864b8d",
+      "error_codes": ["InvalidToolDefinition"]
+    }
+  },
+  {
+    "name": "tool_definition_forbidden_execution_details",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "tool-definition-leaks-execution-details"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search@1",
+                "credentials": {
+                  "secretRef": "support-search-token"
+                },
+                "connection": "support-api",
+                "implementation": {
+                  "kind": "remote"
+                }
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:be644794dbcc686b10361aa08d34adc87510376a1e827cac08c6786b5ac23d19",
+      "error_codes": [
+        "InvalidToolDefinition",
+        "InvalidToolDefinition",
+        "InvalidToolDefinition"
+      ]
+    }
+  },
+  {
+    "name": "nonidempotent_tool_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "nonidempotent-tool-retry"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"],
+              "retryPolicyRef": "retry/default"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:e0c38ac31de6e479bd32fd9fa90ef7ab288c73f15454564ab2cc75c38d72a55b",
+      "error_codes": ["NonIdempotentRetry"]
+    }
+  },
+  {
+    "name": "unbounded_output_policy_holdback",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unbounded-output-policy-holdback"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a67c2c477d86afed8c6f810a4b71380efa10304a6c1a992858e7edffd4c29777",
+      "error_codes": ["UnboundedPolicyHoldback"]
+    }
+  },
+  {
+    "name": "immediate_draft_without_retraction_support",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "immediate-draft-without-retraction-support"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "immediate_draft",
+            "onViolation": "abort_response",
+            "deliveredDraftDisposition": "keep"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a2272fe2613cb3b07a2f4c70cee3b449287efa36919afd60a7d56d0d36664d78",
+      "error_codes": ["ImmediateDraftWithoutRetractionSupport"]
+    }
+  },
+  {
+    "name": "output_policy_gate_after_delivery",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-gate-after-delivery"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "before_client_delivery",
+              "on_generation_chunk",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d5287fc410f586cb26533f5c22364b214fc85a1b880d1433f14d0d69d2cf62f9",
+      "error_codes": ["PolicyGateAfterDelivery"]
+    }
+  },
+  {
+    "name": "policy_abort_keeps_pending_tool_calls",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "policy-abort-keeps-pending-tool-calls"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          },
+          "onViolation": {
+            "disposition": "abort_response",
+            "pendingToolCalls": {
+              "disposition": "keep"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:aa6467bf6df2b524391adb725688ddf867f1512e5cb7c5213f934b79cb977d87",
+      "error_codes": ["PendingToolCallAfterAbort"]
+    }
+  },
+  {
+    "name": "policy_abort_commits_durable_result",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "policy-abort-commits-durable-result"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          },
+          "onViolation": {
+            "disposition": "abort_response",
+            "durableResult": {
+              "disposition": "partial"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d80b1f5548898ee53378853edd79b9a971287c8a10d4cb2cf8322735cd9c9fca",
+      "error_codes": ["CommitAfterPolicyStop"]
+    }
+  },
+  {
+    "name": "async_operation_missing_timeout_idempotency_and_schema",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-missing-contracts"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "callback": {
+              "required": true
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "attemptFencing": true
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:bab2b2edea68233721e81ea18841dd670f25fad7093b3f7e0b0ed86e3e8a8d9b",
+      "error_codes": ["GB6001", "GB6003", "GB6007"]
+    }
+  },
+  {
+    "name": "async_operation_missing_resume_and_fencing_contracts",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-missing-resume-contracts"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "idempotencyKey": "$input.request_id",
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:1f5714317007f9d13b837867140dcd021b935e7893f899e874b140ec8b3476fd",
+      "error_codes": ["GB6008", "GB6015", "GB6016"]
+    }
+  },
+  {
+    "name": "async_operation_ambiguous_timeout_and_infinite_wait_policy",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-ambiguous-wait-bound"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "infiniteWaitPolicy": "operator_review_required",
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:5983b34a66fb0a6121da4ddcc235386c4392cf020736905e48eb7459a89e0b63",
+      "error_codes": ["InvalidAsyncOperation"]
+    }
+  },
+  {
+    "name": "async_operation_absolute_deadline_bound",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-absolute-deadline"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "expiresAtUnixMs": 1801000,
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:71389af7b72b31cc8960abc6628179cb296a0c7852f04cd03cc777c093de7d7d",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "async_operation_ambiguous_absolute_and_relative_wait",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-ambiguous-absolute-relative-wait"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "expiresAtUnixMs": 1801000,
+            "timeoutMs": 1800000,
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:4bbff2d6e9424624beee6f1ba90eb2bfd3dcbcc564fbcf2b824b6140e23ab73d",
+      "error_codes": ["InvalidAsyncOperation"]
+    }
+  },
+  {
+    "name": "async_await_callback_missing_schema",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-await-callback-missing-schema"
+      },
+      "spec": {
+        "nodes": {
+          "waitCI": {
+            "block": "async.await_callback@1",
+            "config": {
+              "timeout": "30m",
+              "idempotencyKey": "$input.request_id",
+              "attemptFencing": true,
+              "resume": {
+                "requirePolicyReevaluation": true,
+                "requireBudgetReservation": true,
+                "requireReleaseCompatibility": true,
+                "requireOwnershipFence": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:7fb14cfcc2b402940badcb736480caf04b8b684e2c48f5161192d0b9efd7aab0",
+      "error_codes": ["GB6007"]
+    }
+  },
+  {
+    "name": "callback_subscription_safety_diagnostics",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-callback-subscription"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-unsafe",
+            "scope": "run",
+            "scopeId": "run-1",
+            "authoritativeFor": ["billing"],
+            "delivery": {
+              "kind": "webhook",
+              "url": "http://127.0.0.1/events"
+            }
+          },
+          {
+            "subscriptionId": "sub-mandatory",
+            "scope": "run",
+            "scopeId": "run-1",
+            "mandatory": true,
+            "delivery": {
+              "kind": "local_callback",
+              "callbackName": "ide",
+              "ordering": {
+                "mode": "ordered",
+                "scope": "run"
+              }
+            }
+          },
+          {
+            "subscriptionId": "sub-fail",
+            "scope": "run",
+            "scopeId": "run-1",
+            "failurePolicy": "fail_run_on_failure",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://relay.example.com/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d504853609423e0c256966ab111845fcef8b9753b2804fa4ae99e9001a670dfc",
+      "error_codes": ["GB6002", "GB6011", "GB6004", "GB6006", "GB6012", "GB6014"]
+    }
+  },
+  {
+    "name": "background_run_missing_replay_and_retention",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "background-run-missing-replay"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "execution": {
+          "lifetime": "background",
+          "clientConnectionRequired": true
+        },
+        "eventStream": {
+          "retention": "1h",
+          "reconnectReplayGuarantee": "24h"
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a5ce16644dbe5aeefed47ad21a7c941d8a5ffecebd04e298a84e935d6b9268b1",
+      "error_codes": ["GB6005", "GB6009", "GB6013"]
+    }
+  },
+  {
+    "name": "async_callback_payload_too_large",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "oversized-async-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1",
+              "expectedPayloadBytes": 524288,
+              "maxPayloadBytes": 262144
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:bd254b7a63a2f083bf2435e82e29a9f91a9743368508e7cf68a295e62feb6432",
+      "error_codes": ["GB6010"]
+    }
+  },
+  {
+    "name": "numeric_loopback_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "numeric-loopback-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-loopback",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://2130706433/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:25d58192412d0fd9ae5918395a726311bbc6f096ae757a7a4448c70d19e9d6ad",
+      "error_codes": ["GB6011"]
+    }
+  },
+  {
+    "name": "invalid_callback_webhook_host_syntax",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-callback-host"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-invalid-host",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://hooks example.com/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:9fd7fbd4b2492c0082df93bec891237da0cde072bb52e7b9b381f60c9eddaa12",
+      "error_codes": ["GB6011"]
+    }
+  },
+  {
+    "name": "embedded_ipv4_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "embedded-ipv4-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-embedded-ipv4",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://[::ffff:127.0.0.1]/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3a54a61cee83eba4c2c01b908321995880e6dc62e0f54cd8d3967df1ff0b3233",
+      "error_codes": ["GB6011"]
+    }
+  },
+  {
+    "name": "reserved_ipv4_callback_endpoint_is_unsafe",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "reserved-ipv4-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-reserved-ipv4",
+            "scope": "run",
+            "scopeId": "run-1",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://255.255.255.255/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a9e0c2f6a5fdc66ca40697fa2ba57121e5d4d49b0e7e9515e94b74b4fa695297",
+      "error_codes": ["GB6011"]
+    }
+  }
+]

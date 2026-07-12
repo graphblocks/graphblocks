@@ -1,0 +1,284 @@
+[
+  {
+    "name": "finish_current_turn_requires_bounded_continuation",
+    "policy": {
+      "preset": "finish_current_turn",
+      "unit": "turn"
+    },
+    "validate": {
+      "production": true,
+      "expectError": "missing_exhaustion_boundary"
+    }
+  },
+  {
+    "name": "finish_current_turn_allows_declared_continuation_only",
+    "policy": {
+      "preset": "finish_current_turn",
+      "unit": "turn",
+      "continuation": {
+        "maxAdditionalUsage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 4000,
+            "unit": "tokens"
+          }
+        ],
+        "maxAdditionalSteps": 1
+      }
+    },
+    "atomicUnit": "turn:1",
+    "admissionEpoch": 7,
+    "continuationPermit": {
+      "authorizedUsage": [
+        {
+          "kind": "model_output_tokens",
+          "amount": 4000,
+          "unit": "tokens"
+        }
+      ]
+    },
+    "admissions": [
+      {
+        "workKind": "already_admitted_child_work",
+        "workEpoch": 7,
+        "allowed": true,
+        "reason": "already_admitted"
+      },
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 8,
+        "permit": "stored",
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "optional_task",
+        "workEpoch": 8,
+        "permit": "stored",
+        "allowed": false,
+        "reason": "forbidden_work"
+      },
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 8,
+        "permit": "stored",
+        "allowed": false,
+        "reason": "max_additional_steps_exceeded"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 1
+    }
+  },
+  {
+    "name": "hard_stop_allows_cleanup_only",
+    "policy": {
+      "preset": "hard_stop",
+      "unit": "provider_call"
+    },
+    "atomicUnit": "call-1",
+    "admissionEpoch": 2,
+    "admissions": [
+      {
+        "workKind": "cleanup",
+        "workEpoch": 2,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "current_provider_call",
+        "workEpoch": 2,
+        "allowed": false,
+        "reason": "new_work_denied"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 0
+    }
+  },
+  {
+    "name": "checkpoint_and_pause_allows_safe_checkpoint_without_topup",
+    "policy": {
+      "preset": "checkpoint_and_pause",
+      "unit": "run",
+      "continuation": {
+        "maxAdditionalSteps": 2
+      }
+    },
+    "atomicUnit": "run:1",
+    "admissionEpoch": 4,
+    "admissions": [
+      {
+        "workKind": "checkpoint",
+        "workEpoch": 5,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "cleanup",
+        "workEpoch": 6,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 7,
+        "allowed": false,
+        "reason": "new_work_denied"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 2
+    }
+  },
+  {
+    "name": "degrade_then_finalize_allows_best_effort_finalization_without_topup",
+    "policy": {
+      "preset": "degrade_then_finalize",
+      "unit": "run",
+      "continuation": {
+        "maxAdditionalSteps": 2
+      }
+    },
+    "atomicUnit": "run:1",
+    "admissionEpoch": 9,
+    "admissions": [
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 10,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "cleanup",
+        "workEpoch": 11,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "optional_task",
+        "workEpoch": 12,
+        "allowed": false,
+        "reason": "forbidden_work"
+      },
+      {
+        "workKind": "unreserved_provider_call",
+        "workEpoch": 12,
+        "allowed": false,
+        "reason": "new_work_denied"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 2
+    }
+  },
+  {
+    "name": "continuation_permit_profile_mismatch_is_denied",
+    "policy": {
+      "preset": "finish_current_turn",
+      "unit": "turn",
+      "continuation": {
+        "maxAdditionalUsage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 100,
+            "unit": "tokens"
+          }
+        ],
+        "maxAdditionalSteps": 1
+      }
+    },
+    "atomicUnit": "turn:1",
+    "admissionEpoch": 7,
+    "admissions": [
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 8,
+        "permit": {
+          "permitId": "permit-wrong-profile",
+          "continuationProfile": "hard_stop"
+        },
+        "allowed": false,
+        "reason": "invalid_permit"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 0
+    }
+  },
+  {
+    "name": "continuation_usage_accumulates_against_envelope",
+    "policy": {
+      "preset": "finish_current_turn",
+      "unit": "turn",
+      "continuation": {
+        "maxAdditionalUsage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 100,
+            "unit": "tokens"
+          }
+        ],
+        "maxAdditionalSteps": 3
+      }
+    },
+    "atomicUnit": "turn:1",
+    "admissionEpoch": 7,
+    "continuationPermit": {
+      "authorizedUsage": [
+        {
+          "kind": "model_output_tokens",
+          "amount": 200,
+          "unit": "tokens"
+        }
+      ]
+    },
+    "admissions": [
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 8,
+        "permit": "stored",
+        "usage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 60,
+            "unit": "tokens"
+          }
+        ],
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "checkpoint",
+        "workEpoch": 8,
+        "permit": "stored",
+        "usage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 41,
+            "unit": "tokens"
+          }
+        ],
+        "allowed": false,
+        "reason": "max_additional_usage_exceeded"
+      },
+      {
+        "workKind": "cleanup",
+        "workEpoch": 8,
+        "permit": "stored",
+        "usage": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 40,
+            "unit": "tokens"
+          }
+        ],
+        "allowed": true,
+        "reason": "allowed"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 2
+    }
+  }
+]

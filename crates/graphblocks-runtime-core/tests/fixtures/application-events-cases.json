@@ -1,0 +1,619 @@
+[
+  {
+    "name": "tool_call_lifecycle_states_emit_standard_events",
+    "responseId": "response-tool-calls-1",
+    "turnId": "turn-tool-calls-1",
+    "operations": [
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-validated",
+        "toolName": "knowledge.search",
+        "resolvedToolId": "resolved-knowledge-search",
+        "status": "validated",
+        "arguments": {
+          "query": "runtime"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-policy-pending",
+        "toolName": "knowledge.search",
+        "resolvedToolId": "resolved-knowledge-search",
+        "status": "policy_pending",
+        "arguments": {
+          "query": "runtime"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000,
+        "expectAccepted": false
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-approval-pending",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "approval_pending",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000,
+        "expectAccepted": false
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-admitted",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "admitted",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-running",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "running",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-completed",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "completed",
+        "arguments": {
+          "resource_id": "ticket-3"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-failed",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "failed",
+        "arguments": {
+          "resource_id": "ticket-4"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-denied",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "denied",
+        "arguments": {
+          "resource_id": "ticket-5"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-cancelled",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "cancelled",
+        "arguments": {
+          "resource_id": "ticket-6"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-policy-stopped",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "policy_stopped",
+        "arguments": {
+          "resource_id": "ticket-7"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-expired",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "expired",
+        "arguments": {
+          "resource_id": "ticket-8"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolCallValidated",
+      "ToolCallAdmitted",
+      "ToolCallStarted",
+      "ToolCallCompleted",
+      "ToolCallFailed",
+      "ToolCallDenied",
+      "ToolCallCancelled",
+      "ToolCallPolicyStopped",
+      "ToolCallIncomplete"
+    ]
+  },
+  {
+    "name": "output_cutoff_discards_late_commit_for_same_response",
+    "streamId": "stream-1",
+    "responseId": "response-1",
+    "turnId": "turn-1",
+    "operations": [
+      {
+        "op": "output_cutoff",
+        "lastGeneratedSequence": 3,
+        "lastPolicyAcceptedSequence": 1,
+        "lastClientDeliveredSequence": 1,
+        "terminalReason": "policy_denied",
+        "draftDisposition": "retract",
+        "durableResult": "none",
+        "policyDecisionId": "decision-abort",
+        "occurredAt": "2026-06-23T00:00:01Z",
+        "occurredAtUnixMs": 1700001
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-1",
+        "outputs": {
+          "answer": "should not commit"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-2",
+        "outputs": {
+          "answer": "replacement"
+        },
+        "expectAccepted": true
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputCutoff",
+      "AssistantRetracted",
+      "RunSucceeded"
+    ]
+  },
+  {
+    "name": "output_cutoff_marks_draft_incomplete",
+    "streamId": "stream-2",
+    "responseId": "response-3",
+    "turnId": "turn-2",
+    "operations": [
+      {
+        "op": "output_cutoff",
+        "lastGeneratedSequence": 4,
+        "lastPolicyAcceptedSequence": 2,
+        "lastClientDeliveredSequence": 2,
+        "terminalReason": "budget_exhausted",
+        "draftDisposition": "mark_incomplete",
+        "durableResult": "incomplete",
+        "policyDecisionId": "decision-incomplete",
+        "occurredAt": "2026-06-23T00:00:02Z",
+        "occurredAtUnixMs": 1700002
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-3",
+        "outputs": {
+          "answer": "should not commit"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-4",
+        "outputs": {
+          "answer": "replacement after incomplete"
+        },
+        "expectAccepted": true
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputCutoff",
+      "AssistantIncomplete",
+      "RunSucceeded"
+    ]
+  },
+  {
+    "name": "output_policy_events_track_evaluation_and_decisions",
+    "streamId": "stream-policy-1",
+    "responseId": "response-policy-1",
+    "turnId": "turn-policy-1",
+    "operations": [
+      {
+        "op": "output_policy_evaluation_started",
+        "streamId": "stream-policy-1",
+        "sequence": 4,
+        "text": "sensitive text",
+        "inputDigest": "sha256:pending-window",
+        "occurredAt": "2026-06-23T00:00:03Z",
+        "occurredAtUnixMs": 1700003
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-hold",
+        "disposition": "hold",
+        "inputDigest": "sha256:pending-window",
+        "reasonCodes": [
+          "needs_more_context"
+        ],
+        "policyRefs": [
+          "policy/output-standard"
+        ],
+        "evaluatedAt": "2026-06-23T00:00:04Z",
+        "evaluatedAtUnixMs": 1700004
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-redact",
+        "disposition": "redact",
+        "acceptedThrough": 4,
+        "inputDigest": "sha256:redact",
+        "reasonCodes": [
+          "pii.detected"
+        ],
+        "policyRefs": [
+          "policy/output-standard"
+        ],
+        "evaluatedAt": "2026-06-23T00:00:05Z",
+        "evaluatedAtUnixMs": 1700005
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-abort",
+        "disposition": "abort_response",
+        "inputDigest": "sha256:blocked",
+        "providerCancellation": "required_if_supported",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "evaluatedAt": "2026-06-23T00:00:06Z",
+        "evaluatedAtUnixMs": 1700006
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputPolicyEvaluationStarted",
+      "OutputPolicyHeld",
+      "OutputPolicyRedacted",
+      "OutputPolicyViolationDetected"
+    ]
+  },
+  {
+    "name": "tool_result_delta_is_draft_until_completed",
+    "responseId": "response-tools-1",
+    "turnId": "turn-tools-1",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:00:00Z",
+        "startedAtUnixMs": 1700000
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "draft chunk",
+            "metadata": {
+              "trust_designation": "untrusted_external"
+            }
+          }
+        ]
+      },
+      {
+        "op": "tool_result_artifact_ready",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 3,
+        "artifact": {
+          "artifactId": "artifact-1",
+          "uri": "file:///tmp/result.json",
+          "checksum": "sha256:artifact",
+          "mediaType": "application/json"
+        }
+      },
+      {
+        "op": "tool_result_completed",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 4,
+        "output": [
+          {
+            "kind": "text",
+            "text": "final result"
+          }
+        ],
+        "startedAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:01Z",
+        "startedAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700001,
+        "effectOutcome": "no_external_effect"
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultArtifactReady",
+      "ToolResultCompleted"
+    ]
+  },
+  {
+    "name": "terminal_tool_result_events_preserve_partial_status",
+    "responseId": "response-tools-2",
+    "turnId": "turn-tools-2",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:01:00Z",
+        "startedAtUnixMs": 1700060
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before cancellation"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_cancelled",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 3,
+        "startedAt": "2026-06-23T00:01:00Z",
+        "completedAt": "2026-06-23T00:01:01Z",
+        "startedAtUnixMs": 1700060,
+        "completedAtUnixMs": 1700061,
+        "effectOutcome": "not_committed"
+      },
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 4,
+        "startedAt": "2026-06-23T00:02:00Z",
+        "startedAtUnixMs": 1700120
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 5,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before policy stop"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_policy_stopped",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 6,
+        "startedAt": "2026-06-23T00:02:00Z",
+        "completedAt": "2026-06-23T00:02:01Z",
+        "startedAtUnixMs": 1700120,
+        "completedAtUnixMs": 1700121,
+        "effectOutcome": "committed",
+        "error": {
+          "code": "policy.tool_output_denied",
+          "message": "tool output was stopped by policy"
+        }
+      },
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 7,
+        "startedAt": "2026-06-23T00:03:00Z",
+        "startedAtUnixMs": 1700180
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 8,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before incomplete"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_incomplete",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 9,
+        "startedAt": "2026-06-23T00:03:00Z",
+        "completedAt": "2026-06-23T00:03:01Z",
+        "startedAtUnixMs": 1700180,
+        "completedAtUnixMs": 1700181
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultCancelled",
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultPolicyStopped",
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultIncomplete"
+    ]
+  },
+  {
+    "name": "failed_and_denied_tool_result_events_are_terminal",
+    "responseId": "response-tools-3",
+    "turnId": "turn-tools-3",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:04:00Z",
+        "startedAtUnixMs": 1700240
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before failure"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_failed",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 3,
+        "startedAt": "2026-06-23T00:04:00Z",
+        "completedAt": "2026-06-23T00:04:01Z",
+        "startedAtUnixMs": 1700240,
+        "completedAtUnixMs": 1700241,
+        "effectOutcome": "unknown",
+        "error": {
+          "code": "tool.execution_failed",
+          "message": "tool execution failed"
+        }
+      },
+      {
+        "op": "tool_result_denied",
+        "toolCallId": "call-denied",
+        "toolResultSequence": 4,
+        "completedAt": "2026-06-23T00:04:02Z",
+        "completedAtUnixMs": 1700242,
+        "effectOutcome": "not_committed",
+        "error": {
+          "code": "policy.tool_denied",
+          "message": "tool execution was denied by policy"
+        }
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultFailed",
+      "ToolResultDenied"
+    ]
+  },
+  {
+    "name": "stream_rejects_conflicting_duplicate_ids_and_nonmonotonic_sequences",
+    "responseId": "response-stream-1",
+    "turnId": "turn-stream-1",
+    "operations": [
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1",
+        "outputs": {
+          "answer": "first"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1",
+        "outputs": {
+          "answer": "first"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-1",
+        "eventSequence": 2,
+        "eventCursor": "run-1:2",
+        "outputs": {
+          "answer": "conflicting duplicate id"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-2",
+        "eventSequence": 1,
+        "eventCursor": "run-1:1-duplicate",
+        "outputs": {
+          "answer": "duplicate sequence"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-3",
+        "eventSequence": 0,
+        "eventCursor": "run-1:0",
+        "outputs": {
+          "answer": "backwards sequence"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-other-run",
+        "runId": "run-2",
+        "eventSequence": 1,
+        "eventCursor": "run-2:1",
+        "outputs": {
+          "answer": "other run"
+        }
+      },
+      {
+        "op": "run_succeeded",
+        "eventId": "event-stream-4",
+        "eventSequence": 2,
+        "eventCursor": "run-1:2",
+        "outputs": {
+          "answer": "next"
+        }
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "RunSucceeded",
+      "RunSucceeded",
+      "RunSucceeded"
+    ]
+  }
+]

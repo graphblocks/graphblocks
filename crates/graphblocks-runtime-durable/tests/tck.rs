@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 
 #[test]
 fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
-    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/durable/cases.json"))
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/durable-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

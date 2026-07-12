@@ -1,0 +1,104 @@
+[
+  {
+    "name": "object_value_canonical_order",
+    "schema": "schemas/Message@1",
+    "value": {
+      "z": 1,
+      "a": [
+        true
+      ]
+    },
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Message@1",
+        "value": {
+          "z": 1,
+          "a": [
+            true
+          ]
+        }
+      },
+      "canonical_json": "{\"schema\":\"schemas/Message@1\",\"value\":{\"a\":[true],\"z\":1}}"
+    }
+  },
+  {
+    "name": "scalar_value",
+    "schema": "schemas/Score@2",
+    "value": 42,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Score@2",
+        "value": 42
+      },
+      "canonical_json": "{\"schema\":\"schemas/Score@2\",\"value\":42}"
+    }
+  },
+  {
+    "name": "small_exponent_uses_cross_language_spelling",
+    "schema": "schemas/Score@2",
+    "value": 1e-7,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Score@2",
+        "value": 1e-7
+      },
+      "canonical_json": "{\"schema\":\"schemas/Score@2\",\"value\":1e-07}"
+    }
+  },
+  {
+    "name": "arbitrary_precision_exponent_uses_cross_language_spelling",
+    "schema": "schemas/Score@2",
+    "value": 1e400,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Score@2",
+        "value": 1e400
+      },
+      "canonical_json": "{\"schema\":\"schemas/Score@2\",\"value\":1e+400}"
+    }
+  },
+  {
+    "name": "decimal_above_binary64_integer_precision_remains_distinct",
+    "schema": "schemas/Score@2",
+    "value": 9007199254740993.0,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Score@2",
+        "value": 9007199254740993.0
+      },
+      "canonical_json": "{\"schema\":\"schemas/Score@2\",\"value\":9007199254740993.0}"
+    }
+  },
+  {
+    "name": "integer_larger_than_u64_remains_an_integer",
+    "schema": "schemas/Counter@1",
+    "value": 100000000000000000000,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Counter@1",
+        "value": 100000000000000000000
+      },
+      "canonical_json": "{\"schema\":\"schemas/Counter@1\",\"value\":100000000000000000000}"
+    }
+  },
+  {
+    "name": "negative_integer_zero_is_normalized",
+    "schema": "schemas/Counter@1",
+    "value": -0,
+    "expected": {
+      "canonical_value": {
+        "schema": "schemas/Counter@1",
+        "value": 0
+      },
+      "canonical_json": "{\"schema\":\"schemas/Counter@1\",\"value\":0}"
+    }
+  },
+  {
+    "name": "invalid_schema_id",
+    "schema": "schemas/Message",
+    "value": {},
+    "expected": {
+      "error": "SchemaIdError"
+    }
+  }
+]

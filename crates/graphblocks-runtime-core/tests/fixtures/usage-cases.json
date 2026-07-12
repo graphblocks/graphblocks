@@ -1,0 +1,160 @@
+[
+  {
+    "name": "late_usage_reconciliation_replaces_provisional_total",
+    "operations": [
+      {
+        "op": "append",
+        "record": {
+          "recordId": "usage-provisional",
+          "source": "tokenizer_estimated",
+          "confidence": "estimated",
+          "amounts": [
+            {
+              "kind": "model_output_tokens",
+              "amount": 18,
+              "unit": "tokens"
+            }
+          ],
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
+          "runId": "run-1",
+          "attemptId": "attempt-1",
+          "providerResponseId": "resp-1",
+          "pricingRef": "pricing-2026-06",
+          "quotaWindowId": "tenant-a:2026-06",
+          "executionScope": "turn:turn-1/tool:call-1",
+          "metadata": {
+            "tool_call_id": "call-1",
+            "tool_name": "knowledge.search"
+          }
+        }
+      },
+      {
+        "op": "reconcile",
+        "sourceRecordId": "usage-provisional",
+        "recordId": "usage-reconciled",
+        "amounts": [
+          {
+            "kind": "model_output_tokens",
+            "amount": 21,
+            "unit": "tokens"
+          }
+        ],
+        "occurredAt": "2026-06-23T00:05:00Z",
+        "occurredAtUnixMs": 1700300
+      }
+    ],
+    "expected": {
+      "runId": "run-1",
+      "appendResults": [
+        "usage-provisional",
+        "usage-reconciled"
+      ],
+      "recordIds": [
+        "usage-provisional",
+        "usage-reconciled"
+      ],
+      "totals": [
+        {
+          "kind": "model_output_tokens",
+          "amount": 21,
+          "unit": "tokens",
+          "dimensions": {}
+        }
+      ]
+    }
+  },
+  {
+    "name": "provider_response_duplicate_replays_existing_record",
+    "operations": [
+      {
+        "op": "append",
+        "record": {
+          "recordId": "usage-provider-1",
+          "source": "provider_reported",
+          "confidence": "provider_exact",
+          "amounts": [
+            {
+              "kind": "model_output_tokens",
+              "amount": 20,
+              "unit": "tokens"
+            }
+          ],
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
+          "runId": "run-1",
+          "attemptId": "attempt-1",
+          "providerResponseId": "resp-1"
+        }
+      },
+      {
+        "op": "append",
+        "record": {
+          "recordId": "usage-provider-1",
+          "source": "provider_reported",
+          "confidence": "provider_exact",
+          "amounts": [
+            {
+              "kind": "model_output_tokens",
+              "amount": 20,
+              "unit": "tokens"
+            }
+          ],
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
+          "runId": "run-1",
+          "attemptId": "attempt-1",
+          "providerResponseId": "resp-1"
+        }
+      }
+    ],
+    "expected": {
+      "runId": "run-1",
+      "appendResults": [
+        "usage-provider-1",
+        "usage-provider-1"
+      ],
+      "recordIds": [
+        "usage-provider-1"
+      ],
+      "totals": [
+        {
+          "kind": "model_output_tokens",
+          "amount": 20,
+          "unit": "tokens",
+          "dimensions": {}
+        }
+      ]
+    }
+  },
+  {
+    "name": "negative_usage_amount_is_rejected",
+    "operations": [
+      {
+        "op": "append",
+        "expectError": "usage amount must be non-negative",
+        "record": {
+          "recordId": "usage-negative",
+          "source": "runtime_measured",
+          "confidence": "exact",
+          "amounts": [
+            {
+              "kind": "model_output_tokens",
+              "amount": -1,
+              "unit": "tokens"
+            }
+          ],
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
+          "runId": "run-negative"
+        }
+      }
+    ],
+    "expected": {
+      "runId": "run-negative",
+      "appendResults": [],
+      "recordIds": [],
+      "totals": []
+    }
+  }
+]

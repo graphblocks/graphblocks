@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 #[test]
 fn orchestration_tck_cases_match_runtime_core() {
     let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    fixture_path.push("../../tck/orchestration/cases.json");
+    fixture_path.push("tests/fixtures/orchestration-cases.json");
     let raw_fixture = fs::read_to_string(&fixture_path).expect("orchestration fixture is readable");
     let cases: Vec<Value> =
         serde_json::from_str(&raw_fixture).expect("orchestration fixture is valid");

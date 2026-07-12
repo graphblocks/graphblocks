@@ -36,8 +36,7 @@ fn typed_value_rejects_invalid_schema_id() {
 
 #[test]
 fn typed_value_matches_shared_tck_cases() -> Result<(), Box<dyn std::error::Error>> {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("../../../tck/schema/typed-values.json"))?;
+    let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/typed-values.json"))?;
 
     for case in cases {
         let name = case

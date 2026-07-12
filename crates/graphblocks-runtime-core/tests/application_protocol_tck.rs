@@ -589,7 +589,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
 #[test]
 fn rust_application_protocol_matches_shared_tck_cases() -> Result<(), String> {
     let cases: Value =
-        serde_json::from_str(include_str!("../../../tck/application-protocol/cases.json"))
+        serde_json::from_str(include_str!("fixtures/application-protocol-cases.json"))
             .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 #[test]
 fn rust_rag_matches_shared_tck_cases() -> Result<(), String> {
-    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/rag/cases.json"))
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/rag-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

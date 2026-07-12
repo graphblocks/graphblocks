@@ -9,7 +9,7 @@ use serde_json::Value;
 
 #[test]
 fn rust_exhaustion_controller_matches_shared_tck_cases() -> Result<(), String> {
-    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/exhaustion/cases.json"))
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/exhaustion-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

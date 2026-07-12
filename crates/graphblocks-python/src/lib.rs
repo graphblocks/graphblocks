@@ -11017,7 +11017,7 @@ mod tests {
 
     #[test]
     fn compile_graph_json_matches_shared_tck_cases() -> Result<(), String> {
-        let cases = serde_json::from_str::<Value>(include_str!("../../../tck/compiler/cases.json"))
+        let cases = serde_json::from_str::<Value>(include_str!("fixtures/compiler-cases.json"))
             .map_err(|error| error.to_string())?;
         let cases = cases
             .as_array()
@@ -15206,8 +15206,8 @@ mod tests {
 
     #[test]
     fn run_stdlib_graph_json_passes_shared_runtime_tck_cases() -> Result<(), String> {
-        let cases_path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tck/runtime/cases.json");
+        let cases_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/fixtures/runtime-cases.json");
         let cases_text = std::fs::read_to_string(&cases_path).map_err(|error| error.to_string())?;
         let cases =
             serde_json::from_str::<Value>(&cases_text).map_err(|error| error.to_string())?;

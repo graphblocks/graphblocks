@@ -1,0 +1,647 @@
+[
+  {
+    "name": "bounded_holdback_releases_accepted_prefix",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:first",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": false
+    }
+  },
+  {
+    "name": "hold_keeps_pending_output_until_later_allow",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "hold",
+        "decisionId": "decision-hold",
+        "inputDigest": "sha256:hold",
+        "occurredAt": 1000
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-allow-after-hold",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:allow-after-hold",
+        "occurredAt": 1100,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          },
+          {
+            "sequence": 2,
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  },
+  {
+    "name": "bounded_holdback_flushes_only_at_sentence_boundary",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 16,
+      "flushBoundaries": [
+        "sentence"
+      ]
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "Hello "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "world. "
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "Next"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-sentence",
+        "acceptedThrough": 3,
+        "inputDigest": "sha256:sentence",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "Hello "
+          },
+          {
+            "sequence": 2,
+            "text": "world. "
+          }
+        ]
+      },
+      {
+        "op": "commit",
+        "deliver": [
+          {
+            "sequence": 3,
+            "text": "Next"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 3,
+      "lastPolicyAcceptedSequence": 3,
+      "lastClientDeliveredSequence": 3,
+      "stopped": false
+    }
+  },
+  {
+    "name": "policy_abort_cuts_off_delivery",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "blocked"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:first",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          }
+        ]
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:abort",
+        "providerCancellation": "required_if_supported",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 1,
+          "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "retract",
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "late",
+        "expectError": "policy_stopped"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-late",
+        "acceptedThrough": 3,
+        "inputDigest": "sha256:late",
+        "occurredAt": 1200,
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
+  },
+  {
+    "name": "abort_turn_stops_delivery_and_marks_draft_incomplete",
+    "delivery": {
+      "mode": "immediate_draft"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "draft before turn abort",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "draft before turn abort"
+          }
+        ]
+      },
+      {
+        "op": "abort_turn",
+        "decisionId": "decision-abort-turn",
+        "inputDigest": "sha256:abort-turn",
+        "providerCancellation": "request",
+        "draftDisposition": "mark_incomplete",
+        "pendingToolCalls": "cancel_admitted",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 1,
+          "lastPolicyAcceptedSequence": 0,
+          "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "mark_incomplete",
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort-turn",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
+  },
+  {
+    "name": "deny_commit_stops_buffered_candidate_without_delivery",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "unsafe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-allow-buffer",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:allow-buffer",
+        "occurredAt": 1000
+      },
+      {
+        "op": "deny_commit",
+        "decisionId": "decision-deny-commit",
+        "inputDigest": "sha256:deny-commit",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 2,
+          "lastClientDeliveredSequence": 0,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "retract",
+          "durableResult": "none",
+          "policyDecisionId": "decision-deny-commit",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 0,
+      "stopped": true
+    }
+  },
+  {
+    "name": "bounded_holdback_rejects_byte_overflow",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxBytes": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe"
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "text"
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "!",
+        "expectError": "bounded_holdback_bytes"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
+    "name": "buffer_until_commit_holds_until_commit",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "buffered "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:accepted",
+        "occurredAt": 1000
+      },
+      {
+        "op": "commit",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "buffered "
+          },
+          {
+            "sequence": 2,
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  },
+  {
+    "name": "buffer_until_commit_exposes_no_rejected_content",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:accepted",
+        "occurredAt": 1000
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "blocked draft"
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:blocked",
+        "occurredAt": 1050,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 1,
+          "lastClientDeliveredSequence": 0,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "retract",
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.050Z",
+          "occurredAtUnixMs": 1050
+        }
+      },
+      {
+        "op": "commit"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 0,
+      "stopped": true
+    }
+  },
+  {
+    "name": "redact_releases_sanitized_chunk",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "hello secret world"
+      },
+      {
+        "op": "redact",
+        "decisionId": "decision-redact",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:redact",
+        "occurredAt": 1000,
+        "redactions": [
+          {
+            "path": "/chunks/1/text",
+            "start": 6,
+            "end": 12,
+            "replacement": "[redacted]"
+          }
+        ],
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "hello [redacted] world"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": false
+    }
+  },
+  {
+    "name": "replace_releases_policy_approved_chunks",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "blocked draft"
+      },
+      {
+        "op": "replace",
+        "decisionId": "decision-replace",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:replace",
+        "occurredAt": 1000,
+        "replacementChunks": [
+          {
+            "sequence": 1,
+            "text": "policy-approved "
+          },
+          {
+            "sequence": 2,
+            "text": "replacement"
+          }
+        ],
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "policy-approved "
+          },
+          {
+            "sequence": 2,
+            "text": "replacement"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  },
+  {
+    "name": "decision_rejects_zero_evaluated_at",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-invalid-time",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:invalid-time",
+        "evaluatedAt": 0,
+        "occurredAt": 1000,
+        "expectError": "invalid_evaluated_at_unix_ms"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
+    "name": "decision_rejects_zero_occurred_at",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-missing-occurred-at",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:missing-occurred-at",
+        "occurredAt": 0,
+        "expectError": "missing_occurred_at_unix_ms"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
+    "name": "immediate_draft_retracts_after_policy_abort",
+    "delivery": {
+      "mode": "immediate_draft"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "provisional draft",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "provisional draft"
+          }
+        ]
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:blocked",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 1,
+          "lastPolicyAcceptedSequence": 0,
+          "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "retract",
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
+  }
+]

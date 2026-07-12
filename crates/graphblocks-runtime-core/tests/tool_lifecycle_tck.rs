@@ -13,9 +13,8 @@ use serde_json::{Map, Value};
 
 #[test]
 fn rust_tool_lifecycle_matches_shared_tck_cases() -> Result<(), String> {
-    let cases =
-        serde_json::from_str::<Value>(include_str!("../../../tck/tool-lifecycle/cases.json"))
-            .map_err(|error| error.to_string())?;
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/tool-lifecycle-cases.json"))
+        .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()
         .ok_or_else(|| "tool-lifecycle TCK root must be an array".to_owned())?;

@@ -1164,7 +1164,7 @@ fn rust_stdlib_async_terminal_blocks_reject_invalid_artifact_entries() -> Result
 
 #[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
-    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
+    let cases = serde_json::from_str::<Value>(include_str!("fixtures/runtime-cases.json"))
         .map_err(|error| error.to_string())?;
     let cases = cases
         .as_array()

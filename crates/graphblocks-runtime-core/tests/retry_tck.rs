@@ -47,7 +47,7 @@ impl NodeExecutor for FixtureExecutor {
 
 #[test]
 fn rust_retry_matches_shared_tck_cases() {
-    let cases: Value = serde_json::from_str(include_str!("../../../tck/retry/cases.json"))
+    let cases: Value = serde_json::from_str(include_str!("fixtures/retry-cases.json"))
         .expect("retry TCK fixture should parse");
     let cases = cases
         .as_array()

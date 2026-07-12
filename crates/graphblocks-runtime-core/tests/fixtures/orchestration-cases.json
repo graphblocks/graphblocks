@@ -1,0 +1,396 @@
+[
+  {
+    "name": "task_plan_patch_revises_steps_and_preserves_noop_digest",
+    "kind": "task_plan_patch",
+    "base": {
+      "planId": "plan-1",
+      "objective": "answer support request",
+      "revision": 1,
+      "steps": [
+        {
+          "stepId": "draft",
+          "description": "Draft response"
+        }
+      ]
+    },
+    "patch": {
+      "patchId": "patch-1",
+      "basePlanId": "plan-1",
+      "baseRevision": 1,
+      "upsertSteps": [
+        {
+          "stepId": "verify",
+          "description": "Verify answer",
+          "dependsOn": [
+            "draft"
+          ]
+        },
+        {
+          "stepId": "draft",
+          "description": "Draft response with citations"
+        }
+      ],
+      "removeStepIds": [
+        "missing"
+      ],
+      "createdAt": "2026-06-26T00:00:00Z"
+    },
+    "expected": {
+      "revision": 2,
+      "stepIds": [
+        "draft",
+        "verify"
+      ],
+      "draftDescription": "Draft response with citations",
+      "noopDigestStable": true
+    }
+  },
+  {
+    "name": "task_plan_dependency_and_cycle_errors_are_explicit",
+    "kind": "task_plan_errors",
+    "missingDependencyPlan": {
+      "planId": "plan-missing",
+      "objective": "answer support request",
+      "steps": [
+        {
+          "stepId": "verify",
+          "description": "Verify answer",
+          "dependsOn": [
+            "draft"
+          ]
+        }
+      ]
+    },
+    "cycleBase": {
+      "planId": "plan-cycle",
+      "objective": "answer support request",
+      "steps": [
+        {
+          "stepId": "draft",
+          "description": "Draft response"
+        },
+        {
+          "stepId": "verify",
+          "description": "Verify answer",
+          "dependsOn": [
+            "draft"
+          ]
+        }
+      ]
+    },
+    "cyclePatch": {
+      "patchId": "patch-cycle",
+      "basePlanId": "plan-cycle",
+      "baseRevision": 1,
+      "upsertSteps": [
+        {
+          "stepId": "draft",
+          "description": "Draft response",
+          "dependsOn": [
+            "verify"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "missingDependencyError": "task_dependency_missing",
+      "missingDependencyStep": "verify",
+      "missingDependencyId": "draft",
+      "cycleError": "task_cycle",
+      "cycle": [
+        "draft",
+        "verify",
+        "draft"
+      ]
+    }
+  },
+  {
+    "name": "context_access_digest_is_order_stable_and_rejects_unknown_resource",
+    "kind": "context_access",
+    "left": {
+      "planId": "plan-left",
+      "objective": "answer support request",
+      "steps": [
+        {
+          "stepId": "draft",
+          "description": "Draft response"
+        },
+        {
+          "stepId": "verify",
+          "description": "Verify answer",
+          "dependsOn": [
+            "draft"
+          ]
+        }
+      ],
+      "contextResources": [
+        "tenant-profile",
+        "policy-doc"
+      ],
+      "contextAccess": [
+        {
+          "stepId": "verify",
+          "resourceId": "tenant-profile",
+          "mode": "read"
+        },
+        {
+          "stepId": "draft",
+          "resourceId": "policy-doc",
+          "mode": "read"
+        }
+      ]
+    },
+    "right": {
+      "planId": "plan-right",
+      "objective": "answer support request",
+      "steps": [
+        {
+          "stepId": "verify",
+          "description": "Verify answer",
+          "dependsOn": [
+            "draft"
+          ]
+        },
+        {
+          "stepId": "draft",
+          "description": "Draft response"
+        }
+      ],
+      "contextResources": [
+        "policy-doc",
+        "tenant-profile"
+      ],
+      "contextAccess": [
+        {
+          "stepId": "draft",
+          "resourceId": "policy-doc",
+          "mode": "read"
+        },
+        {
+          "stepId": "verify",
+          "resourceId": "tenant-profile",
+          "mode": "read"
+        }
+      ]
+    },
+    "invalid": {
+      "planId": "plan-invalid",
+      "objective": "answer support request",
+      "steps": [
+        {
+          "stepId": "draft",
+          "description": "Draft response"
+        }
+      ],
+      "contextResources": [
+        "policy-doc"
+      ],
+      "contextAccess": [
+        {
+          "stepId": "draft",
+          "resourceId": "secret-vault",
+          "mode": "read"
+        }
+      ]
+    },
+    "expected": {
+      "sameDigest": true,
+      "orderedAccess": [
+        "draft:policy-doc:read",
+        "verify:tenant-profile:read"
+      ],
+      "invalidError": "context_access_unknown_resource"
+    }
+  },
+  {
+    "name": "model_pool_selects_eligible_model_and_rejects_disallowed_tool",
+    "kind": "model_pool",
+    "pool": {
+      "poolId": "support-pool",
+      "selectionPolicyRef": "policy-1",
+      "models": [
+        {
+          "profileId": "public-only",
+          "connection": "models.public",
+          "capabilities": [
+            "chat",
+            "tool_use"
+          ],
+          "allowedSensitivity": [
+            "public"
+          ],
+          "regions": [
+            "us-east-1"
+          ]
+        },
+        {
+          "profileId": "support-internal",
+          "connection": "models.support",
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "json"
+          ],
+          "allowedSensitivity": [
+            "public",
+            "internal"
+          ],
+          "regions": [
+            "us-east-1",
+            "eu-west-1"
+          ],
+          "supportsUsageReport": true,
+          "supportsCancellation": true
+        }
+      ]
+    },
+    "worker": {
+      "profileId": "support-worker",
+      "requiredCapabilities": [
+        "chat",
+        "tool_use"
+      ],
+      "allowedTools": [
+        "knowledge.search"
+      ],
+      "modelPoolRef": "support-pool",
+      "sensitivityCeiling": "internal"
+    },
+    "request": {
+      "requiredTools": [
+        "knowledge.search"
+      ],
+      "requiredCapabilities": [
+        "json"
+      ],
+      "sensitivity": "internal",
+      "region": "us-east-1"
+    },
+    "invalidRequest": {
+      "requiredTools": [
+        "ticket.create"
+      ]
+    },
+    "expected": {
+      "selectedModel": "support-internal",
+      "selectedConnection": "models.support",
+      "supportsUsageReport": true,
+      "supportsCancellation": true,
+      "invalidError": "tool_not_allowed",
+      "invalidTool": "ticket.create"
+    }
+  },
+  {
+    "name": "lease_pool_enforces_capacity_expiry_fencing_and_release",
+    "kind": "lease_pool",
+    "pool": {
+      "poolId": "formal-license",
+      "resourceKind": "eda.formal",
+      "capacityUnits": 1
+    },
+    "requests": [
+      {
+        "requestId": "formal-check-1",
+        "holder": "trial:formal-1",
+        "resourceKind": "eda.formal",
+        "units": 1,
+        "leaseId": "lease-1",
+        "acquiredAt": "2026-06-26T00:00:00Z",
+        "expiresAt": "2026-06-26T00:05:00Z"
+      },
+      {
+        "requestId": "formal-check-2",
+        "holder": "trial:formal-2",
+        "resourceKind": "eda.formal",
+        "units": 1,
+        "leaseId": "lease-2",
+        "acquiredAt": "2026-06-26T00:01:00Z",
+        "expiresAt": "2026-06-26T00:06:00Z"
+      }
+    ],
+    "release": {
+      "leaseId": "lease-1",
+      "fencingEpoch": 99
+    },
+    "afterExpiry": "2026-06-26T00:05:01Z",
+    "postExpiryRequest": {
+      "requestId": "formal-check-3",
+      "holder": "trial:formal-3",
+      "resourceKind": "eda.formal",
+      "units": 1,
+      "leaseId": "lease-3",
+      "acquiredAt": "2026-06-26T00:05:01Z",
+      "expiresAt": "2026-06-26T00:10:00Z"
+    },
+    "expected": {
+      "firstLeaseEpoch": 1,
+      "secondError": "lease_pool_exhausted",
+      "availableAfterFirst": 0,
+      "releaseError": "lease_epoch_mismatch",
+      "expectedEpoch": 1,
+      "actualEpoch": 99,
+      "availableAfterExpiry": 1,
+      "postExpiryLeaseEpoch": 2,
+      "availableAfterPostExpiryAcquire": 0,
+      "availableAfterValidRelease": 1
+    }
+  },
+  {
+    "name": "child_budget_delegation_creates_scoped_permit",
+    "kind": "child_budget_delegation",
+    "parentPermit": {
+      "permitId": "permit-parent",
+      "reservationRefs": [
+        "reservation-parent"
+      ],
+      "owner": "task:parent",
+      "atomicUnit": "turn:1",
+      "admissionEpoch": 3,
+      "authorizedAmounts": [
+        {
+          "kind": "tokens",
+          "amount": "100",
+          "unit": "tokens"
+        }
+      ],
+      "continuationProfile": "default",
+      "policySnapshotDigest": "sha256:policy",
+      "expiresAt": "2026-06-26T01:00:00Z",
+      "fencingTokens": {
+        "reservation-parent": 11
+      }
+    },
+    "delegation": {
+      "delegationId": "delegation-1",
+      "childOwner": "task:child",
+      "amounts": [
+        {
+          "kind": "tokens",
+          "amount": "40",
+          "unit": "tokens"
+        }
+      ],
+      "expiresAt": "2026-06-26T00:30:00Z",
+      "continuationProfile": "child"
+    },
+    "childPermitId": "permit-child",
+    "expected": {
+      "permitId": "permit-child",
+      "owner": "task:child",
+      "authorizedAmounts": [
+        {
+          "kind": "tokens",
+          "amount": "40",
+          "unit": "tokens"
+        }
+      ],
+      "continuationProfile": "child",
+      "reservationRefs": [
+        "reservation-parent"
+      ],
+      "fencingTokens": {
+        "reservation-parent": 11
+      }
+    }
+  }
+]
