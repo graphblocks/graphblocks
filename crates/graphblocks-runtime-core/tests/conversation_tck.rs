@@ -458,12 +458,30 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
+            let attachments = raw_attachments
+                .iter()
+                .map(attachment_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut conversation = Conversation::new(conversation_id);
+            for attachment in &attachments {
+                if attachment.scope == AttachmentScope::Message
+                    && let Some(message_id) = attachment.message_id.as_deref()
+                    && !conversation
+                        .messages
+                        .iter()
+                        .any(|message| message.message_id == message_id)
+                {
+                    conversation
+                        .messages
+                        .push(Message::new(message_id, MessageRole::User));
+                }
+            }
             store
-                .create(Conversation::new(conversation_id))
+                .create(conversation)
                 .map_err(|error| error.to_string())?;
-            for raw_attachment in raw_attachments {
+            for attachment in attachments {
                 store
-                    .add_attachment(conversation_id, attachment_from(raw_attachment)?)
+                    .add_attachment(conversation_id, attachment)
                     .map_err(|error| error.to_string())?;
             }
             let with_conversation_scope = store
