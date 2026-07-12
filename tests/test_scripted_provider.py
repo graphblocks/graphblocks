@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_scripted_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-scripted" / "src"))
-
-
 def test_scripted_provider_generates_deterministic_response_for_exact_prompt(monkeypatch) -> None:
-    _add_scripted_package_paths(monkeypatch)
-    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    graphblocks_scripted = importlib.import_module("graphblocks.integrations.scripted")
     provider = graphblocks_scripted.ScriptedModelProvider(
         scripts={"Answer: Hello": "Hello from the scripted provider."},
         model="scripted-test",
@@ -45,8 +36,7 @@ def test_scripted_provider_generates_deterministic_response_for_exact_prompt(mon
 
 
 def test_scripted_provider_streams_chunked_deltas_and_completion(monkeypatch) -> None:
-    _add_scripted_package_paths(monkeypatch)
-    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    graphblocks_scripted = importlib.import_module("graphblocks.integrations.scripted")
     provider = graphblocks_scripted.ScriptedModelProvider(
         scripts={"prompt": "abcdef"},
         model="scripted-test",
@@ -87,8 +77,7 @@ def test_scripted_provider_streams_chunked_deltas_and_completion(monkeypatch) ->
 
 
 def test_scripted_provider_rejects_missing_prompt_and_invalid_chunk_size(monkeypatch) -> None:
-    _add_scripted_package_paths(monkeypatch)
-    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    graphblocks_scripted = importlib.import_module("graphblocks.integrations.scripted")
     provider = graphblocks_scripted.ScriptedModelProvider(scripts={"known": "response"})
 
     with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="no scripted response"):
@@ -99,8 +88,7 @@ def test_scripted_provider_rejects_missing_prompt_and_invalid_chunk_size(monkeyp
 
 
 def test_scripted_provider_detaches_mutable_script_and_metadata_inputs(monkeypatch) -> None:
-    _add_scripted_package_paths(monkeypatch)
-    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    graphblocks_scripted = importlib.import_module("graphblocks.integrations.scripted")
     scripts = {"prompt": "response"}
     metadata = {"run_id": "run-1"}
     provider = graphblocks_scripted.ScriptedModelProvider(scripts=scripts)

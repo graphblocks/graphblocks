@@ -2,21 +2,15 @@ from __future__ import annotations
 
 import importlib
 import json
-from pathlib import Path
-
-
-ROOT = Path(__file__).parents[1]
 
 
 def _import_oci(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-oci" / "src"))
-    return importlib.import_module("graphblocks_oci")
+    return importlib.import_module("graphblocks.integrations.oci")
 
 
 def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -51,7 +45,7 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
 
 def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -92,7 +86,7 @@ def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monk
 
 def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -134,7 +128,7 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
 
 def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -197,7 +191,7 @@ def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) 
 
 def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -316,7 +310,7 @@ def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -
 
 def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")

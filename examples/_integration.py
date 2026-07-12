@@ -96,7 +96,7 @@ class FixtureBlock:
         }
 
         if "scriptedResponse" in node_spec:
-            from graphblocks_scripted import ScriptedModelProvider
+            from graphblocks.integrations.scripted import ScriptedModelProvider
 
             response_text = node_spec["scriptedResponse"]
             response_field = node_spec.get("responseField")
@@ -643,7 +643,7 @@ def run_integration(example_path: Path) -> dict[str, object]:
                 raise TypeError("integration policyProfiles must be a mapping")
             from graphblocks.exhaustion import ContinuationEnvelope, ExhaustionController, ExhaustionPolicy
             from graphblocks.output_policy import OutputCutoff
-            from graphblocks_scripted import ScriptedModelProvider
+            from graphblocks.integrations.scripted import ScriptedModelProvider
 
             profiles = {
                 document["metadata"]["name"]: document["spec"]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
@@ -15,16 +14,8 @@ from graphblocks import (
 )
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_openai_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openai" / "src"))
-
-
 def test_openai_chat_request_encodes_messages_tools_and_options(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     tool = ToolDefinition(
         name="knowledge.search",
         description="Search support docs.",
@@ -94,8 +85,7 @@ def test_openai_chat_request_encodes_messages_tools_and_options(monkeypatch) -> 
 
 
 def test_openai_chat_request_rejects_invalid_contract_inputs(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="model"):
         graphblocks_openai.openai_chat_completion_request(
@@ -112,8 +102,7 @@ def test_openai_chat_request_rejects_invalid_contract_inputs(monkeypatch) -> Non
 
 
 def test_openai_response_maps_text_choice_to_content_parts_and_usage(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     response = graphblocks_openai.openai_chat_response_from_provider(
         {
@@ -156,8 +145,7 @@ def test_openai_response_maps_text_choice_to_content_parts_and_usage(monkeypatch
 
 
 def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     response = graphblocks_openai.openai_chat_response_from_provider(
         {
@@ -207,8 +195,7 @@ def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) ->
 
 
 def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     delta = graphblocks_openai.openai_chat_delta_from_chunk(
         {
@@ -236,8 +223,7 @@ def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
 
 
 def test_openai_stream_chunk_trims_provider_identity(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     response = graphblocks_openai.openai_chat_response_from_provider(
         {
@@ -311,8 +297,7 @@ def test_openai_stream_chunk_trims_provider_identity(monkeypatch) -> None:
 
 
 def test_openai_stream_content_delta_normalizes_to_generation_chunk(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     delta = graphblocks_openai.openai_chat_delta_from_chunk(
         {
@@ -337,8 +322,7 @@ def test_openai_stream_content_delta_normalizes_to_generation_chunk(monkeypatch)
 
 
 def test_openai_stream_non_content_delta_has_no_generation_chunk(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     usage_delta = graphblocks_openai.openai_chat_delta_from_chunk(
         {
@@ -377,8 +361,7 @@ def test_openai_stream_non_content_delta_has_no_generation_chunk(monkeypatch) ->
 
 
 def test_openai_generation_chunk_helper_rejects_invalid_inputs(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     delta = graphblocks_openai.OpenAIChatDelta(
         response_id="chatcmpl-1",
         sequence=1,
@@ -399,8 +382,7 @@ def test_openai_generation_chunk_helper_rejects_invalid_inputs(monkeypatch) -> N
 
 
 def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     delta = graphblocks_openai.openai_chat_delta_from_chunk(
         {
@@ -423,8 +405,7 @@ def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> N
 
 
 def test_openai_provider_usage_converts_to_usage_record(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     response = graphblocks_openai.openai_chat_response_from_provider(
         {
             "id": "chatcmpl-usage",
@@ -484,8 +465,7 @@ def test_openai_provider_usage_converts_to_usage_record(monkeypatch) -> None:
 
 
 def test_openai_stream_usage_converts_to_reconciliation_record(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     delta = graphblocks_openai.openai_chat_delta_from_chunk(
         {
             "id": "chatcmpl-late",
@@ -537,8 +517,7 @@ def test_openai_stream_usage_converts_to_reconciliation_record(monkeypatch) -> N
 
 
 def test_openai_streaming_tool_call_deltas_assemble_graphblocks_drafts(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
 
     first = graphblocks_openai.openai_chat_delta_from_chunk(
@@ -607,8 +586,7 @@ def test_openai_streaming_tool_call_deltas_assemble_graphblocks_drafts(monkeypat
 
 
 def test_openai_stream_chunk_rejects_non_string_tool_argument_delta(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     with pytest.raises(
         graphblocks_openai.OpenAICompatibleAdapterError,
@@ -640,8 +618,7 @@ def test_openai_stream_chunk_rejects_non_string_tool_argument_delta(monkeypatch)
 
 
 def test_openai_stream_chunk_rejects_malformed_tool_call_metadata(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     cases = (
         (
@@ -691,8 +668,7 @@ def test_openai_stream_chunk_rejects_malformed_tool_call_metadata(monkeypatch) -
 
 
 def test_openai_delta_rejects_invalid_sequence_and_metadata(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
 
     with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="sequence"):
         graphblocks_openai.OpenAIChatDelta(
@@ -723,8 +699,7 @@ def test_openai_delta_rejects_invalid_sequence_and_metadata(monkeypatch) -> None
 
 
 def test_openai_streaming_tool_call_assembler_rejects_unstable_identity(monkeypatch) -> None:
-    _add_openai_package_paths(monkeypatch)
-    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
     assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
 
     with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="requires an id"):

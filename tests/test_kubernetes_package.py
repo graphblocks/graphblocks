@@ -1,23 +1,17 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import yaml
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_kubernetes(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-kubernetes" / "src"))
-    return importlib.import_module("graphblocks_kubernetes")
+    return importlib.import_module("graphblocks.integrations.kubernetes")
 
 
 def test_kubernetes_adapter_renders_worker_deployment_and_service(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     target = (
         graphblocks_deployment.ExecutionTarget("agent-workers", "worker_pool", "rust")
         .with_capabilities(["graphblocks.runtime"])
@@ -69,7 +63,7 @@ def test_kubernetes_adapter_renders_worker_deployment_and_service(monkeypatch) -
 
 def test_kubernetes_adapter_renders_secret_env_references(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     target = graphblocks_deployment.ExecutionTarget(
         "agent-workers",
         "worker_pool",
@@ -106,7 +100,7 @@ def test_kubernetes_adapter_renders_secret_env_references(monkeypatch) -> None:
 
 def test_kubernetes_adapter_renders_canary_rollout_manifests(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     stable = graphblocks_deployment.ExecutionTarget(
         "agent-workers",
         "worker_pool",
@@ -165,7 +159,7 @@ def test_kubernetes_adapter_renders_canary_rollout_manifests(monkeypatch) -> Non
 
 def test_kubernetes_rollout_service_routes_only_candidate_after_promote(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     stable = graphblocks_deployment.ExecutionTarget(
         "agent-workers",
         "worker_pool",
@@ -208,7 +202,7 @@ def test_kubernetes_rollout_service_routes_only_candidate_after_promote(monkeypa
 
 def test_kubernetes_manifest_set_digest_is_independent_of_document_order(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     options = graphblocks_kubernetes.KubernetesRenderOptions(namespace="support")
     target = graphblocks_deployment.ExecutionTarget(
         "agent-workers",
@@ -260,7 +254,7 @@ def test_kubernetes_cluster_snapshot_tracks_capabilities_deterministically(monke
 
 def test_kubernetes_adapter_renders_helm_chart_package(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     target = graphblocks_deployment.ExecutionTarget(
         "agent-workers",
         "worker_pool",

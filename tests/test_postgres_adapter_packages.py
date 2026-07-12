@@ -2,27 +2,19 @@ from __future__ import annotations
 
 from decimal import Decimal
 import importlib
-from pathlib import Path
 
 
-ROOT = Path(__file__).parents[1]
+def test_postgres_adapters_have_valid_default_schema_names() -> None:
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
+    graphblocks_usage_postgres = importlib.import_module("graphblocks.integrations.usage_postgres")
 
-
-def _add_budget_postgres_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget-postgres" / "src"))
-
-
-def _add_usage_postgres_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage-postgres" / "src"))
+    assert graphblocks_budget_postgres.PostgresBudgetSchema().schema == "graphblocks_budget"
+    assert graphblocks_usage_postgres.PostgresUsageSchema().schema == "graphblocks_usage"
 
 
 def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     account = graphblocks_budget.BudgetAccount(
         budget_id="budget-1",
@@ -70,9 +62,8 @@ def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
 
 
 def test_budget_postgres_reservation_statement(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     reservation = graphblocks_budget.BudgetReservation(
         reservation_id="reservation-1",
@@ -124,9 +115,8 @@ def test_budget_postgres_reservation_statement(monkeypatch) -> None:
 
 
 def test_budget_postgres_settlement_statement(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     settlement = graphblocks_budget.BudgetSettlement(
         reservation_id="reservation-1",
@@ -187,9 +177,8 @@ def test_budget_postgres_settlement_statement(monkeypatch) -> None:
 
 
 def test_budget_postgres_settlement_statement_can_record_permit_link(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     settlement = graphblocks_budget.BudgetSettlement(
         reservation_id="reservation-1",
@@ -222,9 +211,8 @@ def test_budget_postgres_settlement_statement_can_record_permit_link(monkeypatch
 
 
 def test_budget_postgres_permit_statement(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     permit = graphblocks_budget.BudgetPermit(
         permit_id="permit-1",
@@ -303,9 +291,8 @@ def test_budget_postgres_permit_statement(monkeypatch) -> None:
 
 
 def test_budget_postgres_completion_reserve_statement(monkeypatch) -> None:
-    _add_budget_postgres_paths(monkeypatch)
-    graphblocks_budget = importlib.import_module("graphblocks_budget")
-    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    graphblocks_budget = importlib.import_module("graphblocks.budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks.integrations.budget_postgres")
     schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
     reserve = graphblocks_budget.CompletionReserve(
         reserve_id="reserve-1",
@@ -357,9 +344,8 @@ def test_budget_postgres_completion_reserve_statement(monkeypatch) -> None:
 
 
 def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
-    _add_usage_postgres_paths(monkeypatch)
-    graphblocks_usage = importlib.import_module("graphblocks_usage")
-    graphblocks_usage_postgres = importlib.import_module("graphblocks_usage_postgres")
+    graphblocks_usage = importlib.import_module("graphblocks.usage")
+    graphblocks_usage_postgres = importlib.import_module("graphblocks.integrations.usage_postgres")
     schema = graphblocks_usage_postgres.PostgresUsageSchema(schema="gb_usage")
     record = graphblocks_usage.UsageRecord(
         record_id="usage-1",

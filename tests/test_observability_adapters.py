@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 import importlib
 import json
-from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -26,17 +25,7 @@ from graphblocks.tools import (
 )
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_observability_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-otel" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-langfuse" / "src"))
-
-
 def test_telemetry_package_exposes_native_content_capture(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
     calls: list[tuple[dict[str, object], dict[str, object]]] = []
 
     def capture_telemetry_content(
@@ -51,7 +40,7 @@ def test_telemetry_package_exposes_native_content_capture(monkeypatch) -> None:
         "graphblocks_runtime",
         SimpleNamespace(capture_telemetry_content=capture_telemetry_content),
     )
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
 
     captured = graphblocks_telemetry.capture_native_telemetry_content(
         {"mode": "redacted_preview", "retentionPolicy": "debug-7d"},
@@ -77,8 +66,7 @@ def test_telemetry_package_exposes_native_content_capture(monkeypatch) -> None:
 
 
 def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     usage = {"input_tokens": 20, "output_tokens": 8}
     attributes = {"tenant": "tenant-1"}
 
@@ -116,8 +104,7 @@ def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> 
 
 
 def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
         record_id="policy-1",
         run_id="run-1",
@@ -199,8 +186,7 @@ def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> 
 
 
 def test_telemetry_package_exposes_canonical_literal_sets(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     expected_constants = {
         "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
         "VALID_ENFORCEMENT_POINTS": VALID_ENFORCEMENT_POINTS,
@@ -221,8 +207,7 @@ def test_telemetry_package_exposes_canonical_literal_sets(monkeypatch) -> None:
 
 
 def test_telemetry_records_validate_policy_and_tool_literal_fields(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
 
     with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="enforcement_point"):
         graphblocks_telemetry.OutputPolicyTelemetryRecord(
@@ -290,8 +275,7 @@ def test_telemetry_records_validate_policy_and_tool_literal_fields(monkeypatch) 
 
 
 def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -329,8 +313,7 @@ def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypat
 
 
 def test_telemetry_capture_policy_linter_flags_unprotected_secret_and_content_keys(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     linter = graphblocks_telemetry.TelemetryCapturePolicyLinter(
         sensitive_attribute_keys=("api_key", "authorization"),
         content_attribute_keys=("messages", "prompt"),
@@ -368,8 +351,7 @@ def test_telemetry_capture_policy_linter_flags_unprotected_secret_and_content_ke
 
 
 def test_telemetry_capture_policy_linter_accepts_protected_capture_policy(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     linter = graphblocks_telemetry.TelemetryCapturePolicyLinter(
         sensitive_attribute_keys=("api_key", "authorization"),
         content_attribute_keys=("messages", "prompt"),
@@ -388,8 +370,7 @@ def test_telemetry_capture_policy_linter_accepts_protected_capture_policy(monkey
 
 
 def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
 
     result = graphblocks_telemetry.TelemetryExportResult.failed(
         exporter="otlp",
@@ -412,12 +393,10 @@ def test_telemetry_export_outage_preserves_durable_records_and_recovers_once(
     monkeypatch,
     tmp_path,
 ) -> None:
-    _add_observability_package_paths(monkeypatch)
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    graphblocks_audit = importlib.import_module("graphblocks_audit")
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     from graphblocks.budget import SQLiteBudgetLedger, UsageAmount
     from graphblocks.policy import ResourceRef
     from graphblocks.runtime import SQLiteExecutionJournal
@@ -620,8 +599,7 @@ def test_telemetry_export_outage_preserves_durable_records_and_recovers_once(
 def test_telemetry_export_outbox_rejects_conflicts_and_fails_closed_on_state_drift(
     monkeypatch,
 ) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     original = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -671,8 +649,7 @@ def test_telemetry_export_outbox_rejects_conflicts_and_fails_closed_on_state_dri
 
 
 def test_telemetry_diagnostic_bundle_combines_observability_health(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     capture_lint = graphblocks_telemetry.TelemetryCapturePolicyLinter(
         sensitive_attribute_keys=("api_key",),
         content_attribute_keys=("prompt",),
@@ -791,8 +768,7 @@ def test_telemetry_diagnostic_bundle_combines_observability_health(monkeypatch) 
 
 
 def test_metric_cardinality_linter_flags_unbounded_labels(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     linter = graphblocks_telemetry.MetricCardinalityLinter(max_distinct_values_per_label=2)
 
     result = linter.lint_samples(
@@ -835,9 +811,8 @@ def test_metric_cardinality_linter_flags_unbounded_labels(monkeypatch) -> None:
 
 
 def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -874,8 +849,7 @@ def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch
 
 
 def test_otel_projection_contracts_reject_non_standard_json_constants(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
 
     span = graphblocks_otel.OtlpSpanProjection(span_json='{"metric": NaN}')
     template = graphblocks_otel.OtelCollectorTemplate(
@@ -890,9 +864,8 @@ def test_otel_projection_contracts_reject_non_standard_json_constants(monkeypatc
 
 
 def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
     generation_record = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -926,9 +899,8 @@ def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:
 
 
 def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -956,9 +928,8 @@ def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> No
 
 
 def test_otel_projects_policy_and_tool_spans_with_capture_policy(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
     output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
         record_id="policy-1",
         run_id="run-1",
@@ -1050,8 +1021,7 @@ def test_otel_projects_policy_and_tool_spans_with_capture_policy(monkeypatch) ->
 
 
 def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
 
     template = graphblocks_otel.otlp_collector_template(
         "collector.example:4317",
@@ -1117,17 +1087,15 @@ def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkey
 
 
 def test_otel_collector_template_rejects_invalid_pipeline(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
 
     with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="unknown collector pipeline"):
         graphblocks_otel.otlp_collector_template("collector.example:4317", pipelines=("profiles",))
 
 
 def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -1165,8 +1133,7 @@ def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None
 
 
 def test_langfuse_projection_contracts_reject_non_standard_json_constants(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
 
     projections = (
         graphblocks_langfuse.LangfuseGenerationProjection(generation_json='{"usage": NaN}'),
@@ -1189,9 +1156,8 @@ def test_langfuse_projection_contracts_reject_non_standard_json_constants(monkey
 
 
 def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -1220,9 +1186,8 @@ def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -
 
 
 def test_langfuse_projects_policy_and_tool_events_with_capture_policy(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
     output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
         record_id="policy-1",
         run_id="run-1",
@@ -1305,8 +1270,7 @@ def test_langfuse_projects_policy_and_tool_events_with_capture_policy(monkeypatc
 
 
 def test_langfuse_prompt_score_and_dataset_projections_are_body_free(monkeypatch) -> None:
-    _add_observability_package_paths(monkeypatch)
-    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
     from graphblocks.evaluation import MetricObservation, ResourceSnapshotRef
 
     prompt = graphblocks_langfuse.langfuse_prompt_from_reference(

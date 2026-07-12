@@ -1,21 +1,15 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
-
-
-ROOT = Path(__file__).parents[1]
 
 
 def _import_gitops(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-gitops" / "src"))
-    return importlib.import_module("graphblocks_gitops")
+    return importlib.import_module("graphblocks.integrations.gitops")
 
 
 def _release(monkeypatch):
     _import_gitops(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     return (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
@@ -85,7 +79,7 @@ def test_gitops_package_renders_flux_kustomization(monkeypatch) -> None:
 
 def test_gitops_package_renders_graphblocks_desired_state(monkeypatch) -> None:
     graphblocks_gitops = _import_gitops(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = _release(monkeypatch)
     revision = graphblocks_deployment.DeploymentRevision(
         revision_id="rev-1",

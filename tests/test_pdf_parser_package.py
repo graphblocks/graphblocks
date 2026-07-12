@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
@@ -9,16 +8,8 @@ from graphblocks.document_parsers import DocumentParserRegistry
 from graphblocks.documents import ArtifactRef, AssetRevision, SourceAsset
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_pdf_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-pdf" / "src"))
-
-
 def test_pdf_parser_descriptor_uses_injected_extractor_and_preserves_pages(monkeypatch) -> None:
-    _add_pdf_package_paths(monkeypatch)
-    graphblocks_pdf = importlib.import_module("graphblocks_pdf")
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
 
     def extractor(body: bytes) -> list[object]:
         assert body == b"%PDF-test"
@@ -70,8 +61,7 @@ def test_pdf_parser_descriptor_uses_injected_extractor_and_preserves_pages(monke
 
 
 def test_pdf_parser_descriptor_selects_by_extension_when_media_type_is_missing(monkeypatch) -> None:
-    _add_pdf_package_paths(monkeypatch)
-    graphblocks_pdf = importlib.import_module("graphblocks_pdf")
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
     registry = DocumentParserRegistry()
     registry.register(graphblocks_pdf.pdf_parser_descriptor(extractor=lambda body: []))
 
@@ -82,8 +72,7 @@ def test_pdf_parser_descriptor_selects_by_extension_when_media_type_is_missing(m
 
 
 def test_pdf_page_text_rejects_invalid_page_number(monkeypatch) -> None:
-    _add_pdf_package_paths(monkeypatch)
-    graphblocks_pdf = importlib.import_module("graphblocks_pdf")
+    graphblocks_pdf = importlib.import_module("graphblocks.integrations.pdf")
 
     with pytest.raises(graphblocks_pdf.PdfParserError, match="page_number"):
         graphblocks_pdf.PdfPageText(page_number=0, text="bad")

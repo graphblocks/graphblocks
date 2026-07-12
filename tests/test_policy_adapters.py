@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
@@ -13,9 +12,6 @@ from graphblocks.output_policy import (
     VALID_PROVIDER_CANCELLATIONS,
 )
 from graphblocks.policy import VALID_POLICY_EFFECTS
-
-
-ROOT = Path(__file__).parents[1]
 
 
 def _policy_request() -> PolicyRequest:
@@ -69,10 +65,8 @@ def _output_policy_request() -> PolicyRequest:
 
 
 def test_policy_adapters_use_canonical_literal_sets(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
     opa_constants = {
         "VALID_POLICY_EFFECTS": VALID_POLICY_EFFECTS,
         "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
@@ -96,8 +90,7 @@ def test_policy_adapters_use_canonical_literal_sets(monkeypatch) -> None:
 
 
 def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
     request = _policy_request()
 
     opa_input = graphblocks_policy_opa.prepare_opa_policy_input(
@@ -145,8 +138,7 @@ def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
 
 
 def test_opa_adapter_rejects_non_standard_input_json_constants(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     opa_input = graphblocks_policy_opa.OpaPolicyInput(input_json='{"score": NaN}')
 
@@ -155,8 +147,7 @@ def test_opa_adapter_rejects_non_standard_input_json_constants(monkeypatch) -> N
 
 
 def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="package_ref"):
         graphblocks_policy_opa.prepare_opa_policy_input(
@@ -173,8 +164,7 @@ def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
 
 
 def test_opa_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
     request = _policy_request()
 
     decision = graphblocks_policy_opa.policy_decision_from_opa_result(
@@ -210,8 +200,7 @@ def test_opa_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
 
 
 def test_opa_adapter_rejects_unknown_effect(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="unknown policy effect"):
         graphblocks_policy_opa.policy_decision_from_opa_result(
@@ -223,8 +212,7 @@ def test_opa_adapter_rejects_unknown_effect(monkeypatch) -> None:
 
 
 def test_opa_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="decision_id"):
         graphblocks_policy_opa.policy_decision_from_opa_result(
@@ -252,8 +240,7 @@ def test_opa_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
 
 
 def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="blank string"):
         graphblocks_policy_opa.policy_decision_from_opa_result(
@@ -265,8 +252,7 @@ def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
 
 
 def test_opa_adapter_maps_output_policy_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
     request = _output_policy_request()
 
     decision = graphblocks_policy_opa.output_policy_decision_from_opa_result(
@@ -301,8 +287,7 @@ def test_opa_adapter_maps_output_policy_result(monkeypatch) -> None:
 
 
 def test_opa_adapter_rejects_invalid_output_policy_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
-    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_opa = importlib.import_module("graphblocks.integrations.policy_opa")
 
     with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="unknown output policy disposition"):
         graphblocks_policy_opa.output_policy_decision_from_opa_result(
@@ -322,8 +307,7 @@ def test_opa_adapter_rejects_invalid_output_policy_result(monkeypatch) -> None:
 
 
 def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
     request = _policy_request()
 
     authorization = graphblocks_policy_cedar.prepare_cedar_authorization_request(
@@ -373,8 +357,7 @@ def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
 
 
 def test_cedar_adapter_rejects_non_standard_authorization_json_constants(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     authorization = graphblocks_policy_cedar.CedarAuthorizationRequest(authorization_json='{"principal": NaN}')
 
@@ -383,8 +366,7 @@ def test_cedar_adapter_rejects_non_standard_authorization_json_constants(monkeyp
 
 
 def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="schema_ref"):
         graphblocks_policy_cedar.prepare_cedar_authorization_request(
@@ -401,8 +383,7 @@ def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:
 
 
 def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
     request = _policy_request()
 
     decision = graphblocks_policy_cedar.policy_decision_from_cedar_result(
@@ -427,8 +408,7 @@ def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
 
 
 def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="decision_id"):
         graphblocks_policy_cedar.policy_decision_from_cedar_result(
@@ -456,8 +436,7 @@ def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
 
 
 def test_cedar_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="blank string"):
         graphblocks_policy_cedar.policy_decision_from_cedar_result(
@@ -469,8 +448,7 @@ def test_cedar_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
 
 
 def test_cedar_adapter_requires_principal(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
     request = PolicyRequest(
         request_id="policy-req-1",
         enforcement_point="before_tool_or_effect",
@@ -484,8 +462,7 @@ def test_cedar_adapter_requires_principal(monkeypatch) -> None:
 
 
 def test_cedar_adapter_maps_nested_output_policy_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
     request = _output_policy_request()
 
     decision = graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
@@ -522,8 +499,7 @@ def test_cedar_adapter_maps_nested_output_policy_result(monkeypatch) -> None:
 
 
 def test_cedar_adapter_maps_native_deny_to_output_abort(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
-    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 
     decision = graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
         decision_id="output-decision-cedar-1",

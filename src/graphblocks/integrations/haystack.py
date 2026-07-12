@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Literal
+
+from graphblocks import ContentPart, Message
+
+
+class HaystackBridgeError(ValueError):
+    """Raised when a Haystack bridge contract is invalid."""
+
+
+def _validate_block_type_id(block_type_id: str) -> str:
+    if not isinstance(block_type_id, str) or not block_type_id.strip():
+        raise HaystackBridgeError("block_type_id must not be empty")
+    normalized = block_type_id.strip()
+    if any(character.isspace() for character in normalized) or "@" in normalized:
+        raise HaystackBridgeError(f"block_type_id is invalid: {block_type_id!r}")
+    return normalized
+
+
+def _port_descriptors(owner: str, ports: Mapping[str, str], *, require_output: bool = False) -> list[dict[str, object]]:
+    if not isinstance(ports, Mapping):
+        raise HaystackBridgeError(f"{owner} ports must be a mapping")
+    if require_output and not ports:
+        raise HaystackBridgeError(f"{owner} outputs must not be empty")
+    descriptors: list[dict[str, object]] = []
+    for name, type_ref in sorted(ports.items()):
+        if not isinstance(name, str) or not name.strip():
+            raise HaystackBridgeError(f"{owner} port names must be non-empty strings")
+        if not isinstance(type_ref, str) or not type_ref.strip():
+            raise HaystackBridgeError(f"{owner} port {name!r} type must not be empty")
+        descriptors.append({"name": name.strip(), "type": type_ref.strip(), "required": True})
+    return descriptors
+
+
+@dataclass(frozen=True, slots=True)
+class HaystackComponentBlock:
+    component_ref: str
+    block_type_id: str
+    inputs: Mapping[str, str] = field(default_factory=dict)
+    outputs: Mapping[str, str] = field(default_factory=dict)
+    version: int = 1
+    descriptor_source: Literal["explicit", "introspected"] = "explicit"
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.component_ref, str) or not self.component_ref.strip():
+            raise HaystackBridgeError("component_ref must not be empty")
+        if self.version < 1:
+            raise HaystackBridgeError("version must be at least 1")
+        if self.descriptor_source not in {"explicit", "introspected"}:
+            raise HaystackBridgeError("descriptor_source is invalid")
+        object.__setattr__(self, "component_ref", self.component_ref.strip())
+        object.__setattr__(self, "block_type_id", _validate_block_type_id(self.block_type_id))
+        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
+        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
+        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        _port_descriptors("component", self.inputs)
+        _port_descriptors("component", self.outputs, require_output=True)
+
+    def block_descriptor(self) -> dict[str, object]:
+        return {
+            "typeId": self.block_type_id,
+            "version": self.version,
+            "inputs": _port_descriptors("component", self.inputs),
+            "outputs": _port_descriptors("component", self.outputs, require_output=True),
+            "resourceSlots": [{"name": "component", "type": "haystack.component", "optional": False}],
+            "metadata": {
+                "haystack": {
+                    "componentRef": self.component_ref,
+                    "descriptorSource": self.descriptor_source,
+                    "kind": "component",
+                },
+                **deepcopy(dict(self.metadata)),
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class HaystackPipelineBlock:
+    pipeline_ref: str
+    block_type_id: str
+    inputs: Mapping[str, str] = field(default_factory=dict)
+    outputs: Mapping[str, str] = field(default_factory=dict)
+    version: int = 1
+    async_pipeline: bool = False
+    descriptor_source: Literal["explicit", "introspected"] = "explicit"
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pipeline_ref, str) or not self.pipeline_ref.strip():
+            raise HaystackBridgeError("pipeline_ref must not be empty")
+        if self.version < 1:
+            raise HaystackBridgeError("version must be at least 1")
+        if self.descriptor_source not in {"explicit", "introspected"}:
+            raise HaystackBridgeError("descriptor_source is invalid")
+        object.__setattr__(self, "pipeline_ref", self.pipeline_ref.strip())
+        object.__setattr__(self, "block_type_id", _validate_block_type_id(self.block_type_id))
+        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
+        object.__setattr__(self, "outputs", deepcopy(dict(self.outputs)))
+        object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
+        _port_descriptors("pipeline", self.inputs)
+        _port_descriptors("pipeline", self.outputs, require_output=True)
+
+    def block_descriptor(self) -> dict[str, object]:
+        return {
+            "typeId": self.block_type_id,
+            "version": self.version,
+            "inputs": _port_descriptors("pipeline", self.inputs),
+            "outputs": _port_descriptors("pipeline", self.outputs, require_output=True),
+            "resourceSlots": [{"name": "pipeline", "type": "haystack.pipeline", "optional": False}],
+            "metadata": {
+                "haystack": {
+                    "asyncPipeline": bool(self.async_pipeline),
+                    "descriptorSource": self.descriptor_source,
+                    "kind": "pipeline",
+                    "pipelineRef": self.pipeline_ref,
+                },
+                **deepcopy(dict(self.metadata)),
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class HaystackDescriptorDiagnostic:
+    subject_ref: str
+    subject_kind: Literal["component", "pipeline"]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.subject_ref.strip():
+            raise HaystackBridgeError("subject_ref must not be empty")
+        if self.subject_kind not in {"component", "pipeline"}:
+            raise HaystackBridgeError("subject_kind is invalid")
+        if not self.reason.strip():
+            raise HaystackBridgeError("reason must not be empty")
+
+    def diagnostic_contract(self) -> dict[str, object]:
+        return {
+            "code": "HaystackExplicitDescriptorRequired",
+            "message": (
+                f"{self.subject_kind} {self.subject_ref!r} requires an explicit GraphBlocks descriptor"
+            ),
+            "metadata": {
+                "reason": self.reason,
+                "subject_kind": self.subject_kind,
+            },
+        }
+
+
+def explicit_descriptor_required(
+    *,
+    subject_ref: str,
+    subject_kind: Literal["component", "pipeline"],
+    reason: str,
+) -> HaystackDescriptorDiagnostic:
+    return HaystackDescriptorDiagnostic(subject_ref=subject_ref, subject_kind=subject_kind, reason=reason)
+
+
+def message_to_haystack_chat_message(message: Message) -> dict[str, object]:
+    if not isinstance(message, Message):
+        raise HaystackBridgeError("message must be a graphblocks Message")
+    if len(message.parts) == 1 and message.parts[0].kind == "text":
+        content: object = message.parts[0].text or ""
+    else:
+        content = []
+        for part in message.parts:
+            if part.kind == "text":
+                content.append({"type": "text", "text": part.text or ""})
+            elif part.kind in {"json", "artifact_ref"}:
+                content.append({"type": part.kind, "data": deepcopy(dict(part.data or {}))})
+            else:
+                raise HaystackBridgeError(f"unsupported content part kind {part.kind!r}")
+    meta: dict[str, object] = {"message_id": message.message_id}
+    if message.metadata:
+        meta["graphblocks_metadata"] = deepcopy(dict(message.metadata))
+    return {
+        "role": message.role,
+        "content": content,
+        "meta": meta,
+    }
+
+
+def haystack_chat_message_to_message(value: Mapping[str, object], *, message_id: str) -> Message:
+    if not isinstance(value, Mapping):
+        raise HaystackBridgeError("haystack chat message must be a mapping")
+    role = value.get("role")
+    if role not in {"system", "developer", "user", "assistant", "tool"}:
+        raise HaystackBridgeError(f"unsupported Haystack chat role {role!r}")
+    content_value = value.get("content", "")
+    parts: list[ContentPart] = []
+    if isinstance(content_value, str):
+        parts.append(ContentPart(kind="text", text=content_value))
+    elif isinstance(content_value, list):
+        for item in content_value:
+            if not isinstance(item, Mapping):
+                raise HaystackBridgeError("Haystack content item must be a mapping")
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                parts.append(ContentPart(kind="text", text=item["text"]))
+            elif item.get("type") in {"json", "artifact_ref"} and isinstance(item.get("data"), Mapping):
+                parts.append(ContentPart(kind=item["type"], data=deepcopy(dict(item["data"]))))
+            else:
+                raise HaystackBridgeError("unsupported Haystack content item")
+    else:
+        raise HaystackBridgeError("Haystack chat content must be a string or list")
+    meta = value.get("meta", {})
+    if meta is None:
+        meta = {}
+    if not isinstance(meta, Mapping):
+        raise HaystackBridgeError("Haystack chat meta must be a mapping")
+    metadata = {"haystack_meta": deepcopy(dict(meta))} if meta else {}
+    return Message(
+        message_id=message_id,
+        role=role,  # type: ignore[arg-type]
+        parts=tuple(parts),
+        metadata=metadata,
+    )
+
+
+__all__ = [
+    "HaystackBridgeError",
+    "HaystackComponentBlock",
+    "HaystackDescriptorDiagnostic",
+    "HaystackPipelineBlock",
+    "explicit_descriptor_required",
+    "haystack_chat_message_to_message",
+    "message_to_haystack_chat_message",
+]

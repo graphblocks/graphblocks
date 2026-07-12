@@ -1,24 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks import SearchRequest
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_qdrant_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-qdrant" / "src"))
-
-
 def test_qdrant_search_request_encodes_named_vector_and_filters(monkeypatch) -> None:
-    _add_qdrant_package_paths(monkeypatch)
-    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
     request = SearchRequest(
         query_text="refund policy",
         top_k=3,
@@ -57,8 +47,7 @@ def test_qdrant_search_request_encodes_named_vector_and_filters(monkeypatch) -> 
 
 
 def test_qdrant_search_request_rejects_invalid_inputs(monkeypatch) -> None:
-    _add_qdrant_package_paths(monkeypatch)
-    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
 
     with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="collection"):
         graphblocks_qdrant.QdrantCollectionRef(collection=" ")
@@ -79,8 +68,7 @@ def test_qdrant_search_request_rejects_invalid_inputs(monkeypatch) -> None:
 
 
 def test_qdrant_points_map_to_search_hits_with_source_acl_and_preview(monkeypatch) -> None:
-    _add_qdrant_package_paths(monkeypatch)
-    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
     points = [
         {
             "id": "chunk-1",
@@ -132,8 +120,7 @@ def test_qdrant_points_map_to_search_hits_with_source_acl_and_preview(monkeypatc
 
 
 def test_qdrant_points_without_source_use_untrusted_point_reference(monkeypatch) -> None:
-    _add_qdrant_package_paths(monkeypatch)
-    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
 
     hits = graphblocks_qdrant.qdrant_hits_from_points(
         ({"id": 7, "score": 3.5, "payload": {}} for _ in range(1)),
@@ -149,8 +136,7 @@ def test_qdrant_points_without_source_use_untrusted_point_reference(monkeypatch)
 
 
 def test_qdrant_hits_reject_blank_score_kind(monkeypatch) -> None:
-    _add_qdrant_package_paths(monkeypatch)
-    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
 
     with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="score_kind"):
         graphblocks_qdrant.qdrant_hits_from_points(

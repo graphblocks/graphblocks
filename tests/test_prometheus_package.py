@@ -1,21 +1,15 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
-
-
-ROOT = Path(__file__).parents[1]
 
 
 def _import_prometheus(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-prometheus" / "src"))
-    return importlib.import_module("graphblocks_prometheus")
+    return importlib.import_module("graphblocks.integrations.prometheus")
 
 
 def test_prometheus_projection_builds_generation_samples(monkeypatch) -> None:
     graphblocks_prometheus = _import_prometheus(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     observation = graphblocks_telemetry.GenerationTelemetryRecord(
         record_id="gen-1",
         run_id="run-1",
@@ -80,7 +74,7 @@ def test_prometheus_projection_builds_generation_samples(monkeypatch) -> None:
 
 def test_prometheus_projection_builds_policy_and_tool_samples_without_runtime_ids(monkeypatch) -> None:
     graphblocks_prometheus = _import_prometheus(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
         record_id="policy-1",
         run_id="run-1",
@@ -218,7 +212,7 @@ def test_prometheus_projection_builds_policy_and_tool_samples_without_runtime_id
 
 def test_prometheus_package_lints_sample_cardinality(monkeypatch) -> None:
     graphblocks_prometheus = _import_prometheus(monkeypatch)
-    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
 
     samples = (
         graphblocks_prometheus.PrometheusSample(

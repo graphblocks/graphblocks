@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib
-from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -26,12 +25,7 @@ from graphblocks import (
 )
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def test_mcp_and_openapi_adapters_expose_native_connector_capability_helper(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
     calls: list[tuple[dict[str, object], object]] = []
 
     def evaluate_connector_capabilities(
@@ -49,11 +43,11 @@ def test_mcp_and_openapi_adapters_expose_native_connector_capability_helper(monk
 
     monkeypatch.setitem(
         sys.modules,
-        "graphblocks_runtime",
+        "graphblocks.runtime",
         SimpleNamespace(evaluate_connector_capabilities=evaluate_connector_capabilities),
     )
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
 
     mcp_result = graphblocks_mcp.evaluate_native_connector_capabilities(
         {"connectionId": "support-mcp", "kind": "mcp", "provider": "stdio"},
@@ -139,8 +133,7 @@ def _tool_output_registry() -> ToolSchemaRegistry:
 
 
 def test_mcp_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
 
     definition = graphblocks_mcp.define_mcp_tool(
         name="knowledge.search",
@@ -170,8 +163,7 @@ def test_mcp_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
 
 
 def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
 
     definitions = graphblocks_mcp.discover_mcp_tool_definitions(
         {
@@ -204,8 +196,7 @@ def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -
 
 
 def test_mcp_adapter_discovery_rejects_blank_tool_metadata(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
 
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="name"):
         graphblocks_mcp.discover_mcp_tool_definitions({"tools": [{"name": " "}]})
@@ -241,8 +232,7 @@ def test_mcp_adapter_discovery_rejects_blank_tool_metadata(monkeypatch) -> None:
 
 
 def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     arguments = {"query": "billing", "limit": 5}
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
@@ -300,8 +290,7 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
 
 
 def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -319,8 +308,7 @@ def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
 
 
 def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -365,8 +353,7 @@ def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeyp
 
 
 def test_mcp_adapter_requires_required_idempotency_key_before_execution(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -381,8 +368,7 @@ def test_mcp_adapter_requires_required_idempotency_key_before_execution(monkeypa
 
 
 def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -395,8 +381,7 @@ def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
 
 
 def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -425,8 +410,7 @@ def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None
 
 
 def test_mcp_adapter_prepares_tool_result_with_redactions_and_capture_policy(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -462,8 +446,7 @@ def test_mcp_adapter_prepares_tool_result_with_redactions_and_capture_policy(mon
 
 
 def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -488,8 +471,7 @@ def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
 
 
 def test_mcp_adapter_converts_denied_terminal_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -520,8 +502,7 @@ def test_mcp_adapter_converts_denied_terminal_result(monkeypatch) -> None:
 
 
 def test_mcp_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -553,8 +534,7 @@ def test_mcp_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> Non
 
 
 def test_mcp_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -584,8 +564,7 @@ def test_mcp_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypa
 
 
 def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -646,8 +625,7 @@ def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
 
 
 def test_mcp_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -680,8 +658,7 @@ def test_mcp_adapter_forces_streaming_delta_output_to_untrusted_external(monkeyp
 
 
 def test_mcp_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -711,8 +688,7 @@ def test_mcp_adapter_builds_validated_completed_tool_result_event(monkeypatch) -
 
 
 def test_mcp_adapter_completed_tool_result_event_requires_result_validation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -754,8 +730,7 @@ def test_mcp_adapter_completed_tool_result_event_requires_result_validation(monk
 
 
 def test_mcp_adapter_builds_terminal_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -784,8 +759,7 @@ def test_mcp_adapter_builds_terminal_tool_result_events(monkeypatch) -> None:
 
 
 def test_mcp_adapter_terminal_event_rejects_mismatched_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -809,8 +783,7 @@ def test_mcp_adapter_terminal_event_rejects_mismatched_result(monkeypatch) -> No
 
 
 def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
-    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -831,8 +804,7 @@ def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -
 
 
 def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
 
     definition = graphblocks_openapi.define_openapi_tool(
         name="ticket.create",
@@ -861,8 +833,7 @@ def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None
 
 
 def test_openapi_adapter_discovers_tool_definitions_from_operation_schemas(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
 
     definitions = graphblocks_openapi.define_openapi_tools_from_spec(
         {
@@ -910,8 +881,7 @@ def test_openapi_adapter_discovers_tool_definitions_from_operation_schemas(monke
 
 
 def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
 
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="operationId"):
         graphblocks_openapi.define_openapi_tools_from_spec(
@@ -958,8 +928,7 @@ def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch)
 
 
 def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     arguments = {"title": "Need help", "priority": "normal"}
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
@@ -1017,8 +986,7 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
 
 
 def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1036,8 +1004,7 @@ def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
 
 
 def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1082,8 +1049,7 @@ def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(mon
 
 
 def test_openapi_adapter_requires_required_idempotency_key_before_execution(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1098,8 +1064,7 @@ def test_openapi_adapter_requires_required_idempotency_key_before_execution(monk
 
 
 def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         McpToolImplementation(server="support-mcp", remote_name="search"),
         tool_name="knowledge.search",
@@ -1112,8 +1077,7 @@ def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:
 
 
 def test_openapi_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1139,8 +1103,7 @@ def test_openapi_adapter_converts_valid_response_to_tool_result(monkeypatch) -> 
 
 
 def test_openapi_adapter_enforces_result_policy_size_limit(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1162,8 +1125,7 @@ def test_openapi_adapter_enforces_result_policy_size_limit(monkeypatch) -> None:
 
 
 def test_openapi_adapter_rejects_response_that_fails_output_schema(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1184,8 +1146,7 @@ def test_openapi_adapter_rejects_response_that_fails_output_schema(monkeypatch) 
 
 
 def test_openapi_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1210,8 +1171,7 @@ def test_openapi_adapter_converts_error_to_failed_tool_result(monkeypatch) -> No
 
 
 def test_openapi_adapter_converts_denied_terminal_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1242,8 +1202,7 @@ def test_openapi_adapter_converts_denied_terminal_result(monkeypatch) -> None:
 
 
 def test_openapi_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1272,8 +1231,7 @@ def test_openapi_adapter_converts_policy_stopped_terminal_result(monkeypatch) ->
 
 
 def test_openapi_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1303,8 +1261,7 @@ def test_openapi_adapter_converts_cancelled_and_incomplete_terminal_results(monk
 
 
 def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1353,8 +1310,7 @@ def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> Non
 
 
 def test_openapi_adapter_forces_streaming_delta_output_to_untrusted_external(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1387,8 +1343,7 @@ def test_openapi_adapter_forces_streaming_delta_output_to_untrusted_external(mon
 
 
 def test_openapi_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1418,8 +1373,7 @@ def test_openapi_adapter_builds_validated_completed_tool_result_event(monkeypatc
 
 
 def test_openapi_adapter_completed_tool_result_event_requires_result_validation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1459,8 +1413,7 @@ def test_openapi_adapter_completed_tool_result_event_requires_result_validation(
 
 
 def test_openapi_adapter_builds_terminal_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1488,8 +1441,7 @@ def test_openapi_adapter_builds_terminal_tool_result_events(monkeypatch) -> None
 
 
 def test_openapi_adapter_terminal_event_routes_completed_results_through_validation(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",
@@ -1515,8 +1467,7 @@ def test_openapi_adapter_terminal_event_routes_completed_results_through_validat
 
 
 def test_openapi_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
-    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
     admitted, resolved = _admitted_call_for(
         OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
         tool_name="ticket.create",

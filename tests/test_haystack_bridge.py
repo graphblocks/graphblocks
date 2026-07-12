@@ -1,23 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from graphblocks import BlockCatalog, ContentPart, Message
 
 
-ROOT = Path(__file__).parents[1]
-
-
-def _add_haystack_package_paths(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-haystack" / "src"))
-
-
 def test_haystack_component_block_descriptor_is_explicit_and_catalog_compatible(monkeypatch) -> None:
-    _add_haystack_package_paths(monkeypatch)
-    graphblocks_haystack = importlib.import_module("graphblocks_haystack")
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 
     block = graphblocks_haystack.HaystackComponentBlock(
         component_ref="support.SearchComponent",
@@ -54,8 +45,7 @@ def test_haystack_component_block_descriptor_is_explicit_and_catalog_compatible(
 
 
 def test_haystack_pipeline_block_descriptor_records_async_pipeline(monkeypatch) -> None:
-    _add_haystack_package_paths(monkeypatch)
-    graphblocks_haystack = importlib.import_module("graphblocks_haystack")
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 
     block = graphblocks_haystack.HaystackPipelineBlock(
         pipeline_ref="support.rag",
@@ -74,8 +64,7 @@ def test_haystack_pipeline_block_descriptor_records_async_pipeline(monkeypatch) 
 
 
 def test_haystack_dynamic_component_requires_explicit_descriptor(monkeypatch) -> None:
-    _add_haystack_package_paths(monkeypatch)
-    graphblocks_haystack = importlib.import_module("graphblocks_haystack")
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 
     diagnostic = graphblocks_haystack.explicit_descriptor_required(
         subject_ref="support.DynamicComponent",
@@ -91,8 +80,7 @@ def test_haystack_dynamic_component_requires_explicit_descriptor(monkeypatch) ->
 
 
 def test_haystack_chat_message_round_trips_graphblocks_message(monkeypatch) -> None:
-    _add_haystack_package_paths(monkeypatch)
-    graphblocks_haystack = importlib.import_module("graphblocks_haystack")
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
     message = Message(
         message_id="msg-1",
         role="user",
@@ -123,8 +111,7 @@ def test_haystack_chat_message_round_trips_graphblocks_message(monkeypatch) -> N
 
 
 def test_haystack_bridge_rejects_invalid_descriptors(monkeypatch) -> None:
-    _add_haystack_package_paths(monkeypatch)
-    graphblocks_haystack = importlib.import_module("graphblocks_haystack")
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 
     with pytest.raises(graphblocks_haystack.HaystackBridgeError, match="block_type_id"):
         graphblocks_haystack.HaystackComponentBlock(

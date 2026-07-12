@@ -2,23 +2,17 @@ from __future__ import annotations
 
 import importlib
 import json
-from pathlib import Path
 
 import pytest
 
 
-ROOT = Path(__file__).parents[1]
-
-
 def _import_terraform(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-terraform" / "src"))
-    return importlib.import_module("graphblocks_terraform")
+    return importlib.import_module("graphblocks.integrations.terraform")
 
 
 def test_terraform_bridge_renders_tfvars_and_output_bindings(monkeypatch) -> None:
     graphblocks_terraform = _import_terraform(monkeypatch)
-    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     target = (
         graphblocks_deployment.ExecutionTarget("agent-workers", "worker_pool", "rust")
         .with_capabilities(["graphblocks.runtime"])
