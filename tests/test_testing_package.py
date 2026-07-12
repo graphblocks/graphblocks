@@ -1582,7 +1582,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "async_callback_resume_space_separator_callback_received_at_rejected",
         "async_callback_resume_compact_offset_callback_received_at_rejected",
         "async_callback_resume_invalid_day_callback_received_at_rejected",
-        "async_callback_resume_callback_after_deadline_rejected",
+        "async_callback_resume_callback_at_deadline_rejected",
         "async_callback_resume_missing_callback_release_id_rejected",
         "async_callback_resume_callback_release_mismatch_rejected",
         "async_callback_resume_missing_tenant_id_rejected",
@@ -1659,7 +1659,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "external_operation_compact_offset_submitted_at_rejected",
         "external_operation_submitted_before_created_rejected",
         "external_operation_non_positive_expiry_window_rejected",
-        "external_operation_callback_after_expiry_rejected",
+        "external_operation_callback_at_expiry_rejected",
         "external_operation_callback_before_submission_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",
@@ -2597,7 +2597,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         for result in report.results
     )
     assert any(
-        result.case_id == "async_callback_resume_callback_after_deadline_rejected"
+        result.case_id == "async_callback_resume_callback_at_deadline_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -2980,7 +2980,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         for result in report.results
     )
     assert any(
-        result.case_id == "external_operation_callback_after_expiry_rejected"
+        result.case_id == "external_operation_callback_at_expiry_rejected"
         and result.observed.get("expectedDiagnosticsMatched") is True
         for result in report.results
     )
@@ -7775,7 +7775,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "async_callback_resume_space_separator_callback_received_at_rejected",
         "async_callback_resume_compact_offset_callback_received_at_rejected",
         "async_callback_resume_invalid_day_callback_received_at_rejected",
-        "async_callback_resume_callback_after_deadline_rejected",
+        "async_callback_resume_callback_at_deadline_rejected",
         "async_callback_resume_missing_callback_release_id_rejected",
         "async_callback_resume_callback_release_mismatch_rejected",
         "async_callback_resume_missing_tenant_id_rejected",
@@ -7852,7 +7852,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "external_operation_compact_offset_submitted_at_rejected",
         "external_operation_submitted_before_created_rejected",
         "external_operation_non_positive_expiry_window_rejected",
-        "external_operation_callback_after_expiry_rejected",
+        "external_operation_callback_at_expiry_rejected",
         "external_operation_callback_before_submission_rejected",
         "external_operation_missing_callback_provider_operation_id_rejected",
         "external_operation_mismatched_callback_provider_operation_id_rejected",

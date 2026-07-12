@@ -1062,7 +1062,7 @@ def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() ->
         expired_callback = app.handle(
             replace(
                 callback_request,
-                requested_at="2030-01-01T00:00:00Z",
+                requested_at="2028-08-16T00:53:20Z",
             )
         )
         app.async_callback_resume_admission_hook = None

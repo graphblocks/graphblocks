@@ -8203,7 +8203,7 @@
     }
   },
   {
-    "name": "async_callback_resume_callback_after_deadline_rejected",
+    "name": "async_callback_resume_callback_at_deadline_rejected",
     "kind": "async_callback_resume_guards",
     "operation": {
       "operationId": "op-ci-001",
@@ -8232,7 +8232,7 @@
     "callback": {
       "callbackId": "cb-ci-after-deadline",
       "idempotencyKey": "idem-ci-callback-after-deadline",
-      "receivedAt": "2026-07-02T00:30:01Z",
+      "receivedAt": "2026-07-02T00:30:00Z",
       "releaseId": "rel-coding-001",
       "tenantId": "tenant-coding-001",
       "operationId": "op-ci-001",
@@ -8258,7 +8258,7 @@
     "expectedDiagnostics": [
       {
         "code": "DurableAsyncCallbackResumeInvalid",
-        "message": "async callback resume callback receivedAt must not be after operation deadline",
+        "message": "async callback resume callback receivedAt must be before operation deadline",
         "path": "$.callback.receivedAt"
       }
     ],
@@ -11977,7 +11977,7 @@
     }
   },
   {
-    "name": "external_operation_callback_after_expiry_rejected",
+    "name": "external_operation_callback_at_expiry_rejected",
     "kind": "external_operation_reconciliation",
     "operation": {
       "operationId": "op-ci-002",
@@ -12013,7 +12013,7 @@
       "verifiedBy": "hmac-sha256:callback-endpoint-1",
       "idempotencyKey": "idem-ci-callback-001",
       "policySnapshotId": "pol-callback-001",
-      "receivedAt": "2026-06-23T00:30:01Z",
+      "receivedAt": "2026-06-23T00:30:00Z",
       "commitsResult": false,
       "diagnosticRecorded": true,
       "payloadConvertedToArtifactRef": true

@@ -770,10 +770,10 @@ class InProcessRuntime:
             if (
                 isinstance(expires_at_unix_ms, int)
                 and not isinstance(expires_at_unix_ms, bool)
-                and received_at_unix_ms > expires_at_unix_ms
+                and received_at_unix_ms >= expires_at_unix_ms
             ):
                 raise ValueError(
-                    "runtime callback_receipt must not exceed operation expiration"
+                    "runtime callback_receipt must be before operation expiration"
                 )
             resume_admission = receipt.get("resume_admission")
             required_resume_admission = {
@@ -2061,8 +2061,8 @@ def stdlib_registry() -> RuntimeRegistry:
                 raise ValueError(f"{block_label} terminal timestamp must not be earlier than submitted_at_unix_ms")
         expires_at_unix_ms = operation.get("expires_at_unix_ms")
         if isinstance(expires_at_unix_ms, int) and not isinstance(expires_at_unix_ms, bool):
-            if completed_at_unix_ms > expires_at_unix_ms:
-                raise ValueError(f"{block_label} terminal timestamp must not exceed expires_at_unix_ms")
+            if completed_at_unix_ms >= expires_at_unix_ms:
+                raise ValueError(f"{block_label} terminal timestamp must be earlier than expires_at_unix_ms")
 
     def _async_operation_result(
         operation_id: str,

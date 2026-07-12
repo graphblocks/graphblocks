@@ -13383,12 +13383,12 @@ class TckRunner:
                     if (
                         callback_received_at is not None
                         and operation_deadline_at is not None
-                        and callback_received_at > operation_deadline_at
+                        and callback_received_at >= operation_deadline_at
                     ):
                         diagnostics.append(
                             {
                                 "code": "DurableAsyncCallbackResumeInvalid",
-                                "message": "async callback resume callback receivedAt must not be after operation deadline",
+                                "message": "async callback resume callback receivedAt must be before operation deadline",
                                 "path": f"$.callback.{received_at_path}",
                             }
                         )
@@ -15200,9 +15200,11 @@ class TckRunner:
                         }
                     )
                 if (
-                    expires_at_value is not None
+                    submitted_at_value is not None
+                    and expires_at_value is not None
                     and received_at_value is not None
-                    and received_at_value > expires_at_value
+                    and expires_at_value > submitted_at_value
+                    and received_at_value >= expires_at_value
                 ):
                     diagnostics.append(
                         {

@@ -277,6 +277,22 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     }
     with pytest.raises(
         ValueError,
+        match="runtime callback_receipt must be before operation expiration",
+    ):
+        runtime.run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+            checkpoint=waiting.checkpoint,
+            callback_receipt={
+                **callback_receipt,
+                "received_at_unix_ms": waiting.checkpoint.operation[
+                    "expires_at_unix_ms"
+                ],
+            },
+        )
+    with pytest.raises(
+        ValueError,
         match="runtime callback_receipt verified_by must identify an authenticated principal",
     ):
         runtime.run(
@@ -1645,7 +1661,7 @@ def test_stdlib_async_terminal_blocks_reject_non_mapping_config() -> None:
     assert "async.cancel_operation@1 config must be a mapping" in failed[0].payload["error"]
 
 
-def test_stdlib_async_terminal_blocks_reject_terminal_after_expiration() -> None:
+def test_stdlib_async_terminal_blocks_reject_terminal_at_expiration() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -1682,7 +1698,7 @@ def test_stdlib_async_terminal_blocks_reject_terminal_after_expiration() -> None
                 },
                 "cancel": {
                     "block": "async.cancel_operation@1",
-                    "config": {"cancelledAtUnixMs": 2_001},
+                    "config": {"cancelledAtUnixMs": 2_000},
                     "inputs": {"operation": "startCancel.operation"},
                     "outputs": {"result": "$output.cancelled"},
                 },
@@ -1695,7 +1711,7 @@ def test_stdlib_async_terminal_blocks_reject_terminal_after_expiration() -> None
     assert result.status == "failed"
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "cancel"
-    assert "terminal timestamp must not exceed expires_at_unix_ms" in failed[0].payload["error"]
+    assert "terminal timestamp must be earlier than expires_at_unix_ms" in failed[0].payload["error"]
 
 
 def test_stdlib_async_poll_complete_and_cancel_preserve_terminal_projection_details() -> None:

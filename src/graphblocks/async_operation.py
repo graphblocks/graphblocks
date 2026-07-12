@@ -429,44 +429,51 @@ class AsyncOperation:
         ):
             raise ValueError("async operation expired completed_at must not be before expires_at")
         if (
-            self.state == "callback_received"
+            self.state in {"callback_received", "resuming", "completed", "failed"}
             and callback_received_at is not None
             and expires_at is not None
-            and callback_received_at > expires_at
+            and callback_received_at >= expires_at
         ):
-            raise ValueError("async operation callback receipt must not be after expires_at")
+            raise ValueError("async operation callback receipt must be before expires_at")
         if (
             self.state == "completed"
             and self.callback_ref is not None
             and completed_at is not None
             and expires_at is not None
-            and completed_at > expires_at
+            and completed_at >= expires_at
         ):
-            raise ValueError("async operation callback completion must not be after expires_at")
+            raise ValueError("async operation callback completion must be before expires_at")
         if (
             self.state == "completed"
             and self.polling_ref is not None
             and completed_at is not None
             and expires_at is not None
-            and completed_at > expires_at
+            and completed_at >= expires_at
         ):
-            raise ValueError("async operation polling completion must not be after expires_at")
+            raise ValueError("async operation polling completion must be before expires_at")
         if (
             self.state == "failed"
             and self.callback_ref is not None
             and completed_at is not None
             and expires_at is not None
-            and completed_at > expires_at
+            and completed_at >= expires_at
         ):
-            raise ValueError("async operation callback failure must not be after expires_at")
+            raise ValueError("async operation callback failure must be before expires_at")
         if (
             self.state == "failed"
             and self.polling_ref is not None
             and completed_at is not None
             and expires_at is not None
-            and completed_at > expires_at
+            and completed_at >= expires_at
         ):
-            raise ValueError("async operation polling failure must not be after expires_at")
+            raise ValueError("async operation polling failure must be before expires_at")
+        if (
+            self.state == "cancelled"
+            and completed_at is not None
+            and expires_at is not None
+            and completed_at >= expires_at
+        ):
+            raise ValueError("async operation cancellation must be before expires_at")
 
     @classmethod
     def created(

@@ -2789,10 +2789,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                 if let (Some(callback_received_at_seconds), Some(operation_deadline_seconds)) =
                     (callback_received_at_seconds, operation_deadline_seconds)
                 {
-                    if callback_received_at_seconds > operation_deadline_seconds {
+                    if callback_received_at_seconds >= operation_deadline_seconds {
                         diagnostics.push(json!({
                             "code": "DurableAsyncCallbackResumeInvalid",
-                            "message": "async callback resume callback receivedAt must not be after operation deadline",
+                            "message": "async callback resume callback receivedAt must be before operation deadline",
                             "path": format!("$.callback.{received_at_path}"),
                         }));
                     }
@@ -4386,9 +4386,12 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "path": format!("$.lateCallback.{received_at_path}"),
                 }));
             }
-            if received_at_seconds
+            if submitted_at_seconds
                 .zip(expires_at_seconds)
-                .is_some_and(|(received_at, expires_at)| received_at > expires_at)
+                .is_some_and(|(submitted_at, expires_at)| expires_at > submitted_at)
+                && received_at_seconds
+                    .zip(expires_at_seconds)
+                    .is_some_and(|(received_at, expires_at)| received_at >= expires_at)
             {
                 diagnostics.push(json!({
                     "code": "DurableExternalOperationInvalid",

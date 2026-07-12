@@ -1714,67 +1714,102 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
         )
 
 
-def test_async_operation_rejects_callback_receipt_after_expiry() -> None:
-    with raises_value_error("async operation callback receipt must not be after expires_at"):
-        graphblocks.AsyncOperation.created(
-            operation_id="op-ci-1",
-            run_id="run-1",
-            node_id="startCI",
-            attempt_id="attempt-1",
-            kind="ci_job",
-            expected_schema="schemas/CICallback@1",
-            resume_token_hash=VALID_RESUME_TOKEN_HASH,
-            idempotency_key="idem-ci-1",
-            created_at="2026-07-02T00:00:00Z",
-            callback_ref="cbep-ci-1",
-        ).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z",
-            expires_at="2026-07-02T00:30:00Z",
-        ).wait_for_callback().mark_callback_received(
-            completed_at="2026-07-02T00:30:01Z"
-        )
+def test_async_operation_rejects_callback_receipt_at_or_after_expiry() -> None:
+    for callback_received_at in (
+        "2026-07-02T00:30:00Z",
+        "2026-07-02T00:30:01Z",
+    ):
+        with raises_value_error("async operation callback receipt must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                kind="ci_job",
+                expected_schema="schemas/CICallback@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-ci-1",
+                created_at="2026-07-02T00:00:00Z",
+                callback_ref="cbep-ci-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).wait_for_callback().mark_callback_received(
+                completed_at=callback_received_at
+            )
 
 
-def test_async_operation_rejects_polling_completion_after_expiry() -> None:
-    with raises_value_error("async operation polling completion must not be after expires_at"):
-        graphblocks.AsyncOperation.created(
-            operation_id="op-batch-1",
-            run_id="run-1",
-            node_id="waitBatch",
-            attempt_id="attempt-1",
-            kind="external_provider_job",
-            expected_schema="schemas/BatchResult@1",
-            resume_token_hash=VALID_RESUME_TOKEN_HASH,
-            idempotency_key="idem-batch-1",
-            created_at="2026-07-02T00:00:00Z",
-            polling_ref="poll-batch-1",
-        ).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z",
-            expires_at="2026-07-02T00:30:00Z",
-        ).start_polling().complete(
-            completed_at="2026-07-02T00:30:01Z"
-        )
+def test_async_operation_rejects_polling_completion_at_or_after_expiry() -> None:
+    for completed_at in (
+        "2026-07-02T00:30:00Z",
+        "2026-07-02T00:30:01Z",
+    ):
+        with raises_value_error("async operation polling completion must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-batch-1",
+                run_id="run-1",
+                node_id="waitBatch",
+                attempt_id="attempt-1",
+                kind="external_provider_job",
+                expected_schema="schemas/BatchResult@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-batch-1",
+                created_at="2026-07-02T00:00:00Z",
+                polling_ref="poll-batch-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).start_polling().complete(
+                completed_at=completed_at
+            )
 
 
-def test_async_operation_rejects_callback_completion_after_expiry() -> None:
-    with raises_value_error("async operation callback completion must not be after expires_at"):
-        graphblocks.AsyncOperation.created(
-            operation_id="op-ci-1",
-            run_id="run-1",
-            node_id="startCI",
-            attempt_id="attempt-1",
-            kind="ci_job",
-            expected_schema="schemas/CICallback@1",
-            resume_token_hash=VALID_RESUME_TOKEN_HASH,
-            idempotency_key="idem-ci-1",
-            created_at="2026-07-02T00:00:00Z",
-            callback_ref="cbep-ci-1",
-        ).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z",
-            expires_at="2026-07-02T00:30:00Z",
-        ).wait_for_callback().mark_callback_received(
-            completed_at="2026-07-02T00:29:59Z"
-        ).mark_resuming().complete(completed_at="2026-07-02T00:30:01Z")
+def test_async_operation_rejects_callback_completion_at_or_after_expiry() -> None:
+    for completed_at in (
+        "2026-07-02T00:30:00Z",
+        "2026-07-02T00:30:01Z",
+    ):
+        with raises_value_error("async operation callback completion must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                kind="ci_job",
+                expected_schema="schemas/CICallback@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-ci-1",
+                created_at="2026-07-02T00:00:00Z",
+                callback_ref="cbep-ci-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).wait_for_callback().mark_callback_received(
+                completed_at="2026-07-02T00:29:59Z"
+            ).mark_resuming().complete(completed_at=completed_at)
+
+
+def test_async_operation_rejects_cancellation_at_or_after_expiry() -> None:
+    for completed_at in (
+        "2026-07-02T00:30:00Z",
+        "2026-07-02T00:30:01Z",
+    ):
+        with raises_value_error("async operation cancellation must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                kind="ci_job",
+                expected_schema="schemas/CICallback@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-ci-1",
+                created_at="2026-07-02T00:00:00Z",
+                callback_ref="cbep-ci-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).wait_for_callback().cancel(completed_at=completed_at)
 
 
 def test_async_operation_rejects_terminal_transition_before_callback_receipt() -> None:
@@ -1811,6 +1846,8 @@ def test_async_operation_callback_terminal_ordering_deterministic_fuzz() -> None
         terminal_name, transition = terminals[rng.randrange(len(terminals))]
         receipt_second = 5 + rng.randrange(20)
         terminal_delta = rng.randrange(-4, 5)
+        if terminal_name == "expired" and terminal_delta <= 0:
+            terminal_delta = 1
         terminal_second = receipt_second + terminal_delta
         terminal_at = f"2026-07-02T00:00:{terminal_second:02d}Z"
         expires_at = "2026-07-02T00:30:00Z"
@@ -1883,44 +1920,48 @@ def test_async_operation_rejects_expiry_before_deadline() -> None:
         )
 
 
-def test_async_operation_rejects_terminal_failure_after_expiry() -> None:
-    with raises_value_error("async operation polling failure must not be after expires_at"):
-        graphblocks.AsyncOperation.created(
-            operation_id="op-batch-1",
-            run_id="run-1",
-            node_id="waitBatch",
-            attempt_id="attempt-1",
-            kind="external_provider_job",
-            expected_schema="schemas/BatchResult@1",
-            resume_token_hash=VALID_RESUME_TOKEN_HASH,
-            idempotency_key="idem-batch-1",
-            created_at="2026-07-02T00:00:00Z",
-            polling_ref="poll-batch-1",
-        ).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z",
-            expires_at="2026-07-02T00:30:00Z",
-        ).start_polling().fail(
-            completed_at="2026-07-02T00:30:01Z"
-        )
+def test_async_operation_rejects_terminal_failure_at_or_after_expiry() -> None:
+    for completed_at in (
+        "2026-07-02T00:30:00Z",
+        "2026-07-02T00:30:01Z",
+    ):
+        with raises_value_error("async operation polling failure must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-batch-1",
+                run_id="run-1",
+                node_id="waitBatch",
+                attempt_id="attempt-1",
+                kind="external_provider_job",
+                expected_schema="schemas/BatchResult@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-batch-1",
+                created_at="2026-07-02T00:00:00Z",
+                polling_ref="poll-batch-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).start_polling().fail(
+                completed_at=completed_at
+            )
 
-    with raises_value_error("async operation callback failure must not be after expires_at"):
-        graphblocks.AsyncOperation.created(
-            operation_id="op-ci-1",
-            run_id="run-1",
-            node_id="startCI",
-            attempt_id="attempt-1",
-            kind="ci_job",
-            expected_schema="schemas/CICallback@1",
-            resume_token_hash=VALID_RESUME_TOKEN_HASH,
-            idempotency_key="idem-ci-1",
-            created_at="2026-07-02T00:00:00Z",
-            callback_ref="cbep-ci-1",
-        ).mark_submitted(
-            submitted_at="2026-07-02T00:00:01Z",
-            expires_at="2026-07-02T00:30:00Z",
-        ).wait_for_callback().mark_callback_received(
-            completed_at="2026-07-02T00:29:59Z"
-        ).mark_resuming().fail(completed_at="2026-07-02T00:30:01Z")
+        with raises_value_error("async operation callback failure must be before expires_at"):
+            graphblocks.AsyncOperation.created(
+                operation_id="op-ci-1",
+                run_id="run-1",
+                node_id="startCI",
+                attempt_id="attempt-1",
+                kind="ci_job",
+                expected_schema="schemas/CICallback@1",
+                resume_token_hash=VALID_RESUME_TOKEN_HASH,
+                idempotency_key="idem-ci-1",
+                created_at="2026-07-02T00:00:00Z",
+                callback_ref="cbep-ci-1",
+            ).mark_submitted(
+                submitted_at="2026-07-02T00:00:01Z",
+                expires_at="2026-07-02T00:30:00Z",
+            ).wait_for_callback().mark_callback_received(
+                completed_at="2026-07-02T00:29:59Z"
+            ).mark_resuming().fail(completed_at=completed_at)
 
 
 def test_async_operation_requires_callback_receipt_timestamp() -> None:
@@ -1980,13 +2021,14 @@ def run_direct() -> None:
         test_async_operation_rejects_ambiguous_deadline_and_infinite_wait_policy,
         test_async_operation_wait_boundary_deterministic_fuzz,
         test_async_operation_rejects_invalid_timestamp_format_and_ordering,
-        test_async_operation_rejects_callback_receipt_after_expiry,
-        test_async_operation_rejects_polling_completion_after_expiry,
-        test_async_operation_rejects_callback_completion_after_expiry,
+        test_async_operation_rejects_callback_receipt_at_or_after_expiry,
+        test_async_operation_rejects_polling_completion_at_or_after_expiry,
+        test_async_operation_rejects_callback_completion_at_or_after_expiry,
+        test_async_operation_rejects_cancellation_at_or_after_expiry,
         test_async_operation_rejects_terminal_transition_before_callback_receipt,
         test_async_operation_callback_terminal_ordering_deterministic_fuzz,
         test_async_operation_rejects_expiry_before_deadline,
-        test_async_operation_rejects_terminal_failure_after_expiry,
+        test_async_operation_rejects_terminal_failure_at_or_after_expiry,
         test_async_operation_requires_callback_receipt_timestamp,
         test_async_operation_result_exports_are_available,
     )

@@ -3202,7 +3202,7 @@ class GraphBlocksServerApp:
                     if (
                         isinstance(expires_at_unix_ms, int)
                         and not isinstance(expires_at_unix_ms, bool)
-                        and received_at_unix_ms > expires_at_unix_ms
+                        and received_at_unix_ms >= expires_at_unix_ms
                     ):
                         return ServerResponse.json(
                             409,
