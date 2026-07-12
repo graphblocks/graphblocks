@@ -1022,6 +1022,73 @@ fn compile_graph_rejects_effect_retry_without_idempotency_key() {
 }
 
 #[test]
+fn compile_graph_rejects_invalid_node_timeout() {
+    for timeout in [
+        json!("soon"),
+        json!("0s"),
+        json!("-1s"),
+        json!("nan"),
+        json!("inf"),
+        json!(0),
+        json!(-1),
+        json!(true),
+    ] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "invalid-node-timeout"},
+            "spec": {
+                "nodes": {
+                    "node": {
+                        "block": "test.block@1",
+                        "flow": {"timeout": timeout}
+                    }
+                }
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB1019"]
+        );
+    }
+}
+
+#[test]
+fn compile_graph_accepts_positive_finite_node_timeout() {
+    for timeout in [json!(0.25), json!("250ms"), json!("0.5s"), json!("2")] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "valid-node-timeout"},
+            "spec": {
+                "nodes": {
+                    "node": {
+                        "block": "test.block@1",
+                        "flow": {"timeout": timeout}
+                    }
+                }
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert!(
+            !plan
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "GB1019")
+        );
+    }
+}
+
+#[test]
 fn compile_graph_rejects_effect_retry_with_invalid_idempotency_key() {
     for idempotency_key in [
         json!(""),

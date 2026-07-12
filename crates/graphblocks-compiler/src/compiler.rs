@@ -1238,10 +1238,39 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }),
                 _ => false,
             };
-            let retry = node
-                .get("flow")
-                .and_then(Value::as_object)
-                .and_then(|flow| flow.get("retry"));
+            let flow = node.get("flow").and_then(Value::as_object);
+            if let Some(timeout) = flow.and_then(|flow| flow.get("timeout")) {
+                let valid_timeout = match timeout {
+                    Value::Number(number) => number
+                        .as_f64()
+                        .is_some_and(|seconds| seconds.is_finite() && seconds > 0.0),
+                    Value::String(duration) => {
+                        let duration = duration.trim();
+                        let (amount, multiplier) =
+                            [("ms", 0.001_f64), ("s", 1.0), ("m", 60.0), ("h", 3_600.0)]
+                                .into_iter()
+                                .find_map(|(suffix, multiplier)| {
+                                    duration
+                                        .strip_suffix(suffix)
+                                        .map(|amount| (amount, multiplier))
+                                })
+                                .unwrap_or((duration, 1.0));
+                        amount.parse::<f64>().is_ok_and(|amount| {
+                            let seconds = amount * multiplier;
+                            seconds.is_finite() && seconds > 0.0
+                        })
+                    }
+                    _ => false,
+                };
+                if !valid_timeout {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1019",
+                        "flow.timeout must be a positive finite duration",
+                        format!("$.spec.nodes.{node_name}.flow.timeout"),
+                    ));
+                }
+            }
+            let retry = flow.and_then(|flow| flow.get("retry"));
             let max_attempts = match retry {
                 Some(Value::Object(retry)) => retry
                     .get("maxAttempts")

@@ -14,6 +14,7 @@ from typing import Any, Callable, Literal, Protocol
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import STATE_CHANGING_TOOL_EFFECTS, compile_graph
+from .duration import parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
 from .run_store import InMemoryRunStore, RunDeploymentProvenance
@@ -69,28 +70,6 @@ class JournalStateError(RuntimeError):
     pass
 
 
-def parse_duration_seconds(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    for suffix, multiplier in (("ms", 0.001), ("s", 1.0), ("m", 60.0), ("h", 3600.0)):
-        if text.endswith(suffix):
-            try:
-                return float(text[: -len(suffix)]) * multiplier
-            except ValueError:
-                return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
 def _configured_retry_attempts(value: Any) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return max(value, 1)
@@ -141,6 +120,28 @@ class CancellationToken:
             return
         self.cancelled = True
         self.reason = reason
+
+
+@dataclass(slots=True)
+class _DeadlineCancellationToken:
+    parent: CancellationToken
+    deadline_monotonic: float
+    deadline_reason: str
+
+    @property
+    def cancelled(self) -> bool:
+        return self.parent.cancelled or time.monotonic() >= self.deadline_monotonic
+
+    @property
+    def reason(self) -> str | None:
+        if self.parent.cancelled:
+            return self.parent.reason
+        if time.monotonic() >= self.deadline_monotonic:
+            return self.deadline_reason
+        return None
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        self.parent.cancel(reason)
 
 
 @dataclass(frozen=True, slots=True)
@@ -967,11 +968,23 @@ class InProcessRuntime:
                         merged_inputs = {**node_inputs[node_name], **resolved_inputs}
                         started_at = time.monotonic()
                         deadline = None if timeout_seconds is None else started_at + timeout_seconds
+                        timeout_reason = f"node {node_name!r} exceeded timeout {flow.get('timeout')}"
+                        run_token = context["cancellation_token"]
+                        attempt_token = (
+                            run_token
+                            if deadline is None
+                            else _DeadlineCancellationToken(
+                                parent=run_token,
+                                deadline_monotonic=deadline,
+                                deadline_reason=timeout_reason,
+                            )
+                        )
                         attempt_context = {
                             **context,
                             "node": node_name,
                             "attempt": attempt,
                             "deadline_monotonic": deadline,
+                            "cancellation_token": attempt_token,
                         }
                         if idempotency_key is not None:
                             attempt_context["idempotency_key"] = str(idempotency_key)
@@ -981,8 +994,8 @@ class InProcessRuntime:
                             node.get("config", {}),
                             attempt_context,
                         )
-                        if timeout_seconds is not None and time.monotonic() > started_at + timeout_seconds:
-                            raise TimeoutError(f"node {node_name!r} exceeded timeout {flow.get('timeout')}")
+                        if deadline is not None and time.monotonic() >= deadline:
+                            raise TimeoutError(timeout_reason)
                         if not isinstance(attempt_result, dict):
                             raise TypeError("block returned non-mapping output")
                         result = attempt_result

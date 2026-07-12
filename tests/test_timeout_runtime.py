@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
+import pytest
+
+from graphblocks.compiler import compile_graph
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, parse_duration_seconds
 
 
@@ -14,10 +18,21 @@ def test_parse_duration_seconds_supports_common_units() -> None:
 
 
 def test_parse_duration_seconds_rejects_unsupported_values() -> None:
-    assert parse_duration_seconds(True) is None
-    assert parse_duration_seconds(False) is None
-    assert parse_duration_seconds("soon") is None
-    assert parse_duration_seconds({"seconds": 1}) is None
+    for value in (
+        True,
+        False,
+        "soon",
+        {"seconds": 1},
+        0,
+        -1,
+        "0s",
+        "-1s",
+        math.nan,
+        math.inf,
+        "nan",
+        "inf",
+    ):
+        assert parse_duration_seconds(value) is None
 
 
 def test_runtime_provides_timeout_deadline_to_block_context() -> None:
@@ -81,12 +96,54 @@ def test_runtime_fails_node_that_exceeds_timeout() -> None:
     assert "timeout" in result.journal.records[-1].payload["error"]
 
 
-def test_runtime_ignores_malformed_timeout_without_crashing() -> None:
-    seen_deadline = {"value": "unset"}
+def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token() -> None:
+    seen: dict[str, object] = {}
+    registry = RuntimeRegistry()
+
+    def cooperative_block(
+        inputs: dict[str, Any],
+        config: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        time.sleep(0.01)
+        token = context["cancellation_token"]
+        seen["cancelled"] = token.cancelled
+        seen["reason"] = token.reason
+        return {"value": "late"}
+
+    registry.register("test.cooperative-timeout@1", cooperative_block)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cooperative-timeout"},
+        "spec": {
+            "nodes": {
+                "slow": {
+                    "block": "test.cooperative-timeout@1",
+                    "flow": {"timeout": "1ms"},
+                    "outputs": {"value": "$output.value"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "failed"
+    assert seen == {
+        "cancelled": True,
+        "reason": "node 'slow' exceeded timeout 1ms",
+    }
+
+
+@pytest.mark.parametrize("timeout", ("soon", "0s", "-1s", "nan", "inf"))
+def test_compile_and_runtime_reject_invalid_timeout_before_invoking_block(timeout: str) -> None:
+    invoked = False
     registry = RuntimeRegistry()
 
     def observes_deadline(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        seen_deadline["value"] = context["deadline_monotonic"]
+        nonlocal invoked
+        invoked = True
         return {"value": "ok"}
 
     registry.register("test.malformed-timeout@1", observes_deadline)
@@ -98,15 +155,16 @@ def test_runtime_ignores_malformed_timeout_without_crashing() -> None:
             "nodes": {
                 "deadline": {
                     "block": "test.malformed-timeout@1",
-                    "flow": {"timeout": "soon"},
+                    "flow": {"timeout": timeout},
                     "outputs": {"value": "$output.value"},
                 }
             }
         },
     }
 
-    result = InProcessRuntime(registry).run(graph, {})
+    plan = compile_graph(graph)
 
-    assert result.status == "succeeded"
-    assert result.outputs == {"value": "ok"}
-    assert seen_deadline["value"] is None
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1019"]
+    with pytest.raises(ValueError, match="GB1019.*flow.timeout must be a positive finite duration"):
+        InProcessRuntime(registry).run(graph, {})
+    assert invoked is False

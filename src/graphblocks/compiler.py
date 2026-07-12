@@ -5,6 +5,7 @@ from typing import Any
 
 from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
+from .duration import parse_duration_seconds
 from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_document
 from .output_policy import (
     VALID_DELIVERY_MODES as VALID_OUTPUT_DELIVERY_MODES,
@@ -789,6 +790,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             effects = [effects]
         effect_set = {str(effect) for effect in effects} if isinstance(effects, list) else set()
         flow = node.get("flow", {})
+        if isinstance(flow, dict) and "timeout" in flow and parse_duration_seconds(flow["timeout"]) is None:
+            diagnostics.append(
+                Diagnostic(
+                    "GB1019",
+                    "flow.timeout must be a positive finite duration",
+                    f"$.spec.nodes.{node_name}.flow.timeout",
+                )
+            )
         retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
         max_attempts = 1
         idempotency_key = None
