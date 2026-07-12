@@ -1365,7 +1365,6 @@ def test_testing_package_loads_shared_deployment_tck_cases(monkeypatch) -> None:
 
 
 def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -3278,7 +3277,6 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
 
 
 def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3328,7 +3326,6 @@ def test_testing_package_rejects_non_boolean_background_run_detach_flag(monkeypa
 
 
 def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3384,7 +3381,6 @@ def test_testing_package_rejects_non_boolean_background_run_summary_flag(monkeyp
 
 
 def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3435,7 +3431,6 @@ def test_testing_package_rejects_non_string_background_run_lifetime(monkeypatch)
 
 
 def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3486,7 +3481,6 @@ def test_testing_package_rejects_client_bound_background_run_lifetime(monkeypatc
 
 
 def test_testing_package_rejects_non_object_background_run_initial_response(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3529,7 +3523,6 @@ def test_testing_package_rejects_non_object_background_run_initial_response(monk
 
 
 def test_testing_package_rejects_background_run_initial_response_without_run_id(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3578,7 +3571,6 @@ def test_testing_package_rejects_background_run_initial_response_without_run_id(
 
 
 def test_testing_package_rejects_non_string_background_run_response_mode(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3629,7 +3621,6 @@ def test_testing_package_rejects_non_string_background_run_response_mode(monkeyp
 
 
 def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3680,7 +3671,6 @@ def test_testing_package_rejects_sync_background_run_response_mode(monkeypatch) 
 
 
 def test_testing_package_rejects_background_response_without_run_id(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3729,7 +3719,6 @@ def test_testing_package_rejects_background_response_without_run_id(monkeypatch)
 
 
 def test_testing_package_rejects_non_object_background_run_event(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3769,7 +3758,6 @@ def test_testing_package_rejects_non_object_background_run_event(monkeypatch) ->
 
 
 def test_testing_package_rejects_background_run_event_without_event_id(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3819,7 +3807,6 @@ def test_testing_package_rejects_background_run_event_without_event_id(monkeypat
 
 
 def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3870,7 +3857,6 @@ def test_testing_package_rejects_background_run_event_without_cursor(monkeypatch
 
 
 def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3923,7 +3909,6 @@ def test_testing_package_rejects_non_string_background_run_last_cursor(monkeypat
 
 
 def test_testing_package_rejects_non_string_background_run_expired_cursor(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -3980,7 +3965,6 @@ def test_testing_package_rejects_non_string_background_run_expired_cursor(monkey
 
 
 def test_testing_package_rejects_non_string_background_run_retained_cursor(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4037,7 +4021,6 @@ def test_testing_package_rejects_non_string_background_run_retained_cursor(monke
 
 
 def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4087,7 +4070,6 @@ def test_testing_package_rejects_missing_background_run_source_of_truth(monkeypa
 
 
 def test_testing_package_rejects_non_string_background_run_source_of_truth(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4138,7 +4120,6 @@ def test_testing_package_rejects_non_string_background_run_source_of_truth(monke
 
 
 def test_testing_package_rejects_callback_background_run_source_of_truth(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4189,7 +4170,6 @@ def test_testing_package_rejects_callback_background_run_source_of_truth(monkeyp
 
 
 def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4231,7 +4211,6 @@ def test_testing_package_rejects_non_boolean_async_resume_guard(monkeypatch) -> 
 
 
 def test_testing_package_rejects_non_integer_async_resume_journal_sequence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4273,7 +4252,6 @@ def test_testing_package_rejects_non_integer_async_resume_journal_sequence(monke
 
 
 def test_testing_package_rejects_non_integer_async_resume_success_count(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4315,7 +4293,6 @@ def test_testing_package_rejects_non_integer_async_resume_success_count(monkeypa
 
 
 def test_testing_package_rejects_non_sequence_async_resume_reevaluates(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4363,7 +4340,6 @@ def test_testing_package_rejects_non_sequence_async_resume_reevaluates(monkeypat
 def test_testing_package_rejects_async_callback_resume_whitespace_callback_identity(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     base_fixture = {
@@ -4482,7 +4458,6 @@ def test_testing_package_rejects_async_callback_resume_whitespace_callback_ident
 def test_testing_package_rejects_async_callback_resume_missing_ownership_lease_reevaluation(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
@@ -4517,7 +4492,6 @@ def test_testing_package_rejects_async_callback_resume_missing_ownership_lease_r
 def test_testing_package_rejects_async_callback_resume_whitespace_operation_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
@@ -4622,7 +4596,6 @@ def test_testing_package_rejects_async_callback_resume_whitespace_operation_evid
 def test_testing_package_rejects_async_callback_resume_whitespace_receipt_metadata(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
@@ -4687,7 +4660,6 @@ def test_testing_package_rejects_async_callback_resume_whitespace_receipt_metada
 def test_testing_package_durable_tool_terminal_rejects_non_boolean_commit_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     raw_cases = json.loads((ROOT / "tck" / "durable" / "cases.json").read_text())
@@ -4738,7 +4710,6 @@ def test_testing_package_durable_tool_terminal_rejects_non_boolean_commit_eviden
 
 
 def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4780,7 +4751,6 @@ def test_testing_package_rejects_non_boolean_async_cancel_race_evidence(monkeypa
 
 
 def test_testing_package_rejects_non_integer_async_cancel_race_journal_sequence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4824,7 +4794,6 @@ def test_testing_package_rejects_non_integer_async_cancel_race_journal_sequence(
 def test_testing_package_rejects_non_boolean_external_operation_reconciliation_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4897,7 +4866,6 @@ def test_testing_package_rejects_non_boolean_external_operation_reconciliation_e
 def test_testing_package_rejects_external_operation_reconciliation_without_usage_records(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -4964,7 +4932,6 @@ def test_testing_package_rejects_external_operation_reconciliation_without_usage
 def test_testing_package_rejects_external_operation_reconciliation_whitespace_identity_match(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     base_fixture = {
@@ -5084,7 +5051,6 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_id
 def test_testing_package_rejects_external_operation_reconciliation_whitespace_operation_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     base_fixture = {
@@ -5234,7 +5200,6 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_op
 def test_testing_package_rejects_external_operation_reconciliation_whitespace_late_callback_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     base_fixture = {
@@ -5374,7 +5339,6 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_la
 def test_testing_package_rejects_external_operation_reconciliation_whitespace_late_callback_digest_status(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     base_fixture = {
@@ -5464,7 +5428,6 @@ def test_testing_package_rejects_external_operation_reconciliation_whitespace_la
 
 
 def test_testing_package_rejects_failed_callback_delivery_without_error_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5506,7 +5469,6 @@ def test_testing_package_rejects_failed_callback_delivery_without_error_evidence
 def test_testing_package_rejects_cancelled_callback_delivery_without_error_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5543,7 +5505,6 @@ def test_testing_package_rejects_cancelled_callback_delivery_without_error_evide
 
 
 def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5583,7 +5544,6 @@ def test_testing_package_rejects_callback_delivery_without_idempotency_evidence(
 
 
 def test_testing_package_rejects_duplicate_callback_delivery_idempotency_keys(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5637,7 +5597,6 @@ def test_testing_package_rejects_duplicate_callback_delivery_idempotency_keys(mo
 
 
 def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5662,7 +5621,6 @@ def test_testing_package_rejects_non_object_callback_delivery_evidence(monkeypat
 
 
 def test_testing_package_rejects_empty_callback_delivery_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5687,7 +5645,6 @@ def test_testing_package_rejects_empty_callback_delivery_evidence(monkeypatch) -
 
 
 def test_testing_package_rejects_non_object_callback_subscription_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5730,7 +5687,6 @@ def test_testing_package_rejects_non_object_callback_subscription_evidence(monke
 def test_testing_package_rejects_invalid_callback_subscription_failure_policy(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5777,7 +5733,6 @@ def test_testing_package_rejects_invalid_callback_subscription_failure_policy(
 def test_testing_package_rejects_non_boolean_callback_subscription_mandatory_flag(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5824,7 +5779,6 @@ def test_testing_package_rejects_non_boolean_callback_subscription_mandatory_fla
 def test_testing_package_rejects_callback_delivery_for_different_subscription(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5869,7 +5823,6 @@ def test_testing_package_rejects_callback_delivery_for_different_subscription(
 
 
 def test_testing_package_rejects_non_object_callback_redrive_evidence(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5912,7 +5865,6 @@ def test_testing_package_rejects_non_object_callback_redrive_evidence(monkeypatc
 def test_testing_package_rejects_redrive_assertion_without_redrive_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5955,7 +5907,6 @@ def test_testing_package_rejects_redrive_assertion_without_redrive_evidence(
 def test_testing_package_rejects_redrive_event_assertion_without_redrive_evidence(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -5996,7 +5947,6 @@ def test_testing_package_rejects_redrive_event_assertion_without_redrive_evidenc
 
 
 def test_testing_package_rejects_non_boolean_callback_projection_outage_flag(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6047,7 +5997,6 @@ def test_testing_package_rejects_non_boolean_callback_projection_outage_flag(mon
 def test_testing_package_rejects_callback_delivery_without_identity_evidence(
     monkeypatch, field: str, value: object, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     delivery = {
@@ -6098,7 +6047,6 @@ def test_testing_package_rejects_callback_delivery_without_identity_evidence(
 def test_testing_package_rejects_callback_delivery_without_envelope_evidence(
     monkeypatch, field: str, value: object, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     delivery = {
@@ -6139,7 +6087,6 @@ def test_testing_package_rejects_callback_delivery_without_envelope_evidence(
 
 
 def test_testing_package_rejects_callback_delivery_with_invalid_status(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6180,7 +6127,6 @@ def test_testing_package_rejects_callback_delivery_with_invalid_status(monkeypat
 def test_testing_package_observes_delivery_after_2xx_receiver_status(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6216,7 +6162,6 @@ def test_testing_package_observes_delivery_after_2xx_receiver_status(
 def test_testing_package_rejects_successful_receiver_status_with_failed_delivery(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6257,7 +6202,6 @@ def test_testing_package_rejects_successful_receiver_status_with_failed_delivery
 def test_testing_package_rejects_callback_retry_scheduled_for_non_failed_delivery(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6299,7 +6243,6 @@ def test_testing_package_rejects_callback_retry_scheduled_for_non_failed_deliver
 def test_testing_package_rejects_terminal_callback_delivery_with_next_retry(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6341,7 +6284,6 @@ def test_testing_package_rejects_terminal_callback_delivery_with_next_retry(
 def test_testing_package_rejects_callback_duplicate_409_without_acknowledged_status(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6382,7 +6324,6 @@ def test_testing_package_rejects_callback_duplicate_409_without_acknowledged_sta
 def test_testing_package_observes_subscription_gone_after_410_delivery(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6426,7 +6367,6 @@ def test_testing_package_observes_subscription_gone_after_410_delivery(
 def test_testing_package_rejects_malformed_410_callback_delivery(
     monkeypatch, status: str, last_error: str, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6468,7 +6408,6 @@ def test_testing_package_rejects_malformed_410_callback_delivery(
 def test_testing_package_observes_non_retryable_4xx_terminal_delivery(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6512,7 +6451,6 @@ def test_testing_package_observes_non_retryable_4xx_terminal_delivery(
 def test_testing_package_rejects_malformed_non_retryable_4xx_callback_delivery(
     monkeypatch, status: str, last_error: str, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6552,7 +6490,6 @@ def test_testing_package_rejects_malformed_non_retryable_4xx_callback_delivery(
 
 
 def test_testing_package_rejects_callback_delivery_with_non_integer_receiver_status(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6592,7 +6529,6 @@ def test_testing_package_rejects_callback_delivery_with_non_integer_receiver_sta
 
 
 def test_testing_package_rejects_callback_delivery_with_blank_next_retry_at(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6634,7 +6570,6 @@ def test_testing_package_rejects_callback_delivery_with_blank_next_retry_at(monk
 def test_testing_package_rejects_retry_policy_failed_delivery_without_next_retry(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6680,7 +6615,6 @@ def test_testing_package_rejects_retry_policy_failed_delivery_without_next_retry
 def test_testing_package_rejects_rate_limited_callback_delivery_without_next_retry(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6726,7 +6660,6 @@ def test_testing_package_rejects_rate_limited_callback_delivery_without_next_ret
 def test_testing_package_observes_retry_scheduled_after_rate_limited_delivery(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6765,7 +6698,6 @@ def test_testing_package_observes_retry_scheduled_after_rate_limited_delivery(
 
 
 def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6807,7 +6739,6 @@ def test_testing_package_rejects_callback_delivery_with_invalid_next_retry_at(mo
 def test_testing_package_rejects_delivered_callback_delivery_without_delivered_at(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6847,7 +6778,6 @@ def test_testing_package_rejects_delivered_callback_delivery_without_delivered_a
 def test_testing_package_rejects_acknowledged_callback_delivery_without_acknowledged_at(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6888,7 +6818,6 @@ def test_testing_package_rejects_acknowledged_callback_delivery_without_acknowle
 def test_testing_package_rejects_acknowledged_callback_delivery_before_delivered_at(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -6937,7 +6866,6 @@ def test_testing_package_rejects_acknowledged_callback_delivery_before_delivered
 def test_testing_package_rejects_callback_redrive_without_audit_evidence(
     monkeypatch, field: str, value: object, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     redrive = {
@@ -6997,7 +6925,6 @@ def test_testing_package_rejects_callback_redrive_without_audit_evidence(
 def test_testing_package_rejects_callback_redrive_without_identity_evidence(
     monkeypatch, field: str, value: object, message: str
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     redrive = {
@@ -7047,7 +6974,6 @@ def test_testing_package_rejects_callback_redrive_without_identity_evidence(
 
 
 def test_testing_package_rejects_callback_redrive_that_changes_event_identity(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -7097,7 +7023,6 @@ def test_testing_package_rejects_callback_redrive_that_changes_event_identity(mo
 def test_testing_package_rejects_callback_redrive_with_non_boolean_application_event_flag(
     monkeypatch,
 ) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     case = graphblocks_testing.TckCase.durable(
@@ -7443,7 +7368,6 @@ def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
 
 
 def test_testing_package_loads_shared_voice_tck_cases(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -8581,7 +8505,6 @@ def test_testing_package_cli_runs_deployment_tck_suite(monkeypatch, capsys) -> N
 
 
 def test_testing_package_cli_runs_durable_tck_suite(monkeypatch, capsys) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -8657,7 +8580,6 @@ def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
 
 
 def test_testing_package_cli_runs_voice_tck_suite(monkeypatch, capsys) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -8673,8 +8595,6 @@ def test_testing_package_cli_runs_voice_tck_suite(monkeypatch, capsys) -> None:
 
 
 def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 

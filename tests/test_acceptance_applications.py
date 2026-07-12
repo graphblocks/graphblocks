@@ -11,13 +11,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _import_testing(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-callbacks" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-langfuse" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-otel" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
-    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     return importlib.import_module("graphblocks_testing")
 
 
@@ -700,7 +694,7 @@ def test_coding_agent_semantic_gates_cannot_be_replaced_by_custom_handlers(
     assert custom_calls == []
 
 
-def test_signed_webhook_acceptance_gate_fails_closed_without_callback_package(
+def test_signed_webhook_acceptance_gate_fails_closed_without_callback_support(
     monkeypatch,
 ) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
@@ -718,7 +712,7 @@ def test_signed_webhook_acceptance_gate_fails_closed_without_callback_package(
     real_import_module = graphblocks_testing.importlib.import_module
 
     def missing_callbacks(name, package=None):
-        if name == "graphblocks_callbacks":
+        if name == "graphblocks.callbacks":
             raise ModuleNotFoundError(name)
         return real_import_module(name, package)
 
@@ -733,12 +727,64 @@ def test_signed_webhook_acceptance_gate_fails_closed_without_callback_package(
     assert report.results[0].diagnostic_contracts() == [
         {
             "code": "AcceptanceGateExecutionFailed",
-            "message": (
-                "signed webhook delivery check requires the graphblocks-callbacks production dependency"
-            ),
+            "message": "signed webhook delivery check requires GraphBlocks callback support",
             "path": "$.applications.coding-agent-background-callbacks.gates[0]",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("application_id", "gate", "missing_module", "expected_message"),
+    [
+        (
+            "realtime-voice-agent",
+            "duplex session contract check",
+            "graphblocks.voice",
+            "voice semantic gates require bundled GraphBlocks voice support",
+        ),
+        (
+            "telemetry-outage-correctness",
+            "OTel projection check",
+            "graphblocks.audit",
+            "telemetry semantic gates require bundled GraphBlocks observability support",
+        ),
+    ],
+)
+def test_acceptance_gates_describe_missing_bundled_support(
+    monkeypatch,
+    application_id: str,
+    gate: str,
+    missing_module: str,
+    expected_message: str,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    application = manifest.by_id(application_id)
+    focused_application = graphblocks_testing.AcceptanceApplication(
+        application_id=application.application_id,
+        profiles=application.profiles,
+        scenario_path=application.scenario_path,
+        gates=(gate,),
+        description=application.description,
+    )
+    real_import_module = graphblocks_testing.importlib.import_module
+
+    def missing_support(name, package=None):
+        if name == missing_module:
+            raise ModuleNotFoundError(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(graphblocks_testing.importlib, "import_module", missing_support)
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        focused_application,
+        root=ROOT,
+    )
+
+    assert not report.ok
+    assert report.results[0].diagnostic_contracts()[0]["message"] == expected_message
 
 
 def test_acceptance_gate_runner_never_evaluates_unknown_shell_text(

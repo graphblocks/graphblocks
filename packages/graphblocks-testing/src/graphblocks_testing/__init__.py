@@ -4666,9 +4666,11 @@ def _exercise_realtime_voice_agent(
     if application.application_id != "realtime-voice-agent":
         raise RuntimeError("voice semantic gate requires the realtime-voice-agent application")
     try:
-        voice = importlib.import_module("graphblocks_voice")
+        voice = importlib.import_module("graphblocks.voice")
     except ModuleNotFoundError as error:
-        raise RuntimeError("voice semantic gates require the graphblocks-voice production dependency") from error
+        raise RuntimeError(
+            "voice semantic gates require bundled GraphBlocks voice support"
+        ) from error
     documents = load_documents(scenario_path)
     if len(documents) != 1:
         raise RuntimeError("realtime voice scenario must contain exactly one graph")
@@ -4946,13 +4948,13 @@ def _exercise_telemetry_outage_correctness(
     if application.application_id != "telemetry-outage-correctness":
         raise RuntimeError("telemetry semantic gate requires the telemetry-outage-correctness application")
     try:
-        audit_module = importlib.import_module("graphblocks_audit")
-        langfuse_module = importlib.import_module("graphblocks_langfuse")
-        otel_module = importlib.import_module("graphblocks_otel")
-        telemetry_module = importlib.import_module("graphblocks_telemetry")
+        audit_module = importlib.import_module("graphblocks.audit")
+        langfuse_module = importlib.import_module("graphblocks.integrations.langfuse")
+        otel_module = importlib.import_module("graphblocks.integrations.otel")
+        telemetry_module = importlib.import_module("graphblocks.telemetry")
     except ModuleNotFoundError as error:
         raise RuntimeError(
-            "telemetry semantic gates require the audit, telemetry, OTel, and Langfuse production dependencies"
+            "telemetry semantic gates require bundled GraphBlocks observability support"
         ) from error
     documents = load_documents(scenario_path)
     if len(documents) != 1 or documents[0].get("kind") != "ObservabilityProfile":
@@ -6143,10 +6145,10 @@ def _exercise_coding_agent_background_callback(
     callback_module: object | None = None
     if signed_delivery:
         try:
-            callback_module = importlib.import_module("graphblocks_callbacks")
+            callback_module = importlib.import_module("graphblocks.callbacks")
         except ModuleNotFoundError:
             raise RuntimeError(
-                "signed webhook delivery check requires the graphblocks-callbacks production dependency"
+                "signed webhook delivery check requires GraphBlocks callback support"
             ) from None
 
     downstream_executions = 0
@@ -10397,7 +10399,7 @@ class TckRunner:
         expected_keys_with_structural_diagnostics: set[str] = set()
 
         try:
-            durable = importlib.import_module("graphblocks_durable")
+            durable = importlib.import_module("graphblocks.durable")
         except ModuleNotFoundError as error:
             diagnostics.append(
                 {
@@ -17785,7 +17787,7 @@ class TckRunner:
             )
 
         try:
-            voice = importlib.import_module("graphblocks_voice")
+            voice = importlib.import_module("graphblocks.voice")
         except ModuleNotFoundError as error:
             diagnostics.append(
                 {
