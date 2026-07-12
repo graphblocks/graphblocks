@@ -13,12 +13,13 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
     steps:
       - name: Check out repository
@@ -90,5 +91,32 @@ jobs:
       - name: Verify Rust packages
         run: |
           cargo package --workspace --locked --allow-dirty --no-verify
-          cargo package -p graphblocks-schema --locked --allow-dirty
-          cargo test --manifest-path target/package/graphblocks-schema-0.1.0/Cargo.toml --all-targets
+
+          for archive in target/package/*.crate; do
+            tar -xzf "$archive" -C target/package
+          done
+
+          mapfile -t manifests < <(
+            find target/package -mindepth 2 -maxdepth 2 -name Cargo.toml -print | sort
+          )
+          patches=()
+          schema_manifest=
+          for manifest in "${manifests[@]}"; do
+            crate_dir=$(dirname "$manifest")
+            crate_name=$(sed -n '/^name = / { s/^name = "//; s/"$//; p; q; }' "$manifest")
+            patches+=(--config "patch.crates-io.${crate_name}.path='${PWD}/${crate_dir}'")
+            if [[ "$crate_name" == graphblocks-schema ]]; then
+              schema_manifest=$manifest
+            fi
+          done
+
+          export CARGO_TARGET_DIR="$PWD/target/package/archive-target"
+          for manifest in "${manifests[@]}"; do
+            if [[ "$manifest" == "$schema_manifest" ]]; then
+              continue
+            fi
+            cargo test --manifest-path "$manifest" --all-targets "${patches[@]}"
+          done
+
+          test -n "$schema_manifest"
+          cargo test --manifest-path "$schema_manifest" --all-targets "${patches[@]}"
