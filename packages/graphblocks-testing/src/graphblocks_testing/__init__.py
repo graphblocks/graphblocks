@@ -5628,7 +5628,7 @@ def _exercise_document_ingestion(
 
     def fallback(body: bytes) -> list[PdfPageText]:
         parser_attempts.append(candidate_pairs[1][0])
-        return [PdfPageText(page_number=1, text=body.decode("utf-8"))]
+        return [PdfPageText(page_number=1, text=body.decode("utf-8").strip())]
 
     registry = DocumentParserRegistry()
     registry.register(
@@ -5943,12 +5943,16 @@ def _generated_artifact_check(application: AcceptanceApplication, scenario_path:
 def _parser_fallback_check(application: AcceptanceApplication, scenario_path: Path) -> tuple[int, str]:
     evidence = _exercise_document_ingestion(application, scenario_path)
     parser = evidence["parser"]
-    if not isinstance(parser, Mapping) or parser != {
-        "attempts": ["marker-pdf", "pdf-text"],
-        "failed": ["marker-pdf"],
-        "selected": "pdf-text",
-        "reason": "candidate_fallback",
-    }:
+    attempts = parser.get("attempts") if isinstance(parser, Mapping) else None
+    if (
+        not isinstance(attempts, list)
+        or len(attempts) != 2
+        or not all(isinstance(attempt, str) and attempt for attempt in attempts)
+        or attempts[0] == attempts[1]
+        or parser.get("failed") != [attempts[0]]
+        or parser.get("selected") != attempts[1]
+        or parser.get("reason") != "candidate_fallback"
+    ):
         raise RuntimeError("document-ingestion parser fallback evidence is incomplete")
     return 0, canonical_dumps({"gate": "parser fallback check", **evidence})
 

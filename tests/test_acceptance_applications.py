@@ -297,6 +297,31 @@ def test_default_runner_executes_all_c2_semantic_gates(monkeypatch) -> None:
     }
 
 
+def test_document_ingestion_semantic_gates_build_canonical_knowledge_previews(
+    monkeypatch,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id("document-ingestion")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id=original.application_id,
+        profiles=original.profiles,
+        scenario_path=original.scenario_path,
+        gates=("parser fallback check", "ACL propagation check"),
+        description=original.description,
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=ROOT,
+    )
+
+    assert report.ok, report.report_contract()
+    assert [result.status for result in report.results] == ["passed", "passed"]
+
+
 def test_default_runner_executes_orchestration_and_verified_trial_semantic_gates(
     monkeypatch,
 ) -> None:
