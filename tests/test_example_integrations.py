@@ -31,6 +31,7 @@ EXAMPLE_SLUGS = (
     "10-realtime-voice-extension",
     "11-coding-agent-background-callbacks",
     "12-custom-python-rust-blocks",
+    "13-llm-interviewer-rag-benchmark",
 )
 
 

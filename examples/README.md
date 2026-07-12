@@ -23,6 +23,7 @@ checked-in Python and Rust implementations directly.
 | [10 Realtime voice extension](10-realtime-voice-extension/README.md) | duplex voice, interruption authority, playback |
 | [11 Coding-agent callbacks](11-coding-agent-background-callbacks/README.md) | accepted run, replay, signed webhook, async resume |
 | [12 Custom Python and Rust blocks](12-custom-python-rust-blocks/README.md) | explicit registry, worker protocol, cross-language execution |
+| [13 LLM interviewer RAG benchmark](13-llm-interviewer-rag-benchmark/README.md) | blinded RAG vs no-RAG interview scoring |
 
 After the [development install](../docs/getting-started/installation.md), run one
 example from the repository root:

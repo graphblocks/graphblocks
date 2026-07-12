@@ -1,0 +1,90 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: llm-interviewer-rag-benchmark-integration
+spec:
+  mockGraph:
+    graph: rag-interviewer-benchmark
+    inputs:
+      dataset: product-facts-v1
+    nodes:
+      load:
+        service: benchmark-dataset
+        expectedInputs: {dataset: product-facts-v1}
+        outputs:
+          reference:
+            - Refund requests are accepted within 30 days of purchase.
+            - Enterprise SSO uses SAML 2.0.
+            - Audit logs are retained for 365 days.
+          chunks: [refund-fact, sso-fact, audit-fact]
+      ask:
+        service: scripted-interviewer
+        outputs:
+          questions: [refund-window, enterprise-sso, audit-retention]
+      retrieve:
+        service: local-retriever
+        expectedInputs:
+          questions: [refund-window, enterprise-sso, audit-retention]
+          corpus: [refund-fact, sso-fact, audit-fact]
+        outputs:
+          contexts: [refund-fact, sso-fact, audit-fact]
+      ragAnswer:
+        service: scripted-answer-model
+        expectedInputs:
+          questions: [refund-window, enterprise-sso, audit-retention]
+          contexts: [refund-fact, sso-fact, audit-fact]
+        outputs:
+          answers: [30-days, SAML-2.0, 365-days]
+      noRagAnswer:
+        service: scripted-answer-model
+        expectedInputs:
+          questions: [refund-window, enterprise-sso, audit-retention]
+        outputs:
+          answers: [14-days, SAML-unspecified, 90-days]
+      blind:
+        service: benchmark-blinder
+        expectedInputs:
+          rag: [30-days, SAML-2.0, 365-days]
+          noRag: [14-days, SAML-unspecified, 90-days]
+        outputs:
+          pairs:
+            - {A: 30-days, B: 14-days}
+            - {A: SAML-unspecified, B: SAML-2.0}
+            - {A: 365-days, B: 90-days}
+          mapping:
+            - {A: rag, B: no_rag}
+            - {A: no_rag, B: rag}
+            - {A: rag, B: no_rag}
+      score:
+        service: scripted-interviewer
+        expectedInputs:
+          questions: [refund-window, enterprise-sso, audit-retention]
+        outputs:
+          scores:
+            - {A: 1.0, B: 0.0}
+            - {A: 0.6, B: 1.0}
+            - {A: 1.0, B: 0.0}
+      aggregate:
+        service: benchmark-aggregator
+        expectedInputs:
+          mapping:
+            - {A: rag, B: no_rag}
+            - {A: no_rag, B: rag}
+            - {A: rag, B: no_rag}
+        outputs:
+          report:
+            caseCount: 3
+            gateDecision: pass
+            noRagMeanScore: 0.2
+            ragMeanScore: 1.0
+            ragScoreDelta: 0.8
+            ragWinRate: 1.0
+    expectedCallOrder: [load, ask, noRagAnswer, retrieve, ragAnswer, blind, score, aggregate]
+    expectedOutput:
+      report:
+        caseCount: 3
+        gateDecision: pass
+        noRagMeanScore: 0.2
+        ragMeanScore: 1.0
+        ragScoreDelta: 0.8
+        ragWinRate: 1.0
