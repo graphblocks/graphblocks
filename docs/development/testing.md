@@ -29,15 +29,24 @@ python tools/verify_wheelhouse.py --wheelhouse dist/wheelhouse
 The verifier requires the installed CLI's complete schema manifest, including
 every entry and digest, to match the checked-in `schemas/` manifest exactly.
 
-The verifier builds exactly the root `graphblocks` project,
+The verifier derives build targets from the canonical package catalog. The
+current matrix contains the root `graphblocks` project,
 `packages/graphblocks-runtime`, and `packages/graphblocks-testing`. It resolves
 their external runtime dependencies into the wheelhouse, installs the three
 generated wheel artifacts into a fresh environment with `--no-index`, and runs
-`pip check`. Catalog package identities are not additional wheel build targets.
+`pip check`. Catalog component identities are not additional wheel targets.
 
-The Rust release gate also packages every workspace crate. Path dependencies
-therefore declare both a local path and a publishable version, while crate tests
-consume fixtures shipped inside the crate archive.
+The Rust release gate packages every workspace crate, extracts every resulting
+archive, patches unpublished sibling dependencies to the other extracted
+archives, and runs each archive's complete all-target test suite. Path
+dependencies therefore declare both a local path and a publishable version.
+Crate tests consume fixture mirrors shipped inside their own archive; integrity
+tests require those mirrors to remain byte-for-byte equal to the authoritative
+files under `tck/`.
+
+Python tests run on Python 3.11 and 3.12 on both Ubuntu and Windows. The complete
+catalog-derived wheelhouse is also built and installed on Python 3.11 on both
+operating systems.
 
 Example-local integration tests invoke each example's runner. Documentation
 integrity tests verify links and ensure retired bundle artifacts do not become a

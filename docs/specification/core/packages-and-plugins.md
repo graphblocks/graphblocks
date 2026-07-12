@@ -29,6 +29,11 @@ malformed paths separately, MUST reject multiple artifacts whose references
 resolve to the same manifest, and MUST read the resolved in-root file without
 following a later path or symbolic-link replacement.
 
+Python distribution identities MUST be compared using PEP 503 canonical names.
+Catalog artifacts, locks, wheel matrices, and installed-artifact verification
+MUST reject dotted, underscored, repeated-separator, or case variants that
+canonicalize to the same distribution identity.
+
 Plugins execute with explicitly granted capabilities. Loading a plugin MUST NOT
 grant filesystem, network, secret, tool, deployment, or policy authority merely
 because the package is installed. Plugin failures MUST produce diagnostics and

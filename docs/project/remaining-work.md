@@ -10,7 +10,7 @@ integration work.
   `graphblocks`; the retired feature distributions have been removed.
 - The release boundary is exactly `graphblocks`, `graphblocks-runtime`, and
   `graphblocks-testing`. The operator remains a non-Python catalog artifact.
-- The complete Python suite passes with 2,435 tests.
+- The complete Python suite passes with 2,457 tests.
 - Rust formatting, strict workspace Clippy, and all workspace/all-target tests
   pass.
 - All ten acceptance applications and 42 declared gates pass.

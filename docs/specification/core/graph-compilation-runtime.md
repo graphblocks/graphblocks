@@ -23,7 +23,12 @@ distinguishable.
 
 Cancellation MUST be structured and cooperative, with explicit behavior for
 in-flight provider calls, tools, children, checkpointing, and cleanup. Timeout
-and retry MUST use bounded policies. A stale retry, lease holder, or fencing
+and retry MUST use bounded policies. A configured node timeout MUST be a
+positive finite duration and invalid values MUST be rejected before the node is
+scheduled. At its deadline, the in-process runtime exposes cancellation through
+the block context; cooperative blocks MUST inspect that token before committing
+an effect. An adapter that cannot cooperate MUST provide its own force-
+termination or effect-fencing boundary. A stale retry, lease holder, or fencing
 token MUST NOT mutate a newer attempt.
 
 Sequences and dynamic task work MUST declare hard bounds. State mutation MUST

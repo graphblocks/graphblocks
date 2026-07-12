@@ -24,6 +24,17 @@ pre-release alpha software.
 - Hardened release and conformance gates: release bundles reject non-finite
   numbers, native TCK fallback cannot satisfy a native claim, and TCK reports
   bind suite, implementation version, and fixture digest evidence.
+- Made approval expiration consistently exclusive, rejected malformed or
+  non-positive node deadlines before execution, and exposed elapsed deadlines
+  through the cooperative block cancellation token.
+- Made Rust policy evaluation return typed validation errors for malformed
+  public requests instead of panicking at mandatory enforcement points.
+- Canonicalized Python artifact identities according to PEP 503 across catalog,
+  lock, wheel-matrix, and installed-wheel verification, and derived wheelhouse
+  build targets from the canonical catalog.
+- Made manifest-root validation portable to platforms without descriptor-
+  relative `open`, added Windows Python coverage, and made CI test every Rust
+  crate from its packaged archive with byte-verified crate-local TCK fixtures.
 - Aligned first-party Python dependency constraints with the `0.1` release
   train, added an offline wheelhouse install gate, and made Rust workspace
   crates packageable with versioned path dependencies and bundled schema TCK

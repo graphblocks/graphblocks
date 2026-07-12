@@ -109,9 +109,10 @@ limiter, queue position, retry delay, refresh, and cancel. It MAY transition to
 the ordinary run session after `RunStarted`. Closing the screen MUST NOT cancel
 the ticket unless the client explicitly sends cancellation.
 
-The Python TUI package exposes `admission_ticket_screen(ticket)` for this pure
-projection. It performs no network request and opens no session, so HTTP, CLI,
-TUI, and other clients can share the same server-side admission semantics.
+The `graphblocks.tui` module in the Python `graphblocks` distribution exposes
+`admission_ticket_screen(ticket)` for this pure projection. It performs no
+network request and opens no session, so HTTP, CLI, TUI, and other clients can
+share the same server-side admission semantics.
 
 ## Reference implementation and durability
 

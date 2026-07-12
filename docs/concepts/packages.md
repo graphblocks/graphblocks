@@ -31,10 +31,17 @@ Package-lock and doctor checks validate catalog dependency closure and direct
 references. A package identity may claim only profiles backed by applicable TCK
 and acceptance evidence.
 
+Python distribution names use PEP 503 identity rules throughout this surface.
+For example, `example-wheel`, `example_wheel`, and `example.wheel` identify the
+same distribution and cannot appear as separate artifacts, lock entries, or
+wheel targets.
+
 `graphblocks packages doctor --root` and `graphblocks packages wheel-matrix
 --root` treat the supplied root as a security boundary. Catalog manifests must
 stay within it; absolute paths, `..` escapes, and symlinks resolving outside the
-root are rejected.
+root are rejected. The reader uses descriptor-relative traversal where the
+platform provides it and a fail-closed component/file-identity check otherwise,
+including Windows reparse-point rejection.
 
 The canonical machine-readable package catalog is
 `src/graphblocks/data/package-catalog.yaml`. See the normative
