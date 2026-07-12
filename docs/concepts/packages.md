@@ -1,19 +1,40 @@
 # Packages
 
-GraphBlocks packages declare ownership, dependencies, capabilities, schema
-assets, blocks, and conformance claims. Static metadata discovery must not import
-heavy provider SDKs.
+In GraphBlocks contracts, a package is a logical capability and ownership
+identity. Package metadata can declare dependencies, schema assets, blocks,
+bindings, and conformance claims. Static discovery must not import a provider or
+other heavy third-party SDK.
 
-Foundation packages define provider-neutral contracts and local development
-implementations. Extension packages add orchestration, evaluation, workspace,
-server, deployment, observability, TUI, voice, or durable behavior. Integration
-packages connect those contracts to existing providers, parsers, databases,
-policy engines, transports, and cloud systems.
+These identities are not one-to-one with Python distributions. The supported
+Python distribution surface is:
 
-The default authoring package intentionally avoids optional SDKs. Package-lock
-and doctor checks validate dependency closure, including transitive and direct
-reference forms. A package may claim only profiles backed by applicable TCK and
-acceptance evidence.
+- `graphblocks`: the pure-Python SDK, built-in implementations, reference
+  runtime, CLI, and framework-neutral server contracts.
+- `graphblocks-runtime`: the optional native runtime bindings.
+- `graphblocks-testing`: the TCK library and `graphblocks-tck` command.
+
+The catalog also describes the non-Python `graphblocks-operator` release
+artifact. It does not count as a fourth Python distribution.
+
+Built-in and integration identities remain independently discoverable in the
+catalog so graphs and locks can refer to stable capabilities. They are shipped
+as part of `graphblocks`, not as dozens of separately installed feature wheels.
+
+An optional extra is appropriate only when it adds a real install dependency.
+For example, `graphblocks[runtime]` adds the separately built native extension,
+`graphblocks[pdf]` adds `pypdf`, and `graphblocks[test]` adds pytest. Extras do
+not select catalog identities or move built-ins, CLI commands, or server
+contracts into separate feature wheels. The native bindings and TCK remain
+explicit distributions because they have distinct build and release contracts.
+
+Package-lock and doctor checks validate catalog dependency closure and direct
+references. A package identity may claim only profiles backed by applicable TCK
+and acceptance evidence.
+
+`graphblocks packages doctor --root` and `graphblocks packages wheel-matrix
+--root` treat the supplied root as a security boundary. Catalog manifests must
+stay within it; absolute paths, `..` escapes, and symlinks resolving outside the
+root are rejected.
 
 The canonical machine-readable package catalog is
 `src/graphblocks/data/package-catalog.yaml`. See the normative

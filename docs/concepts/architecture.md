@@ -19,6 +19,10 @@ Policy, usage, budget, approvals, reviews, and leases are runtime admission
 boundaries, not prompt hints. Observability exports projections of authoritative
 records and must not determine run correctness.
 
-The Python implementation is the broadest reference surface today. Rust shares
-schema, compiler, core runtime, durable, and protocol contracts, with explicit
-differences listed in [language support](../specification/conformance/language-support.md).
+The `graphblocks` distribution is the broadest reference surface today. It is
+pure Python and includes the SDK, built-in block registry, reference runtime,
+CLI, and framework-neutral server request/response contracts. The separately
+installed `graphblocks-runtime` distribution exposes native Rust bindings. Rust
+shares schema, compiler, core runtime, durable, and protocol contracts, with
+explicit differences listed in
+[language support](../specification/conformance/language-support.md).

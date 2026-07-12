@@ -14,6 +14,10 @@ pre-release alpha software.
 
 ### Changed
 
+- Consolidated the Python release surface into `graphblocks`,
+  `graphblocks-runtime`, and `graphblocks-testing`; built-in and integration
+  catalog components now map to those artifacts instead of requiring separate
+  feature wheels.
 - Replaced the mutable architecture bundle with explicit documentation
   authorities, implementation status, and roadmap documents.
 - Made shipped catalogs under `src/graphblocks/data/` the canonical catalogs.

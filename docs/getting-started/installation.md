@@ -1,9 +1,8 @@
 # Installation
 
-GraphBlocks is currently developed from source. The monorepo contains multiple
-Python distributions at different stages of packaging, so this page documents
-the verified contributor setup rather than promising a unified published
-installation.
+GraphBlocks is currently developed from source. This page documents the
+verified contributor setup for its three Python distributions rather than
+promising availability from a public package index.
 
 ## Requirements
 
@@ -11,7 +10,7 @@ installation.
 - `pip`
 - the Rust toolchain selected by `rust-toolchain.toml` for Rust work
 
-## Root authoring package
+## Pure-Python SDK
 
 From the repository root:
 
@@ -19,27 +18,66 @@ From the repository root:
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e '.[test]'
+graphblocks --help
 python -m graphblocks --help
 ```
 
-This installs `graphblocks-core`, PyYAML, and pytest in the activated virtual
-environment. Use `python -m graphblocks`; the root distribution intentionally does not install a
-`graphblocks` console script.
+This installs the `graphblocks` distribution in editable mode. It contains the
+public SDK, built-in block implementations, pure-Python reference runtime, CLI,
+and framework-neutral server contracts. The `graphblocks` command and
+`python -m graphblocks` expose the same CLI. `GraphBlocksServerApp` handles the
+project request/response contract but does not start a network listener or add a
+`serve` command.
 
-## Optional workspace packages
+Extras add concrete install dependencies rather than enabling internal feature
+packages:
 
-Provider, parser, server, callback, deployment, telemetry, voice, and durable
-stream adapters live under `packages/`. Install only the package and optional
-extras required for the integration you are developing. Internal versions and
-dependency ranges are still being reconciled for publication, so do not assume
-the entire monorepo is installable from a public package index.
+- `graphblocks[runtime]` adds `graphblocks-runtime`.
+- `graphblocks[pdf]` adds `pypdf`.
+- `graphblocks[test]` adds pytest for repository development.
+
+The built-ins, CLI, and server contracts are always part of the base
+`graphblocks` install.
+
+## Native Python runtime
+
+Install the native extension separately when you need the Rust-backed Python
+entry points:
+
+```bash
+python -m pip install ./packages/graphblocks-runtime
+python -c 'import graphblocks_runtime; graphblocks_runtime.require_native_extension()'
+graphblocks run graph.yaml --runtime native --input-json '{"message":{"text":"Hello"}}'
+```
+
+`graphblocks-runtime` builds the independent `graphblocks_runtime._native`
+module with the selected Rust toolchain. It is not required for the pure-Python
+SDK; the root distribution's `runtime` extra is a convenience dependency on
+this wheel. For a fresh source checkout that uses the extra, install the local
+runtime project first, then install the root project with
+`python -m pip install -e '.[runtime,test]'`. This lets pip satisfy the extra
+from the locally built runtime rather than expecting a public package index.
+
+## TCK tooling
+
+Install the conformance tools separately when developing or verifying a
+profile implementation:
+
+```bash
+python -m pip install -e ./packages/graphblocks-testing
+graphblocks-tck --help
+```
+
+`graphblocks-testing` depends on `graphblocks` and owns the `graphblocks-tck`
+command. It is not part of the root `test` extra. Its `runtime` extra adds
+`graphblocks-runtime` for native-profile TCK work.
 
 Continue with the [quickstart](quickstart.md).
 
 ## Python-free native CLI
 
-The Rust workspace provides `graphblocks-native` without a Python runtime
-dependency:
+The Rust workspace also provides `graphblocks-native`, a standalone executable
+with no Python runtime dependency:
 
 ```bash
 cargo build -p graphblocks-cli-native

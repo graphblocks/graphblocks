@@ -31,7 +31,8 @@ When sources disagree, use this order:
 1. `schemas/` defines normative wire shapes.
 2. `docs/specification/` defines normative semantics.
 3. `tck/` and `acceptance/` define executable conformance.
-4. `src/graphblocks/data/` defines the shipped catalogs.
+4. `src/graphblocks/data/` defines the shipped artifact and component catalogs;
+   component identities are not Python distribution names.
 5. Guides and examples are non-normative.
 
 The implementation may support only part of a normative contract. Conformance
@@ -45,9 +46,14 @@ acceptance/  Executable application manifest and scenarios
 crates/      Rust schemas, compiler, runtimes, protocols, and bindings
 deployment/  Deployment target contracts
 docs/        Guides, specification, development, and project status
-packages/    Foundation and optional Python distributions
+packages/    Auxiliary release roots; Python wheels are native runtime and TCK
 profiles/    Project-level policy profile assets
 schemas/     Versioned wire-shape contracts
 src/         Python authoring and reference implementation
 tck/         Shared conformance fixtures
 ```
+
+The Python distribution surface is deliberately smaller than the package
+catalog: `graphblocks` contains the pure-Python SDK, built-ins, CLI, and server
+contracts; `graphblocks-runtime` contains native bindings; and
+`graphblocks-testing` contains the TCK tooling.

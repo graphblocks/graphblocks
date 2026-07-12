@@ -5,6 +5,12 @@ types, capabilities, dependencies, optional integrations, and conformance
 claims. Discovery MUST be possible from static metadata without importing
 provider SDKs or executing package code.
 
+A catalog component is a logical capability, ownership, dependency, and import
+identity used by graphs and locks. A catalog artifact is a separately built and
+released deliverable. Multiple components MAY map to one artifact, but every
+component MUST name exactly one cataloged artifact; artifact dependencies MUST
+refer to artifacts rather than component identities.
+
 Block descriptors MUST use stable type and version identities, declare typed
 ports and configuration schemas, and identify required capabilities. Duplicate
 block ownership or incompatible descriptors MUST fail registry construction.

@@ -13,6 +13,9 @@ The example runner also executes deterministic semantic checks with recording
 retriever/model fakes. Real network access is blocked and the final JSON line
 contains the checks, mocked boundaries, call-input digests, and evidence digest.
 
+These commands use the built-in plugin metadata and block registry shipped in
+`graphblocks`; no built-in feature wheels are required.
+
 Inspect project assets:
 
 ```bash
@@ -27,10 +30,14 @@ Run the reference runtime against a locally compilable graph:
 python -m graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
 ```
 
-The separate `graphblocks-testing` workspace package provides the TCK command
-and acceptance runner. Contributors working on conformance can invoke its module
-from the workspace or install that package explicitly; see
-[testing](../development/testing.md).
+The separate `graphblocks-testing` distribution provides the TCK command and
+acceptance runner. Install it explicitly for conformance work; see
+[testing](../development/testing.md). Install `graphblocks-runtime` only when
+using the native Python entry points.
+
+Server integrations construct `GraphBlocksServerApp` and adapt its
+request/response types to their transport. The `graphblocks` CLI does not bind a
+server socket.
 
 Next read [graphs and bindings](../concepts/graphs-and-bindings.md) and
 [conformance](../development/conformance.md).
