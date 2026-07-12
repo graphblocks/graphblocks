@@ -3724,12 +3724,12 @@ fn validate_async_terminal_timestamp(
         .get("expires_at_unix_ms")
         .or_else(|| operation.get("expiresAtUnixMs"))
         .and_then(Value::as_u64)
-        && completed_at_unix_ms > expires_at_unix_ms
+        && completed_at_unix_ms >= expires_at_unix_ms
     {
         return Err(BlockError::new(
             error_code,
             ErrorCategory::Configuration,
-            format!("{block_label} terminal timestamp must not exceed expires_at_unix_ms"),
+            format!("{block_label} terminal timestamp must be earlier than expires_at_unix_ms"),
             false,
         ));
     }
@@ -3954,7 +3954,7 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("terminal timestamp must not exceed expires_at_unix_ms"),
+                .contains("terminal timestamp must be earlier than expires_at_unix_ms"),
             "unexpected error: {:?}",
             error
         );

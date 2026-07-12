@@ -137,7 +137,9 @@ callbacks MUST NOT resume twice. A callback after timeout/cancellation or for a
 stale attempt MUST NOT modify the newer or terminal operation.
 Async operation `expires_at` is an exclusive callback admission deadline;
 callbacks received at or after the deadline MUST be rejected before journaling a
-resumable receipt.
+resumable receipt. A non-expiration terminal transition is valid only when its
+terminal timestamp is strictly earlier than `expires_at`; at the boundary the
+operation MUST expire instead.
 Callback endpoint `expires_at` is also exclusive and MUST be checked before
 authentication creates an `AsyncCallbackSubmission`.
 

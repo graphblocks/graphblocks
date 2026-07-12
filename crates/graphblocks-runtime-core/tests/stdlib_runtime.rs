@@ -1542,7 +1542,7 @@ fn rust_stdlib_async_cancel_operation_rejects_non_object_config() -> Result<(), 
 }
 
 #[test]
-fn rust_stdlib_async_cancel_operation_rejects_terminal_after_expiration() -> Result<(), String> {
+fn rust_stdlib_async_cancel_operation_rejects_terminal_at_expiration() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -1561,7 +1561,7 @@ fn rust_stdlib_async_cancel_operation_rejects_terminal_after_expiration() -> Res
                 },
                 "cancel": {
                     "block": "async.cancel_operation@1",
-                    "config": {"cancelledAtUnixMs": 2_001},
+                    "config": {"cancelledAtUnixMs": 2_000},
                     "inputs": {"operation": "startCancel.operation"},
                     "outputs": {"result": "$output.cancelled"}
                 }
@@ -1584,7 +1584,7 @@ fn rust_stdlib_async_cancel_operation_rejects_terminal_after_expiration() -> Res
             .pointer("/payload/message")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .contains("terminal timestamp must not exceed expires_at_unix_ms")
+            .contains("terminal timestamp must be earlier than expires_at_unix_ms")
     );
     Ok(())
 }

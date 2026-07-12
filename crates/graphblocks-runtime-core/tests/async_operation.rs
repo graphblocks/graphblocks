@@ -1093,7 +1093,7 @@ fn async_operation_validate_rejects_completion_after_expiration() {
         operation.validate(),
         Err(AsyncOperationError::InvalidOperation {
             operation_id: "op-1".to_owned(),
-            reason: "completed_at exceeds expires_at".to_owned(),
+            reason: "completed_at reaches or exceeds expires_at".to_owned(),
         })
     );
 }
@@ -1118,7 +1118,23 @@ fn async_operation_validate_rejects_callback_received_receipt_time_after_expirat
         receipt_after_expiry.validate(),
         Err(AsyncOperationError::InvalidOperation {
             operation_id: "op-1".to_owned(),
-            reason: "completed_at exceeds expires_at".to_owned(),
+            reason: "completed_at reaches or exceeds expires_at".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn async_operation_validate_rejects_callback_received_at_expiration() {
+    let mut receipt_at_expiry = waiting_operation();
+    receipt_at_expiry.state = AsyncOperationState::CallbackReceived;
+    receipt_at_expiry.expires_at_unix_ms = Some(2_000);
+    receipt_at_expiry.completed_at_unix_ms = Some(2_000);
+
+    assert_eq!(
+        receipt_at_expiry.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "completed_at reaches or exceeds expires_at".to_owned(),
         })
     );
 }
@@ -3337,6 +3353,26 @@ fn cancel_and_expire_reject_zero_or_regressed_terminal_timestamps() {
             Some(AsyncOperationState::WaitingCallback)
         );
     }
+}
+
+#[test]
+fn cancel_operation_rejects_expiration_boundary() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    assert_eq!(
+        store.cancel_operation("op-1", 2_000),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "cancelled_at reaches or exceeds expires_at".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
 }
 
 #[test]

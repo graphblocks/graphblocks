@@ -442,11 +442,11 @@ impl AsyncOperation {
         if let (Some(completed_at_unix_ms), Some(expires_at_unix_ms)) =
             (self.completed_at_unix_ms, self.expires_at_unix_ms)
             && self.state != AsyncOperationState::Expired
-            && completed_at_unix_ms > expires_at_unix_ms
+            && completed_at_unix_ms >= expires_at_unix_ms
         {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
-                reason: "completed_at exceeds expires_at".to_owned(),
+                reason: "completed_at reaches or exceeds expires_at".to_owned(),
             });
         }
 
@@ -2611,6 +2611,15 @@ impl AsyncOperationStore {
             });
         }
         validate_terminal_transition_timestamp(operation, "cancelled_at", cancelled_at_unix_ms)?;
+        if operation
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| cancelled_at_unix_ms >= expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: operation_id.to_owned(),
+                reason: "cancelled_at reaches or exceeds expires_at".to_owned(),
+            });
+        }
 
         let from = operation.state;
         operation.state = AsyncOperationState::Cancelled;
