@@ -1,0 +1,319 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PluginManifest
+metadata:
+  name: io.graphblocks.stdlib
+  version: 0.1.0
+spec:
+  pluginId: io.graphblocks.stdlib
+  version: 0.1.0
+  maturity: official
+  capabilities:
+    - graphblocks.schema
+    - graphblocks.compiler
+  blocks:
+    - typeId: prompt.render
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.prompt.render
+      inputs:
+        - {name: message, type: graphblocks.ai/Message@1}
+      outputs:
+        - {name: prompt, type: graphblocks.ai/Prompt@1}
+    - typeId: model.generate
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.scripted_model.generate
+      inputs:
+        - {name: prompt, type: graphblocks.ai/Prompt@1, required: false}
+        - {name: context, type: graphblocks.ai/ContextPack@1, required: false}
+      outputs:
+        - {name: response, type: graphblocks.ai/ModelResponse@1}
+      resourceSlots:
+        - {name: model, type: resources/Model@1, optional: true}
+    - typeId: model.structured_generate
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.model.structured_generate
+      inputs:
+        - {name: response, type: Any, required: false}
+        - {name: diagnosis, type: Any, required: false}
+        - {name: prompt, type: Any, required: false}
+        - {name: context, type: graphblocks.ai/ContextPack@1, required: false}
+        - {name: candidates, type: Any, required: false}
+        - {name: questions, type: Any, required: false}
+        - {name: reference, type: Any, required: false}
+      outputs:
+        - {name: value, type: Any}
+        - {name: response, type: Any}
+        - {name: items, type: graphblocks.ai/StructuredItems@1}
+        - {name: schemaId, type: graphblocks.ai/String@1}
+        - {name: schemaRef, type: graphblocks.ai/String@1}
+        - {name: contentDigest, type: graphblocks.ai/String@1}
+        - {name: questions, type: Any, required: false}
+        - {name: scores, type: Any, required: false}
+      resourceSlots:
+        - {name: model, type: resources/Model@1, optional: true}
+    - typeId: tools.resolve
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.tools.resolve
+      inputs:
+        - {name: principal, type: graphblocks.ai/Principal@1, required: false}
+        - {name: conversation, type: graphblocks.ai/ConversationSnapshot@1, required: false}
+        - {name: policySnapshot, type: graphblocks.ai/PolicySnapshot@1, required: false}
+      outputs:
+        - {name: tools, type: graphblocks.ai/ResolvedTools@1}
+    - typeId: agent.run
+      version: 1
+      role: agent
+      implementation: graphblocks.stdlib.agent.run
+      inputs:
+        - {name: messages, type: graphblocks.ai/Messages@1, required: false}
+        - {name: tools, type: graphblocks.ai/ResolvedTools@1, required: false}
+        - {name: context, type: Any, required: false}
+        - {name: objective, type: Any, required: false}
+        - {name: diagnostics, type: Any, required: false}
+        - {name: conversation, type: graphblocks.ai/ConversationSnapshot@1, required: false}
+      outputs:
+        - {name: candidate, type: graphblocks.ai/TurnCandidate@1}
+        - {name: result, type: Any, required: false}
+        - {name: message, type: graphblocks.ai/TurnCandidate@1, required: false}
+      resourceSlots:
+        - {name: model, type: resources/Model@1, optional: true}
+    - typeId: conversation.begin_turn
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.conversation.begin_turn
+      inputs:
+        - {name: conversationId, type: graphblocks.ai/ConversationId@1, required: false}
+        - {name: conversation, type: graphblocks.conversation/ConversationRef@1, required: false}
+        - {name: message, type: graphblocks.conversation/Message@1, required: false}
+      outputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
+        - {name: snapshot, type: graphblocks.ai/ConversationSnapshot@1, required: false}
+        - {name: conversation, type: graphblocks.ai/ConversationSnapshot@1, required: false}
+        - {name: turn, type: graphblocks.ai/ConversationTransaction@1, required: false}
+    - typeId: conversation.commit_turn
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.conversation.commit_turn
+      inputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1, required: false}
+        - {name: candidate, type: Any, required: false}
+        - {name: turn, type: graphblocks.ai/ConversationTransaction@1, required: false}
+        - {name: response, type: graphblocks.ai/TurnCandidate@1, required: false}
+      outputs:
+        - {name: answer, type: graphblocks.ai/Answer@1}
+        - {name: result, type: graphblocks.ai/TurnCandidate@1}
+    - typeId: conversation.policy_stop_turn
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.conversation.policy_stop_turn
+      inputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
+      outputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
+        - {name: turn, type: graphblocks.ai/ConversationTransaction@1}
+    - typeId: async.start_operation
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.async.start_operation
+      inputs:
+        - {name: subject, type: Any, required: false}
+        - {name: changeset, type: Any, required: false}
+      outputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+    - typeId: async.await_callback
+      version: 1
+      role: control
+      implementation: graphblocks.stdlib.async.await_callback
+      inputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+      outputs:
+        - {name: wait, type: graphblocks.ai/AsyncWait@1}
+        - {name: callback, type: Any, required: false}
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1, required: false}
+    - typeId: async.poll_operation
+      version: 1
+      role: control
+      implementation: graphblocks.stdlib.async.poll_operation
+      inputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+      outputs:
+        - {name: poll, type: graphblocks.ai/AsyncPoll@1}
+    - typeId: async.complete_operation
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.async.complete_operation
+      inputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+        - {name: output, type: Any, required: false}
+      outputs:
+        - {name: result, type: graphblocks.ai/AsyncOperationResult@1}
+    - typeId: async.cancel_operation
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.async.cancel_operation
+      inputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+      outputs:
+        - {name: result, type: graphblocks.ai/AsyncOperationResult@1}
+    - typeId: async.expire_operation
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.async.expire_operation
+      inputs:
+        - {name: operation, type: graphblocks.ai/AsyncOperation@1}
+      outputs:
+        - {name: result, type: graphblocks.ai/AsyncOperationResult@1}
+    - typeId: control.map
+      version: 2
+      role: control
+      implementation: graphblocks.stdlib.control.map
+      inputs:
+        - {name: items, type: graphblocks.ai/Items@1}
+      outputs:
+        - {name: values, type: graphblocks.ai/Values@1}
+        - {name: outcomes, type: graphblocks.ai/Outcomes@1, required: false}
+    - typeId: control.select
+      version: 1
+      role: control
+      implementation: graphblocks.stdlib.control.select
+      inputs:
+        - {name: cases, type: graphblocks.ai/Cases@1}
+      outputs:
+        - {name: value, type: graphblocks.ai/SelectedValue@1}
+        - {name: selected, type: graphblocks.ai/SelectedKey@1}
+    - typeId: retrieve.fuse
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.retrieve.fuse
+      inputs:
+        - {name: sources, type: graphblocks.ai/RetrievalSources@1}
+      outputs:
+        - {name: hits, type: graphblocks.ai/SearchHits@1}
+        - {name: metadata, type: Any, required: false}
+    - typeId: retrieve.execute_plan
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.retrieve.execute_plan
+      inputs:
+        - {name: query, type: graphblocks.ai/SearchRequest@1, required: false}
+        - {name: request, type: graphblocks.ai/SearchRequest@1, required: false}
+        - {name: auth, type: Any, required: false}
+        - {name: sources, type: graphblocks.ai/FederatedSources@1, required: false}
+      outputs:
+        - {name: result, type: graphblocks.ai/RetrievalResult@1}
+        - {name: sources, type: graphblocks.ai/RetrievalSources@1}
+      resourceSlots:
+        - {name: retrievers, type: resources/RetrieverSet@1, optional: true}
+        - {name: embedding, type: resources/EmbeddingModel@1, optional: true}
+    - typeId: rank.documents
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.rank.documents
+      inputs:
+        - {name: query, type: graphblocks.ai/SearchRequest@1}
+        - {name: hits, type: graphblocks.ai/SearchHits@1}
+      outputs:
+        - {name: hits, type: graphblocks.ai/SearchHits@1}
+        - {name: result, type: Any, required: false}
+      resourceSlots:
+        - {name: reranker, type: resources/Reranker@1, optional: true}
+    - typeId: context.build
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.context.build
+      inputs:
+        - {name: history, type: graphblocks.ai/Messages@1, required: false}
+        - {name: evidence, type: graphblocks.ai/SearchHits@1, required: false}
+        - {name: hits, type: graphblocks.ai/SearchHits@1, required: false}
+        - {name: currentMessage, type: graphblocks.ai/Message@1, required: false}
+      outputs:
+        - {name: pack, type: graphblocks.ai/ContextPack@1}
+    - typeId: answer.validate_grounding
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.answer.validate_grounding
+      inputs:
+        - {name: response, type: Any, required: false}
+        - {name: answer, type: graphblocks.ai/Answer@1, required: false}
+        - {name: context, type: graphblocks.ai/ContextPack@1}
+      outputs:
+        - {name: candidate, type: graphblocks.ai/Answer@1}
+        - {name: response, type: graphblocks.ai/Answer@1}
+        - {name: result, type: graphblocks.ai/GroundingValidation@1}
+        - {name: validation, type: graphblocks.ai/GroundingValidation@1}
+    - typeId: check.run_suite
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.check.run_suite
+      inputs:
+        - {name: subject, type: Any, required: false}
+        - {name: evidence, type: Any, required: false}
+        - {name: results, type: Any, required: false}
+        - {name: lease, type: Any, required: false}
+      outputs:
+        - {name: results, type: Any}
+        - {name: checks, type: Any}
+        - {name: diagnostics, type: Any}
+        - {name: passed, type: graphblocks.ai/Boolean@1}
+        - {name: hardGatePassed, type: graphblocks.ai/Boolean@1}
+      resourceSlots:
+        - {name: checks, type: resources/CheckProviderSet@1, optional: true}
+    - typeId: gate.evaluate
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.gate.evaluate
+      inputs:
+        - {name: checks, type: Any}
+        - {name: metrics, type: Any, required: false}
+        - {name: subject, type: Any, required: false}
+      outputs:
+        - {name: result, type: Any}
+        - {name: decision, type: graphblocks.ai/String@1}
+        - {name: passed, type: graphblocks.ai/Boolean@1}
+        - {name: violations, type: Any}
+    - typeId: review.request
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.review.request
+      inputs:
+        - {name: subject, type: Any}
+        - {name: gate, type: Any, required: false}
+        - {name: review, type: Any, required: false}
+        - {name: requestedBy, type: graphblocks.ai/Principal@1, required: false}
+        - {name: requested_by, type: graphblocks.ai/Principal@1, required: false}
+      outputs:
+        - {name: request, type: Any}
+        - {name: requestDigest, type: graphblocks.ai/String@1, required: false}
+        - {name: record, type: Any, required: false}
+        - {name: accepted, type: graphblocks.ai/Boolean@1}
+        - {name: approved, type: graphblocks.ai/Boolean@1}
+        - {name: status, type: graphblocks.ai/String@1}
+        - {name: waitMode, type: graphblocks.ai/String@1, required: false}
+      resourceSlots:
+        - {name: reviewer, type: resources/Reviewer@1, optional: true}
+    - typeId: result.bundle
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.result.bundle
+      inputs:
+        - {name: inputs, type: Any, required: false}
+        - {name: outputs, type: Any}
+        - {name: evidence, type: Any, required: false}
+        - {name: checks, type: Any, required: false}
+        - {name: metrics, type: Any, required: false}
+        - {name: diagnostics, type: Any, required: false}
+        - {name: reviews, type: Any, required: false}
+        - {name: gate, type: Any, required: false}
+        - {name: artifacts, type: graphblocks.core/ArtifactRefList@1, required: false}
+        - {name: usage, type: Any, required: false}
+        - {name: usageRecords, type: Any, required: false}
+        - {name: policyDecisionRefs, type: Any, required: false}
+      outputs:
+        - {name: result, type: Any}
+        - {name: bundle, type: Any}
+        - {name: contentDigest, type: graphblocks.ai/String@1}
+  connectorFactories: []
+  adapters: []

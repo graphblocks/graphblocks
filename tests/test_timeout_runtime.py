@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import math
-import time
 from typing import Any
 
 import pytest
 
+import graphblocks.runtime as runtime_module
 from graphblocks.compiler import compile_graph
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, parse_duration_seconds
 
@@ -65,11 +65,14 @@ def test_runtime_provides_timeout_deadline_to_block_context() -> None:
     assert isinstance(seen_deadline["value"], float)
 
 
-def test_runtime_fails_node_that_exceeds_timeout() -> None:
+def test_runtime_fails_node_that_exceeds_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = {"value": 100.0}
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(runtime_module.time, "perf_counter", lambda: now["value"])
     registry = RuntimeRegistry(allow_untyped=True)
 
     def slow_block(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        time.sleep(0.02)
+        now["value"] += 0.002
         return {"value": "late"}
 
     registry.register("test.slow@1", slow_block)
@@ -96,7 +99,12 @@ def test_runtime_fails_node_that_exceeds_timeout() -> None:
     assert "timeout" in result.journal.records[-1].payload["error"]
 
 
-def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token() -> None:
+def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = {"value": 100.0}
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(runtime_module.time, "perf_counter", lambda: now["value"])
     seen: dict[str, object] = {}
     registry = RuntimeRegistry(allow_untyped=True)
 
@@ -105,7 +113,7 @@ def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token() ->
         config: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        time.sleep(0.01)
+        now["value"] += 0.002
         token = context["cancellation_token"]
         seen["cancelled"] = token.cancelled
         seen["reason"] = token.reason

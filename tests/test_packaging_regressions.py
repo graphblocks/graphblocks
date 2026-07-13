@@ -14,6 +14,22 @@ from graphblocks.packages import (
 )
 
 
+DESCRIPTOR_RELATIVE_OPEN_CASES = (
+    pytest.param(
+        True,
+        id="descriptor-relative",
+        marks=pytest.mark.skipif(
+            not (
+                bool(getattr(os, "O_NOFOLLOW", 0))
+                and os.open in getattr(os, "supports_dir_fd", ())
+            ),
+            reason="descriptor-relative O_NOFOLLOW opens are unavailable",
+        ),
+    ),
+    pytest.param(False, id="fallback"),
+)
+
+
 def _write_valid_wheel_manifest(path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -296,7 +312,7 @@ def test_wheel_matrix_reads_manifest_without_no_follow_flag(
 
     monkeypatch.setattr(packages_module.os, "open", open_without_no_follow)
     monkeypatch.setattr(packages_module.os, "supports_dir_fd", {open_without_no_follow})
-    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW", raising=False)
 
     matrix = build_wheel_matrix(
         root,
@@ -349,7 +365,7 @@ def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
 
     monkeypatch.setattr(packages_module.os, "open", swap_before_fallback_open)
     monkeypatch.setattr(packages_module.os, "fdopen", track_outside_manifest_read)
-    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+    monkeypatch.delattr(packages_module.os, "O_NOFOLLOW", raising=False)
 
     matrix = build_wheel_matrix(
         root,
@@ -371,7 +387,7 @@ def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
     ]
 
 
-@pytest.mark.parametrize("descriptor_relative", [True, False])
+@pytest.mark.parametrize("descriptor_relative", DESCRIPTOR_RELATIVE_OPEN_CASES)
 def test_wheel_matrix_rejects_manifest_swapped_to_fifo_without_blocking(
     tmp_path,
     monkeypatch,
@@ -406,7 +422,7 @@ def test_wheel_matrix_rejects_manifest_swapped_to_fifo_without_blocking(
     if descriptor_relative:
         monkeypatch.setattr(packages_module.os, "supports_dir_fd", {swap_to_fifo})
     else:
-        monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+        monkeypatch.delattr(packages_module.os, "O_NOFOLLOW", raising=False)
 
     matrix = build_wheel_matrix(
         root,

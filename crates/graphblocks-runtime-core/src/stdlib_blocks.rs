@@ -1101,8 +1101,6 @@ fn require_nonempty(field: &'static str, value: &str) -> Result<(), StdlibBlockC
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::fs;
-    use std::path::Path;
 
     use graphblocks_compiler::compiler::{PortDescriptor, ResourceSlotDescriptor};
     use serde_json::{Value, json};
@@ -1232,19 +1230,9 @@ mod tests {
 
     #[test]
     fn rust_stdlib_catalog_matches_builtin_plugin_manifest() {
-        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/graphblocks/data/builtin-plugin.yaml");
-        let manifest_source = fs::read_to_string(&manifest_path);
-        assert!(
-            manifest_source.is_ok(),
-            "failed to read {}: {:?}",
-            manifest_path.display(),
-            manifest_source.as_ref().err()
-        );
-        let manifest: Value = serde_yaml::from_str(
-            &manifest_source.expect("builtin plugin manifest source is readable"),
-        )
-        .expect("builtin plugin manifest is valid YAML");
+        let manifest_source = include_str!("../tests/fixtures/builtin-plugin.yaml");
+        let manifest: Value =
+            serde_yaml::from_str(manifest_source).expect("builtin plugin manifest is valid YAML");
         let manifest_blocks = manifest
             .pointer("/spec/blocks")
             .and_then(Value::as_array)

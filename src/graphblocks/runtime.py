@@ -131,13 +131,13 @@ class _DeadlineCancellationToken:
 
     @property
     def cancelled(self) -> bool:
-        return self.parent.cancelled or time.monotonic() >= self.deadline_monotonic
+        return self.parent.cancelled or time.perf_counter() >= self.deadline_monotonic
 
     @property
     def reason(self) -> str | None:
         if self.parent.cancelled:
             return self.parent.reason
-        if time.monotonic() >= self.deadline_monotonic:
+        if time.perf_counter() >= self.deadline_monotonic:
             return self.deadline_reason
         return None
 
@@ -1122,7 +1122,7 @@ class InProcessRuntime:
                     try:
                         block = self.registry.resolve(block_id)
                         merged_inputs = {**node_inputs[node_name], **resolved_inputs}
-                        started_at = time.monotonic()
+                        started_at = time.perf_counter()
                         deadline = None if timeout_seconds is None else started_at + timeout_seconds
                         timeout_reason = f"node {node_name!r} exceeded timeout {flow.get('timeout')}"
                         run_token = context["cancellation_token"]
@@ -1150,7 +1150,7 @@ class InProcessRuntime:
                             node.get("config", {}),
                             attempt_context,
                         )
-                        if deadline is not None and time.monotonic() >= deadline:
+                        if deadline is not None and time.perf_counter() >= deadline:
                             raise TimeoutError(timeout_reason)
                         if not isinstance(attempt_result, dict):
                             raise TypeError("block returned non-mapping output")

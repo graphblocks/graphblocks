@@ -13,6 +13,20 @@ from graphblocks.composition import CompositionError, compose_documents
 MESSAGE_SCHEMA = "graphblocks.ai/Message@1"
 PROMPT_SCHEMA = "graphblocks.ai/Prompt@1"
 COMPOSITION_API_VERSION = "graphblocks.ai/composition/v1alpha1"
+DESCRIPTOR_RELATIVE_OPEN_CASES = (
+    pytest.param(
+        True,
+        id="descriptor-relative",
+        marks=pytest.mark.skipif(
+            not (
+                bool(getattr(os, "O_NOFOLLOW", 0))
+                and os.open in getattr(os, "supports_dir_fd", ())
+            ),
+            reason="descriptor-relative O_NOFOLLOW opens are unavailable",
+        ),
+    ),
+    pytest.param(False, id="fallback"),
+)
 
 
 def _fragment() -> dict[str, object]:
@@ -90,7 +104,7 @@ def _write_yaml(path: Path, document: dict[str, object]) -> None:
 
 
 @pytest.mark.parametrize("source_kind", ["entry", "import"])
-@pytest.mark.parametrize("descriptor_relative", [True, False])
+@pytest.mark.parametrize("descriptor_relative", DESCRIPTOR_RELATIVE_OPEN_CASES)
 def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -133,7 +147,7 @@ def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
     monkeypatch.setattr(Path, "is_file", swap_after_validation)
     monkeypatch.setattr(Path, "read_bytes", track_outside_read)
     if not descriptor_relative:
-        monkeypatch.delattr(os, "O_NOFOLLOW")
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 
     with pytest.raises(CompositionError) as captured:
         compose_documents(graph_path)
@@ -144,7 +158,7 @@ def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
 
 
 @pytest.mark.parametrize("source_kind", ["entry", "import"])
-@pytest.mark.parametrize("descriptor_relative", [True, False])
+@pytest.mark.parametrize("descriptor_relative", DESCRIPTOR_RELATIVE_OPEN_CASES)
 def test_composition_fails_closed_when_source_is_swapped_during_secure_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -192,7 +206,7 @@ def test_composition_fails_closed_when_source_is_swapped_during_secure_open(
     if descriptor_relative:
         monkeypatch.setattr(composition_module.os, "supports_dir_fd", {swap_during_open})
     else:
-        monkeypatch.delattr(composition_module.os, "O_NOFOLLOW")
+        monkeypatch.delattr(composition_module.os, "O_NOFOLLOW", raising=False)
 
     with pytest.raises(CompositionError) as captured:
         compose_documents(graph_path)
@@ -206,7 +220,7 @@ def test_composition_fails_closed_when_source_is_swapped_during_secure_open(
 
 
 @pytest.mark.parametrize("source_kind", ["entry", "import"])
-@pytest.mark.parametrize("descriptor_relative", [True, False])
+@pytest.mark.parametrize("descriptor_relative", DESCRIPTOR_RELATIVE_OPEN_CASES)
 def test_composition_rejects_source_swapped_to_fifo_without_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -248,7 +262,7 @@ def test_composition_rejects_source_swapped_to_fifo_without_blocking(
     if descriptor_relative:
         monkeypatch.setattr(composition_module.os, "supports_dir_fd", {swap_to_fifo})
     else:
-        monkeypatch.delattr(composition_module.os, "O_NOFOLLOW")
+        monkeypatch.delattr(composition_module.os, "O_NOFOLLOW", raising=False)
 
     with pytest.raises(CompositionError) as captured:
         compose_documents(graph_path)

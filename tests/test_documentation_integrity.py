@@ -33,7 +33,7 @@ def test_ci_enforces_documented_rust_quality_and_packaging_gates() -> None:
     assert '"check"' in wheelhouse_gate
 
 
-def test_rust_packages_declare_publishable_path_versions_and_bundle_tck_fixtures() -> None:
+def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtures() -> None:
     cargo_manifests = sorted((ROOT / "crates").glob("*/Cargo.toml"))
     missing_versions: list[str] = []
     for manifest in cargo_manifests:
@@ -47,6 +47,9 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_tck_fixtures
         "crates/graphblocks-compiler/tests/fixtures/compiler-cases.json": "tck/compiler/cases.json",
         "crates/graphblocks-python/src/fixtures/compiler-cases.json": "tck/compiler/cases.json",
         "crates/graphblocks-python/src/fixtures/runtime-cases.json": "tck/runtime/cases.json",
+        "crates/graphblocks-runtime-core/tests/fixtures/builtin-plugin.yaml": (
+            "src/graphblocks/data/builtin-plugin.yaml"
+        ),
         "crates/graphblocks-runtime-core/tests/fixtures/application-events-cases.json": (
             "tck/application-events/cases.json"
         ),
@@ -93,7 +96,8 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_tck_fixtures
     }
     shipped_fixtures = {
         path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "crates").glob("*/**/fixtures/*.json")
+        for path in (ROOT / "crates").glob("*/**/fixtures/*")
+        if path.is_file()
     }
     assert shipped_fixtures == set(fixture_mirrors)
     for packaged_path, authoritative_path in fixture_mirrors.items():
