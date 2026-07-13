@@ -14808,7 +14808,7 @@ mod tests {
                         "messages": "graphblocks.ai/Messages@1",
                         "tools": "graphblocks.ai/ResolvedTools@1"
                     },
-                    "outputs": {"candidate": "graphblocks.ai/AssistantCandidate@1"}
+                    "outputs": {"candidate": "graphblocks.ai/TurnCandidate@1"}
                 },
                 "nodes": {
                     "agent": {
@@ -14863,7 +14863,7 @@ mod tests {
                 "interface": {
                     "inputs": {"messages": "graphblocks.ai/Messages@1"},
                     "outputs": {
-                        "candidate": "graphblocks.ai/AssistantCandidate@1",
+                        "candidate": "graphblocks.ai/TurnCandidate@1",
                         "tools": "graphblocks.ai/ResolvedTools@1"
                     }
                 },
@@ -15036,13 +15036,16 @@ mod tests {
             "spec": {
                 "interface": {
                     "inputs": {"items": "graphblocks.ai/Items@1"},
-                    "outputs": {"outcomes": "graphblocks.ai/MapOutcomes@1"}
+                    "outputs": {"result": "graphblocks.core/ResultBundle@1"}
                 },
                 "nodes": {
                     "map": {
                         "block": "control.map@2",
                         "inputs": {"items": "$input.items"},
-                        "outputs": {"outcomes": "$output.outcomes"},
+                        "outputs": {
+                            "outcomes": "bundle.evidence",
+                            "values": "bundle.outputs"
+                        },
                         "config": {
                             "block": "prompt.render@1",
                             "inputName": "message",
@@ -15050,6 +15053,10 @@ mod tests {
                             "onError": "collect",
                             "config": {"template": "Value {message.text}"}
                         }
+                    },
+                    "bundle": {
+                        "block": "result.bundle@1",
+                        "outputs": {"result": "$output.result"}
                     }
                 }
             }
@@ -15063,7 +15070,9 @@ mod tests {
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
         let outcomes = result
             .get("outputs")
-            .and_then(|outputs| outputs.get("outcomes"))
+            .and_then(|outputs| outputs.get("result"))
+            .and_then(|bundle| bundle.get("content"))
+            .and_then(|content| content.get("evidence"))
             .and_then(Value::as_array)
             .ok_or_else(|| "native map result is missing outcomes".to_owned())?;
 

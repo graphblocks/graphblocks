@@ -1,3 +1,4 @@
+use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json;
 use serde_json::{Map, Value, json};
 
@@ -10,18 +11,48 @@ fn run_block(
     let inputs_object = inputs
         .as_object()
         .ok_or_else(|| "test inputs must be an object".to_owned())?;
-    let interface_inputs = inputs_object
-        .keys()
-        .map(|name| (name.clone(), json!("graphblocks.ai/JsonValue@1")))
-        .collect::<Map<_, _>>();
+    let catalog = stdlib_block_catalog().map_err(|error| error.to_string())?;
+    let descriptor = catalog
+        .get(block)
+        .ok_or_else(|| format!("missing stdlib descriptor for {block}"))?;
+    let mut interface_inputs = Map::new();
+    for name in inputs_object.keys() {
+        let type_ref = descriptor
+            .inputs
+            .iter()
+            .find(|port| port.name == *name)
+            .and_then(|port| port.type_ref.as_deref())
+            .ok_or_else(|| format!("missing stdlib input descriptor for {block}.{name}"))?;
+        interface_inputs.insert(
+            name.clone(),
+            json!(if type_ref == "Any" {
+                "graphblocks.ai/JsonValue@1"
+            } else {
+                type_ref
+            }),
+        );
+    }
     let node_inputs = inputs_object
         .keys()
         .map(|name| (name.clone(), json!(format!("$input.{name}"))))
         .collect::<Map<_, _>>();
-    let interface_outputs = output_ports
-        .iter()
-        .map(|name| ((*name).to_owned(), json!("graphblocks.ai/JsonValue@1")))
-        .collect::<Map<_, _>>();
+    let mut interface_outputs = Map::new();
+    for name in output_ports {
+        let type_ref = descriptor
+            .outputs
+            .iter()
+            .find(|port| port.name == *name)
+            .and_then(|port| port.type_ref.as_deref())
+            .ok_or_else(|| format!("missing stdlib output descriptor for {block}.{name}"))?;
+        interface_outputs.insert(
+            (*name).to_owned(),
+            json!(if type_ref == "Any" {
+                "graphblocks.ai/JsonValue@1"
+            } else {
+                type_ref
+            }),
+        );
+    }
     let node_outputs = output_ports
         .iter()
         .map(|name| ((*name).to_owned(), json!(format!("$output.{name}"))))
@@ -107,7 +138,7 @@ fn retrieval_adapters_execute_fuse_rank_and_build_context() -> Result<(), String
         "rank.documents@1",
         json!({"query": "rust graph", "hits": fused["hits"]}),
         json!({}),
-        &["hits", "result"],
+        &["hits"],
     )?;
     assert_eq!(ranked["hits"][0]["canonicalSource"], "document-a");
     assert_eq!(ranked["hits"][0]["rerankScore"], 2);
@@ -184,11 +215,11 @@ fn review_and_result_bundle_preserve_subject_and_evidence() -> Result<(), String
             "requiredCredential": "attorney-license",
             "invalidateOnSubjectChange": true
         }),
-        &["request", "record", "pending", "approved", "accepted"],
+        &["request", "approved", "accepted"],
     )?;
     assert_eq!(review["approved"], true);
     assert_eq!(review["accepted"], true);
-    assert_eq!(review["record"]["decision"], "accept");
+    assert_eq!(review["request"]["decision"], "accept");
 
     let bundle = run_block(
         "result.bundle@1",
@@ -196,7 +227,7 @@ fn review_and_result_bundle_preserve_subject_and_evidence() -> Result<(), String
             "outputs": [{"memo": "approved content"}],
             "evidence": [{"sourceId": "authority-1"}],
             "checks": [{"checkId": "citations", "status": "passed"}],
-            "reviews": [review["record"]]
+            "reviews": [review["request"]]
         }),
         json!({"runId": "run-1", "releaseId": "release-1"}),
         &["result"],

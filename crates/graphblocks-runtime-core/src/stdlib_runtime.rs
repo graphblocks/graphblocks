@@ -4,7 +4,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_compiler::canonical::canonical_hash;
-use graphblocks_compiler::compiler::compile_graph;
+use graphblocks_compiler::compiler::{BlockCatalog, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
 
@@ -21,6 +21,7 @@ use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
 use crate::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
 use crate::scheduler::{ScheduledNode, StartedNode};
+use crate::stdlib_blocks::stdlib_block_catalog;
 use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
 use crate::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
@@ -269,7 +270,10 @@ pub fn run_stdlib_graph_with_options_json(
             "runtime options JSON must be an object",
         ));
     };
-    let result = run_stdlib_graph_values(&graph, &inputs, options)?;
+    let block_catalog = stdlib_block_catalog().map_err(|error| {
+        StdlibRuntimeError::invalid(format!("invalid stdlib block catalog: {error}"))
+    })?;
+    let result = run_stdlib_graph_values(&graph, &inputs, options, &block_catalog)?;
     serde_json::to_string(&result.canonical_value()).map_err(StdlibRuntimeError::serialization)
 }
 
@@ -285,13 +289,19 @@ pub fn run_stdlib_graph_with_options(
     inputs: &Value,
     options: &StdlibRunOptions,
 ) -> Result<StdlibRunResult, StdlibRuntimeError> {
-    run_stdlib_graph_values(graph.as_value(), inputs, &options.canonical_value())
+    run_stdlib_graph_values(
+        graph.as_value(),
+        inputs,
+        &options.canonical_value(),
+        graph.block_catalog(),
+    )
 }
 
 fn run_stdlib_graph_values(
     graph: &Value,
     inputs: &Value,
     options: &serde_json::Map<String, Value>,
+    block_catalog: &BlockCatalog,
 ) -> Result<StdlibRunResult, StdlibRuntimeError> {
     let run_id = options
         .get("runId")
@@ -327,7 +337,7 @@ fn run_stdlib_graph_values(
         .map(RunDeploymentProvenance::from_production_value)
         .transpose()
         .map_err(|message| StdlibRuntimeError::invalid(format!("runtime options {message}")))?;
-    let bridge_plan = build_runtime_bridge_plan(graph)?;
+    let bridge_plan = build_runtime_bridge_plan(graph, block_catalog)?;
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
@@ -365,8 +375,30 @@ fn parse_json_argument(text: &str, label: &str) -> Result<Value, StdlibRuntimeEr
         .map_err(|error| StdlibRuntimeError::invalid(format!("invalid {label} JSON: {error}")))
 }
 
-fn build_runtime_bridge_plan(graph: &Value) -> Result<RuntimeBridgePlan, StdlibRuntimeError> {
-    let plan = compile_graph(graph);
+fn build_runtime_bridge_plan(
+    graph: &Value,
+    block_catalog: &BlockCatalog,
+) -> Result<RuntimeBridgePlan, StdlibRuntimeError> {
+    let runtime_catalog = stdlib_block_catalog().map_err(|error| {
+        StdlibRuntimeError::invalid(format!("invalid stdlib block catalog: {error}"))
+    })?;
+    if let Some(nodes) = graph
+        .get("spec")
+        .and_then(|spec| spec.get("nodes"))
+        .and_then(Value::as_object)
+    {
+        for (node_id, node) in nodes {
+            let Some(block_id) = node.get("block").and_then(Value::as_str) else {
+                continue;
+            };
+            if runtime_catalog.get(block_id).is_none() {
+                return Err(StdlibRuntimeError::invalid(format!(
+                    "stdlib runtime node {node_id:?} uses unregistered block {block_id:?}"
+                )));
+            }
+        }
+    }
+    let plan = compile_graph_with_catalog(graph, block_catalog);
     if !plan.ok() {
         let error_codes = plan
             .diagnostics
@@ -848,6 +880,16 @@ fn execute_begin_turn(inputs: &Value, config: &Value) -> Result<Value, BlockErro
     let conversation_id = inputs
         .get("conversationId")
         .and_then(Value::as_str)
+        .or_else(|| {
+            inputs
+                .get("conversation")
+                .and_then(|conversation| {
+                    conversation
+                        .get("conversationId")
+                        .or_else(|| conversation.get("conversation_id"))
+                })
+                .and_then(Value::as_str)
+        })
         .or_else(|| config.get("conversationId").and_then(Value::as_str))
         .unwrap_or("conversation-default");
 
@@ -895,15 +937,11 @@ fn execute_prompt_render(inputs: &Value, config: &Value) -> Result<Value, BlockE
 }
 
 fn execute_scripted_generate(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let Some(prompt) = inputs.get("prompt") else {
-        return Err(BlockError::new(
-            "model.generate.missing_prompt",
-            ErrorCategory::Configuration,
-            "model.generate@1 requires prompt input",
-            false,
-        ));
-    };
-    let prompt = json_display(prompt);
+    let prompt = inputs
+        .get("prompt")
+        .or_else(|| inputs.get("context"))
+        .map(json_display)
+        .unwrap_or_default();
     let response = config
         .get("script")
         .and_then(Value::as_object)
@@ -960,14 +998,18 @@ fn execute_structured_generate(inputs: &Value, config: &Value) -> Result<Value, 
 }
 
 fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let query = inputs.get("query").cloned().ok_or_else(|| {
-        BlockError::new(
-            "retrieve.execute_plan.missing_query",
-            ErrorCategory::Configuration,
-            "retrieve.execute_plan@1 requires query input",
-            false,
-        )
-    })?;
+    let query = inputs
+        .get("query")
+        .or_else(|| inputs.get("request"))
+        .cloned()
+        .ok_or_else(|| {
+            BlockError::new(
+                "retrieve.execute_plan.missing_query",
+                ErrorCategory::Configuration,
+                "retrieve.execute_plan@1 requires query or request input",
+                false,
+            )
+        })?;
     let raw_sources = inputs
         .get("sources")
         .or_else(|| config.get("sources"))
@@ -1087,6 +1129,7 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
             false,
         )
     })?;
+    let source_count = source_values.len();
     let algorithm = match config.get("algorithm") {
         None => "reciprocal_rank_fusion",
         Some(value) => value.as_str().ok_or_else(|| {
@@ -1344,18 +1387,68 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
             hit
         })
         .collect::<Vec<_>>();
-    Ok(json!({"hits": hits}))
+    Ok(json!({
+        "hits": hits,
+        "metadata": {
+            "algorithm": algorithm,
+            "sourceCount": source_count,
+        },
+    }))
 }
 
 fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let query = inputs
-        .get("query")
-        .map(json_display)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let terms = query
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|term| !term.is_empty())
+    let configured_terms = config
+        .get("queryTerms")
+        .or_else(|| config.get("query_terms"));
+    let query = inputs.get("query");
+    let raw_terms = if let Some(terms) = configured_terms.or_else(|| {
+        query
+            .and_then(Value::as_object)
+            .and_then(|query| query.get("queryTerms").or_else(|| query.get("query_terms")))
+    }) {
+        let Some(terms) = terms.as_array() else {
+            return Err(BlockError::new(
+                "rank.documents.invalid_query_terms",
+                ErrorCategory::Configuration,
+                "rank.documents@1 queryTerms must be an array of strings",
+                false,
+            ));
+        };
+        terms
+            .iter()
+            .map(|term| {
+                term.as_str().map(str::to_owned).ok_or_else(|| {
+                    BlockError::new(
+                        "rank.documents.invalid_query_terms",
+                        ErrorCategory::Configuration,
+                        "rank.documents@1 queryTerms must be an array of strings",
+                        false,
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let query_text = query
+            .and_then(Value::as_object)
+            .and_then(|query| {
+                query
+                    .get("queryText")
+                    .or_else(|| query.get("query_text"))
+                    .or_else(|| query.get("original"))
+                    .or_else(|| query.get("text"))
+            })
+            .or_else(|| query.filter(|value| value.is_string()))
+            .map(json_display)
+            .unwrap_or_default();
+        vec![query_text]
+    };
+    let terms = raw_terms
+        .iter()
+        .flat_map(|term| {
+            term.split(|character: char| !character.is_alphanumeric() && character != '_')
+                .filter(|term| !term.is_empty())
+                .map(str::to_ascii_lowercase)
+        })
         .collect::<Vec<_>>();
     let hits = inputs
         .get("hits")
@@ -1445,12 +1538,13 @@ fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, Blo
 fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let evidence = inputs
         .get("evidence")
+        .or_else(|| inputs.get("hits"))
         .and_then(Value::as_array)
         .ok_or_else(|| {
             BlockError::new(
                 "context.build.invalid_evidence",
                 ErrorCategory::Configuration,
-                "context.build@1 requires an evidence array",
+                "context.build@1 requires an evidence or hits array",
                 false,
             )
         })?;
@@ -1512,14 +1606,18 @@ fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockE
 }
 
 fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let response = inputs.get("response").cloned().ok_or_else(|| {
-        BlockError::new(
-            "answer.validate_grounding.missing_response",
-            ErrorCategory::Configuration,
-            "answer.validate_grounding@1 requires response input",
-            false,
-        )
-    })?;
+    let response = inputs
+        .get("response")
+        .or_else(|| inputs.get("answer"))
+        .cloned()
+        .ok_or_else(|| {
+            BlockError::new(
+                "answer.validate_grounding.missing_response",
+                ErrorCategory::Configuration,
+                "answer.validate_grounding@1 requires response or answer input",
+                false,
+            )
+        })?;
     let context = inputs.get("context").ok_or_else(|| {
         BlockError::new(
             "answer.validate_grounding.missing_context",
@@ -1770,6 +1868,106 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
             Some("inconclusive" | "error" | "timeout")
         )
     });
+    let metrics = match inputs.get("metrics") {
+        None => Vec::new(),
+        Some(metrics) => metrics.as_array().cloned().ok_or_else(|| {
+            BlockError::new(
+                "gate.evaluate.invalid_metrics",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 metrics must be an array",
+                false,
+            )
+        })?,
+    };
+    let constraints = match config.get("constraints") {
+        None => Vec::new(),
+        Some(constraints) => constraints.as_array().cloned().ok_or_else(|| {
+            BlockError::new(
+                "gate.evaluate.invalid_constraints",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 constraints must be an array",
+                false,
+            )
+        })?,
+    };
+    for constraint in constraints {
+        let Some(constraint) = constraint.as_object() else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_constraint",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 constraint must be an object",
+                false,
+            ));
+        };
+        let metric_name = constraint
+            .get("metric")
+            .or_else(|| constraint.get("metricName"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                BlockError::new(
+                    "gate.evaluate.invalid_constraint",
+                    ErrorCategory::Configuration,
+                    "gate.evaluate@1 constraint metric must be a non-empty string",
+                    false,
+                )
+            })?;
+        let operator = constraint
+            .get("operator")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                BlockError::new(
+                    "gate.evaluate.invalid_constraint",
+                    ErrorCategory::Configuration,
+                    "gate.evaluate@1 constraint operator must be a string",
+                    false,
+                )
+            })?;
+        if !matches!(operator, "equals" | "at_least" | "at_most") {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_constraint",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 constraint operator must be equals, at_least, or at_most",
+                false,
+            ));
+        }
+        let threshold = constraint.get("threshold").ok_or_else(|| {
+            BlockError::new(
+                "gate.evaluate.invalid_constraint",
+                ErrorCategory::Configuration,
+                "gate.evaluate@1 constraint requires threshold",
+                false,
+            )
+        })?;
+        let metric_value = metrics.iter().find_map(|metric| {
+            (metric.get("name").and_then(Value::as_str) == Some(metric_name))
+                .then(|| metric.get("value"))
+                .flatten()
+        });
+        let satisfied = match (operator, metric_value) {
+            ("equals", Some(value)) => value == threshold,
+            ("at_least", Some(value)) => {
+                value
+                    .as_f64()
+                    .zip(threshold.as_f64())
+                    .is_some_and(|(value, threshold)| {
+                        value.is_finite() && threshold.is_finite() && value >= threshold
+                    })
+            }
+            ("at_most", Some(value)) => {
+                value
+                    .as_f64()
+                    .zip(threshold.as_f64())
+                    .is_some_and(|(value, threshold)| {
+                        value.is_finite() && threshold.is_finite() && value <= threshold
+                    })
+            }
+            _ => false,
+        };
+        if !satisfied {
+            violated.push(format!("metric:{metric_name}"));
+        }
+    }
     let decision = if !violated.is_empty() {
         "fail"
     } else if has_inconclusive {
@@ -1777,11 +1975,39 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
     } else {
         "pass"
     };
+    let subject = inputs
+        .get("subject")
+        .cloned()
+        .or_else(|| {
+            flattened
+                .iter()
+                .find_map(|check| check.get("subject").cloned())
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "resourceId": "gate-subject",
+                "digest": canonical_hash(&Value::Array(flattened.clone())),
+            })
+        });
+    let gate_id = config
+        .get("gateId")
+        .or_else(|| config.get("gate_id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "gate-{}",
+                canonical_hash(&json!({"checks": flattened, "constraints": hard_constraints}))
+            )
+        });
     let result = json!({
-        "gateId": format!("gate-{}", canonical_hash(&json!({"checks": flattened, "constraints": hard_constraints}))),
+        "gateId": gate_id,
+        "subject": subject,
         "decision": decision,
         "checkIds": hard_constraints,
         "violatedConstraints": violated.clone(),
+        "metrics": metrics,
+        "policyRef": config.get("policyRef").or_else(|| config.get("policy_ref")).cloned(),
     });
     Ok(json!({
         "result": result,
@@ -1866,7 +2092,14 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
             false,
         ));
     }
-    let record = json!({
+    let requested_by = inputs
+        .get("requestedBy")
+        .or_else(|| inputs.get("requested_by"))
+        .or_else(|| config.get("requestedBy"))
+        .or_else(|| config.get("requested_by"))
+        .cloned()
+        .unwrap_or_else(|| json!({"principalId": "graphblocks-runtime"}));
+    let mut record = json!({
         "reviewId": supplied_review
             .and_then(|review| review.get("reviewId").or_else(|| review.get("review_id")))
             .cloned()
@@ -1875,6 +2108,7 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
         "subjectDigest": subject_digest,
         "scope": config.get("scope").cloned().unwrap_or_else(|| json!("general")),
         "decision": decision,
+        "requestedBy": requested_by,
         "reviewer": supplied_review
             .and_then(|review| review.get("reviewer"))
             .or_else(|| inputs.get("reviewer"))
@@ -1883,9 +2117,14 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
         "credentialRefs": credential_refs,
         "invalidateOnSubjectChange": config.get("invalidateOnSubjectChange").and_then(Value::as_bool).unwrap_or(true),
     });
+    if let Some(gate) = inputs.get("gate") {
+        record["gate"] = gate.clone();
+    }
+    let request_digest = canonical_hash(&record);
     Ok(json!({
         "request": record.clone(),
         "record": record,
+        "requestDigest": request_digest,
         "pending": decision == "pending",
         "approved": matches!(decision, "accept" | "accept_with_conditions"),
         "accepted": matches!(decision, "accept" | "accept_with_conditions"),
@@ -1907,12 +2146,17 @@ fn execute_result_bundle(inputs: &Value, config: &Value) -> Result<Value, BlockE
     let mut content = serde_json::Map::new();
     content.insert("outputs".to_owned(), outputs);
     for name in [
+        "inputs",
         "evidence",
         "checks",
         "gate",
         "reviews",
         "metrics",
         "artifacts",
+        "diagnostics",
+        "usage",
+        "usageRecords",
+        "policyDecisionRefs",
     ] {
         content.insert(
             name.to_owned(),
@@ -2104,7 +2348,13 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
     })?;
 
     Ok(json!({
-        "operation": async_operation_json(&operation, inputs.get("subject").cloned()),
+        "operation": async_operation_json(
+            &operation,
+            inputs
+                .get("subject")
+                .or_else(|| inputs.get("changeset"))
+                .cloned(),
+        ),
     }))
 }
 
@@ -2202,7 +2452,7 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
     }
 
     Ok(json!({
-        "wait": wait
+        "wait": wait,
     }))
 }
 
@@ -2821,13 +3071,17 @@ fn execute_resolve_tools(inputs: &Value, config: &Value) -> Result<Value, BlockE
 }
 
 fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let Some(tools) = inputs.get("tools").and_then(Value::as_array) else {
-        return Err(BlockError::new(
-            "agent.run.invalid_tools",
-            ErrorCategory::Configuration,
-            "agent.run@1 input 'tools' must be a list",
-            false,
-        ));
+    let tools = match inputs.get("tools") {
+        Some(Value::Array(tools)) => tools.as_slice(),
+        Some(_) => {
+            return Err(BlockError::new(
+                "agent.run.invalid_tools",
+                ErrorCategory::Configuration,
+                "agent.run@1 input 'tools' must be a list",
+                false,
+            ));
+        }
+        None => &[],
     };
     let mut model_visible_tools = Vec::new();
     for (index, tool) in tools.iter().enumerate() {
@@ -2992,13 +3246,17 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
         );
         left_key.cmp(&right_key)
     });
-    let Some(messages) = inputs.get("messages").and_then(Value::as_array) else {
-        return Err(BlockError::new(
-            "agent.run.invalid_messages",
-            ErrorCategory::Configuration,
-            "agent.run@1 input 'messages' must be a list",
-            false,
-        ));
+    let messages = match inputs.get("messages") {
+        Some(Value::Array(messages)) => messages.as_slice(),
+        Some(_) => {
+            return Err(BlockError::new(
+                "agent.run.invalid_messages",
+                ErrorCategory::Configuration,
+                "agent.run@1 input 'messages' must be a list",
+                false,
+            ));
+        }
+        None => &[],
     };
 
     let (text, finish_reason) = if let Some(response) = config.get("response") {
@@ -3172,15 +3430,15 @@ fn execute_control_select(inputs: &Value, config: &Value) -> Result<Value, Block
 }
 
 fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
-    let Some(transaction) = inputs.get("transaction").and_then(Value::as_object) else {
-        return Err(BlockError::new(
-            "conversation.commit_turn.missing_transaction",
-            ErrorCategory::Configuration,
-            "conversation.commit_turn@1 requires transaction input",
-            false,
-        ));
-    };
-    if transaction.get("status").and_then(Value::as_str) == Some("policy_stopped") {
+    let transaction = inputs
+        .get("transaction")
+        .or_else(|| inputs.get("turn"))
+        .and_then(Value::as_object);
+    if transaction
+        .and_then(|transaction| transaction.get("status"))
+        .and_then(Value::as_str)
+        == Some("policy_stopped")
+    {
         return Err(BlockError::new(
             "conversation.commit_turn.policy_stopped",
             ErrorCategory::Policy,
@@ -3188,33 +3446,31 @@ fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
             false,
         ));
     }
-    let Some(candidate) = inputs.get("candidate") else {
-        return Err(BlockError::new(
-            "conversation.commit_turn.missing_candidate",
-            ErrorCategory::Configuration,
-            "conversation.commit_turn@1 requires candidate input",
-            false,
-        ));
-    };
+    let candidate = inputs.get("candidate").or_else(|| inputs.get("response"));
+    let result = candidate.cloned().unwrap_or(Value::Null);
     let text = candidate
+        .unwrap_or(&Value::Null)
         .get("text")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| json_display(candidate));
+        .unwrap_or_else(|| candidate.map_or_else(String::new, json_display));
 
-    Ok(json!({
-        "answer": {
-            "conversationId": transaction
-                .get("conversationId")
-                .and_then(Value::as_str)
-                .unwrap_or("conversation-default"),
-            "text": text,
-            "turnId": transaction
-                .get("turnId")
-                .and_then(Value::as_str)
-                .unwrap_or("turn-000001"),
-        }
-    }))
+    let answer = json!({
+        "conversationId": transaction
+            .and_then(|transaction| transaction
+            .get("conversationId")
+            .or_else(|| transaction.get("conversation_id")))
+            .and_then(Value::as_str)
+            .unwrap_or("conversation-default"),
+        "text": text,
+        "turnId": transaction
+            .and_then(|transaction| transaction
+            .get("turnId")
+            .or_else(|| transaction.get("turn_id")))
+            .and_then(Value::as_str)
+            .unwrap_or("turn-000001"),
+    });
+    Ok(json!({ "answer": answer, "result": result }))
 }
 
 fn execute_policy_stop_turn(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
@@ -4147,71 +4403,21 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use crate::application_event::{ApplicationProtocolEventKind, SqliteApplicationProtocolLog};
     use crate::journal::SqliteExecutionJournal;
     use crate::run_store::{RunStatus, SqliteRunStore};
-    use crate::typed_graph::{
-        Block, GraphBuilder, GraphValue, NodeConfig, NodeInputReference, NodeInputs, NodeOutputs,
-        Port,
+    use crate::stdlib_blocks::{
+        ModelGenerate, ModelGenerateConfig, ModelGenerateInputs, ModelResponseValue, PromptValue,
     };
-    use serde_json::{Map, Value, json};
+    use crate::typed_graph::GraphBuilder;
+    use serde_json::{Value, json};
 
     use super::{
         StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
         run_stdlib_graph_with_options_json,
     };
-
-    struct TextValue;
-
-    impl GraphValue for TextValue {
-        const SCHEMA: &'static str = "graphblocks.ai/Text@1";
-    }
-
-    struct GenerateConfig;
-
-    impl NodeConfig for GenerateConfig {
-        fn to_config_object(&self) -> Map<String, Value> {
-            Map::from_iter([("response".to_owned(), json!("typed response"))])
-        }
-    }
-
-    struct Generate;
-
-    struct GenerateInputs {
-        prompt: Port<TextValue>,
-    }
-
-    impl NodeInputs for GenerateInputs {
-        fn into_node_inputs(self) -> BTreeMap<String, NodeInputReference> {
-            BTreeMap::from([("prompt".to_owned(), self.prompt.into_input_reference())])
-        }
-    }
-
-    struct GenerateOutputs {
-        response: Port<TextValue>,
-    }
-
-    impl NodeOutputs for GenerateOutputs {
-        fn for_node(builder_id: u64, node_id: &str) -> Self {
-            Self {
-                response: Port::node_output(builder_id, node_id, "response"),
-            }
-        }
-    }
-
-    impl Block for Generate {
-        const ID: &'static str = "model.generate@1";
-        type Config = GenerateConfig;
-        type Inputs = GenerateInputs;
-        type Outputs = GenerateOutputs;
-
-        fn config(&self) -> &Self::Config {
-            &GenerateConfig
-        }
-    }
 
     fn unique_sqlite_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -4227,12 +4433,18 @@ mod tests {
     #[test]
     fn typed_runtime_returns_structured_result_without_json_adapter() {
         let mut graph = GraphBuilder::new("typed-runtime").expect("graph name is valid");
-        let prompt = graph.input::<TextValue>("prompt").expect("input is unique");
+        let prompt = graph
+            .input::<PromptValue>("prompt")
+            .expect("input is unique");
         let generated = graph
-            .add("generate", Generate, GenerateInputs { prompt })
+            .add(
+                "generate",
+                ModelGenerate::new(ModelGenerateConfig::new(json!("typed response"))),
+                ModelGenerateInputs { prompt },
+            )
             .expect("node is unique");
         graph
-            .bind_output("response", &generated.response)
+            .bind_output::<ModelResponseValue>("response", &generated.response)
             .expect("output is unique");
 
         let result = run_stdlib_graph_with_options(
@@ -4246,6 +4458,92 @@ mod tests {
         assert_eq!(result.status, StdlibRunStatus::Succeeded);
         assert_eq!(result.outputs, json!({"response": "typed response"}));
         assert!(result.graph_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn json_runtime_compiles_with_stdlib_catalog() {
+        let error = run_stdlib_graph_with_options_json(
+            &json!({
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "invalid-stdlib-port"},
+                "spec": {
+                    "interface": {
+                        "inputs": {"prompt": "graphblocks.ai/Prompt@1"},
+                        "outputs": {"response": "graphblocks.ai/ModelResponse@1"}
+                    },
+                    "nodes": {
+                        "generate": {
+                            "block": "model.generate@1",
+                            "inputs": {"wrong": "$input.prompt"},
+                            "outputs": {"response": "$output.response"}
+                        }
+                    }
+                }
+            })
+            .to_string(),
+            &json!({"prompt": "hello"}).to_string(),
+            "{}",
+        )
+        .expect_err("unknown stdlib input port should fail compilation");
+
+        assert!(error.to_string().contains("GB1013"));
+    }
+
+    #[test]
+    fn json_runtime_rejects_unregistered_blocks_before_execution() {
+        let error = run_stdlib_graph_with_options_json(
+            &json!({
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "unknown-runtime-block"},
+                "spec": {
+                    "nodes": {
+                        "unknown": {"block": "custom.unknown@1"}
+                    }
+                }
+            })
+            .to_string(),
+            "{}",
+            "{}",
+        )
+        .expect_err("unregistered stdlib block should fail preflight");
+
+        assert!(
+            error
+                .to_string()
+                .contains("uses unregistered block \"custom.unknown@1\"")
+        );
+    }
+
+    #[test]
+    fn json_runtime_rejects_nominal_stdlib_port_type_mismatches() {
+        let error = run_stdlib_graph_with_options_json(
+            &json!({
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "mismatched-runtime-port"},
+                "spec": {
+                    "interface": {
+                        "inputs": {"message": "graphblocks.ai/Text@1"},
+                        "outputs": {"prompt": "graphblocks.ai/Prompt@1"}
+                    },
+                    "nodes": {
+                        "render": {
+                            "block": "prompt.render@1",
+                            "inputs": {"message": "$input.message"},
+                            "outputs": {"prompt": "$output.prompt"}
+                        }
+                    }
+                }
+            })
+            .to_string(),
+            &json!({"message": {"text": "hello"}}).to_string(),
+            "{}",
+        )
+        .expect_err("nominal stdlib port mismatch should fail compilation");
+
+        assert!(error.to_string().contains("GB1018"));
     }
 
     #[test]
