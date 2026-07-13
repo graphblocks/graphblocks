@@ -9,9 +9,14 @@ python -m graphblocks plan examples/01-enterprise-federated-rag/example.yaml --e
 python examples/01-enterprise-federated-rag/run.py
 ```
 
-The example runner also executes deterministic semantic checks with recording
-retriever/model fakes. Real network access is blocked and the final JSON line
-contains the checks, mocked boundaries, call-input digests, and evidence digest.
+The root runner also executes the 1-1 YAML CLI, 1-2 Python API, and 1-3 Rust API
+variants and verifies their graph hash, node order, and cited-answer parity. It
+then executes deterministic semantic checks with recording retriever/model
+fakes. Real network access is blocked and the final JSON line contains runtime
+parity, mocked boundaries, call-input digests, and evidence digests.
+The combined runner and 1-3 require the Rust toolchain selected by
+`rust-toolchain.toml`; 1-1 and 1-2 can be run with the Python development
+installation alone.
 
 These commands use the built-in plugin metadata and block registry shipped in
 `graphblocks`; no built-in feature wheels are required.

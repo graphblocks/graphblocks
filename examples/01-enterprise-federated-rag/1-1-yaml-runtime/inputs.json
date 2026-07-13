@@ -1,0 +1,108 @@
+{
+  "query": {
+    "original": "production signing key rotation approvals",
+    "topK": 5
+  },
+  "sources": [
+    {
+      "sourceId": "handbook",
+      "weight": 1.0,
+      "hits": [
+        {
+          "hitId": "hit-rotation",
+          "item": {
+            "itemId": "chunk-rotation",
+            "itemKind": "document_chunk",
+            "source": {
+              "sourceId": "source-chunk-rotation",
+              "sourceKind": "document_chunk",
+              "revision": "revision-1",
+              "digest": null,
+              "locator": {
+                "assetId": "asset-handbook",
+                "revisionId": "revision-1",
+                "documentId": "security-handbook",
+                "elementId": "paragraph-rotation",
+                "chunkId": "chunk-rotation",
+                "page": null,
+                "bbox": null,
+                "charStart": null,
+                "charEnd": null,
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "observedAt": null,
+              "relevantAsOf": null,
+              "trust": "verified",
+              "accessPolicy": null,
+              "metadata": {}
+            },
+            "schemaRef": null,
+            "payloadRef": null,
+            "preview": ["Rotate through the security console."],
+            "acl": null,
+            "metadata": {"document_id": "security-handbook"}
+          },
+          "rank": 1,
+          "retriever": "handbook",
+          "rawScore": null,
+          "normalizedScore": null,
+          "scoreKind": null,
+          "highlights": [],
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "sourceId": "tickets",
+      "weight": 1.0,
+      "hits": [
+        {
+          "hitId": "hit-ticket",
+          "item": {
+            "itemId": "chunk-ticket",
+            "itemKind": "document_chunk",
+            "source": {
+              "sourceId": "source-chunk-ticket",
+              "sourceKind": "document_chunk",
+              "revision": "revision-1",
+              "digest": null,
+              "locator": {
+                "assetId": "asset-tickets",
+                "revisionId": "revision-1",
+                "documentId": "support-tickets",
+                "elementId": "ticket-approvals",
+                "chunkId": "chunk-ticket",
+                "page": null,
+                "bbox": null,
+                "charStart": null,
+                "charEnd": null,
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "observedAt": null,
+              "relevantAsOf": null,
+              "trust": "verified",
+              "accessPolicy": null,
+              "metadata": {}
+            },
+            "schemaRef": null,
+            "payloadRef": null,
+            "preview": ["Require two approvers."],
+            "acl": null,
+            "metadata": {"document_id": "support-tickets"}
+          },
+          "rank": 1,
+          "retriever": "tickets",
+          "rawScore": null,
+          "normalizedScore": null,
+          "scoreKind": null,
+          "highlights": [],
+          "metadata": {}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: enterprise-rag-runtime-parity
+spec:
+  interface:
+    inputs:
+      query: graphblocks.ai/SearchRequest@1
+      sources: graphblocks.ai/FederatedSources@1
+    outputs:
+      candidate: graphblocks.ai/Answer@1
+      validation: graphblocks.ai/GroundingValidation@1
+  nodes:
+    retrieve:
+      block: retrieve.execute_plan@1
+      inputs:
+        query: $input.query
+        sources: $input.sources
+      config:
+        minimumSuccessfulSources: 2
+        topK: 5
+    fuse:
+      block: retrieve.fuse@1
+      inputs: {sources: retrieve.sources}
+      config: {algorithm: reciprocal_rank_fusion, k: 60}
+    rerank:
+      block: rank.documents@1
+      inputs:
+        query: $input.query
+        hits: fuse.hits
+      config: {rerankerId: deterministic-lexical}
+    context:
+      block: context.build@1
+      inputs: {evidence: rerank.hits}
+      config:
+        contextId: context-key-rotation
+        maxTokens: 1000
+        reserveOutputTokens: 100
+    generate:
+      block: model.structured_generate@1
+      inputs: {context: context.pack}
+      config:
+        outputSchema: graphblocks.ai/Answer@1
+        response:
+          answerId: answer-key-rotation
+          text: Use the security console and obtain two approvals.
+          claims:
+            - claimId: claim-console
+              text: Rotate through the security console.
+              citationIds: [citation-rotation]
+            - claimId: claim-approvals
+              text: Require two approvers.
+              citationIds: [citation-ticket]
+          citations:
+            - citationId: citation-rotation
+              claimId: claim-console
+              source:
+                sourceId: source-chunk-rotation
+                sourceKind: document_chunk
+                revision: revision-1
+                digest: null
+                locator:
+                  assetId: asset-handbook
+                  revisionId: revision-1
+                  documentId: security-handbook
+                  elementId: paragraph-rotation
+                  chunkId: chunk-rotation
+                  page: null
+                  bbox: null
+                  charStart: null
+                  charEnd: null
+                  sheet: null
+                  cellRange: null
+                  slide: null
+                observedAt: null
+                relevantAsOf: null
+                trust: verified
+                accessPolicy: null
+                metadata: {}
+              citedText: Rotate through the security console.
+            - citationId: citation-ticket
+              claimId: claim-approvals
+              source:
+                sourceId: source-chunk-ticket
+                sourceKind: document_chunk
+                revision: revision-1
+                digest: null
+                locator:
+                  assetId: asset-tickets
+                  revisionId: revision-1
+                  documentId: support-tickets
+                  elementId: ticket-approvals
+                  chunkId: chunk-ticket
+                  page: null
+                  bbox: null
+                  charStart: null
+                  charEnd: null
+                  sheet: null
+                  cellRange: null
+                  slide: null
+                observedAt: null
+                relevantAsOf: null
+                trust: verified
+                accessPolicy: null
+                metadata: {}
+              citedText: Require two approvers.
+    validate:
+      block: answer.validate_grounding@1
+      inputs:
+        response: generate.response
+        context: context.pack
+      config:
+        requireCitation: true
+        onInsufficientEvidence: abstain
+      outputs:
+        candidate: $output.candidate
+        validation: $output.validation

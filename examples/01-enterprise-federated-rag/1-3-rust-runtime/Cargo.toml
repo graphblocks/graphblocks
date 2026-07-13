@@ -1,0 +1,21 @@
+[package]
+name = "graphblocks-example-enterprise-rag-rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+graphblocks-compiler = { path = "../../../crates/graphblocks-compiler" }
+graphblocks-runtime-core = { path = "../../../crates/graphblocks-runtime-core" }
+serde_json = "1.0"
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
