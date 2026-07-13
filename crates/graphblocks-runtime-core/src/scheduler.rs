@@ -19,6 +19,28 @@ pub enum NodeExecutionState {
 pub struct ScheduledNode {
     pub node_id: String,
     pub dependencies: Vec<InputDependency>,
+    pub condition: Option<ScheduledCondition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScheduledCondition {
+    pub input: String,
+    pub source: PortRef,
+    pub path: Vec<String>,
+}
+
+impl ScheduledCondition {
+    pub fn new<I, S>(input: impl Into<String>, source: PortRef, path: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            input: input.into(),
+            source,
+            path: path.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 impl ScheduledNode {
@@ -29,7 +51,13 @@ impl ScheduledNode {
         Self {
             node_id: node_id.into(),
             dependencies: dependencies.into_iter().collect(),
+            condition: None,
         }
+    }
+
+    pub fn with_condition(mut self, condition: ScheduledCondition) -> Self {
+        self.condition = Some(condition);
+        self
     }
 }
 
@@ -230,7 +258,44 @@ impl LocalScheduler {
                 continue;
             }
 
-            match self.readiness.readiness(node.dependencies.clone()) {
+            let readiness = if let Some(condition) = &node.condition {
+                match self.readiness.signal(&condition.source) {
+                    None => Readiness::Waiting {
+                        missing: vec![condition.source.clone()],
+                    },
+                    Some(Outcome::Value(condition_value)) => {
+                        let mut resolved_condition = Some(condition_value);
+                        for part in &condition.path {
+                            resolved_condition =
+                                resolved_condition.and_then(|value| value.get(part));
+                        }
+                        let condition_input = ResolvedInput::Value(condition_value.clone());
+                        if resolved_condition.and_then(Value::as_bool) == Some(true) {
+                            match self.readiness.readiness(node.dependencies.clone()) {
+                                Readiness::Ready(mut resolved) => {
+                                    resolved.insert(condition.input.clone(), condition_input);
+                                    Readiness::Ready(resolved)
+                                }
+                                other => other,
+                            }
+                        } else {
+                            Readiness::Ready(BTreeMap::from([(
+                                condition.input.clone(),
+                                condition_input,
+                            )]))
+                        }
+                    }
+                    Some(outcome) => Readiness::Blocked {
+                        input: condition.input.clone(),
+                        source: condition.source.clone(),
+                        outcome: outcome.clone(),
+                    },
+                }
+            } else {
+                self.readiness.readiness(node.dependencies.clone())
+            };
+
+            match readiness {
                 Readiness::Ready(resolved) => {
                     self.ready_inputs.insert(node_id.clone(), resolved);
                     self.states

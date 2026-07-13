@@ -6,6 +6,8 @@ from decimal import Decimal
 import graphblocks
 import pytest
 
+from graphblocks.leases import InMemoryLeasePool
+from graphblocks.plugins import BlockCatalog
 from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
@@ -18,6 +20,383 @@ from graphblocks.run_store import InMemoryRunStore, RunDeploymentProvenance, SQL
 
 
 VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
+
+
+def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
+    calls: list[str] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def branch(inputs, config, context):
+        calls.append("branch")
+        return {"value": "ran"}
+
+    def condition(inputs, config, context):
+        calls.append("condition")
+        return {"enabled": True}
+
+    registry.register("test.branch@1", branch)
+    registry.register("test.condition@1", condition)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "true-when-guard"},
+        "spec": {
+            "interface": {"outputs": {"value": "graphblocks.ai/Text@1"}},
+            "nodes": {
+                "aBranch": {
+                    "block": "test.branch@1",
+                    "when": "zCondition.enabled",
+                    "outputs": {"value": "$output.value"},
+                },
+                "zCondition": {"block": "test.condition@1"},
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"value": "ran"}
+    assert calls == ["condition", "branch"]
+
+
+def test_runtime_skips_a_false_when_guard_without_invoking_the_block() -> None:
+    calls: list[str] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def branch(inputs, config, context):
+        calls.append("branch")
+        return {"value": "must-not-run"}
+
+    def condition(inputs, config, context):
+        calls.append("condition")
+        return {"enabled": False}
+
+    registry.register("test.branch@1", branch)
+    registry.register("test.condition@1", condition)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "false-when-guard"},
+        "spec": {
+            "interface": {"outputs": {"enabled": "graphblocks.ai/Flag@1"}},
+            "nodes": {
+                "aBranch": {
+                    "block": "test.branch@1",
+                    "when": "zCondition.enabled",
+                },
+                "zCondition": {
+                    "block": "test.condition@1",
+                    "outputs": {"enabled": "$output.enabled"},
+                },
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"enabled": False}
+    assert calls == ["condition"]
+    skipped = [
+        record
+        for record in result.journal.records
+        if record.kind == "node_succeeded" and record.payload["node"] == "aBranch"
+    ]
+    assert skipped[0].payload["skipped"] is True
+
+
+def test_runtime_fails_closed_for_a_non_boolean_when_guard() -> None:
+    calls: list[str] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def branch(inputs, config, context):
+        calls.append("branch")
+        return {"value": "must-not-run"}
+
+    def condition(inputs, config, context):
+        calls.append("condition")
+        return {"enabled": "true"}
+
+    registry.register("test.branch@1", branch)
+    registry.register("test.condition@1", condition)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "non-boolean-when-guard"},
+        "spec": {
+            "nodes": {
+                "aBranch": {
+                    "block": "test.branch@1",
+                    "when": "zCondition.enabled",
+                },
+                "zCondition": {"block": "test.condition@1"},
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert calls == ["condition"]
+    failure = next(
+        record for record in result.journal.records if record.kind == "node_failed"
+    )
+    assert failure.payload["node"] == "aBranch"
+    assert "boolean" in failure.payload["error"]
+
+
+def test_runtime_converts_output_projection_errors_to_terminal_failure() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    store = InMemoryRunStore()
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def produce(inputs, config, context):
+        context["lease_pool"].acquire("model", owner=context["run_id"])
+        return {"value": "ok"}
+
+    registry.register("test.produce@1", produce)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "projection-failure"},
+        "spec": {
+            "interface": {"outputs": {"value": "graphblocks.ai/Text@1"}},
+            "nodes": {"produce": {"block": "test.produce@1"}},
+            "edges": [
+                {"from": "produce.missing", "to": "$output.value"}
+            ],
+        },
+    }
+
+    result = InProcessRuntime(
+        registry,
+        run_store=store,
+        lease_pool=pool,
+    ).run(graph, {}, run_id="run-projection-failure")
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert store.get_run(result.run_id).status == "failed"
+    assert pool.available("model") == 1
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "produce"
+    assert "missing" in failed[0].payload["error"]
+
+
+def test_runtime_converts_checkpoint_serialization_errors_to_terminal_failure() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    store = InMemoryRunStore()
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def wait(inputs, config, context):
+        context["lease_pool"].acquire("model", owner=context["run_id"])
+        return {
+            "wait": {
+                "state": "waiting_callback",
+                "checkpoint": True,
+                "operation": {"not_json": object()},
+            }
+        }
+
+    registry.register("async.await_callback@1", wait)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "checkpoint-serialization-failure"},
+        "spec": {
+            "nodes": {
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "30m",
+                        "idempotencyKey": "checkpoint-failure-idem",
+                        "callback": {"schema": "schemas/Callback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(
+        registry,
+        run_store=store,
+        lease_pool=pool,
+    ).run(graph, {}, run_id="run-checkpoint-failure")
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert store.get_run(result.run_id).status == "failed"
+    assert pool.available("model") == 1
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "wait"
+    assert "JSON serializable" in failed[0].payload["error"]
+
+
+def test_runtime_converts_mixed_output_key_errors_to_terminal_failure() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+    store = InMemoryRunStore()
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def produce(inputs, config, context):
+        context["lease_pool"].acquire("model", owner=context["run_id"])
+        return {"value": "ok", 2: "invalid-key"}
+
+    registry.register("test.produce@1", produce)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "mixed-output-key-failure"},
+        "spec": {"nodes": {"produce": {"block": "test.produce@1"}}},
+    }
+
+    result = InProcessRuntime(
+        registry,
+        run_store=store,
+        lease_pool=pool,
+    ).run(graph, {}, run_id="run-mixed-output-key-failure")
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert store.get_run(result.run_id).status == "failed"
+    assert pool.available("model") == 1
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "produce"
+    assert "not supported" in failed[0].payload["error"]
+
+
+def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
+    pool = InMemoryLeasePool({"callback": 1})
+    store = InMemoryRunStore()
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+    run_id = "run-resume-projection-failure"
+    operation = {
+        "operation_id": "operation-resume-projection-failure",
+        "run_id": run_id,
+        "node_id": "wait",
+        "attempt_id": "attempt-1",
+        "kind": "ci_job",
+        "state": "waiting_callback",
+        "provider_operation_id": "provider-operation-1",
+        "resume_token_hash": VALID_RESUME_TOKEN_HASH,
+        "idempotency_key": "idem-resume-projection-failure",
+        "expected_schema": "schemas/CICallback@1",
+        "created_at_unix_ms": 1_000,
+        "submitted_at_unix_ms": 1_050,
+        "expires_at_unix_ms": 10_000,
+    }
+
+    def wait(inputs, config, context):
+        context["lease_pool"].acquire("callback", owner=context["run_id"])
+        return {
+            "wait": {
+                "state": "waiting_callback",
+                "checkpoint": True,
+                "operation": operation,
+            }
+        }
+
+    registry.register("async.await_callback@1", wait)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "resume-projection-failure"},
+        "spec": {
+            "interface": {"outputs": {"result": "graphblocks.ai/Any@1"}},
+            "nodes": {
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "30m",
+                        "idempotencyKey": "idem-resume-projection-failure",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            },
+            "edges": [{"from": "wait.missing", "to": "$output.result"}],
+        },
+    }
+    journals: dict[str, ExecutionJournal] = {}
+    runtime = InProcessRuntime(
+        registry,
+        run_store=store,
+        lease_pool=pool,
+        journal_factory=lambda journal_run_id: journals.setdefault(
+            journal_run_id,
+            ExecutionJournal(journal_run_id),
+        ),
+    )
+
+    waiting = runtime.run(graph, {}, run_id=run_id)
+    assert waiting.checkpoint is not None
+    assert pool.available("callback") == 0
+    callback_payload = {"status": "completed"}
+    receipt = {
+        "operation_id": operation["operation_id"],
+        "run_id": run_id,
+        "node_id": "wait",
+        "attempt_id": operation["attempt_id"],
+        "provider_operation_id": operation["provider_operation_id"],
+        "operation_idempotency_key": operation["idempotency_key"],
+        "callback_idempotency_key": "delivery-resume-projection-failure",
+        "resume_token_hash": operation["resume_token_hash"],
+        "schema_id": operation["expected_schema"],
+        "schema_validated": True,
+        "payload": callback_payload,
+        "payload_digest": graphblocks.canonical_hash(callback_payload),
+        "received_at_unix_ms": 2_000,
+        "verified_by": "callback-relay",
+        "resume_admission": {
+            "policy_reevaluated": True,
+            "budget_reserved": True,
+            "release_compatible": True,
+            "ownership_fenced": True,
+        },
+    }
+
+    result = runtime.run(
+        graph,
+        {},
+        run_id=run_id,
+        checkpoint=waiting.checkpoint,
+        callback_receipt=receipt,
+    )
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert store.get_run(run_id).status == "failed"
+    assert pool.available("callback") == 1
+    failure = next(
+        record for record in result.journal.records if record.kind == "node_failed"
+    )
+    assert failure.payload["node"] == "wait"
+    assert "missing" in failure.payload["error"]
+    with pytest.raises(
+        ValueError,
+        match="runtime checkpoint state does not match the issuing runtime",
+    ):
+        runtime.run(
+            graph,
+            {},
+            run_id=run_id,
+            checkpoint=waiting.checkpoint,
+            callback_receipt=receipt,
+        )
 
 
 def test_runtime_executes_conversation_vertical_slice() -> None:
@@ -430,15 +809,21 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
             }
         },
     )
-    with pytest.raises(
-        ValueError,
-        match="runtime checkpoint operation operation_id must be an exact non-empty string",
-    ):
-        InProcessRuntime(malformed_registry).run(
-            graph,
-            {},
-            run_id="run-runtime-resume-1",
-        )
+    malformed = InProcessRuntime(malformed_registry).run(
+        graph,
+        {},
+        run_id="run-runtime-resume-1",
+    )
+
+    assert malformed.status == "failed"
+    assert malformed.journal.terminal_kind == "run_failed"
+    malformed_failure = next(
+        record for record in malformed.journal.records if record.kind == "node_failed"
+    )
+    assert (
+        "runtime checkpoint operation operation_id must be an exact non-empty string"
+        in malformed_failure.payload["error"]
+    )
 
 
 def test_stdlib_policy_stop_turn_blocks_late_commit() -> None:

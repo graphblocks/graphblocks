@@ -868,55 +868,82 @@ class InProcessRuntime:
                 "callback": callback_payload,
                 "operation": operation,
             }
-            descriptor = self.registry.block_catalog.get(
-                "async.await_callback@1"
-            )
-            if descriptor is not None:
-                declared_outputs = {
-                    port.name for port in descriptor.outputs
-                }
-                unexpected_outputs = sorted(
-                    set(wait_result) - declared_outputs
+            try:
+                descriptor = self.registry.block_catalog.get(
+                    "async.await_callback@1"
                 )
-                if unexpected_outputs:
-                    raise TypeError(
-                        "async.await_callback@1 returned undeclared output(s): "
-                        + ", ".join(unexpected_outputs)
+                if descriptor is not None:
+                    declared_outputs = {
+                        port.name for port in descriptor.outputs
+                    }
+                    unexpected_outputs = sorted(
+                        set(wait_result) - declared_outputs
                     )
-                missing_outputs = sorted(
-                    port.name
-                    for port in descriptor.outputs
-                    if port.required and port.name not in wait_result
+                    if unexpected_outputs:
+                        raise TypeError(
+                            "async.await_callback@1 returned undeclared output(s): "
+                            + ", ".join(unexpected_outputs)
+                        )
+                    missing_outputs = sorted(
+                        port.name
+                        for port in descriptor.outputs
+                        if port.required and port.name not in wait_result
+                    )
+                    if missing_outputs:
+                        raise TypeError(
+                            "async.await_callback@1 omitted required output(s): "
+                            + ", ".join(missing_outputs)
+                        )
+                node_outputs[checkpoint.wait_node] = wait_result
+                for edge in edges:
+                    if not (
+                        isinstance(edge, dict)
+                        and isinstance(edge.get("from"), str)
+                        and isinstance(edge.get("to"), str)
+                        and edge["from"].split(".", 1)[0]
+                        == checkpoint.wait_node
+                        and edge["to"].startswith("$output.")
+                    ):
+                        continue
+                    value: Any = wait_result
+                    source_path = edge["from"].partition(".")[2]
+                    if source_path:
+                        for part in source_path.split("."):
+                            value = value[part]
+                    target_path = edge["to"].partition(".")[2]
+                    current = output_values
+                    parts = target_path.split(".")
+                    for part in parts[:-1]:
+                        nested = current.setdefault(part, {})
+                        if not isinstance(nested, dict):
+                            raise RuntimeError(
+                                f"output path conflict at {edge['to']}"
+                            )
+                        current = nested
+                    current[parts[-1]] = value
+            except Exception as exc:
+                with self._checkpoint_lock:
+                    self._checkpoint_state_digests.pop(
+                        checkpoint.checkpoint_id,
+                        None,
+                    )
+                journal.append(
+                    "node_failed",
+                    {
+                        "node": checkpoint.wait_node,
+                        "error": str(exc),
+                        "attempt": 1,
+                    },
                 )
-                if missing_outputs:
-                    raise TypeError(
-                        "async.await_callback@1 omitted required output(s): "
-                        + ", ".join(missing_outputs)
-                    )
-            node_outputs[checkpoint.wait_node] = wait_result
-            for edge in edges:
-                if not (
-                    isinstance(edge, dict)
-                    and isinstance(edge.get("from"), str)
-                    and isinstance(edge.get("to"), str)
-                    and edge["from"].split(".", 1)[0] == checkpoint.wait_node
-                    and edge["to"].startswith("$output.")
-                ):
-                    continue
-                value: Any = wait_result
-                source_path = edge["from"].partition(".")[2]
-                if source_path:
-                    for part in source_path.split("."):
-                        value = value[part]
-                target_path = edge["to"].partition(".")[2]
-                current = output_values
-                parts = target_path.split(".")
-                for part in parts[:-1]:
-                    nested = current.setdefault(part, {})
-                    if not isinstance(nested, dict):
-                        raise RuntimeError(f"output path conflict at {edge['to']}")
-                    current = nested
-                current[parts[-1]] = value
+                journal.append_terminal(
+                    "run_failed",
+                    {"node": checkpoint.wait_node, "error": str(exc)},
+                )
+                if self.run_store is not None:
+                    self.run_store.set_status(run_id, "failed")
+                if self.lease_pool is not None:
+                    self.lease_pool.release_all(run_id)
+                return RunResult(run_id, "failed", output_values, journal)
             remaining.remove(checkpoint.wait_node)
             if self.run_store is not None:
                 self.run_store.set_status(run_id, "resuming")
@@ -959,6 +986,50 @@ class InProcessRuntime:
                 return RunResult(run_id, "cancelled", {}, journal)
             progressed = False
             for node_name in sorted(remaining):
+                node = nodes[node_name]
+                guard = node.get("when")
+                if isinstance(guard, str):
+                    guard_owner, _, guard_path = guard.partition(".")
+                    guard_ready = True
+                    if guard_owner == "$input":
+                        guard_value: Any = inputs
+                    elif guard_owner in node_outputs:
+                        guard_value = node_outputs[guard_owner]
+                    else:
+                        guard_ready = False
+                        guard_value = None
+                    if guard_ready:
+                        for part in guard_path.split("."):
+                            if isinstance(guard_value, dict) and part in guard_value:
+                                guard_value = guard_value[part]
+                            else:
+                                guard_ready = False
+                                break
+                    if not guard_ready:
+                        continue
+                    if not isinstance(guard_value, bool):
+                        error = f"node {node_name!r} when guard must resolve to a boolean"
+                        journal.append("node_failed", {"node": node_name, "error": error, "attempt": 0})
+                        journal.append_terminal("run_failed", {"node": node_name, "error": error})
+                        if self.run_store is not None:
+                            self.run_store.set_status(run_id, "failed")
+                        if self.lease_pool is not None:
+                            self.lease_pool.release_all(run_id)
+                        return RunResult(run_id, "failed", output_values, journal)
+                    if not guard_value:
+                        node_outputs[node_name] = {}
+                        journal.append(
+                            "node_succeeded",
+                            {
+                                "node": node_name,
+                                "outputs": [],
+                                "skipped": True,
+                                "reason": "condition_false",
+                            },
+                        )
+                        remaining.remove(node_name)
+                        progressed = True
+                        break
                 inbound = [
                     edge
                     for edge in edges
@@ -1016,7 +1087,6 @@ class InProcessRuntime:
                 if not ready:
                     continue
 
-                node = nodes[node_name]
                 block_id = str(node["block"])
                 flow = node.get("flow", {})
                 retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
@@ -1150,102 +1220,139 @@ class InProcessRuntime:
                     and wait_descriptor.get("state") == "waiting_callback"
                     and wait_descriptor.get("checkpoint") is True
                 ):
-                    operation = wait_descriptor.get("operation")
-                    if not isinstance(operation, Mapping):
-                        raise ValueError(
-                            "async callback wait checkpoint requires operation object"
+                    checkpoint_id: str | None = None
+                    try:
+                        operation = wait_descriptor.get("operation")
+                        if not isinstance(operation, Mapping):
+                            raise ValueError(
+                                "async callback wait checkpoint requires operation object"
+                            )
+                        with self._checkpoint_lock:
+                            checkpoint_sequence = self._next_checkpoint_sequence
+                            self._next_checkpoint_sequence += 1
+                        checkpoint_id = (
+                            f"{run_id}:{node_name}:{checkpoint_sequence}"
                         )
-                    with self._checkpoint_lock:
-                        checkpoint_sequence = self._next_checkpoint_sequence
-                        self._next_checkpoint_sequence += 1
-                    checkpoint_id = (
-                        f"{run_id}:{node_name}:{checkpoint_sequence}"
-                    )
-                    checkpoint_inputs = canonical_loads(canonical_dumps(inputs))
-                    checkpoint_remaining_nodes = tuple(sorted(remaining))
-                    checkpoint_node_outputs = canonical_loads(
-                        canonical_dumps(node_outputs)
-                    )
-                    checkpoint_output_values = canonical_loads(
-                        canonical_dumps(output_values)
-                    )
-                    checkpoint_operation = canonical_loads(
-                        canonical_dumps(dict(operation))
-                    )
-                    checkpoint_state_digest = canonical_hash(
-                        {
-                            "checkpoint_id": checkpoint_id,
-                            "run_id": run_id,
-                            "graph_hash": plan.graph_hash,
-                            "wait_node": node_name,
-                            "remaining_nodes": list(
-                                checkpoint_remaining_nodes
-                            ),
-                            "inputs": checkpoint_inputs,
-                            "node_outputs": checkpoint_node_outputs,
-                            "output_values": checkpoint_output_values,
-                            "operation": checkpoint_operation,
-                        }
-                    )
-                    runtime_checkpoint = RuntimeCheckpoint(
-                        checkpoint_id=checkpoint_id,
-                        run_id=run_id,
-                        graph_hash=plan.graph_hash,
-                        wait_node=node_name,
-                        remaining_nodes=checkpoint_remaining_nodes,
-                        inputs=checkpoint_inputs,
-                        node_outputs=checkpoint_node_outputs,
-                        output_values=checkpoint_output_values,
-                        operation=checkpoint_operation,
-                        state_digest=checkpoint_state_digest,
-                    )
-                    with self._checkpoint_lock:
-                        self._checkpoint_state_digests[
-                            checkpoint_id
-                        ] = checkpoint_state_digest
-                    if self.run_store is not None:
-                        self.run_store.set_status(run_id, "waiting_callback")
-                    journal.append(
-                        "run_waiting_callback",
-                        {
-                            "operationId": operation.get("operation_id"),
-                            "node": node_name,
-                            "graphHash": plan.graph_hash,
-                        },
-                    )
-                    return RunResult(
-                        run_id,
-                        "waiting_callback",
-                        dict(output_values),
-                        journal,
-                        runtime_checkpoint,
-                    )
+                        checkpoint_inputs = canonical_loads(canonical_dumps(inputs))
+                        checkpoint_remaining_nodes = tuple(sorted(remaining))
+                        checkpoint_node_outputs = canonical_loads(
+                            canonical_dumps(node_outputs)
+                        )
+                        checkpoint_output_values = canonical_loads(
+                            canonical_dumps(output_values)
+                        )
+                        checkpoint_operation = canonical_loads(
+                            canonical_dumps(dict(operation))
+                        )
+                        checkpoint_state_digest = canonical_hash(
+                            {
+                                "checkpoint_id": checkpoint_id,
+                                "run_id": run_id,
+                                "graph_hash": plan.graph_hash,
+                                "wait_node": node_name,
+                                "remaining_nodes": list(
+                                    checkpoint_remaining_nodes
+                                ),
+                                "inputs": checkpoint_inputs,
+                                "node_outputs": checkpoint_node_outputs,
+                                "output_values": checkpoint_output_values,
+                                "operation": checkpoint_operation,
+                            }
+                        )
+                        runtime_checkpoint = RuntimeCheckpoint(
+                            checkpoint_id=checkpoint_id,
+                            run_id=run_id,
+                            graph_hash=plan.graph_hash,
+                            wait_node=node_name,
+                            remaining_nodes=checkpoint_remaining_nodes,
+                            inputs=checkpoint_inputs,
+                            node_outputs=checkpoint_node_outputs,
+                            output_values=checkpoint_output_values,
+                            operation=checkpoint_operation,
+                            state_digest=checkpoint_state_digest,
+                        )
+                        with self._checkpoint_lock:
+                            self._checkpoint_state_digests[
+                                checkpoint_id
+                            ] = checkpoint_state_digest
+                        if self.run_store is not None:
+                            self.run_store.set_status(run_id, "waiting_callback")
+                        journal.append(
+                            "run_waiting_callback",
+                            {
+                                "operationId": operation.get("operation_id"),
+                                "node": node_name,
+                                "graphHash": plan.graph_hash,
+                            },
+                        )
+                        return RunResult(
+                            run_id,
+                            "waiting_callback",
+                            dict(output_values),
+                            journal,
+                            runtime_checkpoint,
+                        )
+                    except Exception as exc:
+                        if checkpoint_id is not None:
+                            with self._checkpoint_lock:
+                                self._checkpoint_state_digests.pop(checkpoint_id, None)
+                        journal.append(
+                            "node_failed",
+                            {"node": node_name, "error": str(exc), "attempt": attempt},
+                        )
+                        journal.append_terminal(
+                            "run_failed",
+                            {"node": node_name, "error": str(exc)},
+                        )
+                        if self.run_store is not None:
+                            self.run_store.set_status(run_id, "failed")
+                        if self.lease_pool is not None:
+                            self.lease_pool.release_all(run_id)
+                        return RunResult(run_id, "failed", output_values, journal)
 
                 node_outputs[node_name] = result
-                for edge in edges:
-                    if not (
-                        isinstance(edge, dict)
-                        and isinstance(edge.get("from"), str)
-                        and isinstance(edge.get("to"), str)
-                        and edge["from"].split(".", 1)[0] == node_name
-                        and edge["to"].startswith("$output.")
-                    ):
-                        continue
-                    value = result
-                    source_path = edge["from"].partition(".")[2]
-                    if source_path:
-                        for part in source_path.split("."):
-                            value = value[part]
-                    target_path = edge["to"].partition(".")[2]
-                    current = output_values
-                    parts = target_path.split(".")
-                    for part in parts[:-1]:
-                        nested = current.setdefault(part, {})
-                        if not isinstance(nested, dict):
-                            raise RuntimeError(f"output path conflict at {edge['to']}")
-                        current = nested
-                    current[parts[-1]] = value
-                journal.append("node_succeeded", {"node": node_name, "outputs": sorted(result)})
+                try:
+                    for edge in edges:
+                        if not (
+                            isinstance(edge, dict)
+                            and isinstance(edge.get("from"), str)
+                            and isinstance(edge.get("to"), str)
+                            and edge["from"].split(".", 1)[0] == node_name
+                            and edge["to"].startswith("$output.")
+                        ):
+                            continue
+                        value = result
+                        source_path = edge["from"].partition(".")[2]
+                        if source_path:
+                            for part in source_path.split("."):
+                                value = value[part]
+                        target_path = edge["to"].partition(".")[2]
+                        current = output_values
+                        parts = target_path.split(".")
+                        for part in parts[:-1]:
+                            nested = current.setdefault(part, {})
+                            if not isinstance(nested, dict):
+                                raise RuntimeError(f"output path conflict at {edge['to']}")
+                            current = nested
+                        current[parts[-1]] = value
+                    journal.append(
+                        "node_succeeded",
+                        {"node": node_name, "outputs": sorted(result)},
+                    )
+                except Exception as exc:
+                    journal.append(
+                        "node_failed",
+                        {"node": node_name, "error": str(exc), "attempt": attempt},
+                    )
+                    journal.append_terminal(
+                        "run_failed",
+                        {"node": node_name, "error": str(exc)},
+                    )
+                    if self.run_store is not None:
+                        self.run_store.set_status(run_id, "failed")
+                    if self.lease_pool is not None:
+                        self.lease_pool.release_all(run_id)
+                    return RunResult(run_id, "failed", output_values, journal)
                 remaining.remove(node_name)
                 progressed = True
                 break

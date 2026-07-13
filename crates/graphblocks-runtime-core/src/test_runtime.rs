@@ -356,9 +356,31 @@ impl InProcessTestRuntime {
 
                 match execution_result {
                     Ok(outputs) => {
+                        let skipped = if !outputs.is_empty()
+                            && outputs
+                                .iter()
+                                .all(|(_, outcome)| matches!(outcome, Outcome::Skipped(_)))
+                        {
+                            outputs.iter().find_map(|(_, outcome)| match outcome {
+                                Outcome::Skipped(reason) => Some(reason.clone()),
+                                _ => None,
+                            })
+                        } else {
+                            None
+                        };
                         let newly_ready = self.scheduler.complete_node(&node_id, outputs)?;
-                        self.journal
-                            .append_with_metadata("node_completed", metadata, None)?;
+                        let completed_payload = skipped.map(|reason| {
+                            json!({
+                                "skipped": true,
+                                "reason": reason.code,
+                                "message": reason.message,
+                            })
+                        });
+                        self.journal.append_with_metadata(
+                            "node_completed",
+                            metadata,
+                            completed_payload,
+                        )?;
                         for node_id in newly_ready {
                             ready.push_back(node_id);
                         }
