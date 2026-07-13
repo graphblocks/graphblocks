@@ -22,6 +22,11 @@ Tool-call identity, attempt, schema, and result identity MUST remain linked in
 conversation history. Duplicate identical results may replay idempotently;
 conflicting result reuse MUST fail.
 
+A resolved tool's `valid_until` is an exclusive capability boundary. Tool
+admission and every adapter invocation MUST reject the capability when the
+evaluation timestamp is greater than or equal to `valid_until`; an earlier
+admission does not authorize an adapter call made at or after that boundary.
+
 Conversation memory and retrieval are explicit graph inputs. Implementations
 MUST apply tenant, principal, policy, and budget boundaries before injecting
 memory or external context into a model request.

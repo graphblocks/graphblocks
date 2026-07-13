@@ -14,17 +14,22 @@ a deterministic offline `config.response`. It returns `value`, `response`,
 optional `items`, `schemaId`, the compatibility alias `schemaRef`, and
 `contentDigest`. A missing response or a non-JSON object/array fails closed.
 
-`retrieve.execute_plan@1` accepts a query and resolved retrieval source records
-through `inputs.sources` or `config.sources`. It applies the configured minimum
-successful-source policy and returns `result` plus normalized `sources`.
+`retrieve.execute_plan@1` accepts a search request through `inputs.query` or the
+compatibility alias `inputs.request`, and resolved retrieval source records
+through `inputs.sources` or `config.sources`. `query` takes precedence when both
+aliases are present. It applies the configured minimum successful-source policy
+and returns `result` plus normalized `sources`.
 Network and database clients remain resource adapters rather than stdlib
 dependencies.
 
-`retrieve.fuse@1` deterministically fuses source hit lists.
-`rank.documents@1` deterministically reranks supplied hits.
-`context.build@1` creates a bounded context pack from supplied evidence.
-`answer.validate_grounding@1` validates a typed answer against that context and
-returns `candidate`, `response`, `result`, and `validation`. When configured to
+`retrieve.fuse@1` deterministically fuses source hit lists and returns metadata
+identifying the algorithm and source count. `rank.documents@1` extracts terms
+from a typed search request before deterministically reranking supplied hits.
+`context.build@1` creates a bounded context pack from `inputs.evidence` or its
+`inputs.hits` compatibility alias, with `evidence` taking precedence.
+`answer.validate_grounding@1` validates `inputs.response` or its `inputs.answer`
+compatibility alias against that context and returns `candidate`, `response`,
+`result`, and `validation`. `response` takes precedence. When configured to
 abstain, insufficient evidence returns a graph-compatible abstention candidate
 instead of an unsupported answer.
 
@@ -36,18 +41,23 @@ implicitly. The block returns `results`, `checks`, `diagnostics`, `passed`, and
 `hardGatePassed`.
 
 `gate.evaluate@1` applies required-check and metric constraints using the typed
-gate evaluator. It returns `result`, `decision`, `passed`, and `violations`.
+gate evaluator. Missing metrics and unsatisfied constraints fail the gate. The
+result remains bound to `inputs.subject` when supplied. It returns `result`,
+`decision`, `passed`, and `violations`.
 
 `review.request@1` always creates a subject-bound review request. Without a
 review response it returns a pending application work item and never fabricates
 approval. An injected review must match the subject digest and requested scope;
 when `requiredCredential` is configured, its reference must be present. The
-block returns `request`, `record`, `accepted`/`approved`, `status`, and
-`waitMode`. Durable notification and wait/resume remain application/runtime
-responsibilities.
+request binds `inputs.requestedBy` or `inputs.requested_by` and optional gate
+evidence. The block returns `request`, its canonical `requestDigest`, `record`,
+`accepted`/`approved`, `status`, and `waitMode`. Durable notification and
+wait/resume remain application/runtime responsibilities.
 
-`result.bundle@1` creates a canonical result bundle from outputs and optional
-evidence, checks, metrics, artifacts, diagnostics, reviews, and gate data. It
+`result.bundle@1` creates a canonical result bundle from inputs, outputs, and
+optional evidence, checks, metrics, artifacts, diagnostics, reviews, gate,
+usage, and policy-decision data. Every advertised evidence field participates
+in `contentDigest`; runtimes MUST NOT silently discard a supplied field. It
 returns `result`, the `bundle` alias, and `contentDigest`. Persisting or
 publishing the bundle is a separate effect.
 

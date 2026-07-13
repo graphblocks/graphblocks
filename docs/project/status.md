@@ -10,7 +10,7 @@ The Python release surface is consolidated into three distributions:
 TCK. Package catalog component entries remain capability and binding identities,
 not separately published wheels.
 
-The consolidated checkout is verified by 2,457 Python tests, the complete Rust
+The consolidated checkout is verified by 2,625 Python tests, the complete Rust
 workspace formatting/strict-Clippy/test gates, all 42 acceptance gates, and a
 fresh no-index wheelhouse install of the three Python distributions followed by
 `pip check`.

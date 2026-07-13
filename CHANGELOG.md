@@ -16,6 +16,20 @@ pre-release alpha software.
 
 ### Changed
 
+- Made graph execution honor boolean `when` dependencies without dispatching
+  false branches or waiting for their unused inputs, propagated auditable native
+  skip outcomes, terminalized projection/checkpoint/resume failures, and
+  rejected cycles, malformed endpoints, and reversed pseudo-node directions at
+  compile time in Python and Rust, while preserving the tightly bounded
+  checkpointed realtime voice tool-feedback profile.
+- Aligned native stdlib execution with the advertised portable block contracts:
+  typed retrieval, context, and grounding aliases now execute, structured
+  requests drive ranking, metric constraints fail closed, review digests are
+  emitted, and all result-bundle evidence participates in its canonical digest.
+- Made resolved-tool expiration exclusive at admission and at every Python
+  adapter invocation, completed PEP 503 handling for all artifact references,
+  disambiguated exact component requests, and prevented package/composition
+  source swaps from escaping their roots or blocking on raced special files.
 - Consolidated the Python release surface into `graphblocks`,
   `graphblocks-runtime`, and `graphblocks-testing`; built-in and integration
   catalog components now map to those artifacts instead of requiring separate

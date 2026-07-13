@@ -33,15 +33,19 @@ and acceptance evidence.
 
 Python distribution names use PEP 503 identity rules throughout this surface.
 For example, `example-wheel`, `example_wheel`, and `example.wheel` identify the
-same distribution and cannot appear as separate artifacts, lock entries, or
-wheel targets.
+same distribution and cannot appear as separate artifacts, lock artifact
+identities, or wheel targets. Component lock entries are logical capability
+identities instead: their spelling remains exact. If a requested value is both
+an exact component name and an alias of an artifact, the exact component match
+takes precedence.
 
 `graphblocks packages doctor --root` and `graphblocks packages wheel-matrix
 --root` treat the supplied root as a security boundary. Catalog manifests must
 stay within it; absolute paths, `..` escapes, and symlinks resolving outside the
 root are rejected. The reader uses descriptor-relative traversal where the
 platform provides it and a fail-closed component/file-identity check otherwise,
-including Windows reparse-point rejection.
+including Windows reparse-point rejection. Final file opens are non-blocking so
+a raced FIFO or other special file is rejected rather than stalling validation.
 
 The canonical machine-readable package catalog is
 `src/graphblocks/data/package-catalog.yaml`. See the normative

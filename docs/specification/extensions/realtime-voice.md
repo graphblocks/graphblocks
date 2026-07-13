@@ -5,6 +5,15 @@ authority, model/provider session identity, interruption policy, and a playback
 ledger. Media chunks and control events MUST preserve session and monotonic
 sequence identity.
 
+A graph using `graphblocks.voice/v1alpha1` MAY declare the canonical realtime
+tool-feedback cycle only when execution is a checkpointed duplex `session` and
+`voice.pipeline.kind` is `realtime`. The cyclic component MUST contain exactly
+one `realtime.session@1` node and one `tools.dispatch@1` node, connected by
+`session.toolCalls -> tools.calls` and
+`tools.results -> session.toolResults`. Guards, additional nodes, or additional
+internal edges make the cycle invalid; every other graph cycle remains subject
+to ordinary acyclic validation.
+
 Local VAD may detect a candidate interruption, but when provider authority is
 configured it MUST return `continue` until a matching provider confirmation is
 received. A confirmation for another provider or session is invalid. A valid

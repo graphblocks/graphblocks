@@ -27,12 +27,21 @@ symbolic links. Doctor and wheel-matrix operations MUST reject absolute or
 escaped manifest references before reading package metadata. They MUST report
 malformed paths separately, MUST reject multiple artifacts whose references
 resolve to the same manifest, and MUST read the resolved in-root file without
-following a later path or symbolic-link replacement.
+following a later path or symbolic-link replacement. Final opens MUST NOT block
+on a raced FIFO or other special-file replacement.
 
 Python distribution identities MUST be compared using PEP 503 canonical names.
 Catalog artifacts, locks, wheel matrices, and installed-artifact verification
 MUST reject dotted, underscored, repeated-separator, or case variants that
 canonicalize to the same distribution identity.
+
+Canonical comparison applies to every artifact reference, including artifact
+dependency edges, component-to-artifact mappings, default artifact selections,
+requested artifact selections, and lock artifact fields. Component names are
+logical capability identities rather than Python distribution names and retain
+their exact spelling. When one requested value is both an exact component name
+and a canonical alias of an artifact, the exact component match takes
+precedence; one request MUST NOT implicitly select both identities.
 
 Plugins execute with explicitly granted capabilities. Loading a plugin MUST NOT
 grant filesystem, network, secret, tool, deployment, or policy authority merely

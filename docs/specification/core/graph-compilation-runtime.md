@@ -8,6 +8,11 @@ compiler MUST diagnose unknown endpoints, duplicate identities, invalid
 configuration, unsupported cycles, unresolved binding requirements, and target
 incompatibility before execution.
 
+Every edge endpoint MUST contain an owner and port path. `$input` is valid only
+as an edge source and `$output` only as an edge target; the opposite directions
+MUST fail compilation. Ordinary executable graphs MUST be acyclic unless a
+selected runtime profile explicitly defines a bounded cycle construct.
+
 Normalization and expansion MUST be deterministic. A physical plan MUST bind
 the normalized graph, resolved blocks and packages, target, policy inputs, and
 compiler version into canonical evidence. Identical inputs MUST produce the same
@@ -20,6 +25,24 @@ requirements are satisfied. It MUST preserve typed ports, record state
 transitions in order, and project exactly one terminal outcome per run. Terminal
 success, failure, cancellation, rejection, pause, and exhaustion MUST remain
 distinguishable.
+
+A node `when` reference is a boolean dependency. The runtime MUST wait for that
+dependency, execute the node only when it resolves to `true`, and skip it
+without invoking the block when it resolves to `false`. A missing or non-boolean
+condition MUST fail closed. The referenced root port MUST exist on a declared
+graph input or resolved source block. In particular, a false guard MUST never allow a
+state-changing block to commit an effect. Guard resolution gates ordinary input
+readiness: a false branch MUST be skippable without waiting for inputs that the
+block will never consume. The skip and its reason MUST remain auditable, and
+native scheduling MUST propagate skipped outcomes to dependent ports.
+
+Failures after a block returns, including output-path projection and checkpoint
+materialization, remain part of node execution. They MUST append a terminal
+failure, update durable run state, and release run-scoped leases instead of
+escaping with the run still recorded as running. Output projection MUST finish
+before terminal success is recorded. The same cleanup rule applies while
+projecting a resumed callback, and a failed resume MUST consume its checkpoint
+so it cannot be replayed.
 
 Cancellation MUST be structured and cooperative, with explicit behavior for
 in-flight provider calls, tools, children, checkpointing, and cleanup. Timeout

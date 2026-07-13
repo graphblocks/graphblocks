@@ -266,6 +266,15 @@ implementation MUST check the resolved target against the resolved root and
 fail closed on an import cycle, missing file, special file, or path race it can
 detect.
 
+Validation and reading MUST be one security boundary. Implementations SHOULD
+use descriptor-relative traversal with no-follow semantics where the platform
+provides it. A portable fallback MUST reject symbolic links or reparse points,
+verify component and file identities before opening, and recheck them after the
+read so a validated entry or import cannot be replaced with an out-of-root
+target during composition. The final source open MUST be non-blocking and MUST
+reject a raced FIFO or other special-file replacement without waiting for a
+writer or device.
+
 The YAML reader MUST be safe and bounded. It MUST reject unknown or executable
 tags, duplicate mapping keys, recursive aliases, cyclic value graphs,
 non-canonical map keys, and values outside the canonical JSON domain. YAML
