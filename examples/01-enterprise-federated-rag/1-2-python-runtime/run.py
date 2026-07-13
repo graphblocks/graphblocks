@@ -5,6 +5,19 @@ import sys
 
 from graphblocks.canonical import canonical_dumps
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
+from graphblocks.stdlib_blocks import (
+    ANSWER as ANSWER_TYPE,
+    FEDERATED_SOURCES,
+    GROUNDING_VALIDATION,
+    SEARCH_REQUEST,
+    AnswerValidateGrounding,
+    ContextBuild,
+    RankDocuments,
+    RetrieveExecutePlan,
+    RetrieveFuse,
+    StructuredGenerate,
+)
+from graphblocks.typed import GraphBuilder
 
 
 EXAMPLE_ROOT = Path(__file__).parent.parent
@@ -125,72 +138,60 @@ ANSWER = {
 }
 
 
-GRAPH = {
-    "apiVersion": "graphblocks.ai/v1alpha3",
-    "kind": "Graph",
-    "metadata": {"name": "enterprise-rag-runtime-parity"},
-    "spec": {
-        "interface": {
-            "inputs": {
-                "query": "graphblocks.ai/SearchRequest@1",
-                "sources": "graphblocks.ai/FederatedSources@1",
-            },
-            "outputs": {
-                "candidate": "graphblocks.ai/Answer@1",
-                "validation": "graphblocks.ai/GroundingValidation@1",
-            },
-        },
-        "nodes": {
-            "retrieve": {
-                "block": "retrieve.execute_plan@1",
-                "inputs": {"query": "$input.query", "sources": "$input.sources"},
-                "config": {"minimumSuccessfulSources": 2, "topK": 5},
-            },
-            "fuse": {
-                "block": "retrieve.fuse@1",
-                "inputs": {"sources": "retrieve.sources"},
-                "config": {"algorithm": "reciprocal_rank_fusion", "k": 60},
-            },
-            "rerank": {
-                "block": "rank.documents@1",
-                "inputs": {"query": "$input.query", "hits": "fuse.hits"},
-                "config": {"rerankerId": "deterministic-lexical"},
-            },
-            "context": {
-                "block": "context.build@1",
-                "inputs": {"evidence": "rerank.hits"},
-                "config": {
-                    "contextId": "context-key-rotation",
-                    "maxTokens": 1000,
-                    "reserveOutputTokens": 100,
-                },
-            },
-            "generate": {
-                "block": "model.structured_generate@1",
-                "inputs": {"context": "context.pack"},
-                "config": {
-                    "outputSchema": "graphblocks.ai/Answer@1",
-                    "response": ANSWER,
-                },
-            },
-            "validate": {
-                "block": "answer.validate_grounding@1",
-                "inputs": {
-                    "response": "generate.response",
-                    "context": "context.pack",
-                },
-                "config": {
-                    "requireCitation": True,
-                    "onInsufficientEvidence": "abstain",
-                },
-                "outputs": {
-                    "candidate": "$output.candidate",
-                    "validation": "$output.validation",
-                },
-            },
-        },
-    },
-}
+def build_graph() -> dict[str, object]:
+    graph = GraphBuilder("enterprise-rag-runtime-parity")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+    candidate = graph.output("candidate", ANSWER_TYPE)
+    validation = graph.output("validation", GROUNDING_VALIDATION)
+
+    retrieve = graph.add(
+        "retrieve",
+        RetrieveExecutePlan(minimum_successful_sources=2, top_k=5).bind(
+            query=query,
+            sources=sources,
+        ),
+    )
+    fuse = graph.add(
+        "fuse",
+        RetrieveFuse(algorithm="reciprocal_rank_fusion", k=60).bind(
+            sources=retrieve.sources
+        ),
+    )
+    rerank = graph.add(
+        "rerank",
+        RankDocuments(reranker_id="deterministic-lexical").bind(
+            query=query,
+            hits=fuse.hits,
+        ),
+    )
+    context = graph.add(
+        "context",
+        ContextBuild(
+            context_id="context-key-rotation",
+            max_tokens=1000,
+            reserve_output_tokens=100,
+        ).bind(evidence=rerank.hits),
+    )
+    generate = graph.add(
+        "generate",
+        StructuredGenerate(output_schema=ANSWER_TYPE, response=ANSWER).bind(
+            context=context.pack
+        ),
+    )
+    grounded = graph.add(
+        "validate",
+        AnswerValidateGrounding(
+            require_citation=True,
+            on_insufficient_evidence="abstain",
+        ).bind(response=generate.response, context=context.pack),
+    )
+    graph.publish(candidate, grounded.candidate)
+    graph.publish(validation, grounded.validation)
+    return graph.build()
+
+
+GRAPH = build_graph()
 
 INPUTS = {
     "query": {"original": "production signing key rotation approvals", "topK": 5},
