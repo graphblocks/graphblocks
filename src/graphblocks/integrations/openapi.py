@@ -812,7 +812,7 @@ def _validate_resolved_tool_capability(
             owner=owner,
             field="valid_until",
         )
-        if effective_datetime > valid_until_datetime:
+        if effective_datetime >= valid_until_datetime:
             raise OpenApiToolAdapterError(
                 f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
             )

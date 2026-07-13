@@ -328,6 +328,12 @@ def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeyp
             replace(resolved, valid_until="2026-06-23T00:00:01Z"),
             validation_time="2026-06-23T00:00:02Z",
         )
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="expired at 2026-06-23T00:00:01Z"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-23T00:00:01Z"),
+            validation_time="2026-06-23T00:00:01Z",
+        )
 
     offset_valid = replace(resolved, valid_until="2026-06-23T00:00:00-05:00")
     invocation = graphblocks_mcp.prepare_mcp_tool_invocation(
@@ -1023,6 +1029,12 @@ def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(mon
             admitted,
             replace(resolved, valid_until="2026-06-23T00:00:01Z"),
             validation_time="2026-06-23T00:00:02Z",
+        )
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="expired at 2026-06-23T00:00:01Z"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-23T00:00:01Z"),
+            validation_time="2026-06-23T00:00:01Z",
         )
 
     offset_valid = replace(resolved, valid_until="2026-06-23T00:00:00-05:00")

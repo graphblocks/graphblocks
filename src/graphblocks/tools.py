@@ -1424,7 +1424,7 @@ def admit_tool_call(
             )
         except ValueError as error:
             raise ToolAdmissionError(str(error)) from error
-        if admitted_at_time > valid_until_time:
+        if admitted_at_time >= valid_until_time:
             raise ToolAdmissionError(
                 f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
             )

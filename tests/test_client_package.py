@@ -469,6 +469,12 @@ def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeyp
             replace(resolved, valid_until="2026-06-24T00:00:01Z"),
             validation_time="2026-06-24T00:00:02Z",
         )
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="expired at 2026-06-24T00:00:01Z"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-24T00:00:01Z"),
+            validation_time="2026-06-24T00:00:01Z",
+        )
 
     offset_valid = replace(resolved, valid_until="2026-06-24T00:00:00-05:00")
     invocation = graphblocks_client.prepare_remote_tool_invocation(

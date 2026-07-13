@@ -2229,6 +2229,24 @@ def test_tool_admission_denies_expired_resolved_tool() -> None:
     assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00Z"
 
 
+def test_tool_admission_denies_resolved_tool_at_exact_expiration() -> None:
+    resolved = replace(_resolved_process_tool(), valid_until="2026-06-23T00:00:01Z")
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError, match="resolved tool process.run expired at"):
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+
 def test_tool_admission_compares_resolved_tool_expiration_as_datetime() -> None:
     base = _resolved_process_tool()
     binding = replace(base.binding, approval="never", idempotency="optional")
