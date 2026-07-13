@@ -1,7 +1,18 @@
 use std::error::Error;
 
 use graphblocks_compiler::canonical::canonical_hash;
-use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_with_options_json;
+use graphblocks_runtime_core::stdlib_blocks::{
+    AnswerValue, ContextBuild, ContextBuildConfig, ContextBuildInputs, FederatedSourcesValue,
+    GroundingFailurePolicy, RankDocuments, RankDocumentsConfig, RankDocumentsInputs,
+    RetrievalFusionAlgorithm, RetrieveExecutePlan, RetrieveExecutePlanConfig,
+    RetrieveExecutePlanInputs, RetrieveFuse, RetrieveFuseConfig, RetrieveFuseInputs,
+    SearchRequestValue, StructuredGenerate, StructuredGenerateConfig, StructuredGenerateInputs,
+    ValidateGrounding, ValidateGroundingConfig, ValidateGroundingInputs,
+};
+use graphblocks_runtime_core::stdlib_runtime::{
+    StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
+};
+use graphblocks_runtime_core::typed_graph::{GraphBuilder, GraphDocument};
 use serde_json::{Value, json};
 
 fn source_ref(
@@ -38,7 +49,7 @@ fn source_ref(
     })
 }
 
-fn graph() -> Value {
+fn graph() -> Result<GraphDocument, Box<dyn Error>> {
     let rotation_source = source_ref(
         "source-chunk-rotation",
         "asset-handbook",
@@ -83,91 +94,83 @@ fn graph() -> Value {
             }
         ]
     });
-    json!({
-        "apiVersion": "graphblocks.ai/v1alpha3",
-        "kind": "Graph",
-        "metadata": {"name": "enterprise-rag-runtime-parity"},
-        "spec": {
-            "interface": {
-                "inputs": {
-                    "query": "graphblocks.ai/SearchRequest@1",
-                    "sources": "graphblocks.ai/FederatedSources@1"
-                },
-                "outputs": {
-                    "candidate": "graphblocks.ai/Answer@1",
-                    "validation": "graphblocks.ai/GroundingValidation@1"
-                }
-            },
-            "nodes": {
-                "retrieve": {
-                    "block": "retrieve.execute_plan@1",
-                    "inputs": {"query": "$input.query", "sources": "$input.sources"},
-                    "config": {"minimumSuccessfulSources": 2, "topK": 5}
-                },
-                "fuse": {
-                    "block": "retrieve.fuse@1",
-                    "inputs": {"sources": "retrieve.sources"},
-                    "config": {"algorithm": "reciprocal_rank_fusion", "k": 60}
-                },
-                "rerank": {
-                    "block": "rank.documents@1",
-                    "inputs": {"query": "$input.query", "hits": "fuse.hits"},
-                    "config": {"rerankerId": "deterministic-lexical"}
-                },
-                "context": {
-                    "block": "context.build@1",
-                    "inputs": {"evidence": "rerank.hits"},
-                    "config": {
-                        "contextId": "context-key-rotation",
-                        "maxTokens": 1000,
-                        "reserveOutputTokens": 100
-                    }
-                },
-                "generate": {
-                    "block": "model.structured_generate@1",
-                    "inputs": {"context": "context.pack"},
-                    "config": {
-                        "outputSchema": "graphblocks.ai/Answer@1",
-                        "response": answer
-                    }
-                },
-                "validate": {
-                    "block": "answer.validate_grounding@1",
-                    "inputs": {
-                        "response": "generate.response",
-                        "context": "context.pack"
-                    },
-                    "config": {
-                        "requireCitation": true,
-                        "onInsufficientEvidence": "abstain"
-                    },
-                    "outputs": {
-                        "candidate": "$output.candidate",
-                        "validation": "$output.validation"
-                    }
-                }
-            }
-        }
-    })
+    let mut graph = GraphBuilder::new("enterprise-rag-runtime-parity")?;
+    let query = graph.input::<SearchRequestValue>("query")?;
+    let sources = graph.input::<FederatedSourcesValue>("sources")?;
+    let retrieve = graph.add(
+        "retrieve",
+        RetrieveExecutePlan::new(RetrieveExecutePlanConfig::new(2, 5)?),
+        RetrieveExecutePlanInputs {
+            query: query.clone(),
+            sources,
+        },
+    )?;
+    let fuse = graph.add(
+        "fuse",
+        RetrieveFuse::new(RetrieveFuseConfig::new(
+            RetrievalFusionAlgorithm::ReciprocalRankFusion,
+            60,
+        )?),
+        RetrieveFuseInputs {
+            sources: retrieve.sources,
+        },
+    )?;
+    let rerank = graph.add(
+        "rerank",
+        RankDocuments::new(RankDocumentsConfig::new("deterministic-lexical")?),
+        RankDocumentsInputs {
+            query,
+            hits: fuse.hits,
+        },
+    )?;
+    let context = graph.add(
+        "context",
+        ContextBuild::new(ContextBuildConfig::new("context-key-rotation", 1_000, 100)?),
+        ContextBuildInputs {
+            evidence: rerank.hits,
+        },
+    )?;
+    let generate = graph.add(
+        "generate",
+        StructuredGenerate::<AnswerValue>::new(StructuredGenerateConfig::new(answer)?),
+        StructuredGenerateInputs {
+            context: context.pack.clone(),
+        },
+    )?;
+    let validate = graph.add(
+        "validate",
+        ValidateGrounding::new(ValidateGroundingConfig::new(
+            true,
+            GroundingFailurePolicy::Abstain,
+        )),
+        ValidateGroundingInputs {
+            response: generate.response,
+            context: context.pack,
+        },
+    )?;
+    graph.bind_output("candidate", &validate.candidate)?;
+    graph.bind_output("validation", &validate.validation)?;
+    Ok(graph.build())
 }
 
 fn execute() -> Result<Value, Box<dyn Error>> {
-    let graph = graph();
+    let graph = graph()?;
     let inputs: Value = serde_json::from_str(include_str!("../../1-1-yaml-runtime/inputs.json"))?;
-    let result_json = run_stdlib_graph_with_options_json(
-        &serde_json::to_string(&graph)?,
-        &serde_json::to_string(&inputs)?,
-        r#"{"runId":"example-01-3-rust"}"#,
+    let result = run_stdlib_graph_with_options(
+        &graph,
+        &inputs,
+        &StdlibRunOptions::default().with_run_id("example-01-3-rust"),
     )?;
-    let result: Value = serde_json::from_str(&result_json)?;
-    if result.get("status").and_then(Value::as_str) != Some("succeeded") {
+    if result.status != StdlibRunStatus::Succeeded {
         return Err("Rust runtime did not succeed".into());
     }
     let candidate = result
-        .pointer("/outputs/candidate")
+        .outputs
+        .get("candidate")
         .ok_or("Rust runtime did not produce a candidate")?;
     let validation = result
-        .pointer("/outputs/validation")
+        .outputs
+        .get("validation")
         .ok_or("Rust runtime did not produce grounding validation")?;
     if validation.get("ok").and_then(Value::as_bool) != Some(true)
         || validation
@@ -206,10 +209,8 @@ fn execute() -> Result<Value, Box<dyn Error>> {
         return Err("Rust semantic result does not match the example contract".into());
     }
     let succeeded_nodes = result
-        .get("journal")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+        .journal
+        .iter()
         .filter(|record| record.get("kind").and_then(Value::as_str) == Some("node_completed"))
         .filter_map(|record| {
             record
@@ -219,7 +220,7 @@ fn execute() -> Result<Value, Box<dyn Error>> {
         })
         .collect::<Vec<_>>();
     let evidence = json!({
-        "graphHash": result.get("graphHash"),
+        "graphHash": result.graph_hash,
         "grounding": {"issueCount": 0, "ok": true},
         "runtime": "rust-api",
         "semanticResult": semantic_result,

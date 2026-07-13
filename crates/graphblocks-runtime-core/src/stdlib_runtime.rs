@@ -29,6 +29,7 @@ use crate::tool::{
     ToolResolutionScope, ToolResultMode,
 };
 use crate::tool_result::ToolEffectOutcome;
+use crate::typed_graph::GraphDocument;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StdlibRuntimeError {
@@ -68,6 +69,116 @@ impl fmt::Display for StdlibRuntimeError {
 }
 
 impl Error for StdlibRuntimeError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StdlibRunStatus {
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl StdlibRunStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StdlibRunOptions {
+    pub run_id: Option<String>,
+    pub run_store_path: Option<String>,
+    pub journal_store_path: Option<String>,
+    pub application_event_store_path: Option<String>,
+    pub deployment_provenance: Option<RunDeploymentProvenance>,
+}
+
+impl StdlibRunOptions {
+    pub fn with_run_id(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
+    }
+
+    pub fn with_run_store_path(mut self, path: impl Into<String>) -> Self {
+        self.run_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_journal_store_path(mut self, path: impl Into<String>) -> Self {
+        self.journal_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_application_event_store_path(mut self, path: impl Into<String>) -> Self {
+        self.application_event_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_deployment_provenance(mut self, provenance: RunDeploymentProvenance) -> Self {
+        self.deployment_provenance = Some(provenance);
+        self
+    }
+
+    fn canonical_value(&self) -> serde_json::Map<String, Value> {
+        let mut value = serde_json::Map::new();
+        if let Some(run_id) = &self.run_id {
+            value.insert("runId".to_owned(), Value::String(run_id.clone()));
+        }
+        if let Some(path) = &self.run_store_path {
+            value.insert("runStorePath".to_owned(), Value::String(path.clone()));
+        }
+        if let Some(path) = &self.journal_store_path {
+            value.insert("journalStorePath".to_owned(), Value::String(path.clone()));
+        }
+        if let Some(path) = &self.application_event_store_path {
+            value.insert(
+                "applicationEventStorePath".to_owned(),
+                Value::String(path.clone()),
+            );
+        }
+        if let Some(provenance) = &self.deployment_provenance {
+            value.insert(
+                "deploymentProvenance".to_owned(),
+                provenance.canonical_value(),
+            );
+        }
+        value
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StdlibRunResult {
+    pub run_id: String,
+    pub graph_hash: String,
+    pub status: StdlibRunStatus,
+    pub outputs: Value,
+    pub journal: Vec<Value>,
+    pub deployment_provenance: Option<RunDeploymentProvenance>,
+}
+
+impl StdlibRunResult {
+    pub fn canonical_value(&self) -> Value {
+        let mut payload = json!({
+            "runId": self.run_id,
+            "graphHash": self.graph_hash,
+            "status": self.status.as_str(),
+            "outputs": self.outputs,
+            "journal": self.journal,
+        });
+        if let (Some(provenance), Some(payload)) =
+            (&self.deployment_provenance, payload.as_object_mut())
+        {
+            payload.insert(
+                "deploymentProvenance".to_owned(),
+                provenance.canonical_value(),
+            );
+        }
+        payload
+    }
+}
 
 struct RuntimeBridgePlan {
     graph_hash: String,
@@ -158,6 +269,30 @@ pub fn run_stdlib_graph_with_options_json(
             "runtime options JSON must be an object",
         ));
     };
+    let result = run_stdlib_graph_values(&graph, &inputs, options)?;
+    serde_json::to_string(&result.canonical_value()).map_err(StdlibRuntimeError::serialization)
+}
+
+pub fn run_stdlib_graph(
+    graph: &GraphDocument,
+    inputs: &Value,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    run_stdlib_graph_with_options(graph, inputs, &StdlibRunOptions::default())
+}
+
+pub fn run_stdlib_graph_with_options(
+    graph: &GraphDocument,
+    inputs: &Value,
+    options: &StdlibRunOptions,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    run_stdlib_graph_values(graph.as_value(), inputs, &options.canonical_value())
+}
+
+fn run_stdlib_graph_values(
+    graph: &Value,
+    inputs: &Value,
+    options: &serde_json::Map<String, Value>,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
     let run_id = options
         .get("runId")
         .or_else(|| options.get("run_id"))
@@ -192,8 +327,8 @@ pub fn run_stdlib_graph_with_options_json(
         .map(RunDeploymentProvenance::from_production_value)
         .transpose()
         .map_err(|message| StdlibRuntimeError::invalid(format!("runtime options {message}")))?;
-    let bridge_plan = build_runtime_bridge_plan(&graph)?;
-    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, &inputs, run_id)?;
+    let bridge_plan = build_runtime_bridge_plan(graph)?;
+    let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
         outputs_by_node: BTreeMap::new(),
@@ -203,26 +338,26 @@ pub fn run_stdlib_graph_with_options_json(
     })?;
     let output_values = collect_output_values(
         &bridge_plan.edges,
-        &inputs,
+        inputs,
         &executor.outputs_by_node,
         result.status,
     )?;
     persist_runtime_evidence(RuntimeEvidencePersistence {
         result: &result,
         graph_hash: &bridge_plan.graph_hash,
-        inputs: &inputs,
+        inputs,
         run_store_path,
         journal_store_path,
         application_event_store_path,
         output_values: &output_values,
         deployment_provenance: deployment_provenance.as_ref(),
     })?;
-    serialize_runtime_result(
+    Ok(build_runtime_result(
         result,
         bridge_plan.graph_hash,
         output_values,
         deployment_provenance.as_ref(),
-    )
+    ))
 }
 
 fn parse_json_argument(text: &str, label: &str) -> Result<Value, StdlibRuntimeError> {
@@ -594,16 +729,16 @@ fn collect_output_values(
     Ok(output_values)
 }
 
-fn serialize_runtime_result(
+fn build_runtime_result(
     result: TestRunResult,
     graph_hash: String,
     output_values: Value,
     deployment_provenance: Option<&RunDeploymentProvenance>,
-) -> Result<String, StdlibRuntimeError> {
+) -> StdlibRunResult {
     let status = match result.status {
-        TestRunStatus::Succeeded => "succeeded",
-        TestRunStatus::Failed => "failed",
-        TestRunStatus::Cancelled => "cancelled",
+        TestRunStatus::Succeeded => StdlibRunStatus::Succeeded,
+        TestRunStatus::Failed => StdlibRunStatus::Failed,
+        TestRunStatus::Cancelled => StdlibRunStatus::Cancelled,
     };
     let journal = result
         .journal
@@ -624,21 +759,14 @@ fn serialize_runtime_result(
             })
         })
         .collect::<Vec<_>>();
-    let mut payload = json!({
-        "runId": result.run_id,
-        "graphHash": graph_hash,
-        "status": status,
-        "outputs": output_values,
-        "journal": journal,
-    });
-    if let (Some(provenance), Some(payload)) = (deployment_provenance, payload.as_object_mut()) {
-        payload.insert(
-            "deploymentProvenance".to_owned(),
-            provenance.canonical_value(),
-        );
+    StdlibRunResult {
+        run_id: result.run_id,
+        graph_hash,
+        status,
+        outputs: output_values,
+        journal,
+        deployment_provenance: deployment_provenance.cloned(),
     }
-
-    serde_json::to_string(&payload).map_err(StdlibRuntimeError::serialization)
 }
 
 fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<Value, BlockError> {
@@ -878,6 +1006,7 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
             .or_else(|| source.pointer("/result/hits"))
             .cloned()
             .unwrap_or_else(|| json!([]));
+        let weight = source.get("weight").cloned().unwrap_or_else(|| json!(1.0));
         if !hits.is_array() {
             return Err(BlockError::new(
                 "retrieve.execute_plan.invalid_source_hits",
@@ -893,6 +1022,7 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
                 "status": "failed",
                 "hits": hits,
                 "error": error,
+                "weight": weight,
             }));
         } else {
             successful.push(Value::String(source_id.clone()));
@@ -900,6 +1030,7 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
                 "sourceId": source_id,
                 "status": "succeeded",
                 "hits": hits,
+                "weight": weight,
             }));
         }
     }
@@ -925,6 +1056,21 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
 }
 
 fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    #[derive(Clone)]
+    struct FusionCandidate {
+        dedupe_key: String,
+        hit_id: String,
+        rank: u64,
+        normalized_score: f64,
+        hit: Value,
+    }
+
+    struct FusionGroup {
+        representative: Value,
+        minimum_rank: u64,
+        score: f64,
+    }
+
     let sources = inputs.get("sources").ok_or_else(|| {
         BlockError::new(
             "retrieve.fuse.missing_sources",
@@ -941,7 +1087,43 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
             false,
         )
     })?;
-    let k = config.get("k").and_then(Value::as_u64).unwrap_or(60);
+    let algorithm = match config.get("algorithm") {
+        None => "reciprocal_rank_fusion",
+        Some(value) => value.as_str().ok_or_else(|| {
+            BlockError::new(
+                "retrieve.fuse.invalid_algorithm",
+                ErrorCategory::Configuration,
+                "retrieve.fuse@1 config.algorithm must be a string",
+                false,
+            )
+        })?,
+    };
+    if !matches!(
+        algorithm,
+        "concatenate"
+            | "reciprocal_rank_fusion"
+            | "weighted_rank"
+            | "normalized_score"
+            | "interleave"
+    ) {
+        return Err(BlockError::new(
+            "retrieve.fuse.invalid_algorithm",
+            ErrorCategory::Configuration,
+            "retrieve.fuse@1 config.algorithm must be concatenate, reciprocal_rank_fusion, weighted_rank, normalized_score, or interleave",
+            false,
+        ));
+    }
+    let k = match config.get("k") {
+        None => 60,
+        Some(value) => value.as_u64().ok_or_else(|| {
+            BlockError::new(
+                "retrieve.fuse.invalid_k",
+                ErrorCategory::Configuration,
+                "retrieve.fuse@1 config.k must be a positive integer",
+                false,
+            )
+        })?,
+    };
     if k == 0 {
         return Err(BlockError::new(
             "retrieve.fuse.invalid_k",
@@ -950,8 +1132,28 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
             false,
         ));
     }
-    let mut fused: BTreeMap<String, (f64, usize, Value)> = BTreeMap::new();
+    let mut hit_sets = Vec::new();
+    let mut weights = Vec::new();
     for source in source_values {
+        let weight = match source.get("weight") {
+            None => 1.0,
+            Some(value) => value.as_f64().ok_or_else(|| {
+                BlockError::new(
+                    "retrieve.fuse.invalid_source_weight",
+                    ErrorCategory::Validation,
+                    "retrieve.fuse@1 source weight must be a positive finite number",
+                    false,
+                )
+            })?,
+        };
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(BlockError::new(
+                "retrieve.fuse.invalid_source_weight",
+                ErrorCategory::Validation,
+                "retrieve.fuse@1 source weight must be a positive finite number",
+                false,
+            ));
+        }
         let hits = source
             .get("hits")
             .or_else(|| source.pointer("/result/hits"))
@@ -964,12 +1166,13 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                     false,
                 )
             })?;
+        let mut candidates = Vec::new();
         for (index, hit) in hits.iter().enumerate() {
             let rank = hit
                 .get("rank")
                 .and_then(Value::as_u64)
                 .unwrap_or((index + 1) as u64);
-            let key = hit
+            let dedupe_key = hit
                 .get("canonicalSource")
                 .or_else(|| hit.get("canonical_source"))
                 .or_else(|| hit.pointer("/item/source/sourceId"))
@@ -981,34 +1184,163 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .unwrap_or_else(|| canonical_hash(hit));
-            let score = 1.0 / (k + rank) as f64;
-            fused
-                .entry(key)
-                .and_modify(|entry| {
-                    entry.0 += score;
-                    entry.1 = entry.1.min(rank as usize);
+            let normalized_score = hit
+                .get("normalizedScore")
+                .or_else(|| hit.get("normalized_score"))
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    value.as_f64().ok_or_else(|| {
+                        BlockError::new(
+                            "retrieve.fuse.invalid_normalized_score",
+                            ErrorCategory::Validation,
+                            "retrieve.fuse@1 hit normalizedScore must be a finite number",
+                            false,
+                        )
+                    })
                 })
-                .or_insert((score, rank as usize, hit.clone()));
+                .transpose()?
+                .unwrap_or(0.0);
+            if !normalized_score.is_finite() || !(0.0..=1.0).contains(&normalized_score) {
+                return Err(BlockError::new(
+                    "retrieve.fuse.invalid_normalized_score",
+                    ErrorCategory::Validation,
+                    "retrieve.fuse@1 hit normalizedScore must be between 0 and 1",
+                    false,
+                ));
+            }
+            let hit_id = hit
+                .get("hitId")
+                .or_else(|| hit.get("hit_id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| canonical_hash(hit));
+            candidates.push(FusionCandidate {
+                dedupe_key,
+                hit_id,
+                rank,
+                normalized_score,
+                hit: hit.clone(),
+            });
+        }
+        hit_sets.push(candidates);
+        weights.push(weight);
+    }
+
+    let mut groups: BTreeMap<String, FusionGroup> = BTreeMap::new();
+    let mut first_seen = Vec::new();
+    for (source_index, hit_set) in hit_sets.iter().enumerate() {
+        let weight = weights[source_index];
+        for candidate in hit_set {
+            if !groups.contains_key(&candidate.dedupe_key) {
+                first_seen.push(candidate.dedupe_key.clone());
+            }
+            let score = match algorithm {
+                "reciprocal_rank_fusion" => {
+                    weight / (k.saturating_add(candidate.rank.max(1))) as f64
+                }
+                "weighted_rank" => weight / candidate.rank.max(1) as f64,
+                "normalized_score" => weight * candidate.normalized_score,
+                "concatenate" | "interleave" => 0.0,
+                _ => unreachable!(),
+            };
+            groups
+                .entry(candidate.dedupe_key.clone())
+                .and_modify(|group| {
+                    group.minimum_rank = group.minimum_rank.min(candidate.rank);
+                    group.score += score;
+                })
+                .or_insert_with(|| FusionGroup {
+                    representative: candidate.hit.clone(),
+                    minimum_rank: candidate.rank,
+                    score,
+                });
         }
     }
-    let mut fused = fused.into_values().collect::<Vec<_>>();
-    fused.sort_by(|left, right| {
-        right
-            .0
-            .partial_cmp(&left.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.1.cmp(&right.1))
-            .then_with(|| canonical_hash(&left.2).cmp(&canonical_hash(&right.2)))
-    });
-    let hits = fused
+
+    let mut ordered_keys = if algorithm == "concatenate" {
+        first_seen
+    } else if algorithm == "interleave" {
+        let mut sorted_hit_sets = hit_sets.clone();
+        for hit_set in &mut sorted_hit_sets {
+            hit_set.sort_by(|left, right| {
+                left.rank
+                    .cmp(&right.rank)
+                    .then_with(|| left.hit_id.cmp(&right.hit_id))
+            });
+        }
+        let max_len = sorted_hit_sets.iter().map(Vec::len).max().unwrap_or(0);
+        let mut keys = Vec::new();
+        let mut seen = BTreeSet::new();
+        for index in 0..max_len {
+            for hit_set in &sorted_hit_sets {
+                if let Some(candidate) = hit_set.get(index)
+                    && seen.insert(candidate.dedupe_key.clone())
+                {
+                    keys.push(candidate.dedupe_key.clone());
+                }
+            }
+        }
+        keys
+    } else {
+        let mut keys = groups.keys().cloned().collect::<Vec<_>>();
+        keys.sort_by(|left, right| {
+            let left_group = &groups[left];
+            let right_group = &groups[right];
+            right_group
+                .score
+                .partial_cmp(&left_group.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left_group.minimum_rank.cmp(&right_group.minimum_rank))
+                .then_with(|| left.cmp(right))
+        });
+        keys
+    };
+    if let Some(top_k) = config.get("topK").or_else(|| config.get("top_k")) {
+        let top_k = top_k.as_u64().ok_or_else(|| {
+            BlockError::new(
+                "retrieve.fuse.invalid_top_k",
+                ErrorCategory::Configuration,
+                "retrieve.fuse@1 config.topK must be a positive integer",
+                false,
+            )
+        })?;
+        if top_k == 0 {
+            return Err(BlockError::new(
+                "retrieve.fuse.invalid_top_k",
+                ErrorCategory::Configuration,
+                "retrieve.fuse@1 config.topK must be positive",
+                false,
+            ));
+        }
+        ordered_keys.truncate(top_k as usize);
+    }
+    let max_score = ordered_keys
+        .first()
+        .and_then(|key| groups.get(key))
+        .map(|group| group.score)
+        .filter(|score| *score > 0.0);
+    let hits = ordered_keys
         .into_iter()
         .enumerate()
-        .map(|(index, (score, _rank, mut hit))| {
+        .map(|(index, key)| {
+            let group = &groups[&key];
+            let mut hit = group.representative.clone();
             if !hit.is_object() {
                 hit = json!({"value": hit});
             }
             hit["rank"] = json!(index + 1);
-            hit["fusionScore"] = json!(score);
+            hit["fusionStrategy"] = json!(algorithm);
+            if matches!(
+                algorithm,
+                "reciprocal_rank_fusion" | "weighted_rank" | "normalized_score"
+            ) {
+                hit["fusionScore"] = json!(group.score);
+                hit["normalizedScore"] = max_score
+                    .map(|maximum| json!(group.score / maximum))
+                    .unwrap_or(Value::Null);
+            } else {
+                hit["fusionScore"] = Value::Null;
+            }
             hit
         })
         .collect::<Vec<_>>();
@@ -1050,10 +1382,24 @@ fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, Blo
             false,
         ));
     }
-    let reranker = config
-        .get("reranker")
-        .and_then(Value::as_str)
-        .unwrap_or("deterministic-term-reranker");
+    let reranker = match config
+        .get("rerankerId")
+        .or_else(|| config.get("reranker_id"))
+        .or_else(|| config.get("reranker"))
+    {
+        None => "deterministic-term-reranker",
+        Some(value) => value
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                BlockError::new(
+                    "rank.documents.invalid_reranker_id",
+                    ErrorCategory::Configuration,
+                    "rank.documents@1 config.rerankerId must be a non-empty string",
+                    false,
+                )
+            })?,
+    };
     let mut ranked = hits
         .iter()
         .take(input_limit)
@@ -1126,6 +1472,23 @@ fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockE
             false,
         ));
     }
+    let context_id = match config.get("contextId").or_else(|| config.get("context_id")) {
+        None => None,
+        Some(value) => {
+            let context_id = value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "context.build.invalid_context_id",
+                        ErrorCategory::Configuration,
+                        "context.build@1 config.contextId must be a non-empty string",
+                        false,
+                    )
+                })?;
+            Some(context_id)
+        }
+    };
     let available = max_tokens - reserve_tokens;
     let mut selected = Vec::new();
     let mut token_count = 0usize;
@@ -1137,7 +1500,7 @@ fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockE
         }
     }
     let pack = json!({
-        "contextId": format!("context-{}", canonical_hash(&json!({"evidence": selected, "history": inputs.get("history"), "currentMessage": inputs.get("currentMessage")}))),
+        "contextId": context_id.map(str::to_owned).unwrap_or_else(|| format!("context-{}", canonical_hash(&json!({"evidence": selected, "history": inputs.get("history"), "currentMessage": inputs.get("currentMessage")})))),
         "hits": selected,
         "history": inputs.get("history").cloned().unwrap_or_else(|| json!([])),
         "currentMessage": inputs.get("currentMessage").cloned().unwrap_or(Value::Null),
@@ -1170,6 +1533,31 @@ fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value,
         .or_else(|| config.get("require_citation"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let policy = match config
+        .get("onInsufficientEvidence")
+        .or_else(|| config.get("on_insufficient_evidence"))
+    {
+        None => "fail",
+        Some(value) => value.as_str().ok_or_else(|| {
+            BlockError::new(
+                "answer.validate_grounding.invalid_failure_policy",
+                ErrorCategory::Configuration,
+                "answer.validate_grounding@1 onInsufficientEvidence must be a string",
+                false,
+            )
+        })?,
+    };
+    if !matches!(
+        policy,
+        "warn" | "fail" | "abstain" | "repair" | "remove_invalid"
+    ) {
+        return Err(BlockError::new(
+            "answer.validate_grounding.invalid_failure_policy",
+            ErrorCategory::Configuration,
+            "answer.validate_grounding@1 onInsufficientEvidence must be warn, fail, abstain, repair, or remove_invalid",
+            false,
+        ));
+    }
     let context_hits = context
         .get("hits")
         .or_else(|| context.get("evidence"))
@@ -1186,13 +1574,19 @@ fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value,
     if require_citation && citation_count == 0 {
         issues.push("grounding.citation_required");
     }
-    let ok = issues.is_empty();
-    let policy = config
-        .get("onInsufficientEvidence")
-        .or_else(|| config.get("on_insufficient_evidence"))
-        .and_then(Value::as_str)
-        .unwrap_or("fail");
-    let abstained = !ok && policy == "abstain";
+    let issues_detected = !issues.is_empty();
+    let ok = !issues_detected || policy == "warn";
+    let abstained = issues_detected && policy == "abstain";
+    let repair_attempted = issues_detected && matches!(policy, "repair" | "remove_invalid");
+    // The lightweight stdlib validator can currently detect missing context and
+    // missing citations, but neither issue can be repaired without inventing
+    // evidence. Keep the original candidate and report the unrepaired issues.
+    let repaired = false;
+    let unrepaired_issues = if repair_attempted {
+        issues.clone()
+    } else {
+        Vec::new()
+    };
     let validated_response = if abstained {
         json!({
             "text": "I do not have enough validated source support to answer.",
@@ -1205,6 +1599,10 @@ fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value,
         "ok": ok,
         "issues": issues,
         "abstained": abstained,
+        "policy": policy,
+        "repaired": repaired,
+        "repairAttempted": repair_attempted,
+        "unrepairedIssues": unrepaired_issues,
         "response": validated_response,
     });
     Ok(json!({
@@ -3749,14 +4147,71 @@ fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use crate::application_event::{ApplicationProtocolEventKind, SqliteApplicationProtocolLog};
     use crate::journal::SqliteExecutionJournal;
     use crate::run_store::{RunStatus, SqliteRunStore};
-    use serde_json::{Value, json};
+    use crate::typed_graph::{
+        Block, GraphBuilder, GraphValue, NodeConfig, NodeInputReference, NodeInputs, NodeOutputs,
+        Port,
+    };
+    use serde_json::{Map, Value, json};
 
-    use super::run_stdlib_graph_with_options_json;
+    use super::{
+        StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
+        run_stdlib_graph_with_options_json,
+    };
+
+    struct TextValue;
+
+    impl GraphValue for TextValue {
+        const SCHEMA: &'static str = "graphblocks.ai/Text@1";
+    }
+
+    struct GenerateConfig;
+
+    impl NodeConfig for GenerateConfig {
+        fn to_config_object(&self) -> Map<String, Value> {
+            Map::from_iter([("response".to_owned(), json!("typed response"))])
+        }
+    }
+
+    struct Generate;
+
+    struct GenerateInputs {
+        prompt: Port<TextValue>,
+    }
+
+    impl NodeInputs for GenerateInputs {
+        fn into_node_inputs(self) -> BTreeMap<String, NodeInputReference> {
+            BTreeMap::from([("prompt".to_owned(), self.prompt.into_input_reference())])
+        }
+    }
+
+    struct GenerateOutputs {
+        response: Port<TextValue>,
+    }
+
+    impl NodeOutputs for GenerateOutputs {
+        fn for_node(builder_id: u64, node_id: &str) -> Self {
+            Self {
+                response: Port::node_output(builder_id, node_id, "response"),
+            }
+        }
+    }
+
+    impl Block for Generate {
+        const ID: &'static str = "model.generate@1";
+        type Config = GenerateConfig;
+        type Inputs = GenerateInputs;
+        type Outputs = GenerateOutputs;
+
+        fn config(&self) -> &Self::Config {
+            &GenerateConfig
+        }
+    }
 
     fn unique_sqlite_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -3767,6 +4222,200 @@ mod tests {
                 .expect("system clock should be after epoch")
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn typed_runtime_returns_structured_result_without_json_adapter() {
+        let mut graph = GraphBuilder::new("typed-runtime").expect("graph name is valid");
+        let prompt = graph.input::<TextValue>("prompt").expect("input is unique");
+        let generated = graph
+            .add("generate", Generate, GenerateInputs { prompt })
+            .expect("node is unique");
+        graph
+            .bind_output("response", &generated.response)
+            .expect("output is unique");
+
+        let result = run_stdlib_graph_with_options(
+            &graph.build(),
+            &json!({"prompt": "ignored by scripted response"}),
+            &StdlibRunOptions::default().with_run_id("typed-run-1"),
+        )
+        .expect("typed runtime succeeds");
+
+        assert_eq!(result.run_id, "typed-run-1");
+        assert_eq!(result.status, StdlibRunStatus::Succeeded);
+        assert_eq!(result.outputs, json!({"response": "typed response"}));
+        assert!(result.graph_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn stdlib_retrieval_fusion_applies_algorithms_and_source_weights() {
+        let inputs = json!({
+            "sources": [
+                {
+                    "sourceId": "first",
+                    "weight": 0.1,
+                    "hits": [
+                        {"hitId": "a", "rank": 1, "normalizedScore": 0.2, "item": {"itemId": "a"}},
+                        {"hitId": "b", "rank": 2, "normalizedScore": 0.9, "item": {"itemId": "b"}}
+                    ]
+                },
+                {
+                    "sourceId": "second",
+                    "weight": 2.0,
+                    "hits": [
+                        {"hitId": "c", "rank": 1, "normalizedScore": 0.5, "item": {"itemId": "c"}},
+                        {"hitId": "d", "rank": 2, "normalizedScore": 0.4, "item": {"itemId": "d"}}
+                    ]
+                }
+            ]
+        });
+        for (algorithm, expected_ids) in [
+            ("concatenate", vec!["a", "b", "c", "d"]),
+            ("interleave", vec!["a", "c", "b", "d"]),
+            ("reciprocal_rank_fusion", vec!["c", "d", "a", "b"]),
+            ("weighted_rank", vec!["c", "d", "a", "b"]),
+            ("normalized_score", vec!["c", "d", "b", "a"]),
+        ] {
+            let output = super::execute_stdlib_block(
+                "retrieve.fuse@1",
+                &inputs,
+                &json!({"algorithm": algorithm, "k": 60}),
+            )
+            .expect("supported fusion strategy should succeed");
+            let ids = output["hits"]
+                .as_array()
+                .expect("fusion hits should be an array")
+                .iter()
+                .map(|hit| {
+                    hit.pointer("/item/itemId")
+                        .and_then(Value::as_str)
+                        .expect("fused hit should preserve itemId")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(ids, expected_ids, "unexpected order for {algorithm}");
+            assert!(output["hits"].as_array().is_some_and(|hits| {
+                hits.iter()
+                    .all(|hit| hit["fusionStrategy"].as_str() == Some(algorithm))
+            }));
+        }
+    }
+
+    #[test]
+    fn stdlib_retrieval_fusion_rejects_invalid_strategy_weight_and_score() {
+        let invalid_algorithm = super::execute_stdlib_block(
+            "retrieve.fuse@1",
+            &json!({"sources": []}),
+            &json!({"algorithm": "unknown"}),
+        )
+        .expect_err("unknown fusion strategy should fail");
+        assert_eq!(invalid_algorithm.code, "retrieve.fuse.invalid_algorithm");
+
+        let invalid_weight = super::execute_stdlib_block(
+            "retrieve.fuse@1",
+            &json!({"sources": [{"sourceId": "source", "weight": 0, "hits": []}]}),
+            &json!({}),
+        )
+        .expect_err("non-positive source weight should fail");
+        assert_eq!(invalid_weight.code, "retrieve.fuse.invalid_source_weight");
+
+        let invalid_score = super::execute_stdlib_block(
+            "retrieve.fuse@1",
+            &json!({
+                "sources": [{
+                    "sourceId": "source",
+                    "hits": [{"hitId": "hit", "normalizedScore": 1.1}]
+                }]
+            }),
+            &json!({"algorithm": "normalized_score"}),
+        )
+        .expect_err("out-of-range normalized score should fail");
+        assert_eq!(invalid_score.code, "retrieve.fuse.invalid_normalized_score");
+    }
+
+    #[test]
+    fn stdlib_rank_and_context_apply_typed_camel_case_config() {
+        let ranked = super::execute_stdlib_block(
+            "rank.documents@1",
+            &json!({
+                "query": "needle",
+                "hits": [{"hitId": "hit", "item": {"preview": ["needle"]}}]
+            }),
+            &json!({"rerankerId": "configured-reranker"}),
+        )
+        .expect("ranking should succeed");
+        assert_eq!(ranked["result"]["reranker"], json!("configured-reranker"));
+        assert_eq!(ranked["hits"][0]["reranker"], json!("configured-reranker"));
+
+        let context = super::execute_stdlib_block(
+            "context.build@1",
+            &json!({"evidence": []}),
+            &json!({"contextId": "configured-context", "maxTokens": 100}),
+        )
+        .expect("context build should succeed");
+        assert_eq!(context["pack"]["contextId"], json!("configured-context"));
+    }
+
+    #[test]
+    fn stdlib_grounding_policies_warn_abstain_and_report_unrepaired_issues() {
+        let inputs = json!({
+            "response": {"answerId": "answer-1", "text": "unsupported", "citations": []},
+            "context": {"hits": []}
+        });
+        let warning = super::execute_stdlib_block(
+            "answer.validate_grounding@1",
+            &inputs,
+            &json!({"requireCitation": true, "onInsufficientEvidence": "warn"}),
+        )
+        .expect("warning policy should return validation evidence");
+        assert_eq!(warning["validation"]["ok"], json!(true));
+        assert!(
+            warning["validation"]["issues"]
+                .as_array()
+                .is_some_and(|issues| !issues.is_empty())
+        );
+        assert_eq!(warning["candidate"], inputs["response"]);
+
+        let abstention = super::execute_stdlib_block(
+            "answer.validate_grounding@1",
+            &inputs,
+            &json!({"requireCitation": true, "onInsufficientEvidence": "abstain"}),
+        )
+        .expect("abstain policy should return a safe candidate");
+        assert_eq!(abstention["validation"]["ok"], json!(false));
+        assert_eq!(abstention["validation"]["abstained"], json!(true));
+        assert_ne!(abstention["candidate"], inputs["response"]);
+
+        let repair = super::execute_stdlib_block(
+            "answer.validate_grounding@1",
+            &inputs,
+            &json!({"requireCitation": true, "onInsufficientEvidence": "repair"}),
+        )
+        .expect("repair policy should report its result");
+        assert_eq!(repair["validation"]["ok"], json!(false));
+        assert_eq!(repair["validation"]["repairAttempted"], json!(true));
+        assert_eq!(repair["validation"]["repaired"], json!(false));
+        assert!(
+            repair["validation"]["unrepairedIssues"]
+                .as_array()
+                .is_some_and(|issues| !issues.is_empty())
+        );
+        assert_eq!(repair["candidate"], inputs["response"]);
+    }
+
+    #[test]
+    fn stdlib_grounding_rejects_unknown_failure_policy() {
+        let error = super::execute_stdlib_block(
+            "answer.validate_grounding@1",
+            &json!({"response": {"text": "answer"}, "context": {"hits": []}}),
+            &json!({"onInsufficientEvidence": "ignore"}),
+        )
+        .expect_err("unknown grounding policy should fail");
+
+        assert_eq!(
+            error.code,
+            "answer.validate_grounding.invalid_failure_policy"
+        );
     }
 
     #[test]
