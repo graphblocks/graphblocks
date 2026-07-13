@@ -17,10 +17,10 @@ use crate::async_operation::{
     AsyncOperationState, CallbackArtifactRef, ExternalEffectRecord,
 };
 use crate::journal::{JournalMetadata, SqliteExecutionJournal};
-use crate::outcome::{BlockError, ErrorCategory, Outcome};
+use crate::outcome::{BlockError, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
 use crate::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
-use crate::scheduler::{ScheduledNode, StartedNode};
+use crate::scheduler::{ScheduledCondition, ScheduledNode, StartedNode};
 use crate::stdlib_blocks::stdlib_block_catalog;
 use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
 use crate::tool::{
@@ -184,13 +184,28 @@ impl StdlibRunResult {
 struct RuntimeBridgePlan {
     graph_hash: String,
     nodes: BTreeMap<String, Value>,
-    edges: Vec<Value>,
     scheduled_nodes: Vec<ScheduledNode>,
+    input_output_projections: Vec<OutputProjection>,
+    output_projections_by_node: BTreeMap<String, Vec<OutputProjection>>,
+    output_ports_by_node: BTreeMap<String, Vec<String>>,
+}
+
+const INTERNAL_WHEN_INPUT: &str = "\0graphblocks.when";
+const INTERNAL_SKIPPED_OUTPUT: &str = "\0graphblocks.skipped";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OutputProjection {
+    source: String,
+    source_path: String,
+    target: String,
+    target_path: String,
 }
 
 struct StdlibExecutor {
     nodes: BTreeMap<String, Value>,
-    outputs_by_node: BTreeMap<String, Value>,
+    output_projections_by_node: BTreeMap<String, Vec<OutputProjection>>,
+    output_ports_by_node: BTreeMap<String, Vec<String>>,
+    output_values: Value,
 }
 
 struct RuntimeEvidencePersistence<'a> {
@@ -206,7 +221,7 @@ struct RuntimeEvidencePersistence<'a> {
 
 impl NodeExecutor for StdlibExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
-        let inputs = resolved_inputs_to_json(&node.inputs)?;
+        let mut resolved_inputs = node.inputs;
         let Some(node_spec) = self.nodes.get(&node.node_id).and_then(Value::as_object) else {
             return Err(BlockError::new(
                 format!("{}.missing_node", node.node_id),
@@ -215,6 +230,69 @@ impl NodeExecutor for StdlibExecutor {
                 false,
             ));
         };
+        if let Some(when) = node_spec.get("when") {
+            let when = when
+                .as_str()
+                .expect("runtime bridge validates when references");
+            let mut guard = match resolved_inputs.remove(INTERNAL_WHEN_INPUT) {
+                Some(ResolvedInput::Value(value)) => value,
+                _ => {
+                    return Err(BlockError::new(
+                        format!("{}.invalid_when", node.node_id),
+                        ErrorCategory::Configuration,
+                        "node.when guard did not resolve to a value",
+                        false,
+                    ));
+                }
+            };
+            let guard_path = when
+                .split_once('.')
+                .expect("runtime bridge validates when references")
+                .1;
+            for part in guard_path.split('.').skip(1) {
+                let Some(value) = guard.get(part).cloned() else {
+                    return Err(BlockError::new(
+                        format!("{}.invalid_when", node.node_id),
+                        ErrorCategory::Configuration,
+                        format!("node.when guard {when:?} is missing path segment {part:?}"),
+                        false,
+                    ));
+                };
+                guard = value;
+            }
+            match guard {
+                Value::Bool(true) => {}
+                Value::Bool(false) => {
+                    let reason = SkipReason::new("condition_false");
+                    let mut skipped_outputs = self
+                        .output_ports_by_node
+                        .get(&node.node_id)
+                        .into_iter()
+                        .flatten()
+                        .map(|port| {
+                            (
+                                PortRef::new(node.node_id.clone(), port),
+                                Outcome::Skipped(reason.clone()),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    skipped_outputs.push((
+                        PortRef::new(node.node_id, INTERNAL_SKIPPED_OUTPUT),
+                        Outcome::Skipped(reason),
+                    ));
+                    return Ok(skipped_outputs);
+                }
+                _ => {
+                    return Err(BlockError::new(
+                        format!("{}.invalid_when", node.node_id),
+                        ErrorCategory::Configuration,
+                        format!("node.when guard {when:?} must resolve to a boolean"),
+                        false,
+                    ));
+                }
+            }
+        }
+        let inputs = resolved_inputs_to_json(&resolved_inputs)?;
         let Some(block_id) = node_spec.get("block").and_then(Value::as_str) else {
             return Err(BlockError::new(
                 format!("{}.missing_block", node.node_id),
@@ -236,6 +314,23 @@ impl NodeExecutor for StdlibExecutor {
                 false,
             ));
         };
+        let projections = self
+            .output_projections_by_node
+            .get(&node.node_id)
+            .cloned()
+            .unwrap_or_default();
+        for projection in &projections {
+            project_output_value(&mut self.output_values, &outputs, projection).map_err(
+                |message| {
+                    BlockError::new(
+                        format!("{}.output_projection", node.node_id),
+                        ErrorCategory::Internal,
+                        message,
+                        false,
+                    )
+                },
+            )?;
+        }
         let port_outputs = outputs_object
             .iter()
             .map(|(port, value)| {
@@ -245,9 +340,49 @@ impl NodeExecutor for StdlibExecutor {
                 )
             })
             .collect();
-        self.outputs_by_node.insert(node.node_id, outputs);
         Ok(port_outputs)
     }
+}
+
+fn project_output_value(
+    output_values: &mut Value,
+    source_value: &Value,
+    projection: &OutputProjection,
+) -> Result<(), String> {
+    let mut value = source_value.clone();
+    if !projection.source_path.is_empty() {
+        for part in projection.source_path.split('.') {
+            value = value.get(part).cloned().ok_or_else(|| {
+                format!(
+                    "output edge source {:?} is missing path segment {:?}",
+                    projection.source, part
+                )
+            })?;
+        }
+    }
+    let target_parts = projection.target_path.split('.').collect::<Vec<_>>();
+    if target_parts.is_empty() || target_parts.iter().any(|part| part.is_empty()) {
+        return Err(format!(
+            "output edge target {:?} must include an output path",
+            projection.target
+        ));
+    }
+    let mut current = output_values;
+    for part in &target_parts[..target_parts.len() - 1] {
+        let Some(current_object) = current.as_object_mut() else {
+            return Err(format!("output path conflict at {:?}", projection.target));
+        };
+        current = current_object
+            .entry((*part).to_owned())
+            .or_insert_with(|| json!({}));
+    }
+    let Some(current_object) = current.as_object_mut() else {
+        return Err(format!("output path conflict at {:?}", projection.target));
+    };
+    if let Some(target_name) = target_parts.last() {
+        current_object.insert((*target_name).to_owned(), value);
+    }
+    Ok(())
 }
 
 pub fn run_stdlib_graph_json(
@@ -338,20 +473,26 @@ fn run_stdlib_graph_values(
         .transpose()
         .map_err(|message| StdlibRuntimeError::invalid(format!("runtime options {message}")))?;
     let bridge_plan = build_runtime_bridge_plan(graph, block_catalog)?;
+    let mut initial_output_values = json!({});
+    for projection in &bridge_plan.input_output_projections {
+        project_output_value(&mut initial_output_values, inputs, projection)
+            .map_err(StdlibRuntimeError::invalid)?;
+    }
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
-        outputs_by_node: BTreeMap::new(),
+        output_projections_by_node: bridge_plan.output_projections_by_node,
+        output_ports_by_node: bridge_plan.output_ports_by_node,
+        output_values: initial_output_values,
     };
     let result = runtime.run(&mut executor).map_err(|error| {
         StdlibRuntimeError::runtime(format!("stdlib runtime execution failed: {error:?}"))
     })?;
-    let output_values = collect_output_values(
-        &bridge_plan.edges,
-        inputs,
-        &executor.outputs_by_node,
-        result.status,
-    )?;
+    let output_values = if result.status == TestRunStatus::Succeeded {
+        executor.output_values
+    } else {
+        json!({})
+    };
     persist_runtime_evidence(RuntimeEvidencePersistence {
         result: &result,
         graph_hash: &bridge_plan.graph_hash,
@@ -434,6 +575,47 @@ fn build_runtime_bridge_plan(
         .keys()
         .map(|node_id| (node_id.clone(), Vec::new()))
         .collect::<BTreeMap<_, _>>();
+    let mut conditions_by_node = BTreeMap::<String, ScheduledCondition>::new();
+    let mut input_output_projections = Vec::new();
+    let mut output_projections_by_node = BTreeMap::<String, Vec<OutputProjection>>::new();
+    let mut output_ports_by_node = nodes
+        .keys()
+        .map(|node_id| (node_id.clone(), BTreeSet::<String>::new()))
+        .collect::<BTreeMap<_, _>>();
+
+    for (node_id, node) in nodes {
+        let Some(when) = node.get("when") else {
+            continue;
+        };
+        let Some(when) = when.as_str() else {
+            return Err(StdlibRuntimeError::invalid(format!(
+                "node {node_id:?} when reference must be a string"
+            )));
+        };
+        let Some((source_owner, source_path)) = when.split_once('.') else {
+            return Err(StdlibRuntimeError::invalid(format!(
+                "node {node_id:?} when reference {when:?} must include a port path"
+            )));
+        };
+        let path_parts = source_path.split('.').collect::<Vec<_>>();
+        let source_port = path_parts.first().copied().unwrap_or_default();
+        if source_owner.is_empty()
+            || source_port.is_empty()
+            || path_parts.iter().any(|part| part.is_empty())
+        {
+            return Err(StdlibRuntimeError::invalid(format!(
+                "node {node_id:?} when reference {when:?} must include a non-empty owner and port path"
+            )));
+        }
+        conditions_by_node.insert(
+            node_id.clone(),
+            ScheduledCondition::new(
+                INTERNAL_WHEN_INPUT,
+                PortRef::new(source_owner, source_port),
+                path_parts.iter().skip(1).copied(),
+            ),
+        );
+    }
 
     for edge in &edges {
         let Some(edge) = edge.as_object() else {
@@ -447,9 +629,6 @@ fn build_runtime_bridge_plan(
         };
         let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
         let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
-        if target_owner.starts_with('$') {
-            continue;
-        }
         if source_owner.starts_with('$') && source_owner != "$input" {
             continue;
         }
@@ -462,6 +641,34 @@ fn build_runtime_bridge_plan(
                 "edge source {source:?} must include a port"
             )));
         };
+        if let Some(output_ports) = output_ports_by_node.get_mut(source_owner) {
+            output_ports.insert(source_port.to_owned());
+        }
+        if target_owner == "$output" {
+            if target_path.is_empty() || target_path.split('.').any(str::is_empty) {
+                return Err(StdlibRuntimeError::invalid(format!(
+                    "output edge target {target:?} must include an output path"
+                )));
+            }
+            let projection = OutputProjection {
+                source: source.to_owned(),
+                source_path: source_path.to_owned(),
+                target: target.to_owned(),
+                target_path: target_path.to_owned(),
+            };
+            if source_owner == "$input" {
+                input_output_projections.push(projection);
+            } else {
+                output_projections_by_node
+                    .entry(source_owner.to_owned())
+                    .or_default()
+                    .push(projection);
+            }
+            continue;
+        }
+        if target_owner.starts_with('$') {
+            continue;
+        }
         let Some(target_input) = target_path
             .split('.')
             .next()
@@ -482,16 +689,26 @@ fn build_runtime_bridge_plan(
         ));
     }
 
-    let scheduled_nodes = dependencies_by_node
+    let mut scheduled_nodes = Vec::with_capacity(dependencies_by_node.len());
+    for (node_id, dependencies) in dependencies_by_node {
+        let mut scheduled_node = ScheduledNode::new(node_id.clone(), dependencies);
+        if let Some(condition) = conditions_by_node.remove(&node_id) {
+            scheduled_node = scheduled_node.with_condition(condition);
+        }
+        scheduled_nodes.push(scheduled_node);
+    }
+    let output_ports_by_node = output_ports_by_node
         .into_iter()
-        .map(|(node_id, dependencies)| ScheduledNode::new(node_id, dependencies))
-        .collect::<Vec<_>>();
+        .map(|(node_id, ports)| (node_id, ports.into_iter().collect::<Vec<_>>()))
+        .collect();
 
     Ok(RuntimeBridgePlan {
         graph_hash: plan.graph_hash,
         nodes: node_specs,
-        edges,
         scheduled_nodes,
+        input_output_projections,
+        output_projections_by_node,
+        output_ports_by_node,
     })
 }
 
@@ -688,77 +905,6 @@ fn persist_runtime_evidence(
     }
 
     Ok(())
-}
-
-fn collect_output_values(
-    edges: &[Value],
-    inputs: &Value,
-    outputs_by_node: &BTreeMap<String, Value>,
-    status: TestRunStatus,
-) -> Result<Value, StdlibRuntimeError> {
-    let mut output_values = json!({});
-
-    if status == TestRunStatus::Succeeded {
-        for edge in edges {
-            let Some(edge) = edge.as_object() else {
-                continue;
-            };
-            let (Some(source), Some(target)) = (
-                edge.get("from").and_then(Value::as_str),
-                edge.get("to").and_then(Value::as_str),
-            ) else {
-                continue;
-            };
-            let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
-            let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
-            if target_owner != "$output" {
-                continue;
-            }
-            let mut value = if source_owner == "$input" {
-                inputs.clone()
-            } else {
-                outputs_by_node.get(source_owner).cloned().ok_or_else(|| {
-                    StdlibRuntimeError::runtime(format!(
-                        "output edge references missing node output {source_owner:?}"
-                    ))
-                })?
-            };
-            if !source_path.is_empty() {
-                for part in source_path.split('.') {
-                    value = value.get(part).cloned().ok_or_else(|| {
-                        StdlibRuntimeError::runtime(format!(
-                            "output edge source {source:?} is missing path segment {part:?}"
-                        ))
-                    })?;
-                }
-            }
-            let target_parts = target_path.split('.').collect::<Vec<_>>();
-            if target_parts.is_empty() || target_parts.iter().any(|part| part.is_empty()) {
-                return Err(StdlibRuntimeError::invalid(format!(
-                    "output edge target {target:?} must include an output path"
-                )));
-            }
-            let mut current = &mut output_values;
-            for part in &target_parts[..target_parts.len() - 1] {
-                let Some(current_object) = current.as_object_mut() else {
-                    return Err(StdlibRuntimeError::runtime(format!(
-                        "output path conflict at {target:?}"
-                    )));
-                };
-                current = current_object
-                    .entry((*part).to_owned())
-                    .or_insert_with(|| json!({}));
-            }
-            let Some(current_object) = current.as_object_mut() else {
-                return Err(StdlibRuntimeError::runtime(format!(
-                    "output path conflict at {target:?}"
-                )));
-            };
-            current_object.insert(target_parts[target_parts.len() - 1].to_owned(), value);
-        }
-    }
-
-    Ok(output_values)
 }
 
 fn build_runtime_result(

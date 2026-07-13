@@ -30,6 +30,7 @@ fn single_node_graph(
         }
     })
 }
+
 fn run_succeeded(graph: &Value, inputs: &Value) -> Result<Value, String> {
     let result_json = run_stdlib_graph_json(&graph.to_string(), &inputs.to_string())
         .map_err(|error| error.to_string())?;

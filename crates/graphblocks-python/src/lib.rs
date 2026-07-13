@@ -15029,6 +15029,7 @@ mod tests {
 
     #[test]
     fn run_stdlib_graph_json_collects_native_map_errors() -> Result<(), String> {
+        pyo3::Python::initialize();
         let graph = json!({
             "apiVersion": "graphblocks.ai/v1alpha3",
             "kind": "Graph",
