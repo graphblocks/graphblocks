@@ -1,25 +1,46 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from graphblocks.canonical import canonical_hash
 
 
-VARIANT_SCRIPTS = {
-    "1-1-yaml": "1-1-yaml-runtime/run.py",
-    "1-2-python": "1-2-python-runtime/run.py",
-    "1-3-rust": "1-3-rust-runtime/run.py",
-}
-
-
 def run_variants(example_root: Path) -> dict[str, object]:
+    rust_target_dir = Path(
+        os.environ.get(
+            "GRAPHBLOCKS_EXAMPLE_RUST_TARGET_DIR",
+            str(Path(tempfile.gettempdir()) / "graphblocks-example-rust-target"),
+        )
+    )
+    variant_commands = {
+        "1-1-yaml": [
+            sys.executable,
+            str(example_root / "1-1-yaml-runtime" / "run.py"),
+        ],
+        "1-2-python": [
+            sys.executable,
+            str(example_root / "1-2-python-runtime" / "run.py"),
+        ],
+        "1-3-rust": [
+            "cargo",
+            "run",
+            "--quiet",
+            "--locked",
+            "--manifest-path",
+            str(example_root / "1-3-rust-runtime" / "Cargo.toml"),
+            "--target-dir",
+            str(rust_target_dir),
+        ],
+    }
     variants: dict[str, dict[str, object]] = {}
-    for variant, relative_script in VARIANT_SCRIPTS.items():
+    for variant, command in variant_commands.items():
         completed = subprocess.run(
-            [sys.executable, str(example_root / relative_script)],
+            command,
             cwd=example_root.parents[1],
             check=False,
             capture_output=True,

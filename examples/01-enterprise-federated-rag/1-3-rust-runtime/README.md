@@ -21,15 +21,12 @@ execute the fixed stdlib handlers against their advertised input and output
 aliases.
 
 ```bash
-python examples/01-enterprise-federated-rag/1-3-rust-runtime/run.py
-```
-
-Or invoke Cargo directly:
-
-```bash
 cargo run --locked \
   --manifest-path examples/01-enterprise-federated-rag/1-3-rust-runtime/Cargo.toml
 ```
+
+The combined example runner invokes this Cargo command directly; the Rust
+variant has no Python launcher or runtime dependency.
 
 The Rust program shares only the deterministic input fixture with 1-1. JSON
 values remain at the payload/wire boundary, but graph structure, block ports,
