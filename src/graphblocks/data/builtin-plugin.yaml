@@ -117,6 +117,7 @@ spec:
         - {name: sources, type: Any, required: false}
       outputs:
         - {name: result, type: Any}
+        - {name: sources, type: Any}
       resourceSlots:
         - {name: retrievers, type: resources/RetrieverSet@1, optional: true}
     - typeId: rank.documents

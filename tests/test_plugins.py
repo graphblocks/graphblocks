@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from graphblocks import BlockCatalog, discover_plugins, validate_plugin_manifest
+from graphblocks import BlockCatalog, compile_graph, discover_plugins, validate_plugin_manifest
 
 
 def test_builtin_plugin_discovery_does_not_need_installed_scan() -> None:
@@ -89,6 +89,7 @@ def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
     resolve_tools = catalog.get("tools.resolve@1")
     agent = catalog.get("agent.run@1")
     control_map = catalog.get("control.map@2")
+    retrieve = catalog.get("retrieve.execute_plan@1")
 
     assert prompt is not None
     assert [port.name for port in prompt.inputs] == ["message"]
@@ -105,6 +106,41 @@ def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
     assert control_map is not None
     assert [port.name for port in control_map.inputs] == ["items"]
     assert [port.name for port in control_map.outputs] == ["values", "outcomes"]
+    assert retrieve is not None
+    assert [port.name for port in retrieve.outputs] == ["result", "sources"]
+
+
+def test_builtin_retrieval_descriptor_compiles_federated_source_wiring() -> None:
+    registry = discover_plugins(include_installed=False)
+    catalog = BlockCatalog.from_manifests(registry.manifests)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "typed-retrieval-contract"},
+        "spec": {
+            "nodes": {
+                "retrieve": {
+                    "block": "retrieve.execute_plan@1",
+                    "inputs": {
+                        "query": "$input.query",
+                        "sources": "$input.sources",
+                    },
+                },
+                "fuse": {
+                    "block": "retrieve.fuse@1",
+                    "inputs": {"sources": "retrieve.sources"},
+                },
+            }
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not [
+        diagnostic
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ]
 
 
 def test_builtin_plugin_describes_all_documented_portable_blocks() -> None:
