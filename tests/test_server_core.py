@@ -772,7 +772,7 @@ def test_server_app_executor_advances_accepted_run_after_client_detach() -> None
         assert release.wait(timeout=5)
         return {"value": "done"}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.background@1", wait_block)
     with ThreadPoolExecutor(max_workers=1) as executor:
         app = GraphBlocksServerApp(
@@ -906,7 +906,7 @@ def test_server_app_executor_resumes_authenticated_callback_checkpoint_once() ->
                 "ownership_fenced": True,
             }
 
-    registry = graphblocks.stdlib_registry()
+    registry = graphblocks.stdlib_registry(allow_untyped=True)
     registry.register("test.prepare@1", prepare)
     registry.register("test.consume-callback@1", consume)
     graph = {
@@ -1492,7 +1492,7 @@ def test_server_app_clears_callback_receipt_before_sequential_wait() -> None:
                 "ownership_fenced": True,
             }
 
-    registry = graphblocks.stdlib_registry()
+    registry = graphblocks.stdlib_registry(allow_untyped=True)
     registry.register(
         "test.finish-callback@1",
         lambda inputs, config, context: {"result": inputs["callback"]},
@@ -2143,7 +2143,7 @@ def test_server_app_deferred_advance_is_fenced_against_concurrent_execution() ->
         assert release.wait(timeout=5)
         return {"value": "done"}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.wait@1", wait_block)
     app = GraphBlocksServerApp(
         registry=registry,
@@ -2293,7 +2293,7 @@ def test_server_app_serializes_callback_and_terminal_event_append() -> None:
                 self.sequence_barrier = None
             return super()._last_event_sequence(events, owner=owner)
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register(
         "test.callback-race@1",
         lambda inputs, config, context: {"value": "ok"},
@@ -2561,14 +2561,12 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
                         "spec": {
                             "nodes": {
                                 "first": {
-                                    "block": "prompt.render@1",
-                                    "config": {"template": "first"},
-                                    "outputs": {"prompt": "$output.x"},
+                                    "block": "model.generate@1",
+                                    "outputs": {"response": "$output.x"},
                                 },
                                 "second": {
-                                    "block": "prompt.render@1",
-                                    "config": {"template": "second"},
-                                    "outputs": {"prompt": "$output.x.y"},
+                                    "block": "model.generate@1",
+                                    "outputs": {"response": "$output.x.y"},
                                 },
                             }
                         },
@@ -2605,7 +2603,7 @@ def test_server_app_records_non_json_runtime_output_without_reexecution() -> Non
         calls += 1
         return {"value": object()}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.non-json@1", non_json_block)
     app = GraphBlocksServerApp(
         registry=registry,
@@ -2671,7 +2669,7 @@ def test_server_app_cancel_during_deferred_execution_remains_authoritative() -> 
         assert release.wait(timeout=5)
         return {"value": "done"}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.wait@1", wait_block)
     app = GraphBlocksServerApp(
         registry=registry,
@@ -2749,7 +2747,7 @@ def test_server_app_cancel_wakes_duplicate_advance_before_worker_exits() -> None
         assert release.wait(timeout=5)
         return {"value": "done"}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.cancel-waiter@1", wait_block)
     app = GraphBlocksServerApp(
         registry=registry,

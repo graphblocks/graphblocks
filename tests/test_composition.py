@@ -13,17 +13,20 @@ from graphblocks.canonical import canonical_hash, normalize_graph
 from graphblocks.cli import main
 from graphblocks.compiler import compile_graph
 from graphblocks.composition import CompositionError, compose_documents
+from graphblocks.plugins import BlockCatalog
 
 
 TEXT_SCHEMA = "graphblocks.ai/Text@1"
+MESSAGE_SCHEMA = "graphblocks.ai/Message@1"
+PROMPT_SCHEMA = "graphblocks.ai/Prompt@1"
 COMPOSITION_API_VERSION = "graphblocks.ai/composition/v1alpha1"
 
 
 def _fragment(
     *,
     name: str = "render-prompt",
-    input_schema: str = TEXT_SCHEMA,
-    output_schema: str = TEXT_SCHEMA,
+    input_schema: str = MESSAGE_SCHEMA,
+    output_schema: str = PROMPT_SCHEMA,
 ) -> dict[str, object]:
     return {
         "apiVersion": COMPOSITION_API_VERSION,
@@ -61,8 +64,8 @@ def _composed_graph(
     *,
     fragment_path: str = "fragment.yaml",
     imports: dict[str, object] | None = None,
-    slot_input_schema: str = TEXT_SCHEMA,
-    slot_output_schema: str = TEXT_SCHEMA,
+    slot_input_schema: str = MESSAGE_SCHEMA,
+    slot_output_schema: str = PROMPT_SCHEMA,
     extra_nodes: dict[str, object] | None = None,
 ) -> dict[str, object]:
     graph_imports = imports or {"prompt": {"path": fragment_path}}
@@ -80,8 +83,8 @@ def _composed_graph(
         "metadata": {"name": "composed-prompt"},
         "spec": {
             "interface": {
-                "inputs": {"message": TEXT_SCHEMA},
-                "outputs": {"prompt": TEXT_SCHEMA},
+                "inputs": {"message": MESSAGE_SCHEMA},
+                "outputs": {"prompt": PROMPT_SCHEMA},
             },
             "composition": {
                 "apiVersion": COMPOSITION_API_VERSION,
@@ -108,8 +111,8 @@ def _monolithic_graph() -> dict[str, object]:
         "metadata": {"name": "composed-prompt"},
         "spec": {
             "interface": {
-                "inputs": {"message": TEXT_SCHEMA},
-                "outputs": {"prompt": TEXT_SCHEMA},
+                "inputs": {"message": MESSAGE_SCHEMA},
+                "outputs": {"prompt": PROMPT_SCHEMA},
             },
             "nodes": {
                 "answer__render": {
@@ -473,8 +476,8 @@ def test_composition_rejects_malformed_imported_binding(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("slot_input_schema", "slot_output_schema"),
     [
-        ("graphblocks.ai/Query@1", TEXT_SCHEMA),
-        (TEXT_SCHEMA, "graphblocks.ai/RenderedPrompt@1"),
+        ("graphblocks.ai/Query@1", PROMPT_SCHEMA),
+        (MESSAGE_SCHEMA, "graphblocks.ai/RenderedPrompt@1"),
     ],
     ids=["input", "output"],
 )
@@ -496,6 +499,75 @@ def test_composition_rejects_slot_fragment_interface_mismatch(
     with pytest.raises(CompositionError) as captured:
         compose_documents(graph_path)
     assert captured.value.code == "CompositionInterfaceMismatch"
+
+
+@pytest.mark.parametrize(
+    ("block_input_schema", "block_output_schema"),
+    [
+        (TEXT_SCHEMA, PROMPT_SCHEMA),
+        (MESSAGE_SCHEMA, TEXT_SCHEMA),
+    ],
+    ids=["fragment-input", "fragment-output"],
+)
+def test_expanded_fragment_interface_is_checked_against_internal_block_ports(
+    tmp_path: Path,
+    block_input_schema: str,
+    block_output_schema: str,
+) -> None:
+    _write_yaml(tmp_path / "fragment.yaml", _fragment())
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, _composed_graph())
+    _, expanded = _expanded_graph(graph_path)
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "prompt.render",
+                "version": 1,
+                "inputs": [{"name": "message", "type": block_input_schema}],
+                "outputs": [{"name": "prompt", "type": block_output_schema}],
+            }
+        ]
+    )
+
+    plan = compile_graph(expanded, block_catalog=catalog)
+
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == [
+        "GB1018"
+    ]
+
+
+def test_expanded_slot_external_edge_is_checked_against_internal_block_port(
+    tmp_path: Path,
+) -> None:
+    _write_yaml(tmp_path / "fragment.yaml", _fragment())
+    graph = _composed_graph(
+        extra_nodes={"source": {"block": "number.source@1"}},
+    )
+    graph["spec"]["nodes"]["answer"]["inputs"]["message"] = "source.value"
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, graph)
+    _, expanded = _expanded_graph(graph_path)
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "number.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Number@1"}],
+            },
+            {
+                "typeId": "prompt.render",
+                "version": 1,
+                "inputs": [{"name": "message", "type": MESSAGE_SCHEMA}],
+                "outputs": [{"name": "prompt", "type": PROMPT_SCHEMA}],
+            },
+        ]
+    )
+
+    plan = compile_graph(expanded, block_catalog=catalog)
+
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == [
+        "GB1018"
+    ]
 
 
 def test_composition_rejects_synthesized_node_collision(tmp_path: Path) -> None:

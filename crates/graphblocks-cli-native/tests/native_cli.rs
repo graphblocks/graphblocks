@@ -11,28 +11,14 @@ use serde_json::{Value, json};
 
 #[test]
 fn native_validate_reports_ok_and_plan_hash_without_expanded_plan() {
-    let graph = json!({
-        "apiVersion": GRAPH_API_VERSION,
-        "kind": "Graph",
-        "metadata": {"name": "ordered"},
-        "spec": {
-            "nodes": {
-                "b": {"block": "text.join@1", "config": {"second": 2, "first": 1}},
-                "a": {"block": "text.literal@1"}
-            },
-            "edges": [
-                {"to": "b.value", "from": "a.value"},
-                {"to": "$output.result", "from": "b.value"}
-            ]
-        }
-    });
+    let graph = prompt_graph("Native {message.text}");
 
     let report = run_compiler_workflow(&graph, NativeCliMode::Validate);
 
     assert!(report.ok);
     assert_eq!(
         report.graph_hash.as_deref(),
-        Some("sha256:0b2636678ee1af1446500624da2f5db0dab238aceb858058a6f3b60f9e06f3a8")
+        Some("sha256:fe857328a0c944648cbfc1afa1d190fc3bc1aa8df55ac9ad2b63ac7f4ae47b2a")
     );
     assert_eq!(report.normalized, None);
     assert!(report.diagnostics.is_empty());
@@ -206,6 +192,31 @@ fn native_validate_returns_structured_diagnostics() {
 }
 
 #[test]
+fn native_validate_rejects_graph_interface_to_stdlib_port_type_mismatch() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "interface-type-mismatch"},
+        "spec": {
+            "interface": {
+                "inputs": {"message": "graphblocks.ai/Text@1"}
+            },
+            "nodes": {
+                "context": {"block": "context.build@1"}
+            },
+            "edges": [
+                {"from": "$input.message", "to": "context.currentMessage"}
+            ]
+        }
+    });
+
+    let report = run_compiler_workflow(&graph, NativeCliMode::Validate);
+
+    assert!(!report.ok);
+    assert!(report.diagnostics.iter().any(|item| item.code == "GB1018"));
+}
+
+#[test]
 fn native_run_executes_stdlib_graph_with_inputs() {
     let graph = prompt_graph("Native {message.text}");
 
@@ -225,16 +236,7 @@ fn native_run_executes_stdlib_graph_with_inputs() {
 
 #[test]
 fn native_run_reports_failed_runtime_status_as_not_ok() {
-    let graph = json!({
-        "apiVersion": GRAPH_API_VERSION,
-        "kind": "Graph",
-        "metadata": {"name": "native-run-fails"},
-        "spec": {
-            "nodes": {
-                "missing": {"block": "missing.block@1"}
-            }
-        }
-    });
+    let graph = prompt_graph("Native {message.text}");
 
     let report = run_stdlib_workflow(&graph, &json!({}));
 

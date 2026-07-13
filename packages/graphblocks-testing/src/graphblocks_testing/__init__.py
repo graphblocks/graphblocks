@@ -6202,7 +6202,7 @@ def _exercise_coding_agent_background_callback(
                 "ownership_fenced": True,
             }
 
-    registry = stdlib_registry()
+    registry = stdlib_registry(allow_untyped=True)
     registry.register("acceptance.fail-after-callback@1", fail_after_callback)
     run_id = "run-coding-agent-acceptance-1"
     operation_id = "operation-coding-agent-acceptance-1"
@@ -16233,7 +16233,7 @@ class TckRunner:
 
         attempts = {"count": 0}
         seen_idempotency_keys: list[str | None] = []
-        registry = RuntimeRegistry()
+        registry = RuntimeRegistry(allow_untyped=True)
         block_id = str(fixture.get("block", "test.flaky_write@1"))
         node_id = str(fixture.get("nodeId", fixture.get("node_id", "write")))
         max_attempts = int(fixture.get("maxAttempts", fixture.get("max_attempts", 1)))
