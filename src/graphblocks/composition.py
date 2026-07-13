@@ -5,8 +5,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import math
+import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 from typing import Any
 
 import yaml
@@ -366,13 +368,203 @@ class _Composer:
             )
 
         try:
-            data = source.read_bytes()
-        except OSError as error:
+            relative_path = source.relative_to(self.root)
+        except ValueError as error:
             raise CompositionError(
-                "CompositionInvalidImport",
-                "composition source could not be read",
+                "CompositionImportOutsideRoot",
+                "composition source escapes the composition root",
                 source=self._logical_path(source),
             ) from error
+
+        directory_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        source_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOCTTY", 0)
+            | no_follow
+        )
+        supports_dir_fd = os.open in getattr(os, "supports_dir_fd", set())
+        reparse_point_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        data: bytes | None = None
+        if supports_dir_fd and no_follow:
+            opened_directories: list[int] = []
+            file_fd: int | None = None
+            try:
+                root_stat = os.lstat(self.root)
+                if stat.S_ISLNK(root_stat.st_mode) or bool(
+                    getattr(root_stat, "st_file_attributes", 0) & reparse_point_flag
+                ):
+                    raise CompositionError(
+                        "CompositionSymlinkRejected",
+                        "composition sources must not traverse symbolic links",
+                        source=self._logical_path(source),
+                    )
+                directory_fd = os.open(self.root, directory_flags | no_follow)
+                opened_directories.append(directory_fd)
+                if not stat.S_ISDIR(os.fstat(directory_fd).st_mode) or not os.path.samestat(
+                    root_stat, os.fstat(directory_fd)
+                ):
+                    raise OSError("composition root changed while it was opened")
+                for part in relative_path.parts[:-1]:
+                    directory_fd = os.open(
+                        part,
+                        directory_flags | no_follow,
+                        dir_fd=directory_fd,
+                    )
+                    opened_directories.append(directory_fd)
+                    if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+                        raise NotADirectoryError(part)
+                if not relative_path.parts:
+                    raise IsADirectoryError(str(source))
+                file_fd = os.open(
+                    relative_path.parts[-1],
+                    source_flags,
+                    dir_fd=directory_fd,
+                )
+                if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                    raise OSError(f"composition source is not a regular file: {source}")
+                with os.fdopen(file_fd, "rb") as stream:
+                    file_fd = None
+                    data = stream.read(MAX_SOURCE_BYTES + 1)
+            except CompositionError:
+                raise
+            except (NotImplementedError, TypeError):
+                data = None
+            except OSError as error:
+                try:
+                    became_link = stat.S_ISLNK(os.lstat(source).st_mode)
+                except OSError:
+                    became_link = False
+                if became_link:
+                    raise CompositionError(
+                        "CompositionSymlinkRejected",
+                        "composition sources must not traverse symbolic links",
+                        source=self._logical_path(source),
+                    ) from error
+                raise CompositionError(
+                    "CompositionInvalidImport",
+                    "composition source could not be read safely",
+                    source=self._logical_path(source),
+                ) from error
+            finally:
+                if file_fd is not None:
+                    os.close(file_fd)
+                for opened_fd in reversed(opened_directories):
+                    os.close(opened_fd)
+
+        if data is None:
+            path_components = [self.root]
+            current_path = self.root
+            for part in relative_path.parts:
+                current_path /= part
+                path_components.append(current_path)
+
+            component_stats: list[os.stat_result] = []
+            try:
+                for index, path_component in enumerate(path_components):
+                    component_stat = os.lstat(path_component)
+                    is_reparse_point = bool(
+                        getattr(component_stat, "st_file_attributes", 0)
+                        & reparse_point_flag
+                    )
+                    if stat.S_ISLNK(component_stat.st_mode) or is_reparse_point:
+                        raise CompositionError(
+                            "CompositionSymlinkRejected",
+                            "composition sources must not traverse symbolic links",
+                            source=self._logical_path(source),
+                        )
+                    if index < len(path_components) - 1:
+                        if not stat.S_ISDIR(component_stat.st_mode):
+                            raise NotADirectoryError(str(path_component))
+                    elif not stat.S_ISREG(component_stat.st_mode):
+                        raise OSError(
+                            f"composition source is not a regular file: {source}"
+                        )
+                    if (component_stat.st_dev, component_stat.st_ino) == (0, 0):
+                        raise OSError(
+                            f"composition source identity cannot be verified: {path_component}"
+                        )
+                    component_stats.append(component_stat)
+
+                file_fd = None
+                try:
+                    file_fd = os.open(
+                        source,
+                        source_flags,
+                    )
+                    opened_stat = os.fstat(file_fd)
+                    if not stat.S_ISREG(opened_stat.st_mode):
+                        raise OSError(
+                            f"composition source is not a regular file: {source}"
+                        )
+                    opened_path = source.resolve(strict=True)
+                    if not opened_path.is_relative_to(self.root):
+                        raise CompositionError(
+                            "CompositionImportOutsideRoot",
+                            "composition source escapes the composition root",
+                            source=self._logical_path(source),
+                        )
+                    if opened_path != source or not os.path.samestat(
+                        component_stats[-1], opened_stat
+                    ):
+                        raise OSError(
+                            f"composition source changed while it was opened: {source}"
+                        )
+                    with os.fdopen(file_fd, "rb") as stream:
+                        file_fd = None
+                        data = stream.read(MAX_SOURCE_BYTES + 1)
+                finally:
+                    if file_fd is not None:
+                        os.close(file_fd)
+
+                final_path = source.resolve(strict=True)
+                if not final_path.is_relative_to(self.root):
+                    raise CompositionError(
+                        "CompositionImportOutsideRoot",
+                        "composition source escapes the composition root",
+                        source=self._logical_path(source),
+                    )
+                if final_path != source:
+                    raise OSError(f"composition source changed while it was read: {source}")
+                for path_component, initial_stat in zip(
+                    path_components, component_stats, strict=True
+                ):
+                    final_stat = os.lstat(path_component)
+                    is_reparse_point = bool(
+                        getattr(final_stat, "st_file_attributes", 0)
+                        & reparse_point_flag
+                    )
+                    if stat.S_ISLNK(final_stat.st_mode) or is_reparse_point:
+                        raise CompositionError(
+                            "CompositionSymlinkRejected",
+                            "composition sources must not traverse symbolic links",
+                            source=self._logical_path(source),
+                        )
+                    if not os.path.samestat(initial_stat, final_stat):
+                        raise OSError(
+                            f"composition source path changed while it was read: {path_component}"
+                        )
+            except CompositionError:
+                raise
+            except OSError as error:
+                raise CompositionError(
+                    "CompositionInvalidImport",
+                    "composition source could not be read safely",
+                    source=self._logical_path(source),
+                ) from error
+
+        if data is None:
+            raise CompositionError(
+                "CompositionInvalidImport",
+                "composition source could not be read safely",
+                source=self._logical_path(source),
+            )
         if len(data) > MAX_SOURCE_BYTES:
             raise CompositionError(
                 "CompositionLimitExceeded",
