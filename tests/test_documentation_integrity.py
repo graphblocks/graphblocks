@@ -28,6 +28,10 @@ def test_ci_enforces_documented_rust_quality_and_packaging_gates() -> None:
     assert "cargo clippy --workspace --all-targets --locked -- -D warnings" in workflow
     assert "cargo test --workspace --all-targets --locked" in workflow
     assert "cargo package" in workflow
+    assert "patch_config=.cargo/config.toml" in workflow
+    assert "printf '[patch.crates-io]\\n'" in workflow
+    assert '>> "$patch_config"' in workflow
+    assert '"${patches[@]}"' not in workflow
     assert '"--no-index"' in wheelhouse_gate
     assert '"--find-links"' in wheelhouse_gate
     assert '"check"' in wheelhouse_gate

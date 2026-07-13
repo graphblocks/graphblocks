@@ -101,12 +101,14 @@ jobs:
           mapfile -t manifests < <(
             find target/package -mindepth 2 -maxdepth 2 -name Cargo.toml -print | sort
           )
-          patches=()
+          mkdir -p .cargo
+          patch_config=.cargo/config.toml
+          printf '[patch.crates-io]\n' > "$patch_config"
           schema_manifest=
           for manifest in "${manifests[@]}"; do
             crate_dir=$(dirname "$manifest")
             crate_name=$(sed -n '/^name = / { s/^name = "//; s/"$//; p; q; }' "$manifest")
-            patches+=(--config "patch.crates-io.${crate_name}.path='${PWD}/${crate_dir}'")
+            printf "%s = { path = '%s/%s' }\n" "$crate_name" "$PWD" "$crate_dir" >> "$patch_config"
             if [[ "$crate_name" == graphblocks-schema ]]; then
               schema_manifest=$manifest
             fi
@@ -117,8 +119,8 @@ jobs:
             if [[ "$manifest" == "$schema_manifest" ]]; then
               continue
             fi
-            cargo test --manifest-path "$manifest" --all-targets "${patches[@]}"
+            cargo test --manifest-path "$manifest" --all-targets
           done
 
           test -n "$schema_manifest"
-          cargo test --manifest-path "$schema_manifest" --all-targets "${patches[@]}"
+          cargo test --manifest-path "$schema_manifest" --all-targets
