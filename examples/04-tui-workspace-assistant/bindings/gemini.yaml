@@ -1,0 +1,15 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Binding
+metadata:
+  name: workspace-assistant-gemini
+spec:
+  resources:
+    coding-model:
+      kind: ChatModel
+      implementation: google.interactions
+      config:
+        provider: google
+        model: gemini-3.5-flash
+        api: interactions
+      credentials:
+        secretRef: secret://model-providers/google/api-key

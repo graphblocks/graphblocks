@@ -1,0 +1,15 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Binding
+metadata:
+  name: workspace-assistant-gpt
+spec:
+  resources:
+    coding-model:
+      kind: ChatModel
+      implementation: openai.responses
+      config:
+        provider: openai
+        model: gpt-5.6-sol
+        api: responses
+      credentials:
+        secretRef: secret://model-providers/openai/api-key

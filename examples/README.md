@@ -16,7 +16,7 @@ checked-in Python and Rust implementations directly.
 | [01-3 Enterprise RAG — Rust](01-enterprise-federated-rag/1-3-rust-runtime/README.md) | Rust graph through `graphblocks-runtime-core` |
 | [02 Marker document ingestion](02-document-ingestion/README.md) | Marker-first PDF parsing, fallback, ACL lineage |
 | [03 Policy-governed chat](03-policy-governed-chat/README.md) | bounded completion and hard-stop profiles |
-| [04 TUI workspace assistant](04-tui-workspace-assistant/README.md) | application protocol and TUI client boundary |
+| [04 TUI workspace assistant](04-tui-workspace-assistant/README.md) | application protocol, TUI boundary, GPT/Gemini/Claude bindings |
 | [05 Authority-backed advisory](05-authority-backed-advisory/README.md) | sources, evidence, review, and gated result |
 | [06 Bounded research orchestrator](06-bounded-research-orchestrator/README.md) | task limits, budget delegation, replan CAS |
 | [07 Verified RTL workspace trial](07-verified-rtl-workspace-trial/README.md) | trial checks, leases, review, governed commit |

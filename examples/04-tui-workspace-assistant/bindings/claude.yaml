@@ -1,0 +1,16 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Binding
+metadata:
+  name: workspace-assistant-claude
+spec:
+  resources:
+    coding-model:
+      kind: ChatModel
+      implementation: anthropic.messages
+      config:
+        provider: anthropic
+        model: claude-sonnet-5
+        api: messages
+        thinking: {type: adaptive}
+      credentials:
+        secretRef: secret://model-providers/anthropic/api-key
