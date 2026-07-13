@@ -15,8 +15,8 @@ same validation and integration path runs.
 | Example | Contract focus |
 | --- | --- |
 | [01-1 Enterprise RAG — YAML](01-enterprise-federated-rag/1-1-yaml-runtime/README.md) | YAML graph through the CLI runtime |
-| [01-2 Enterprise RAG — Python](01-enterprise-federated-rag/1-2-python-runtime/README.md) | Python graph through `InProcessRuntime` |
-| [01-3 Enterprise RAG — Rust](01-enterprise-federated-rag/1-3-rust-runtime/README.md) | Rust graph through `graphblocks-runtime-core` |
+| [01-2 Enterprise RAG — Python](01-enterprise-federated-rag/1-2-python-runtime/README.md) | Typed Python blocks and graph through `InProcessRuntime` |
+| [01-3 Enterprise RAG — Rust](01-enterprise-federated-rag/1-3-rust-runtime/README.md) | Typed Rust blocks and graph through `graphblocks-runtime-core` |
 | [02 Marker document ingestion](02-document-ingestion/README.md) | Marker-first PDF parsing, fallback, ACL lineage |
 | [03 Policy-governed chat](03-policy-governed-chat/README.md) | bounded completion and hard-stop profiles |
 | [04 TUI workspace assistant](04-tui-workspace-assistant/README.md) | composed workspace/agent stages, TUI boundary, GPT/Gemini/Claude bindings |

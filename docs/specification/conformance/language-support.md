@@ -7,6 +7,7 @@ release compatibility promise.
 | --- | --- | --- |
 | Canonical schema/compiler | Implemented and TCK-backed | Implemented and TCK-backed |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
+| Typed code graph authoring | Implemented for the stdlib RAG vertical slice; materializes a portable Graph | Implemented for the stdlib RAG vertical slice; materializes a portable Graph |
 | Local runtime, cancellation, tools, budget core | Implemented | Implemented |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
@@ -29,3 +30,7 @@ without granting the Rust process access to the source tree. Direct Rust
 composition support requires parity on composition fixtures, canonical expanded
 values, graph hashes, and deterministic diagnostics before it can be listed as
 implemented.
+
+Typed code authoring is intentionally narrower than the complete block catalog.
+The current Python and Rust definitions cover the stdlib RAG path demonstrated
+by example 01 and preserve the portable Graph as the compiler/runtime boundary.

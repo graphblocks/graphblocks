@@ -10,15 +10,21 @@ runtime entry points:
 
 - [1-1 YAML runtime](1-1-yaml-runtime/README.md) loads `graph.yaml` through the
   `graphblocks run` CLI.
-- [1-2 Python runtime](1-2-python-runtime/README.md) constructs the graph as
-  Python dictionaries and calls `InProcessRuntime` directly.
-- [1-3 Rust runtime](1-3-rust-runtime/README.md) constructs the graph with
-  `serde_json::json!` and calls `run_stdlib_graph_with_options_json` directly.
+- [1-2 Python runtime](1-2-python-runtime/README.md) imports typed stdlib block
+  definitions, wires them with `GraphBuilder`, and calls `InProcessRuntime`.
+- [1-3 Rust runtime](1-3-rust-runtime/README.md) imports typed stdlib block
+  definitions, wires them with the Rust `GraphBuilder`, and calls the typed
+  `run_stdlib_graph_with_options` API.
 
 All three execute federated retrieval, reciprocal-rank fusion, deterministic
 reranking, bounded context construction, structured answer generation, and
 grounding validation. They use the same inputs and must produce the same graph
 hash, successful-node order, and normalized cited answer.
+
+The Python and Rust builders materialize the same portable Graph document as the
+YAML variant. JSON remains at the fixture and wire-value boundary; block IDs,
+port names, configuration fields, and graph wiring are represented by imported
+definitions instead of hand-authored JSON objects.
 
 Run all variants together with the original production contract acceptance
 checks:

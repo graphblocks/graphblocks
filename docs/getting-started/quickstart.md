@@ -14,6 +14,10 @@ variants and verifies their graph hash, node order, and cited-answer parity. It
 then executes deterministic semantic checks with recording retriever/model
 fakes. Real network access is blocked and the final JSON line contains runtime
 parity, mocked boundaries, call-input digests, and evidence digests.
+The Python and Rust variants import typed stdlib block definitions and wire typed
+ports with their language's `GraphBuilder`; both builders materialize the same
+portable Graph document as the YAML variant. JSON is still used for dynamic
+runtime payloads, but graph structure no longer requires hand-authored JSON.
 The combined runner and 1-3 require the Rust toolchain selected by
 `rust-toolchain.toml`; 1-1 and 1-2 can be run with the Python development
 installation alone.
