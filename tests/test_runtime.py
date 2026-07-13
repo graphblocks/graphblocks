@@ -102,7 +102,7 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         assert store.get_run("run-runtime-resume-1").status == "resuming"
         return {"result": inputs["callback"]}
 
-    registry = stdlib_registry()
+    registry = stdlib_registry(allow_untyped=True)
     registry.register("test.prepare@1", prepare)
     registry.register("test.consume-callback@1", consume)
     graph = {
@@ -417,10 +417,10 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     assert second_wait.checkpoint is not None
     assert first_wait.checkpoint.checkpoint_id != second_wait.checkpoint.checkpoint_id
 
-    malformed_registry = stdlib_registry()
+    malformed_registry = stdlib_registry(allow_untyped=True)
     malformed_registry.register("test.prepare@1", prepare)
     malformed_registry.register("test.consume-callback@1", consume)
-    malformed_registry.register(
+    malformed_registry.replace(
         "async.await_callback@1",
         lambda inputs, config, context: {
             "wait": {
@@ -869,15 +869,13 @@ def test_runtime_fails_when_block_is_not_registered() -> None:
         },
     }
 
-    result = InProcessRuntime(RuntimeRegistry()).run(graph, {})
-
-    assert result.status == "failed"
-    assert result.journal.terminal_kind == "run_failed"
+    with pytest.raises(ValueError, match="GB1022.*not declared in the block catalog"):
+        InProcessRuntime(RuntimeRegistry()).run(graph, {})
 
 
 def test_runtime_does_not_coerce_non_numeric_retry_attempts() -> None:
     attempts = {"count": 0}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def flaky_block(inputs, config, context):
         attempts["count"] += 1
@@ -911,7 +909,7 @@ def test_runtime_does_not_coerce_non_numeric_retry_attempts() -> None:
 
 
 def test_runtime_ignores_malformed_retry_attempts_without_crashing() -> None:
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def failing_block(inputs, config, context):
         raise RuntimeError("failed once")
@@ -949,7 +947,7 @@ def test_runtime_does_not_retry_state_changes_with_invalid_idempotency_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     attempts = {"count": 0}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def failing_write(inputs, config, context):
         attempts["count"] += 1

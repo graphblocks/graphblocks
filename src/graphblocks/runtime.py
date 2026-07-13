@@ -17,6 +17,7 @@ from .compiler import STATE_CHANGING_TOOL_EFFECTS, compile_graph
 from .duration import parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
+from .plugins import BlockCatalog, builtin_block_catalog
 from .run_store import InMemoryRunStore, RunDeploymentProvenance
 from .tools import (
     BlockToolImplementation,
@@ -546,11 +547,61 @@ class RunResult:
 @dataclass(slots=True)
 class RuntimeRegistry:
     blocks: dict[str, BlockCallable] = field(default_factory=dict)
+    block_catalog: BlockCatalog = field(default_factory=lambda: BlockCatalog({}))
+    allow_untyped: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allow_untyped, bool):
+            raise TypeError("allow_untyped must be a boolean")
+        if self.allow_untyped:
+            return
+        undeclared = sorted(set(self.blocks) - set(self.block_catalog.descriptors))
+        if undeclared:
+            raise ValueError(
+                "runtime blocks are not declared in the block catalog: "
+                + ", ".join(undeclared)
+            )
 
     def register(self, block_id: str, block: BlockCallable) -> None:
+        if block_id in self.blocks:
+            raise ValueError(f"runtime block {block_id!r} is already registered")
+        if not self.allow_untyped and self.block_catalog.get(block_id) is None:
+            raise ValueError(
+                f"runtime block {block_id!r} is not declared in the block catalog"
+            )
         self.blocks[block_id] = block
 
+    def replace(self, block_id: str, block: BlockCallable) -> None:
+        if block_id not in self.blocks:
+            raise ValueError(f"runtime block {block_id!r} is not registered")
+        if not self.allow_untyped and self.block_catalog.get(block_id) is None:
+            raise ValueError(
+                f"runtime block {block_id!r} is not declared in the block catalog"
+            )
+        self.blocks[block_id] = block
+
+    def compilation_catalog(self) -> BlockCatalog | None:
+        if not self.allow_untyped:
+            if self.block_catalog.allow_unknown_blocks:
+                return BlockCatalog(
+                    self.block_catalog.descriptors,
+                    allow_unknown_blocks=False,
+                )
+            return self.block_catalog
+        if not self.block_catalog.descriptors:
+            return None
+        if self.block_catalog.allow_unknown_blocks:
+            return self.block_catalog
+        return BlockCatalog(
+            self.block_catalog.descriptors,
+            allow_unknown_blocks=True,
+        )
+
     def resolve(self, block_id: str) -> BlockCallable:
+        if not self.allow_untyped and self.block_catalog.get(block_id) is None:
+            raise ValueError(
+                f"runtime block {block_id!r} is not declared in the block catalog"
+            )
         return self.blocks[block_id]
 
 
@@ -594,7 +645,12 @@ class InProcessRuntime:
             raise ValueError("deployment_provenance must be RunDeploymentProvenance")
         if deployment_provenance is not None:
             deployment_provenance.validate_for_production()
-        plan = compile_graph(graph)
+        block_catalog = self.registry.compilation_catalog()
+        plan = (
+            compile_graph(graph, block_catalog=block_catalog)
+            if block_catalog is not None
+            else compile_graph(graph)
+        )
         errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
         if errors:
             message = "; ".join(f"{item.code} {item.path}: {item.message}" for item in errors)
@@ -804,9 +860,39 @@ class InProcessRuntime:
                 )
             operation["state"] = "resuming"
             wait_result = {
+                "wait": {
+                    "state": "resumed",
+                    "operation": operation,
+                    "checkpoint": False,
+                },
                 "callback": callback_payload,
                 "operation": operation,
             }
+            descriptor = self.registry.block_catalog.get(
+                "async.await_callback@1"
+            )
+            if descriptor is not None:
+                declared_outputs = {
+                    port.name for port in descriptor.outputs
+                }
+                unexpected_outputs = sorted(
+                    set(wait_result) - declared_outputs
+                )
+                if unexpected_outputs:
+                    raise TypeError(
+                        "async.await_callback@1 returned undeclared output(s): "
+                        + ", ".join(unexpected_outputs)
+                    )
+                missing_outputs = sorted(
+                    port.name
+                    for port in descriptor.outputs
+                    if port.required and port.name not in wait_result
+                )
+                if missing_outputs:
+                    raise TypeError(
+                        "async.await_callback@1 omitted required output(s): "
+                        + ", ".join(missing_outputs)
+                    )
             node_outputs[checkpoint.wait_node] = wait_result
             for edge in edges:
                 if not (
@@ -998,6 +1084,29 @@ class InProcessRuntime:
                             raise TimeoutError(timeout_reason)
                         if not isinstance(attempt_result, dict):
                             raise TypeError("block returned non-mapping output")
+                        descriptor = self.registry.block_catalog.get(block_id)
+                        if descriptor is not None:
+                            declared_outputs = {
+                                port.name for port in descriptor.outputs
+                            }
+                            unexpected_outputs = sorted(
+                                set(attempt_result) - declared_outputs
+                            )
+                            if unexpected_outputs:
+                                raise TypeError(
+                                    f"{block_id} returned undeclared output(s): "
+                                    + ", ".join(unexpected_outputs)
+                                )
+                            missing_outputs = sorted(
+                                port.name
+                                for port in descriptor.outputs
+                                if port.required and port.name not in attempt_result
+                            )
+                            if missing_outputs:
+                                raise TypeError(
+                                    f"{block_id} omitted required output(s): "
+                                    + ", ".join(missing_outputs)
+                                )
                         result = attempt_result
                         break
                     except Exception as exc:
@@ -1166,15 +1275,55 @@ class InProcessRuntime:
         return RunResult(run_id, "succeeded", output_values, journal)
 
 
-def stdlib_registry() -> RuntimeRegistry:
+def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
     from .stdlib_governance import GOVERNANCE_BLOCKS
     from .stdlib_rag import RAG_BLOCKS
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(
+        block_catalog=builtin_block_catalog(),
+        allow_untyped=allow_untyped,
+    )
 
     def begin_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        conversation_id = str(inputs.get("conversationId") or config.get("conversationId") or context["conversation_id"])
-        return {"transaction": {"conversationId": conversation_id, "turnId": context["turn_id"]}}
+        conversation = inputs.get("conversation")
+        if isinstance(conversation, Mapping):
+            snapshot = dict(conversation)
+            conversation_id = str(
+                inputs.get("conversationId")
+                or conversation.get("conversationId")
+                or conversation.get("conversation_id")
+                or conversation.get("id")
+                or config.get("conversationId")
+                or context["conversation_id"]
+            )
+        else:
+            conversation_id = str(
+                inputs.get("conversationId")
+                or conversation
+                or config.get("conversationId")
+                or context["conversation_id"]
+            )
+            snapshot = {"conversationId": conversation_id}
+        snapshot["conversationId"] = conversation_id
+        messages = snapshot.get("messages", [])
+        if not isinstance(messages, list):
+            raise TypeError("conversation.begin_turn@1 input 'conversation.messages' must be a list")
+        messages = list(messages)
+        if "message" in inputs:
+            messages.append(inputs["message"])
+        snapshot["messages"] = messages
+        transaction = {
+            "conversationId": conversation_id,
+            "turnId": context["turn_id"],
+        }
+        if "message" in inputs:
+            transaction["message"] = inputs["message"]
+        return {
+            "transaction": transaction,
+            "snapshot": snapshot,
+            "conversation": snapshot,
+            "turn": transaction,
+        }
 
     def prompt_render(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         template = str(config.get("template", "{message.text}"))
@@ -1542,7 +1691,13 @@ def stdlib_registry() -> RuntimeRegistry:
         run_store = context.get("run_store")
         if run_store is not None:
             run_store.record_model_visible_tools(str(context["run_id"]), provenance_tools)
-        messages = inputs.get("messages", [])
+        messages = inputs.get("messages")
+        if messages is None:
+            conversation = inputs.get("conversation")
+            if isinstance(conversation, Mapping):
+                messages = conversation.get("messages", [])
+            else:
+                messages = []
         if not isinstance(messages, list):
             raise TypeError("agent.run@1 input 'messages' must be a list")
         if "response" in config:
@@ -1572,21 +1727,36 @@ def stdlib_registry() -> RuntimeRegistry:
         if output_policy_profile_ref is not None:
             candidate["outputPolicyProfileRef"] = output_policy_profile_ref
         return {
-            "candidate": candidate
+            "candidate": candidate,
+            "result": candidate,
+            "message": candidate,
         }
 
     def commit_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        transaction = inputs["transaction"]
-        if isinstance(transaction, dict) and transaction.get("status") == "policy_stopped":
+        transaction = inputs.get("transaction", inputs.get("turn"))
+        if not isinstance(transaction, Mapping):
+            raise TypeError(
+                "conversation.commit_turn@1 requires transaction or turn mapping"
+            )
+        if transaction.get("status") == "policy_stopped":
             raise RuntimeError("conversation.commit_turn@1 cannot commit policy-stopped turn")
-        candidate = inputs["candidate"]
-        text = candidate["text"] if isinstance(candidate, dict) and "text" in candidate else str(candidate)
+        if "candidate" in inputs:
+            candidate = inputs["candidate"]
+        elif "response" in inputs:
+            candidate = inputs["response"]
+        else:
+            raise TypeError(
+                "conversation.commit_turn@1 requires candidate or response input"
+            )
+        text = candidate["text"] if isinstance(candidate, Mapping) and "text" in candidate else str(candidate)
+        answer = {
+            "conversationId": transaction["conversationId"],
+            "text": text,
+            "turnId": transaction["turnId"],
+        }
         return {
-            "answer": {
-                "conversationId": transaction["conversationId"],
-                "text": text,
-                "turnId": transaction["turnId"],
-            }
+            "answer": answer,
+            "result": candidate,
         }
 
     def policy_stop_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -1742,6 +1912,8 @@ def stdlib_registry() -> RuntimeRegistry:
             operation["state"] = "waiting_callback"
         if "subject" in inputs:
             operation["subject"] = inputs["subject"]
+        if "changeset" in inputs:
+            operation["changeset"] = inputs["changeset"]
         return {"operation": operation}
 
     def async_await_callback(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -2208,6 +2380,8 @@ def stdlib_registry() -> RuntimeRegistry:
     registry.register("async.complete_operation@1", async_complete_operation)
     registry.register("async.cancel_operation@1", async_cancel_operation)
     registry.register("async.expire_operation@1", async_expire_operation)
-    registry.blocks.update(RAG_BLOCKS)
-    registry.blocks.update(GOVERNANCE_BLOCKS)
+    for block_id, block in RAG_BLOCKS.items():
+        registry.register(block_id, block)
+    for block_id, block in GOVERNANCE_BLOCKS.items():
+        registry.register(block_id, block)
     return registry
