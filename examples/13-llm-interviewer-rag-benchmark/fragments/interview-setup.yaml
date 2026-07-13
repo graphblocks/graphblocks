@@ -1,0 +1,32 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: interview-setup
+spec:
+  interface:
+    inputs:
+      dataset: graphblocks.evaluation/InterviewDatasetRef@1
+    outputs:
+      reference: graphblocks.evaluation/InterviewReference@1
+      chunks: graphblocks.ai/DocumentChunkList@1
+      questions: graphblocks.evaluation/InterviewQuestionSet@1
+  nodes:
+    load:
+      block: evaluation.load_interview_dataset@1
+    ask:
+      block: model.structured_generate@1
+      bindings: {model: interviewer-model}
+      config:
+        role: interviewer
+        outputSchema: graphblocks.evaluation/InterviewQuestionSet@1
+  edges:
+    - from: $input.dataset
+      to: load.dataset
+    - from: load.reference
+      to: ask.reference
+    - from: load.reference
+      to: $output.reference
+    - from: load.chunks
+      to: $output.chunks
+    - from: ask.questions
+      to: $output.questions

@@ -1,0 +1,23 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: workspace-context
+spec:
+  interface:
+    inputs:
+      workspace: graphblocks.workspace/WorkspaceRef@1
+      selection: company.workspace/Selection@1
+      message: graphblocks.ai/Message@1
+    outputs:
+      context: graphblocks.ai/ContextPack@1
+  nodes:
+    snapshot:
+      block: workspace.snapshot@1
+      inputs: {workspace: $input.workspace}
+    context:
+      block: workspace.context@1
+      inputs:
+        snapshot: snapshot.value
+        selection: $input.selection
+        message: $input.message
+      outputs: {pack: $output.context}

@@ -7,7 +7,7 @@ spec:
     graph: vllm-config-performance-benchmark
     inputs: {matrix: configs.yaml}
     nodes:
-      load:
+      collect__load:
         service: benchmark-matrix
         expectedInputs: {matrix: configs.yaml}
         outputs:
@@ -15,12 +15,12 @@ spec:
           candidate: larger-batch
           configs: [baseline, larger-batch]
           workload: {inputTokens: 512, maxOutputTokens: 64, promptCount: 4}
-      warmup:
+      collect__warmup:
         service: mock-vllm-servers
         expectedInputs:
           configs: [baseline, larger-batch]
         outputs: {result: completed}
-      measure:
+      collect__measure:
         service: mock-vllm-servers
         expectedInputs:
           configs: [baseline, larger-batch]
@@ -29,13 +29,13 @@ spec:
           samples:
             baseline: {p95TtftMs: 197.0, meanDecodeTps: 50.0}
             larger-batch: {p95TtftMs: 98.5, meanDecodeTps: 80.0}
-      aggregate:
+      evaluate__aggregate:
         service: benchmark-aggregator
         outputs:
           results:
             baseline: {p95TtftMs: 197.0, meanDecodeTps: 50.0, outputThroughputTps: 128.0}
             larger-batch: {p95TtftMs: 98.5, meanDecodeTps: 80.0, outputThroughputTps: 204.8}
-      compare:
+      evaluate__compare:
         service: performance-gate
         expectedInputs:
           baseline: baseline
@@ -47,7 +47,12 @@ spec:
             gateDecision: pass
             p95TtftImprovementPct: 50.0
             outputThroughputImprovementPct: 60.0
-    expectedCallOrder: [load, warmup, measure, aggregate, compare]
+    expectedCallOrder:
+      - collect__load
+      - collect__warmup
+      - collect__measure
+      - evaluate__aggregate
+      - evaluate__compare
     expectedOutput:
       report:
         baseline: baseline

@@ -1,0 +1,52 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: blind-evaluation
+spec:
+  interface:
+    inputs:
+      questions: graphblocks.evaluation/InterviewQuestionSet@1
+      reference: graphblocks.evaluation/InterviewReference@1
+      rag: graphblocks.evaluation/AnswerSet@1
+      noRag: graphblocks.evaluation/AnswerSet@1
+    outputs:
+      report: graphblocks.evaluation/BenchmarkReport@1
+  nodes:
+    blind:
+      block: evaluation.blind_answer_pairs@1
+      config:
+        labels: [A, B]
+        order: alternate_by_question
+    score:
+      block: model.structured_generate@1
+      bindings: {model: interviewer-model}
+      config:
+        role: interviewer
+        blind: true
+        scale: {minimum: 0, maximum: 1}
+        outputSchema: graphblocks.evaluation/InterviewScoreSet@1
+    aggregate:
+      block: evaluation.compare_variants@1
+      config:
+        candidate: rag
+        baseline: no_rag
+        constraints:
+          ragScoreDelta: {atLeast: 0.20}
+          ragWinRate: {atLeast: 0.67}
+  edges:
+    - from: $input.rag
+      to: blind.rag
+    - from: $input.noRag
+      to: blind.noRag
+    - from: $input.questions
+      to: score.questions
+    - from: $input.reference
+      to: score.reference
+    - from: blind.pairs
+      to: score.candidates
+    - from: score.scores
+      to: aggregate.scores
+    - from: blind.mapping
+      to: aggregate.mapping
+    - from: aggregate.report
+      to: $output.report

@@ -1,0 +1,33 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: assistant-turn
+spec:
+  interface:
+    inputs:
+      messages: company.workspace/MessageHistory@1
+      context: graphblocks.ai/ContextPack@1
+    outputs:
+      result: graphblocks.ai/TurnResult@1
+  nodes:
+    agent:
+      block: agent.run@1
+      inputs:
+        messages: $input.messages
+        context: $input.context
+      bindings: {model: coding-model}
+      config:
+        tools:
+          - workspace.search
+          - workspace.read
+          - workspace.propose_changeset
+          - workspace.run_checks
+          - git.diff
+        maxSteps: 20
+        approval:
+          workspace.commit_changeset: required
+          process.execute: required
+    candidate:
+      block: conversation.make_turn_candidate@1
+      inputs: {agent: agent.result}
+      outputs: {result: $output.result}

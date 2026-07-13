@@ -12,12 +12,12 @@ spec:
         message: Explain this function and propose a safe rename.
         history: [{role: user, text: Keep the patch small.}]
     nodes:
-      snapshot:
+      prepare__snapshot:
         service: mock-workspace-api
         expectedInputs: {workspace: workspace-demo}
         outputs:
           value: {workspaceId: workspace-demo, revision: 7, digest: sha256:workspace-demo}
-      context:
+      prepare__context:
         service: workspace-context
         expectedInputs:
           selection: src/main.py:1-20
@@ -25,13 +25,13 @@ spec:
           snapshot: {workspaceId: workspace-demo, revision: 7}
         outputs:
           pack: {selection: src/main.py:1-20, symbol: load_config, revision: 7}
-      agent:
+      respond__agent:
         service: scripted-llm
         expectedInputs:
           context: {symbol: load_config, revision: 7}
         scriptedResponse: Rename load_config to load_project_config and update its two call sites.
         responseField: result
-      candidate:
+      respond__candidate:
         service: conversation-store
         expectedInputs:
           agent: Rename load_config to load_project_config and update its two call sites.
@@ -40,7 +40,7 @@ spec:
             status: draft
             message: Rename load_config to load_project_config and update its two call sites.
             baseRevision: 7
-    expectedCallOrder: [snapshot, context, agent, candidate]
+    expectedCallOrder: [prepare__snapshot, prepare__context, respond__agent, respond__candidate]
     expectedOutput:
       result:
         status: draft

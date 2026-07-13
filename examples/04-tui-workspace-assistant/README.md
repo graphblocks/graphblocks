@@ -4,7 +4,18 @@ This example models a terminal UI as an Application Protocol client rather than
 a graph node. The application exposes run events and commands while the graph
 handles workspace snapshot, agent work, review, and commit boundaries.
 
-The portable graph always binds its agent to the logical `coding-model`
+The root graph is assembled from two typed subgraphs. `prepare` fills the
+`workspace-context` slot from `fragments/workspace-context.yaml`, and `respond`
+fills the `assistant-turn` slot from `fragments/assistant-turn.yaml`. Composition
+materializes them as the ordinary nodes `prepare__snapshot`,
+`prepare__context`, `respond__agent`, and `respond__candidate` before validation,
+planning, or execution:
+
+```bash
+graphblocks compose examples/04-tui-workspace-assistant/example.yaml
+```
+
+The portable assistant fragment always binds its agent to the logical `coding-model`
 resource. Choose which physical provider supplies that resource with
 `--model`:
 

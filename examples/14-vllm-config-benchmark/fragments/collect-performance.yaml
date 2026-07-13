@@ -1,0 +1,35 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: collect-performance
+spec:
+  interface:
+    inputs:
+      matrix: graphblocks.evaluation/VllmBenchmarkMatrix@1
+    outputs:
+      baseline: graphblocks.evaluation/BenchmarkVariantId@1
+      candidate: graphblocks.evaluation/BenchmarkVariantId@1
+      samples: graphblocks.evaluation/PerformanceSamples@1
+  nodes:
+    load:
+      block: evaluation.load_benchmark_matrix@1
+      inputs: {matrix: $input.matrix}
+      outputs:
+        baseline: $output.baseline
+        candidate: $output.candidate
+    warmup:
+      block: benchmark.warmup_variants@1
+      inputs:
+        configs: load.configs
+        workload: load.workload
+    measure:
+      block: benchmark.measure_vllm_streaming@1
+      inputs:
+        configs: load.configs
+        workload: load.workload
+        warmup: warmup.result
+      outputs:
+        samples: $output.samples
+      config:
+        metrics: [ttft_ms, decode_tps, output_throughput_tps]
+        timingSource: monotonic_client_clock

@@ -4,44 +4,49 @@ kind: Graph
 metadata:
   name: vllm-config-performance-benchmark
 spec:
+  composition:
+    apiVersion: graphblocks.ai/composition/v1alpha1
+    imports:
+      collection:
+        path: fragments/collect-performance.yaml
+      evaluation:
+        path: fragments/evaluate-performance.yaml
+    slots:
+      performance-collection:
+        interface:
+          inputs:
+            matrix: graphblocks.evaluation/VllmBenchmarkMatrix@1
+          outputs:
+            baseline: graphblocks.evaluation/BenchmarkVariantId@1
+            candidate: graphblocks.evaluation/BenchmarkVariantId@1
+            samples: graphblocks.evaluation/PerformanceSamples@1
+        fill:
+          fragment: collection/collect-performance
+      performance-evaluation:
+        interface:
+          inputs:
+            samples: graphblocks.evaluation/PerformanceSamples@1
+            baseline: graphblocks.evaluation/BenchmarkVariantId@1
+            candidate: graphblocks.evaluation/BenchmarkVariantId@1
+          outputs:
+            report: graphblocks.evaluation/BenchmarkReport@1
+        fill:
+          fragment: evaluation/evaluate-performance
   interface:
     inputs:
       matrix: graphblocks.evaluation/VllmBenchmarkMatrix@1
     outputs:
       report: graphblocks.evaluation/BenchmarkReport@1
   nodes:
-    load:
-      block: evaluation.load_benchmark_matrix@1
-      inputs: {matrix: $input.matrix}
-    warmup:
-      block: benchmark.warmup_variants@1
+    collect:
+      slot: performance-collection
       inputs:
-        configs: load.configs
-        workload: load.workload
-    measure:
-      block: benchmark.measure_vllm_streaming@1
+        matrix: $input.matrix
+    evaluate:
+      slot: performance-evaluation
       inputs:
-        configs: load.configs
-        workload: load.workload
-        warmup: warmup.result
-      config:
-        metrics: [ttft_ms, decode_tps, output_throughput_tps]
-        timingSource: monotonic_client_clock
-    aggregate:
-      block: evaluation.aggregate_performance@1
-      inputs: {samples: measure.samples}
-      config:
-        percentiles: [50, 95]
-        decodeTpsFormula: (output_tokens-1)/((e2e_ms-ttft_ms)/1000)
-    compare:
-      block: evaluation.compare_variants@1
-      inputs:
-        aggregates: aggregate.results
-        baseline: load.baseline
-        candidate: load.candidate
-      config:
-        constraints:
-          p95TtftMs: {atMost: 120}
-          meanDecodeTps: {atLeast: 75}
-          outputThroughputTps: {atLeast: 200}
-      outputs: {report: $output.report}
+        samples: collect.samples
+        baseline: collect.baseline
+        candidate: collect.candidate
+      outputs:
+        report: $output.report

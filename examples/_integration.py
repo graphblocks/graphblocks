@@ -18,6 +18,7 @@ import yaml
 
 from graphblocks.canonical import canonical_dumps, canonical_hash
 from graphblocks.compiler import compile_graph
+from graphblocks.composition import CompositionResult, compose_documents
 from graphblocks.plugins import BlockCatalog, load_plugin_manifest
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry
 from graphblocks.schema import SchemaManifest
@@ -228,7 +229,11 @@ class WorkerBlockAdapter:
         return deepcopy(result.outputs)
 
 
-def run_integration(example_path: Path) -> dict[str, object]:
+def run_integration(
+    example_path: Path,
+    *,
+    composition: CompositionResult | None = None,
+) -> dict[str, object]:
     example_path = example_path.resolve()
     integration_path = example_path.with_name("integration.yaml")
     integration = yaml.safe_load(integration_path.read_text(encoding="utf-8"))
@@ -257,7 +262,11 @@ def run_integration(example_path: Path) -> dict[str, object]:
     worker_calls: list[dict[str, object]] = []
 
     try:
-        example_documents = list(yaml.safe_load_all(example_path.read_text(encoding="utf-8")))
+        if composition is None:
+            composition = compose_documents(example_path)
+        example_documents = list(composition.documents)
+        if composition.report.instances:
+            checks.append("composition:expanded")
         embedded_graphs = {
             str(document["metadata"]["name"])
             for document in example_documents
@@ -729,6 +738,8 @@ def run_integration(example_path: Path) -> dict[str, object]:
             "executedBlocks": sorted(executed_blocks),
             "workerCalls": worker_calls,
         }
+        if composition.report.instances:
+            evidence["compositionReport"] = composition.report.canonical_value()
         return {
             "ok": True,
             **evidence,

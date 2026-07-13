@@ -1,0 +1,31 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: evaluate-performance
+spec:
+  interface:
+    inputs:
+      samples: graphblocks.evaluation/PerformanceSamples@1
+      baseline: graphblocks.evaluation/BenchmarkVariantId@1
+      candidate: graphblocks.evaluation/BenchmarkVariantId@1
+    outputs:
+      report: graphblocks.evaluation/BenchmarkReport@1
+  nodes:
+    aggregate:
+      block: evaluation.aggregate_performance@1
+      inputs: {samples: $input.samples}
+      config:
+        percentiles: [50, 95]
+        decodeTpsFormula: (output_tokens-1)/((e2e_ms-ttft_ms)/1000)
+    compare:
+      block: evaluation.compare_variants@1
+      inputs:
+        aggregates: aggregate.results
+        baseline: $input.baseline
+        candidate: $input.candidate
+      config:
+        constraints:
+          p95TtftMs: {atMost: 120}
+          meanDecodeTps: {atLeast: 75}
+          outputThroughputTps: {atLeast: 200}
+      outputs: {report: $output.report}

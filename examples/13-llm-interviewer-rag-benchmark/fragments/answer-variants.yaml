@@ -1,0 +1,38 @@
+apiVersion: graphblocks.ai/composition/v1alpha1
+kind: GraphFragment
+metadata:
+  name: answer-variants
+spec:
+  interface:
+    inputs:
+      questions: graphblocks.evaluation/InterviewQuestionSet@1
+      chunks: graphblocks.ai/DocumentChunkList@1
+    outputs:
+      rag: graphblocks.evaluation/AnswerSet@1
+      noRag: graphblocks.evaluation/AnswerSet@1
+  nodes:
+    retrieve:
+      block: retrieve.batch@1
+      bindings: {retriever: benchmark-retriever}
+      config: {topK: 1}
+    ragAnswer:
+      block: model.batch_generate@1
+      bindings: {model: answer-model}
+    noRagAnswer:
+      block: model.batch_generate@1
+      bindings: {model: answer-model}
+  edges:
+    - from: $input.questions
+      to: retrieve.questions
+    - from: $input.chunks
+      to: retrieve.corpus
+    - from: $input.questions
+      to: ragAnswer.questions
+    - from: retrieve.contexts
+      to: ragAnswer.contexts
+    - from: $input.questions
+      to: noRagAnswer.questions
+    - from: ragAnswer.answers
+      to: $output.rag
+    - from: noRagAnswer.answers
+      to: $output.noRag

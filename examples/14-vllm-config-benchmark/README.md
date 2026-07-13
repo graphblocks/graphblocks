@@ -11,6 +11,22 @@ Run the deterministic fixture from the repository root:
 python examples/14-vllm-config-benchmark/run.py
 ```
 
+The root graph is a composition contract instead of a monolithic workflow:
+
+```text
+example.yaml
+  collect  -> fragments/collect-performance.yaml
+  evaluate -> fragments/evaluate-performance.yaml
+```
+
+`collect` owns matrix loading, warmup, and measurement. `evaluate` owns metric
+aggregation and the candidate gate. Inspect the deterministic materialized
+graph with:
+
+```bash
+graphblocks compose examples/14-vllm-config-benchmark/example.yaml
+```
+
 The fixture compares `max_num_batched_tokens=2048, max_num_seqs=32` with
 `max_num_batched_tokens=8192, max_num_seqs=128`. Both keep tensor parallelism,
 chunked prefill, model revision, hardware, prompt lengths, output limit,

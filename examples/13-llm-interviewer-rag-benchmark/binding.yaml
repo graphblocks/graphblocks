@@ -1,0 +1,17 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: Binding
+metadata:
+  name: rag-interviewer-benchmark-local
+spec:
+  resources:
+    interviewer-model:
+      kind: ChatModel
+      implementation: graphblocks.scripted
+      config: {model: scripted-interviewer-v1, temperature: 0}
+    answer-model:
+      kind: ChatModel
+      implementation: graphblocks.scripted
+      config: {model: scripted-answer-v1, temperature: 0}
+    benchmark-retriever:
+      kind: Retriever
+      implementation: graphblocks.in_memory_chunks

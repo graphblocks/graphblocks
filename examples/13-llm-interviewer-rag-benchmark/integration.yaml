@@ -8,7 +8,7 @@ spec:
     inputs:
       dataset: product-facts-v1
     nodes:
-      load:
+      setup__load:
         service: benchmark-dataset
         expectedInputs: {dataset: product-facts-v1}
         outputs:
@@ -17,31 +17,31 @@ spec:
             - Enterprise SSO uses SAML 2.0.
             - Audit logs are retained for 365 days.
           chunks: [refund-fact, sso-fact, audit-fact]
-      ask:
+      setup__ask:
         service: scripted-interviewer
         outputs:
           questions: [refund-window, enterprise-sso, audit-retention]
-      retrieve:
+      variants__retrieve:
         service: local-retriever
         expectedInputs:
           questions: [refund-window, enterprise-sso, audit-retention]
           corpus: [refund-fact, sso-fact, audit-fact]
         outputs:
           contexts: [refund-fact, sso-fact, audit-fact]
-      ragAnswer:
+      variants__ragAnswer:
         service: scripted-answer-model
         expectedInputs:
           questions: [refund-window, enterprise-sso, audit-retention]
           contexts: [refund-fact, sso-fact, audit-fact]
         outputs:
           answers: [30-days, SAML-2.0, 365-days]
-      noRagAnswer:
+      variants__noRagAnswer:
         service: scripted-answer-model
         expectedInputs:
           questions: [refund-window, enterprise-sso, audit-retention]
         outputs:
           answers: [14-days, SAML-unspecified, 90-days]
-      blind:
+      evaluation__blind:
         service: benchmark-blinder
         expectedInputs:
           rag: [30-days, SAML-2.0, 365-days]
@@ -55,7 +55,7 @@ spec:
             - {A: rag, B: no_rag}
             - {A: no_rag, B: rag}
             - {A: rag, B: no_rag}
-      score:
+      evaluation__score:
         service: scripted-interviewer
         expectedInputs:
           questions: [refund-window, enterprise-sso, audit-retention]
@@ -64,7 +64,7 @@ spec:
             - {A: 1.0, B: 0.0}
             - {A: 0.6, B: 1.0}
             - {A: 1.0, B: 0.0}
-      aggregate:
+      evaluation__aggregate:
         service: benchmark-aggregator
         expectedInputs:
           mapping:
@@ -79,7 +79,15 @@ spec:
             ragMeanScore: 1.0
             ragScoreDelta: 0.8
             ragWinRate: 1.0
-    expectedCallOrder: [load, ask, noRagAnswer, retrieve, ragAnswer, blind, score, aggregate]
+    expectedCallOrder:
+      - setup__load
+      - setup__ask
+      - variants__noRagAnswer
+      - variants__retrieve
+      - variants__ragAnswer
+      - evaluation__blind
+      - evaluation__score
+      - evaluation__aggregate
     expectedOutput:
       report:
         caseCount: 3

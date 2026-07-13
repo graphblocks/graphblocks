@@ -23,6 +23,33 @@ kind: Graph
 metadata:
   name: workspace-agent
 spec:
+  composition:
+    apiVersion: graphblocks.ai/composition/v1alpha1
+    imports:
+      workspace:
+        path: ./fragments/workspace-context.yaml
+      assistant:
+        path: ./fragments/assistant-turn.yaml
+    slots:
+      workspace-context:
+        interface:
+          inputs:
+            workspace: graphblocks.workspace/WorkspaceRef@1
+            selection: company.workspace/Selection@1
+            message: graphblocks.ai/Message@1
+          outputs:
+            context: graphblocks.ai/ContextPack@1
+        fill:
+          fragment: workspace/workspace-context
+      assistant-turn:
+        interface:
+          inputs:
+            messages: company.workspace/MessageHistory@1
+            context: graphblocks.ai/ContextPack@1
+          outputs:
+            result: graphblocks.ai/TurnResult@1
+        fill:
+          fragment: assistant/assistant-turn
   interface:
     inputs:
       turn: company.workspace/TurnRequest@1
@@ -33,33 +60,15 @@ spec:
       - graphblocks.app/ApprovalRequested@1
       - graphblocks.workspace/FilePatchPreview@1
   nodes:
-    snapshot:
-      block: workspace.snapshot@1
-      inputs: {workspace: $input.turn.workspace}
-    context:
-      block: workspace.context@1
+    prepare:
+      slot: workspace-context
       inputs:
-        snapshot: snapshot.value
+        workspace: $input.turn.workspace
         selection: $input.turn.selection
         message: $input.turn.message
-    agent:
-      block: agent.run@1
+    respond:
+      slot: assistant-turn
       inputs:
         messages: $input.turn.history
-        context: context.pack
-      bindings: {model: coding-model}
-      config:
-        tools:
-          - workspace.search
-          - workspace.read
-          - workspace.propose_changeset
-          - workspace.run_checks
-          - git.diff
-        maxSteps: 20
-        approval:
-          workspace.commit_changeset: required
-          process.execute: required
-    candidate:
-      block: conversation.make_turn_candidate@1
-      inputs: {agent: agent.result}
+        context: prepare.context
       outputs: {result: $output.result}

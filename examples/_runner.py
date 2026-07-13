@@ -4,9 +4,8 @@ from collections.abc import Callable, Mapping
 import json
 from pathlib import Path
 
-import yaml
-
 from graphblocks.cli import main as graphblocks_main
+from graphblocks.composition import compose_documents
 
 from _integration import run_integration
 
@@ -26,15 +25,18 @@ def run_example(
     if result != 0:
         return result
 
-    documents = list(yaml.safe_load_all(example_path.read_text(encoding="utf-8")))
+    composition = compose_documents(example_path)
+    documents = list(composition.documents)
     kinds = [str(document["kind"]) for document in documents]
     relative_path = example_path.relative_to(root)
-    integration = run_integration(example_path)
+    integration = run_integration(example_path, composition=composition)
     payload: dict[str, object] = {
         "validated": relative_path.as_posix(),
         "kinds": kinds,
         "integration": integration,
     }
+    if composition.report.instances:
+        payload["composition"] = composition.report.canonical_value()
     if additional_evidence is not None:
         evidence = dict(additional_evidence())
         reserved_keys = payload.keys() & evidence.keys()

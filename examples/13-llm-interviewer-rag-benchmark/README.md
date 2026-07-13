@@ -16,10 +16,32 @@ The comparison controls the main sources of avoidable bias:
   digest. `MetricObservation`, `evaluate_gate`, and `TrialResult` carry the
   aggregate comparison.
 
+The authoring graph is physically split along those responsibilities:
+
+```text
+example.yaml
+binding.yaml
+fragments/
+  interview-setup.yaml
+  answer-variants.yaml
+  blind-evaluation.yaml
+```
+
+`example.yaml` declares three typed slots and connects their placeholder nodes.
+The local model and retriever resources stay in the imported `binding.yaml`.
+Composition expands the fragment nodes with their placeholder prefix (for
+example, `variants__ragAnswer`) before validation, compilation, or execution.
+
 Run it from the repository root after the development install:
 
 ```bash
 python examples/13-llm-interviewer-rag-benchmark/run.py
+```
+
+To inspect the ordinary materialized `Graph` and imported `Binding` directly:
+
+```bash
+graphblocks compose examples/13-llm-interviewer-rag-benchmark/example.yaml
 ```
 
 The final JSON includes each interview turn, retrieved item IDs, blinded order,
