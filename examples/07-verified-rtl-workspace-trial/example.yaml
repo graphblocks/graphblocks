@@ -32,7 +32,7 @@ spec:
         outputSchema: company.hdl/PatchCandidateSet@1
     trials:
       block: control.map@2
-      inputs: {items: candidates.items}
+      inputs: {items: candidates.value}
       config:
         graph: evaluate-rtl-candidate
         itemKey: $.candidate_id
@@ -123,9 +123,13 @@ spec:
         integrity: trusted-oracle-unchanged
     seal:
       block: trial.seal_result@1
-      inputs: {gate: gate.result}
-      outputs:
+      inputs:
         changeSet: apply.changeSet
         checks: [fast.results, formal.results, synthesis.results]
-        leases: [formal.lease, synthesis.lease]
+        leases: reserve.leases
         gate: gate.result
+      outputs:
+        changeSet: $output.changeSet
+        checks: $output.checks
+        leases: $output.leases
+        gate: $output.gate

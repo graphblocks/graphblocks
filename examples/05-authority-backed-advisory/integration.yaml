@@ -58,6 +58,7 @@ spec:
       gate:
         service: policy-gate
         outputs:
+          passed: true
           result: {passed: true, checkIds: [official_source_resolves, relevant_date_matches]}
       review:
         service: mock-reviewer
