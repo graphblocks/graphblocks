@@ -15,6 +15,19 @@ Block descriptors MUST use stable type and version identities, declare typed
 ports and configuration schemas, and identify required capabilities. Duplicate
 block ownership or incompatible descriptors MUST fail registry construction.
 
+Block versions MUST be positive canonical integers. Catalog construction MUST
+reject duplicate block IDs and duplicate input, output, or resource-slot names;
+malformed input/output/resource collections; and `required` or `optional`
+values that are not booleans.
+
+Value-port type references MUST be non-empty and whitespace-free. They MUST be
+one of `Any`, `Boolean`, `Bytes`, `Integer`, `Number`, `Null`, or `String`; a
+recursively valid `List<T>`, `Map<K,V>`, or `Optional<T>` expression; or a
+canonical versioned schema ID. Resource-slot types MUST be canonical schema IDs
+or dot-separated opaque identities such as `haystack.component`. Catalogs MUST
+be immutable after construction and closed to unknown block IDs by default. An
+open catalog MUST require an explicit compatibility or discovery opt-in.
+
 Package resolution MUST evaluate complete dependency closure. Doctor and lock
 operations MUST detect incompatible versions, missing packages, forbidden
 default dependencies, transitive violations, and direct-reference forms that

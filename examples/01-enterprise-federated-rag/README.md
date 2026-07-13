@@ -18,8 +18,18 @@ runtime entry points:
 
 All three execute federated retrieval, reciprocal-rank fusion, deterministic
 reranking, bounded context construction, structured answer generation, and
-grounding validation. They use the same inputs and must produce the same graph
-hash, successful-node order, and normalized cited answer.
+grounding validation. They use equivalent deterministic inputs and must produce
+the same graph hash, successful-node order, and normalized cited answer. The
+YAML and Rust variants read the shared `inputs.json`; the Python variant builds
+the equivalent values in code.
+
+The variants meet at the same catalog-backed compiler and strict built-in
+runtime boundary. Known block and graph-interface ports use exact nominal type
+identities and optional outputs cannot feed required targets. Python dynamically
+checks handler output keys and required outputs, while Rust's fixed stdlib
+handlers are covered by manifest/runtime parity tests. Python and Rust also add
+earlier typed-builder checks; see each variant README and the project
+[type-safety guide](../../docs/concepts/type-safety.md).
 
 The Python and Rust builders materialize the same portable Graph document as the
 YAML variant. JSON remains at the fixture and wire-value boundary; block IDs,

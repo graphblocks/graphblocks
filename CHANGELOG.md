@@ -16,6 +16,11 @@ pre-release alpha software.
 
 ### Changed
 
+- Made block catalogs closed by default; validated recursive descriptor type
+  expressions and exact booleans; enforced nominal graph-interface and block
+  port types and optional-to-required boundaries; enforced Python runtime output
+  contracts and Rust stdlib manifest parity; and added mypy and Rust
+  compile-fail evidence against mismatched or forged typed ports.
 - Made graph execution honor boolean `when` dependencies without dispatching
   false branches or waiting for their unused inputs, propagated auditable native
   skip outcomes, terminalized projection/checkpoint/resume failures, and

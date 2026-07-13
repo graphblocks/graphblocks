@@ -7,7 +7,7 @@ release compatibility promise.
 | --- | --- | --- |
 | Canonical schema/compiler | Implemented and TCK-backed | Implemented and TCK-backed |
 | Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
-| Typed code graph authoring | Implemented for the stdlib RAG vertical slice; materializes a portable Graph | Implemented for the stdlib RAG vertical slice; materializes a portable Graph |
+| Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
 | Local runtime, cancellation, tools, budget core | Implemented | Implemented |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
@@ -34,3 +34,8 @@ implemented.
 Typed code authoring is intentionally narrower than the complete block catalog.
 The current Python and Rust definitions cover the stdlib RAG path demonstrated
 by example 01 and preserve the portable Graph as the compiler/runtime boundary.
+Python checks schema-and-marker identity, required catalog ports, and reference
+provenance in addition to generic static types. Rust uses private `Port<T>`
+construction and `PortType::TYPE_REF`, then rechecks catalog identity and port
+provenance in `GraphBuilder`. Both materialized documents undergo catalog-backed
+compiler validation before execution.

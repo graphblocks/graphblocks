@@ -6,6 +6,7 @@ one of the checked-in application contracts:
 ```bash
 python -m graphblocks validate examples/01-enterprise-federated-rag/example.yaml
 python -m graphblocks plan examples/01-enterprise-federated-rag/example.yaml --expand
+python -m graphblocks validate examples/01-enterprise-federated-rag/1-1-yaml-runtime/graph.yaml
 python examples/01-enterprise-federated-rag/run.py
 ```
 
@@ -18,6 +19,13 @@ The Python and Rust variants import typed stdlib block definitions and wire type
 ports with their language's `GraphBuilder`; both builders materialize the same
 portable Graph document as the YAML variant. JSON is still used for dynamic
 runtime payloads, but graph structure no longer requires hand-authored JSON.
+The YAML compiler checks known catalog ports and nominal types; Python adds
+mypy plus builder-time schema/marker and reference-provenance checks; Rust adds
+`Port<T>` compile-time checks plus catalog-backed builder validation. The Python
+runtime enforces required and undeclared outputs dynamically; the fixed Rust
+stdlib handlers are exercised against the same manifest contracts by parity
+tests. See [type safety](../concepts/type-safety.md) for the exact boundaries and
+extension-friendly open-catalog behavior of `validate` and `plan`.
 The combined runner and 1-3 require the Rust toolchain selected by
 `rust-toolchain.toml`; 1-1 and 1-2 can be run with the Python development
 installation alone.

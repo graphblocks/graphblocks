@@ -10,6 +10,7 @@ organized by audience and authority.
 - [Quickstart](getting-started/quickstart.md)
 - [Architecture](concepts/architecture.md)
 - [Graphs and bindings](concepts/graphs-and-bindings.md)
+- [Type safety](concepts/type-safety.md)
 - [Runtime](concepts/runtime.md)
 - [Packages](concepts/packages.md)
 - [Async runs and callbacks guide](guides/async-runs-and-callbacks.md)

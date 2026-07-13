@@ -9,6 +9,13 @@ receive and emit. An edge connects compatible ports; the compiler rejects
 unknown endpoints, duplicate identities, invalid direction, type mismatch, and
 cycles where the selected runtime profile does not permit them.
 
+Port types are nominal: declared schema IDs must match exactly, with `Any` as
+the only wildcard. The compiler also checks graph-interface ports, prevents an
+optional block output from feeding a required target, and rejects blocks absent
+from a closed catalog. Nested paths validate their declared root port without
+inferring nested field types. See [type safety](type-safety.md) for the catalog,
+authoring, compiler, and runtime layers.
+
 A binding maps an abstract block contract to an implementation. Bindings may
 select a provider model, parser, vector store, local function, remote worker,
 tool operation, or package adapter. Runtime plans record the resolved binding

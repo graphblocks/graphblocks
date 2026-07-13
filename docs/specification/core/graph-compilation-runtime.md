@@ -8,6 +8,21 @@ compiler MUST diagnose unknown endpoints, duplicate identities, invalid
 configuration, unsupported cycles, unresolved binding requirements, and target
 incompatibility before execution.
 
+Catalog-backed compilation MUST be closed-world by default. Every executable
+node MUST resolve to one descriptor; a missing descriptor MUST fail with
+`GB1022`. An implementation MAY expose an explicitly open catalog for discovery
+or compatibility workflows, but that result MUST NOT be represented as proof
+that unknown blocks are executable.
+
+Declared root-port types MUST be compared by exact nominal identity for
+graph-input-to-block, block-to-block, and block-to-graph-output connections.
+`Any` is the only wildcard. Implementations MUST NOT coerce or structurally
+equate two different schema IDs. An optional block output MUST NOT feed a
+required block input or graph output, and every required block input MUST be
+supplied. A nested endpoint MUST name an existing root port; compilation does
+not infer a nested field type beyond that root, so payload-schema validation is
+a separate boundary.
+
 Every edge endpoint MUST contain an owner and port path. `$input` is valid only
 as an edge source and `$output` only as an edge target; the opposite directions
 MUST fail compilation. Ordinary executable graphs MUST be acyclic unless a
@@ -25,6 +40,14 @@ requirements are satisfied. It MUST preserve typed ports, record state
 transitions in order, and project exactly one terminal outcome per run. Terminal
 success, failure, cancellation, rejection, pause, and exhaustion MUST remain
 distinguishable.
+
+A catalog-backed runtime MUST reject handlers registered under undeclared block
+IDs and MUST reject duplicate registration unless the caller explicitly uses a
+replacement operation. After a block returns, the runtime MUST reject a
+non-mapping result, any output key absent from the descriptor, and omission of
+any required output. Callback resume MUST enforce the same output contract.
+An explicit untyped compatibility mode MAY admit handlers without descriptors;
+it MUST NOT disable output checks for descriptors that are present.
 
 A node `when` reference is a boolean dependency. The runtime MUST wait for that
 dependency, execute the node only when it resolves to `true`, and skip it

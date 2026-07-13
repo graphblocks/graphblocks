@@ -10,6 +10,16 @@ Configuration is also block-specific (`RetrieveFuseConfig`,
 `Port<SearchHitsValue>` to an input requiring `Port<ContextPackValue>` is a Rust
 compile-time error.
 
+`GraphBuilder::new` includes the official stdlib catalog. Private port
+constructors prevent fabricating a node output, while `GraphBuilder::add` and
+`bind_output` return an error for an unknown block, missing required port,
+catalog/type disagreement, cross-builder reference, or invalid output source.
+The repository's trybuild fixtures cover both incompatible `Port<T>` wiring and
+port/type-identity forgery. Thus static Rust errors and builder-time catalog
+errors are separate, complementary checks. Manifest/runtime parity tests also
+execute the fixed stdlib handlers against their advertised input and output
+aliases.
+
 ```bash
 python examples/01-enterprise-federated-rag/1-3-rust-runtime/run.py
 ```
