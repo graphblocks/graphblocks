@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, Literal
 
 from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
@@ -1653,10 +1654,36 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     normalized_spec = normalized.get("spec", {})
     normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
     edges = normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
+    normalized_interface = normalized_spec.get("interface", {}) if isinstance(normalized_spec, dict) else {}
+    extensions = normalized_spec.get("extensions", []) if isinstance(normalized_spec, dict) else []
+    execution = normalized_spec.get("execution", {}) if isinstance(normalized_spec, dict) else {}
+    voice = normalized_spec.get("voice", {}) if isinstance(normalized_spec, dict) else {}
+    voice_pipeline = voice.get("pipeline", {}) if isinstance(voice, dict) else {}
+    allows_duplex_voice_feedback = (
+        isinstance(extensions, list)
+        and "graphblocks.voice/v1alpha1" in extensions
+        and isinstance(execution, dict)
+        and execution.get("lifetime") == "session"
+        and execution.get("interaction") == "duplex"
+        and execution.get("durability") == "checkpointed"
+        and isinstance(voice_pipeline, dict)
+        and voice_pipeline.get("kind") == "realtime"
+    )
+    interface_inputs = normalized_interface.get("inputs") if isinstance(normalized_interface, dict) else None
+    interface_outputs = normalized_interface.get("outputs") if isinstance(normalized_interface, dict) else None
+    if not isinstance(interface_inputs, dict):
+        interface_inputs = None
+    if not isinstance(interface_outputs, dict):
+        interface_outputs = None
     produced_nodes: set[str] = set()
     consumed_nodes: set[str] = set()
     invalid_input_port_nodes: set[str] = set()
     invalid_resource_binding_nodes: set[str] = set()
+    dependency_graph: dict[str, set[str]] = {
+        node_name: set() for node_name in normalized_nodes
+    }
+    edge_dependency_endpoints: set[tuple[str, str]] = set()
+    guard_dependencies: set[tuple[str, str]] = set()
 
     if isinstance(edges, list):
         for index, edge in enumerate(edges):
@@ -1669,7 +1696,61 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 diagnostics.append(Diagnostic("GB0011", "edge.from and edge.to must be strings", f"$.spec.edges[{index}]"))
                 continue
             for key, endpoint in (("from", source), ("to", target)):
-                owner = endpoint.split(".", 1)[0]
+                owner, separator, endpoint_path = endpoint.partition(".")
+                if (
+                    not separator
+                    or not owner
+                    or not endpoint_path
+                    or any(not part for part in endpoint_path.split("."))
+                ):
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1020",
+                            f"edge {key} endpoint must include a port path",
+                            f"$.spec.edges[{index}].{key}",
+                        )
+                    )
+                    continue
+                if key == "from" and owner == "$output":
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1020",
+                            "$output cannot be used as an edge source",
+                            f"$.spec.edges[{index}].from",
+                        )
+                    )
+                    continue
+                if key == "to" and owner == "$input":
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1020",
+                            "$input cannot be used as an edge target",
+                            f"$.spec.edges[{index}].to",
+                        )
+                    )
+                    continue
+                if key == "from" and owner == "$input":
+                    port_name = endpoint.partition(".")[2].split(".", 1)[0]
+                    if interface_inputs is not None and port_name not in interface_inputs:
+                        diagnostics.append(
+                            Diagnostic(
+                                "GB1014",
+                                f"graph interface has no input port {port_name!r}",
+                                f"$.spec.edges[{index}].from",
+                            )
+                        )
+                    continue
+                if key == "to" and owner == "$output":
+                    port_name = endpoint.partition(".")[2].split(".", 1)[0]
+                    if interface_outputs is not None and port_name not in interface_outputs:
+                        diagnostics.append(
+                            Diagnostic(
+                                "GB1013",
+                                f"graph interface has no output port {port_name!r}",
+                                f"$.spec.edges[{index}].to",
+                            )
+                        )
+                    continue
                 if owner in PSEUDO_NODES:
                     continue
                 if owner not in normalized_nodes:
@@ -1684,6 +1765,21 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     produced_nodes.add(owner)
                 else:
                     consumed_nodes.add(owner)
+
+            source_owner, source_separator, source_path = source.partition(".")
+            target_owner, target_separator, target_path = target.partition(".")
+            if (
+                source_separator
+                and target_separator
+                and source_path
+                and target_path
+                and all(source_path.split("."))
+                and all(target_path.split("."))
+                and source_owner in dependency_graph
+                and target_owner in dependency_graph
+            ):
+                dependency_graph[source_owner].add(target_owner)
+                edge_dependency_endpoints.add((source, target))
 
             if block_catalog is not None:
                 source_type = None
@@ -1805,15 +1901,186 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     )
 
     for node_name, node in normalized_nodes.items():
-        if isinstance(node, dict) and isinstance(node.get("when"), str):
-            owner = node["when"].split(".", 1)[0]
-            if owner not in PSEUDO_NODES and owner not in normalized_nodes:
+        if isinstance(node, dict) and "when" in node:
+            when = node["when"]
+            if not isinstance(when, str):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1020",
+                        "node when reference must be a string",
+                        f"$.spec.nodes.{node_name}.when",
+                    )
+                )
+                continue
+            owner, separator, when_path = when.partition(".")
+            if (
+                not separator
+                or not owner
+                or not when_path
+                or any(not part for part in when_path.split("."))
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1020",
+                        "node when reference must include a port path",
+                        f"$.spec.nodes.{node_name}.when",
+                    )
+                )
+            elif owner == "$output":
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1020",
+                        "$output cannot be used as a when source",
+                        f"$.spec.nodes.{node_name}.when",
+                    )
+                )
+            elif owner == "$input":
+                port_name = when_path.split(".", 1)[0]
+                if interface_inputs is not None and port_name not in interface_inputs:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1014",
+                            f"graph interface has no input port {port_name!r}",
+                            f"$.spec.nodes.{node_name}.when",
+                        )
+                    )
+            elif owner not in PSEUDO_NODES and owner not in normalized_nodes:
                 diagnostics.append(
                     Diagnostic("GB1002", f"when references unknown node {owner!r}", f"$.spec.nodes.{node_name}.when")
                 )
             elif owner not in PSEUDO_NODES:
+                source_node = normalized_nodes[owner]
+                descriptor = None
+                if block_catalog is not None and isinstance(source_node, dict):
+                    descriptor = block_catalog.get(str(source_node.get("block")))
+                port_name = when_path.split(".", 1)[0]
+                if descriptor is not None and port_name not in {port.name for port in descriptor.outputs}:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1014",
+                            f"block {descriptor.block_id} has no output port {port_name!r}",
+                            f"$.spec.nodes.{node_name}.when",
+                        )
+                    )
+                    continue
                 produced_nodes.add(owner)
                 consumed_nodes.add(node_name)
+                dependency_graph[owner].add(node_name)
+                guard_dependencies.add((owner, node_name))
+
+    if allows_duplex_voice_feedback:
+        reverse_dependency_graph: dict[str, set[str]] = {
+            node_name: set() for node_name in dependency_graph
+        }
+        for source_owner, targets in dependency_graph.items():
+            for target_owner in targets:
+                reverse_dependency_graph[target_owner].add(source_owner)
+
+        allowed_feedback_dependencies: set[tuple[str, str]] = set()
+        for source_endpoint, target_endpoint in sorted(edge_dependency_endpoints):
+            source_owner, _, source_path = source_endpoint.partition(".")
+            target_owner, _, target_path = target_endpoint.partition(".")
+            if source_path != "results" or target_path != "toolResults":
+                continue
+            source_node = normalized_nodes.get(source_owner)
+            target_node = normalized_nodes.get(target_owner)
+            if (
+                not isinstance(source_node, dict)
+                or source_node.get("block") != "tools.dispatch@1"
+                or not isinstance(target_node, dict)
+                or target_node.get("block") != "realtime.session@1"
+            ):
+                continue
+            reverse_endpoint = (
+                f"{target_owner}.toolCalls",
+                f"{source_owner}.calls",
+            )
+            if reverse_endpoint not in edge_dependency_endpoints:
+                continue
+
+            reachable_from_session: set[str] = set()
+            stack = [target_owner]
+            while stack:
+                current = stack.pop()
+                if current in reachable_from_session:
+                    continue
+                reachable_from_session.add(current)
+                stack.extend(dependency_graph[current] - reachable_from_session)
+
+            can_reach_session: set[str] = set()
+            stack = [target_owner]
+            while stack:
+                current = stack.pop()
+                if current in can_reach_session:
+                    continue
+                can_reach_session.add(current)
+                stack.extend(reverse_dependency_graph[current] - can_reach_session)
+
+            component = reachable_from_session & can_reach_session
+            if component != {source_owner, target_owner}:
+                continue
+            internal_endpoints = {
+                (edge_source, edge_target)
+                for edge_source, edge_target in edge_dependency_endpoints
+                if edge_source.partition(".")[0] in component
+                and edge_target.partition(".")[0] in component
+            }
+            if internal_endpoints != {
+                (source_endpoint, target_endpoint),
+                reverse_endpoint,
+            }:
+                continue
+            if any(
+                guard_source in component and guard_target in component
+                for guard_source, guard_target in guard_dependencies
+            ):
+                continue
+            allowed_feedback_dependencies.add((source_owner, target_owner))
+
+        for source_owner, target_owner in allowed_feedback_dependencies:
+            dependency_graph[source_owner].discard(target_owner)
+
+    dependency_states: dict[str, Literal["visiting", "done"]] = {}
+    dependency_cycle: list[str] | None = None
+    for root in sorted(dependency_graph):
+        if root in dependency_states:
+            continue
+        dependency_states[root] = "visiting"
+        path = [root]
+        path_positions = {root: 0}
+        stack: list[tuple[str, Iterator[str]]] = [
+            (root, iter(sorted(dependency_graph[root])))
+        ]
+        while stack:
+            current, neighbors = stack[-1]
+            try:
+                neighbor = next(neighbors)
+            except StopIteration:
+                dependency_states[current] = "done"
+                stack.pop()
+                path_positions.pop(current, None)
+                path.pop()
+                continue
+            state = dependency_states.get(neighbor)
+            if state is None:
+                dependency_states[neighbor] = "visiting"
+                path_positions[neighbor] = len(path)
+                path.append(neighbor)
+                stack.append((neighbor, iter(sorted(dependency_graph[neighbor]))))
+            elif state == "visiting":
+                cycle_start = path_positions[neighbor]
+                dependency_cycle = [*path[cycle_start:], neighbor]
+                break
+        if dependency_cycle is not None:
+            break
+    if dependency_cycle is not None:
+        diagnostics.append(
+            Diagnostic(
+                "GB1021",
+                f"graph dependency cycle detected: {' -> '.join(dependency_cycle)}",
+                "$.spec",
+            )
+        )
 
     interface = normalized_spec.get("interface", {}) if isinstance(normalized_spec, dict) else {}
     outputs = interface.get("outputs", {}) if isinstance(interface, dict) else {}

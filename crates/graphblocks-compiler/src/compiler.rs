@@ -2502,12 +2502,59 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
     }
 
     let normalized = normalize_graph(document);
+    let normalized_spec = normalized.get("spec");
+    let allows_duplex_voice_feedback = normalized_spec
+        .and_then(|spec| spec.get("extensions"))
+        .and_then(Value::as_array)
+        .is_some_and(|extensions| {
+            extensions
+                .iter()
+                .any(|extension| extension.as_str() == Some("graphblocks.voice/v1alpha1"))
+        })
+        && normalized_spec
+            .and_then(|spec| spec.get("execution"))
+            .and_then(|execution| execution.get("lifetime"))
+            .and_then(Value::as_str)
+            == Some("session")
+        && normalized_spec
+            .and_then(|spec| spec.get("execution"))
+            .and_then(|execution| execution.get("interaction"))
+            .and_then(Value::as_str)
+            == Some("duplex")
+        && normalized_spec
+            .and_then(|spec| spec.get("execution"))
+            .and_then(|execution| execution.get("durability"))
+            .and_then(Value::as_str)
+            == Some("checkpointed")
+        && normalized_spec
+            .and_then(|spec| spec.get("voice"))
+            .and_then(|voice| voice.get("pipeline"))
+            .and_then(|pipeline| pipeline.get("kind"))
+            .and_then(Value::as_str)
+            == Some("realtime");
     let normalized_nodes = normalized
         .get("spec")
         .and_then(|spec| spec.get("nodes"))
         .and_then(Value::as_object);
+    let interface_inputs = normalized
+        .get("spec")
+        .and_then(|spec| spec.get("interface"))
+        .and_then(|interface| interface.get("inputs"))
+        .and_then(Value::as_object);
+    let interface_outputs = normalized
+        .get("spec")
+        .and_then(|spec| spec.get("interface"))
+        .and_then(|interface| interface.get("outputs"))
+        .and_then(Value::as_object);
     let mut produced_nodes = BTreeSet::<String>::new();
     let mut consumed_nodes = BTreeSet::<String>::new();
+    let mut dependency_graph = normalized_nodes
+        .into_iter()
+        .flat_map(|nodes| nodes.keys())
+        .map(|node_name| (node_name.to_owned(), BTreeSet::<String>::new()))
+        .collect::<BTreeMap<_, _>>();
+    let mut edge_dependency_endpoints = BTreeSet::<(String, String)>::new();
+    let mut guard_dependencies = BTreeSet::<(String, String)>::new();
     if let Some(edges) = normalized
         .get("spec")
         .and_then(|spec| spec.get("edges"))
@@ -2533,9 +2580,69 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 continue;
             };
             for (key, endpoint) in [("from", source), ("to", target)] {
-                let owner = endpoint
-                    .split_once('.')
-                    .map_or(endpoint, |(owner, _)| owner);
+                let Some((owner, endpoint_path)) = endpoint.split_once('.') else {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        format!("edge {key} endpoint must include a port path"),
+                        format!("$.spec.edges[{index}].{key}"),
+                    ));
+                    continue;
+                };
+                if owner.is_empty()
+                    || endpoint_path.is_empty()
+                    || endpoint_path.split('.').any(str::is_empty)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        format!("edge {key} endpoint must include a port path"),
+                        format!("$.spec.edges[{index}].{key}"),
+                    ));
+                    continue;
+                }
+                if key == "from" && owner == "$output" {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "$output cannot be used as an edge source",
+                        format!("$.spec.edges[{index}].from"),
+                    ));
+                    continue;
+                }
+                if key == "to" && owner == "$input" {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "$input cannot be used as an edge target",
+                        format!("$.spec.edges[{index}].to"),
+                    ));
+                    continue;
+                }
+                if key == "from" && owner == "$input" {
+                    let port_name = endpoint
+                        .split_once('.')
+                        .map(|(_, path)| path.split_once('.').map_or(path, |(port, _)| port))
+                        .unwrap_or_default();
+                    if interface_inputs.is_some_and(|ports| !ports.contains_key(port_name)) {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1014",
+                            format!("graph interface has no input port {port_name:?}"),
+                            format!("$.spec.edges[{index}].from"),
+                        ));
+                    }
+                    continue;
+                }
+                if key == "to" && owner == "$output" {
+                    let port_name = endpoint
+                        .split_once('.')
+                        .map(|(_, path)| path.split_once('.').map_or(path, |(port, _)| port))
+                        .unwrap_or_default();
+                    if interface_outputs.is_some_and(|ports| !ports.contains_key(port_name)) {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1013",
+                            format!("graph interface has no output port {port_name:?}"),
+                            format!("$.spec.edges[{index}].to"),
+                        ));
+                    }
+                    continue;
+                }
                 if PSEUDO_NODES.contains(&owner) {
                     continue;
                 }
@@ -2550,6 +2657,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 } else {
                     consumed_nodes.insert(owner.to_owned());
                 }
+            }
+            if let (Some((source_owner, source_path)), Some((target_owner, target_path))) =
+                (source.split_once('.'), target.split_once('.'))
+                && !source_path.is_empty()
+                && !target_path.is_empty()
+                && source_path.split('.').all(|part| !part.is_empty())
+                && target_path.split('.').all(|part| !part.is_empty())
+                && dependency_graph.contains_key(source_owner)
+                && dependency_graph.contains_key(target_owner)
+                && let Some(dependents) = dependency_graph.get_mut(source_owner)
+            {
+                dependents.insert(target_owner.to_owned());
+                edge_dependency_endpoints.insert((source.to_owned(), target.to_owned()));
             }
         }
     }
@@ -2763,26 +2883,274 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
 
     if let Some(normalized_nodes) = normalized_nodes {
         for (node_name, node) in normalized_nodes {
-            if let Some(owner) = node
-                .as_object()
-                .and_then(|node| node.get("when"))
-                .and_then(Value::as_str)
-                .map(|when| when.split_once('.').map_or(when, |(owner, _)| owner))
-            {
-                if PSEUDO_NODES.contains(&owner) {
+            if let Some(when) = node.as_object().and_then(|node| node.get("when")) {
+                let Some(when) = when.as_str() else {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "node when reference must be a string",
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
                     continue;
-                }
-                if !normalized_nodes.contains_key(owner) {
+                };
+                let Some((owner, when_path)) = when.split_once('.') else {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "node when reference must include a port path",
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
+                    continue;
+                };
+                if owner.is_empty()
+                    || when_path.is_empty()
+                    || when_path.split('.').any(str::is_empty)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "node when reference must include a port path",
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
+                } else if owner == "$output" {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        "$output cannot be used as a when source",
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
+                } else if owner == "$input" {
+                    let port_name = when_path
+                        .split_once('.')
+                        .map_or(when_path, |(port_name, _)| port_name);
+                    if interface_inputs.is_some_and(|ports| !ports.contains_key(port_name)) {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1014",
+                            format!("graph interface has no input port {port_name:?}"),
+                            format!("$.spec.nodes.{node_name}.when"),
+                        ));
+                    }
+                } else if PSEUDO_NODES.contains(&owner) {
+                    continue;
+                } else if !normalized_nodes.contains_key(owner) {
                     diagnostics.push(Diagnostic::error(
                         "GB1002",
                         format!("when references unknown node {owner:?}"),
                         format!("$.spec.nodes.{node_name}.when"),
                     ));
                 } else {
+                    let port_name = when_path
+                        .split_once('.')
+                        .map_or(when_path, |(port_name, _)| port_name);
+                    let descriptor = normalized_nodes
+                        .get(owner)
+                        .and_then(Value::as_object)
+                        .and_then(|node| node.get("block"))
+                        .and_then(Value::as_str)
+                        .and_then(|block_id| block_catalog.get(block_id));
+                    if let Some(descriptor) = descriptor
+                        && !descriptor.outputs.iter().any(|port| port.name == port_name)
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1014",
+                            format!(
+                                "block {} has no output port {port_name:?}",
+                                descriptor.block_id()
+                            ),
+                            format!("$.spec.nodes.{node_name}.when"),
+                        ));
+                        continue;
+                    }
                     produced_nodes.insert(owner.to_owned());
                     consumed_nodes.insert(node_name.to_owned());
+                    if let Some(dependents) = dependency_graph.get_mut(owner) {
+                        dependents.insert(node_name.to_owned());
+                    }
+                    guard_dependencies.insert((owner.to_owned(), node_name.to_owned()));
                 }
             }
+        }
+
+        if allows_duplex_voice_feedback {
+            let mut reverse_dependency_graph = dependency_graph
+                .keys()
+                .map(|node_name| (node_name.clone(), BTreeSet::<String>::new()))
+                .collect::<BTreeMap<_, _>>();
+            for (source_owner, targets) in &dependency_graph {
+                for target_owner in targets {
+                    if let Some(sources) = reverse_dependency_graph.get_mut(target_owner) {
+                        sources.insert(source_owner.clone());
+                    }
+                }
+            }
+
+            let mut allowed_feedback_dependencies = BTreeSet::<(String, String)>::new();
+            for (source_endpoint, target_endpoint) in &edge_dependency_endpoints {
+                let Some((source_owner, source_path)) = source_endpoint.split_once('.') else {
+                    continue;
+                };
+                let Some((target_owner, target_path)) = target_endpoint.split_once('.') else {
+                    continue;
+                };
+                if source_path != "results" || target_path != "toolResults" {
+                    continue;
+                }
+                let source_block = normalized_nodes
+                    .get(source_owner)
+                    .and_then(Value::as_object)
+                    .and_then(|node| node.get("block"))
+                    .and_then(Value::as_str);
+                let target_block = normalized_nodes
+                    .get(target_owner)
+                    .and_then(Value::as_object)
+                    .and_then(|node| node.get("block"))
+                    .and_then(Value::as_str);
+                if source_block != Some("tools.dispatch@1")
+                    || target_block != Some("realtime.session@1")
+                {
+                    continue;
+                }
+                let reverse_endpoint = (
+                    format!("{target_owner}.toolCalls"),
+                    format!("{source_owner}.calls"),
+                );
+                if !edge_dependency_endpoints.contains(&reverse_endpoint) {
+                    continue;
+                }
+
+                let mut reachable_from_session = BTreeSet::<String>::new();
+                let mut stack = vec![target_owner.to_owned()];
+                while let Some(current) = stack.pop() {
+                    if !reachable_from_session.insert(current.clone()) {
+                        continue;
+                    }
+                    if let Some(neighbors) = dependency_graph.get(&current) {
+                        stack.extend(
+                            neighbors
+                                .iter()
+                                .filter(|neighbor| !reachable_from_session.contains(*neighbor))
+                                .cloned(),
+                        );
+                    }
+                }
+
+                let mut can_reach_session = BTreeSet::<String>::new();
+                let mut stack = vec![target_owner.to_owned()];
+                while let Some(current) = stack.pop() {
+                    if !can_reach_session.insert(current.clone()) {
+                        continue;
+                    }
+                    if let Some(neighbors) = reverse_dependency_graph.get(&current) {
+                        stack.extend(
+                            neighbors
+                                .iter()
+                                .filter(|neighbor| !can_reach_session.contains(*neighbor))
+                                .cloned(),
+                        );
+                    }
+                }
+
+                let component = reachable_from_session
+                    .intersection(&can_reach_session)
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if component != BTreeSet::from([source_owner.to_owned(), target_owner.to_owned()]) {
+                    continue;
+                }
+                let internal_endpoints = edge_dependency_endpoints
+                    .iter()
+                    .filter(|(edge_source, edge_target)| {
+                        edge_source
+                            .split_once('.')
+                            .is_some_and(|(owner, _)| component.contains(owner))
+                            && edge_target
+                                .split_once('.')
+                                .is_some_and(|(owner, _)| component.contains(owner))
+                    })
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if internal_endpoints
+                    != BTreeSet::from([
+                        (source_endpoint.clone(), target_endpoint.clone()),
+                        reverse_endpoint,
+                    ])
+                {
+                    continue;
+                }
+                if guard_dependencies
+                    .iter()
+                    .any(|(guard_source, guard_target)| {
+                        component.contains(guard_source) && component.contains(guard_target)
+                    })
+                {
+                    continue;
+                }
+                allowed_feedback_dependencies
+                    .insert((source_owner.to_owned(), target_owner.to_owned()));
+            }
+
+            for (source_owner, target_owner) in allowed_feedback_dependencies {
+                if let Some(dependents) = dependency_graph.get_mut(&source_owner) {
+                    dependents.remove(&target_owner);
+                }
+            }
+        }
+
+        let dependencies_by_node = dependency_graph
+            .iter()
+            .map(|(node_name, dependencies)| {
+                (
+                    node_name.clone(),
+                    dependencies.iter().cloned().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut dependency_states = BTreeMap::<String, u8>::new();
+        let mut dependency_cycle = None;
+        'roots: for root in dependencies_by_node.keys() {
+            if dependency_states.contains_key(root) {
+                continue;
+            }
+            dependency_states.insert(root.clone(), 1);
+            let mut path = vec![root.clone()];
+            let mut path_positions = BTreeMap::from([(root.clone(), 0_usize)]);
+            let mut stack = vec![(root.clone(), 0_usize)];
+            while let Some((current, next_index)) = stack.last_mut() {
+                let neighbor = dependencies_by_node
+                    .get(current)
+                    .and_then(|neighbors| neighbors.get(*next_index))
+                    .cloned();
+                let Some(neighbor) = neighbor else {
+                    dependency_states.insert(current.clone(), 2);
+                    path_positions.remove(current);
+                    path.pop();
+                    stack.pop();
+                    continue;
+                };
+                *next_index += 1;
+                match dependency_states.get(&neighbor).copied() {
+                    None => {
+                        dependency_states.insert(neighbor.clone(), 1);
+                        path_positions.insert(neighbor.clone(), path.len());
+                        path.push(neighbor.clone());
+                        stack.push((neighbor, 0));
+                    }
+                    Some(1) => {
+                        if let Some(cycle_start) = path_positions.get(&neighbor).copied()
+                            && let Some(cycle_path) = path.get(cycle_start..)
+                        {
+                            let mut cycle = cycle_path.to_vec();
+                            cycle.push(neighbor);
+                            dependency_cycle = Some(cycle);
+                            break 'roots;
+                        }
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        if let Some(cycle) = dependency_cycle {
+            diagnostics.push(Diagnostic::error(
+                "GB1021",
+                format!("graph dependency cycle detected: {}", cycle.join(" -> ")),
+                "$.spec",
+            ));
         }
 
         let interface_outputs = normalized
