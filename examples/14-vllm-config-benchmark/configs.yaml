@@ -1,0 +1,64 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: VllmBenchmarkMatrix
+metadata:
+  name: vllm-scheduler-config-comparison
+spec:
+  model: example/model-revision
+  modelRevision: pinned-model-commit
+  tokenizerRevision: pinned-tokenizer-commit
+  vllmVersion: pinned-vllm-version
+  hardware: 1x-identical-gpu
+  baseline: baseline
+  candidate: larger-batch
+  workload:
+    dataset: random-fixed-seed
+    seed: 7
+    inputTokens: 512
+    maxOutputTokens: 64
+    promptCount: 4
+    maxConcurrency: 4
+    requestRate: inf
+    warmupRequests: 2
+    temperature: 0
+    ignoreEos: true
+  constraints:
+    p95TtftMs: {atMost: 120}
+    meanDecodeTps: {atLeast: 75}
+    outputThroughputTps: {atLeast: 200}
+  configs:
+    baseline:
+      serveArgs:
+        tensorParallelSize: 1
+        dtype: bfloat16
+        maxModelLen: 4096
+        maxNumBatchedTokens: 2048
+        maxNumSeqs: 32
+        enableChunkedPrefill: true
+        enablePrefixCaching: false
+        gpuMemoryUtilization: 0.90
+        streamInterval: 1
+      fixture:
+        runDurationMs: 2000
+        samples:
+          - {promptId: prompt-1, ttftMs: 140, e2eMs: 1400, outputTokens: 64}
+          - {promptId: prompt-2, ttftMs: 160, e2eMs: 1420, outputTokens: 64}
+          - {promptId: prompt-3, ttftMs: 180, e2eMs: 1440, outputTokens: 64}
+          - {promptId: prompt-4, ttftMs: 200, e2eMs: 1460, outputTokens: 64}
+    larger-batch:
+      serveArgs:
+        tensorParallelSize: 1
+        dtype: bfloat16
+        maxModelLen: 4096
+        maxNumBatchedTokens: 8192
+        maxNumSeqs: 128
+        enableChunkedPrefill: true
+        enablePrefixCaching: false
+        gpuMemoryUtilization: 0.90
+        streamInterval: 1
+      fixture:
+        runDurationMs: 1250
+        samples:
+          - {promptId: prompt-1, ttftMs: 70, e2eMs: 857.5, outputTokens: 64}
+          - {promptId: prompt-2, ttftMs: 80, e2eMs: 867.5, outputTokens: 64}
+          - {promptId: prompt-3, ttftMs: 90, e2eMs: 877.5, outputTokens: 64}
+          - {promptId: prompt-4, ttftMs: 100, e2eMs: 887.5, outputTokens: 64}

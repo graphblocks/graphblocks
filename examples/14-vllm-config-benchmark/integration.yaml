@@ -1,0 +1,57 @@
+apiVersion: graphblocks.ai/examples/v1alpha1
+kind: ExampleIntegration
+metadata:
+  name: vllm-config-benchmark-integration
+spec:
+  mockGraph:
+    graph: vllm-config-performance-benchmark
+    inputs: {matrix: configs.yaml}
+    nodes:
+      load:
+        service: benchmark-matrix
+        expectedInputs: {matrix: configs.yaml}
+        outputs:
+          baseline: baseline
+          candidate: larger-batch
+          configs: [baseline, larger-batch]
+          workload: {inputTokens: 512, maxOutputTokens: 64, promptCount: 4}
+      warmup:
+        service: mock-vllm-servers
+        expectedInputs:
+          configs: [baseline, larger-batch]
+        outputs: {result: completed}
+      measure:
+        service: mock-vllm-servers
+        expectedInputs:
+          configs: [baseline, larger-batch]
+          warmup: completed
+        outputs:
+          samples:
+            baseline: {p95TtftMs: 197.0, meanDecodeTps: 50.0}
+            larger-batch: {p95TtftMs: 98.5, meanDecodeTps: 80.0}
+      aggregate:
+        service: benchmark-aggregator
+        outputs:
+          results:
+            baseline: {p95TtftMs: 197.0, meanDecodeTps: 50.0, outputThroughputTps: 128.0}
+            larger-batch: {p95TtftMs: 98.5, meanDecodeTps: 80.0, outputThroughputTps: 204.8}
+      compare:
+        service: performance-gate
+        expectedInputs:
+          baseline: baseline
+          candidate: larger-batch
+        outputs:
+          report:
+            baseline: baseline
+            candidate: larger-batch
+            gateDecision: pass
+            p95TtftImprovementPct: 50.0
+            outputThroughputImprovementPct: 60.0
+    expectedCallOrder: [load, warmup, measure, aggregate, compare]
+    expectedOutput:
+      report:
+        baseline: baseline
+        candidate: larger-batch
+        gateDecision: pass
+        p95TtftImprovementPct: 50.0
+        outputThroughputImprovementPct: 60.0
