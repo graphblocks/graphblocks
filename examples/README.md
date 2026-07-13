@@ -21,7 +21,7 @@ checked-in Python and Rust implementations directly.
 | [08 Kubernetes production deployment](08-kubernetes-production-deployment/README.md) | release, placement, canary, rollback, drain |
 | [09 Observability profile](09-observability-profile/README.md) | OTel/Langfuse projections and outage isolation |
 | [10 Realtime voice extension](10-realtime-voice-extension/README.md) | duplex voice, interruption authority, playback |
-| [11 Coding-agent callbacks](11-coding-agent-background-callbacks/README.md) | accepted run, replay, signed webhook, async resume |
+| [11 OpenCode-style coding agent](11-coding-agent-background-callbacks/README.md) | AGENTS discovery, tool permission gates, replay, signed callbacks |
 | [12 Custom Python and Rust blocks](12-custom-python-rust-blocks/README.md) | explicit registry, worker protocol, cross-language execution |
 | [13 LLM interviewer RAG benchmark](13-llm-interviewer-rag-benchmark/README.md) | blinded RAG vs no-RAG interview scoring |
 | [14 vLLM config benchmark](14-vllm-config-benchmark/README.md) | TTFT and token-throughput configuration comparison |

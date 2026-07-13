@@ -11,7 +11,10 @@ spec:
     - background_runs
     - cursor_replay
     - callback_subscription
+    - instruction_discovery
     - approval
+    - tool_call_approval
+    - session_messages
     - review
     - artifact_preview
     - patch_preview
@@ -38,6 +41,10 @@ spec:
       method: POST
       path: /v1/callbacks/{operation_id}
       command: SubmitAsyncCallback
+    - id: reply-tool-permission
+      method: POST
+      path: /v1/coding/tasks/{run_id}/permissions/{approval_id}
+      command: SubmitApproval
   callbackRegistration:
     type: RegisterCallback
     scope: run
@@ -78,6 +85,9 @@ spec:
     events:
       - RunStarted
       - AgentProgress
+      - MessagePartUpdated
+      - ToolCallApprovalRequested
+      - ToolCallApprovalReplied
       - FilePatchPreview
       - CheckStarted
       - CheckCompleted
@@ -96,26 +106,53 @@ spec:
       block: workspace.snapshot@1
       inputs:
         workspace: begin.workspace
-    plan:
-      block: orchestration.plan@1
+    discoverInstructions:
+      block: examples.opencode.discover_instructions@1
+      inputs:
+        workspace: snapshot.value
+        workingDirectory: begin.working_directory
+      config:
+        projectFiles: [AGENTS.md, CLAUDE.md]
+        customInstructionConfig: opencode.json
+        traversal: working_directory_to_worktree
+        nestedInstructions: lazy_on_file_read
+    agentSession:
+      block: examples.opencode.agent_session@1
       inputs:
         objective: begin.objective
         workspace: snapshot.value
+        instructions: discoverInstructions.context
       config:
-        maxTasks: 40
-        maxDepth: 4
-    executePlan:
-      block: orchestration.execute_task_plan@1
-      inputs:
-        plan: plan.task_plan
-      config:
-        checkpoint: each_task
-        maximumParallelism: 4
-        onTaskFailure: return_to_planner
+        loop: model_turn_tools_until_final
+        maxSteps: 40
+        snapshotBeforeStep: true
+        patchAfterStep: true
+        compactOnContextOverflow: true
+        stopOnPermissionReject: true
+        tools:
+          - bash
+          - read
+          - edit
+        permissions:
+          default: allow
+          external_directory: ask
+          doom_loop: ask
+          read:
+            "*": allow
+            "*.env": deny
+            "*.env.*": deny
+            "*.env.example": allow
+          responses: [once, always, reject]
+        toolParts:
+          states: [pending, running, completed, error]
+          checkpoint: each_result
+          onFailure: return_to_model
+      projection:
+        event: AgentProgress
     proposePatch:
       block: workspace.propose_changeset@1
       inputs:
-        taskResults: executePlan.results
+        taskResults: agentSession.result
         base: snapshot.value
     preview:
       block: workspace.preview_changeset@1

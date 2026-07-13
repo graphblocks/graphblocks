@@ -982,6 +982,12 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
         "path": "/v1/callbacks/{operation_id}",
         "command": "SubmitAsyncCallback",
     }
+    assert routes["reply-tool-permission"] == {
+        "id": "reply-tool-permission",
+        "method": "POST",
+        "path": "/v1/coding/tasks/{run_id}/permissions/{approval_id}",
+        "command": "SubmitApproval",
+    }
 
     assert graph["kind"] == "Graph"
     assert graph["metadata"]["name"] == "coding-agent-task"
@@ -992,6 +998,41 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
     }
     assert graph["spec"]["eventStream"]["replayable"] is True
     nodes = graph["spec"]["nodes"]
+    assert nodes["discoverInstructions"] == {
+        "block": "examples.opencode.discover_instructions@1",
+        "inputs": {
+            "workspace": "snapshot.value",
+            "workingDirectory": "begin.working_directory",
+        },
+        "config": {
+            "projectFiles": ["AGENTS.md", "CLAUDE.md"],
+            "customInstructionConfig": "opencode.json",
+            "traversal": "working_directory_to_worktree",
+            "nestedInstructions": "lazy_on_file_read",
+        },
+    }
+    session_config = nodes["agentSession"]["config"]
+    assert nodes["agentSession"]["block"] == "examples.opencode.agent_session@1"
+    assert session_config["loop"] == "model_turn_tools_until_final"
+    assert session_config["snapshotBeforeStep"] is True
+    assert session_config["patchAfterStep"] is True
+    assert session_config["permissions"] == {
+        "default": "allow",
+        "external_directory": "ask",
+        "doom_loop": "ask",
+        "read": {
+            "*": "allow",
+            "*.env": "deny",
+            "*.env.*": "deny",
+            "*.env.example": "allow",
+        },
+        "responses": ["once", "always", "reject"],
+    }
+    assert session_config["toolParts"] == {
+        "states": ["pending", "running", "completed", "error"],
+        "checkpoint": "each_result",
+        "onFailure": "return_to_model",
+    }
     assert nodes["startCI"]["block"] == "async.start_operation@1"
     assert nodes["startCI"]["config"]["callback"] == {
         "required": True,
