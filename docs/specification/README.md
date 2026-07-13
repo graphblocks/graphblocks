@@ -14,6 +14,7 @@ claim.
 ## Core contracts
 
 - [Canonical data model](core/canonical-data-model.md)
+- [Deterministic YAML composition](core/yaml-composition.md)
 - [Graph, compiler, and runtime](core/graph-compilation-runtime.md)
 - [Packages and plugins](core/packages-and-plugins.md)
 - [Portable domain blocks](core/portable-domain-blocks.md)

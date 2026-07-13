@@ -15,3 +15,15 @@ def load_documents(path: str | Path) -> list[dict[str, Any]]:
             raise ValueError(f"{source}:{index + 1}: expected a YAML mapping document")
     return documents
 
+
+def load_composed_documents(
+    path: str | Path,
+    *,
+    root: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    from .composition import compose_documents
+
+    return list(compose_documents(path, root=root).documents)
+
+
+__all__ = ["load_composed_documents", "load_documents"]

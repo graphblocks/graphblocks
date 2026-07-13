@@ -8,6 +8,8 @@ pre-release alpha software.
 
 ### Added
 
+- Deterministic local YAML composition with typed `GraphFragment` slots,
+  imported bindings, materialized output, and bounded filesystem access.
 - Living English specification organized by contract domain.
 - Open-source contribution, governance, conduct, and security policies.
 - Executable acceptance coverage for ten applications and 42 gates.

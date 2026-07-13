@@ -19,5 +19,16 @@ Dynamic work is represented by bounded constructs such as sequence limits,
 task-plan limits, async-operation deadlines, or durable-stream checkpoints. A
 graph must not smuggle an unbounded scheduler into ordinary node configuration.
 
+For authoring, a graph may import local `GraphFragment` documents and fill a
+typed slot placeholder. Composition is a deterministic preprocessing boundary:
+it resolves only explicitly named local files, expands each fragment into
+ordinary prefixed nodes and edges, and removes all authoring directives before
+compilation. The graph hash is derived from that normalized expanded graph, so
+moving an imported file without changing the result does not change graph
+identity. Environment interpolation, remote imports, and arbitrary YAML subtree
+merges are not composition features.
+
 See the normative [canonical data model](../specification/core/canonical-data-model.md)
 and [graph, compiler, and runtime contract](../specification/core/graph-compilation-runtime.md).
+The authoring rules are defined by
+[deterministic YAML composition](../specification/core/yaml-composition.md).

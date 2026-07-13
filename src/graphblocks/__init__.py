@@ -238,7 +238,16 @@ from .exhaustion import (
     PartialOutputPolicy,
     validate_exhaustion_policy,
 )
-from .loader import load_documents
+from .composition import (
+    COMPOSITION_API_VERSION,
+    CompositionError,
+    CompositionInstance,
+    CompositionReport,
+    CompositionResult,
+    CompositionSource,
+    compose_documents,
+)
+from .loader import load_composed_documents, load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
 from .packages import (
@@ -665,6 +674,12 @@ __all__ = [
     "BudgetStatus",
     "CallbackDelivery",
     "CallbackSubscription",
+    "COMPOSITION_API_VERSION",
+    "CompositionError",
+    "CompositionInstance",
+    "CompositionReport",
+    "CompositionResult",
+    "CompositionSource",
     "CompletionReserve",
     "CompletionReservePurpose",
     "CompletionReserveStatus",
@@ -1149,6 +1164,7 @@ __all__ = [
     "canonical_dumps",
     "canonical_hash",
     "canonical_loads",
+    "compose_documents",
     "compile_graph",
     "compile_graph_native",
     "chunk_document_by_lines",
@@ -1161,6 +1177,7 @@ __all__ = [
     "evaluate_rag_answer_metrics",
     "evaluate_retrieval_metrics",
     "load_package_catalog",
+    "load_composed_documents",
     "load_documents",
     "load_plugin_manifest",
     "authorize_search_hits",

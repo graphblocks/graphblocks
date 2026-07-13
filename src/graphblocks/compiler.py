@@ -718,6 +718,15 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         diagnostics.append(Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes"))
         nodes = {}
 
+    if "composition" in spec:
+        diagnostics.append(
+            Diagnostic(
+                "UnexpandedComposition",
+                "graph composition must be materialized before compilation",
+                "$.spec.composition",
+            )
+        )
+
     interface = spec.get("interface")
     if isinstance(interface, dict):
         for direction in ("inputs", "outputs"):
@@ -753,6 +762,15 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             diagnostics.append(Diagnostic("GB0007", "node names cannot use pseudo-node prefix '$'", f"$.spec.nodes.{node_name}"))
         if not isinstance(node, dict):
             diagnostics.append(Diagnostic("GB0008", "node spec must be a mapping", f"$.spec.nodes.{node_name}"))
+            continue
+        if "slot" in node:
+            diagnostics.append(
+                Diagnostic(
+                    "UnexpandedComposition",
+                    "slot placeholders must be materialized before compilation",
+                    f"$.spec.nodes.{node_name}.slot",
+                )
+            )
             continue
         block = node.get("block")
         if not isinstance(block, str) or "@" not in block or block.endswith("@"):

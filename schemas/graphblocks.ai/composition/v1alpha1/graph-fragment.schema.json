@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
+  "title": "GraphBlocks GraphFragment",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "graphblocks.ai/composition/v1alpha1" },
+    "kind": { "const": "GraphFragment" },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "spec": {
+      "type": "object",
+      "required": ["interface", "nodes"],
+      "properties": {
+        "interface": {
+          "type": "object",
+          "required": ["inputs", "outputs"],
+          "properties": {
+            "inputs": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^.+@[1-9][0-9]*$"
+              }
+            },
+            "outputs": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^.+@[1-9][0-9]*$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "nodes": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["block"],
+            "properties": {
+              "block": {
+                "type": "string",
+                "pattern": "^.+@[^@]+$"
+              }
+            },
+            "not": { "required": ["slot"] },
+            "additionalProperties": true
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

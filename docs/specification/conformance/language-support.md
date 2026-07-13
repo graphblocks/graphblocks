@@ -6,6 +6,7 @@ release compatibility promise.
 | Contract area | Python | Rust |
 | --- | --- | --- |
 | Canonical schema/compiler | Implemented and TCK-backed | Implemented and TCK-backed |
+| Cross-file YAML composition authoring | Implemented; materializes an expanded Graph | Does not resolve authoring sources; consumes expanded Graph YAML |
 | Local runtime, cancellation, tools, budget core | Implemented | Implemented |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
 | Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
@@ -21,3 +22,10 @@ Profile claims are determined by applicable fixtures and acceptance evidence,
 not this summary alone. Advanced provider-specific voice adapters may still add
 their own evidence beyond the shared provider-authority and playback lifecycle
 cases.
+
+Composition is outside the runtime language boundary. A Python-authored graph
+may be materialized with `graphblocks compose` and then compiled or run by Rust
+without granting the Rust process access to the source tree. Direct Rust
+composition support requires parity on composition fixtures, canonical expanded
+values, graph hashes, and deterministic diagnostics before it can be listed as
+implemented.

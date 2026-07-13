@@ -1107,6 +1107,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         ));
     }
 
+    if spec.and_then(|spec| spec.get("composition")).is_some() {
+        diagnostics.push(Diagnostic::error(
+            "UnexpandedComposition",
+            "graph composition must be materialized before compilation",
+            "$.spec.composition",
+        ));
+    }
+
     if let Some(interface) = spec
         .and_then(|spec| spec.get("interface"))
         .and_then(Value::as_object)
@@ -1166,6 +1174,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 ));
                 continue;
             };
+            if node.contains_key("slot") {
+                diagnostics.push(Diagnostic::error(
+                    "UnexpandedComposition",
+                    "slot placeholders must be materialized before compilation",
+                    format!("$.spec.nodes.{node_name}.slot"),
+                ));
+                continue;
+            }
             if !node
                 .get("block")
                 .and_then(Value::as_str)

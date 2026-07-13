@@ -35,6 +35,19 @@ Run the reference runtime against a locally compilable graph:
 python -m graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
 ```
 
+For a graph split across local fragment and binding files, materialize the
+portable YAML first or let `validate`, `plan`, `run`, and `lock` compose it
+automatically:
+
+```bash
+python -m graphblocks compose graph.yaml --output graph.expanded.yaml
+python -m graphblocks validate graph.expanded.yaml
+```
+
+Composition uses typed `GraphFragment` slots, rejects path traversal and remote
+imports, and hashes only the expanded graph. See
+[deterministic YAML composition](../specification/core/yaml-composition.md).
+
 The separate `graphblocks-testing` distribution provides the TCK command and
 acceptance runner. Install it explicitly for conformance work; see
 [testing](../development/testing.md). Install `graphblocks-runtime` only when

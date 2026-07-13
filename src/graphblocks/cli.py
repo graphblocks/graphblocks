@@ -7,6 +7,7 @@ from importlib import resources
 import io
 import json
 from pathlib import Path
+import sys
 import tarfile
 
 import yaml
@@ -14,6 +15,7 @@ import yaml
 from . import __version__
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 from .compiler import compile_graph
+from .composition import CompositionError, compose_documents
 from .deployment import (
     DeploymentRevision,
     DeploymentTargetProfileSet,
@@ -31,7 +33,7 @@ from .deployment import (
     SupplyChainLock,
 )
 from .diagnostics import Diagnostic
-from .loader import load_documents
+from .loader import load_composed_documents, load_documents
 from .migration import migrate_document
 from .packages import (
     PackageManifestAuditPolicy,
@@ -120,26 +122,33 @@ def _resource_ref_from_mapping(mapping: Mapping[str, object]) -> ResourceRef:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="graphblocks")
     parser.add_argument("--version", action="store_true", help="show package version")
     subparsers = parser.add_subparsers(dest="command")
 
     validate_parser = subparsers.add_parser("validate", help="validate GraphBlocks YAML documents")
     validate_parser.add_argument("path", type=Path)
+    validate_parser.add_argument("--composition-root", type=Path)
     validate_parser.add_argument("--json", action="store_true", help="emit machine-readable diagnostics")
     validate_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
 
     plan_parser = subparsers.add_parser("plan", help="compile a GraphSpec into normalized plan JSON")
     plan_parser.add_argument("path", type=Path)
+    plan_parser.add_argument("--composition-root", type=Path)
     plan_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
     plan_parser.add_argument("--expand", action="store_true", help="include normalized graph")
-    plan_parser.add_argument("--show-bindings", action="store_true", help="include Binding documents from the same file")
+    plan_parser.add_argument(
+        "--show-bindings",
+        action="store_true",
+        help="include Binding documents from the composed document stream",
+    )
     plan_parser.add_argument("--show-packages", action="store_true", help="include inferred semantic block requirements")
     plan_parser.add_argument("--target", default="local-python", help="execution target label for diagnostics")
 
     run_parser = subparsers.add_parser("run", help="execute a GraphSpec with the deterministic in-process runtime")
     run_parser.add_argument("path", type=Path)
+    run_parser.add_argument("--composition-root", type=Path)
     run_parser.add_argument("--input-json", default="{}", help="JSON object used as graph input values")
     run_parser.add_argument(
         "--runtime",
@@ -159,6 +168,15 @@ def main(argv: list[str] | None = None) -> int:
         "--release-signature-digest",
         help="signature digest for the release referenced by --deployment-plan",
     )
+
+    compose_parser = subparsers.add_parser(
+        "compose",
+        help="materialize imported GraphFragments into standalone YAML",
+    )
+    compose_parser.add_argument("path", type=Path)
+    compose_parser.add_argument("--root", type=Path, help="trusted composition root")
+    compose_parser.add_argument("--output", type=Path, help="write expanded YAML instead of stdout")
+    compose_parser.add_argument("--report", type=Path, help="write composition evidence as JSON")
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -289,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
+    lock_parser.add_argument("--composition-root", type=Path)
     lock_parser.add_argument("--output", type=Path, help="write lock JSON to this path instead of stdout")
     lock_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     lock_parser.add_argument("--package", action="append", default=[], help="additional package distribution to lock")
@@ -302,8 +321,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         print(__version__)
         return 0
+    if args.command == "compose":
+        result = compose_documents(args.path, root=args.root)
+        rendered = yaml.safe_dump_all(
+            result.documents,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+        if args.output is None:
+            print(rendered, end="")
+        else:
+            try:
+                args.output.write_text(rendered, encoding="utf-8")
+            except OSError as error:
+                raise CompositionError(
+                    "CompositionOutputError",
+                    "materialized YAML output could not be written",
+                ) from error
+        if args.report is not None:
+            try:
+                args.report.write_text(
+                    json.dumps(result.report.canonical_value(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as error:
+                raise CompositionError(
+                    "CompositionOutputError",
+                    "composition report output could not be written",
+                ) from error
+        return 0
     if args.command == "validate":
-        documents = load_documents(args.path)
+        documents = load_composed_documents(args.path, root=args.composition_root)
         diagnostics: list[dict[str, str]] = []
         ok = True
         block_catalog = None
@@ -347,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("OK")
         return 0 if ok else 1
     if args.command == "plan":
-        documents = load_documents(args.path)
+        documents = load_composed_documents(args.path, root=args.composition_root)
         graph_documents = [document for document in documents if document.get("kind") == "Graph"]
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
@@ -379,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if plan.ok else 1
     if args.command == "run":
-        documents = load_documents(args.path)
+        documents = load_composed_documents(args.path, root=args.composition_root)
         graph_documents = [document for document in documents if document.get("kind") == "Graph"]
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
@@ -643,7 +691,7 @@ def main(argv: list[str] | None = None) -> int:
         print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
         return 0
     if args.command == "lock":
-        documents = load_documents(args.path)
+        documents = load_composed_documents(args.path, root=args.composition_root)
         graph_documents = [document for document in documents if document.get("kind") == "Graph"]
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
@@ -1939,3 +1987,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     parser.print_help()
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except CompositionError as error:
+        arguments = argv if argv is not None else sys.argv[1:]
+        if "--json" in arguments:
+            print(
+                json.dumps(
+                    {"ok": False, "diagnostics": [error.to_diagnostic()]},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(error)
+        return 1

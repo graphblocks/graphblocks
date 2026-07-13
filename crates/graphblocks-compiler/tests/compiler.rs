@@ -60,6 +60,36 @@ fn compile_graph_requires_metadata_name() {
 }
 
 #[test]
+fn compile_graph_rejects_unexpanded_composition_and_slot() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unexpanded"},
+        "spec": {
+            "composition": {
+                "apiVersion": "graphblocks.ai/composition/v1alpha1",
+                "imports": {},
+                "slots": {}
+            },
+            "nodes": {"placeholder": {"slot": "missing"}}
+        }
+    });
+
+    let plan = compile_graph(&graph);
+    let error_codes = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        error_codes,
+        vec!["UnexpandedComposition", "UnexpandedComposition"]
+    );
+}
+
+#[test]
 fn block_catalog_rejects_invalid_descriptor_schema_ids() {
     assert_eq!(
         BlockCatalog::from_blocks(&json!([
