@@ -1788,12 +1788,18 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 target_required = None
                 source_owner, _, source_path = source.partition(".")
                 target_owner, _, target_path = target.partition(".")
-                if source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
+                if source_owner == "$input":
+                    port_name, separator, _nested_path = source_path.partition(".")
+                    if interface_inputs is not None and port_name in interface_inputs and not separator:
+                        schema_id = interface_inputs[port_name]
+                        if isinstance(schema_id, str):
+                            source_type = schema_id
+                elif source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
                     source_node = normalized_nodes[source_owner]
                     if isinstance(source_node, dict):
                         descriptor = block_catalog.get(str(source_node.get("block")))
-                        if descriptor is not None and descriptor.outputs:
-                            port_name = source_path.split(".", 1)[0]
+                        if descriptor is not None:
+                            port_name, separator, _nested_path = source_path.partition(".")
                             output_ports = {port.name: port for port in descriptor.outputs}
                             if port_name not in output_ports:
                                 diagnostics.append(
@@ -1805,14 +1811,22 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                 )
                             else:
                                 source_port = output_ports[port_name]
-                                source_type = source_port.type_ref
-                                source_required = source_port.required
-                if target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
+                                if not separator:
+                                    source_type = source_port.type_ref
+                                    source_required = source_port.required
+                if target_owner == "$output":
+                    port_name, separator, _nested_path = target_path.partition(".")
+                    if interface_outputs is not None and port_name in interface_outputs and not separator:
+                        schema_id = interface_outputs[port_name]
+                        if isinstance(schema_id, str):
+                            target_type = schema_id
+                            target_required = True
+                elif target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
                     target_node = normalized_nodes[target_owner]
                     if isinstance(target_node, dict):
                         descriptor = block_catalog.get(str(target_node.get("block")))
-                        if descriptor is not None and descriptor.inputs:
-                            port_name = target_path.split(".", 1)[0]
+                        if descriptor is not None:
+                            port_name, separator, _nested_path = target_path.partition(".")
                             input_ports = {port.name: port for port in descriptor.inputs}
                             if port_name not in input_ports:
                                 invalid_input_port_nodes.add(target_owner)
@@ -1825,8 +1839,9 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                 )
                             else:
                                 target_port = input_ports[port_name]
-                                target_type = target_port.type_ref
-                                target_required = target_port.required
+                                if not separator:
+                                    target_type = target_port.type_ref
+                                    target_required = target_port.required
                 if source_type and target_type and source_type != "Any" and target_type != "Any" and source_type != target_type:
                     diagnostics.append(
                         Diagnostic(
@@ -1858,6 +1873,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 continue
             descriptor = block_catalog.get(str(node.get("block")))
             if descriptor is None:
+                if not block_catalog.allow_unknown_blocks:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1022",
+                            f"block {node.get('block')!r} is not declared in the block catalog",
+                            f"$.spec.nodes.{node_name}.block",
+                        )
+                    )
                 continue
             if descriptor.resource_slots:
                 bindings = node.get("bindings", {})

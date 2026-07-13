@@ -27,6 +27,7 @@ impl Plan {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BlockCatalog {
     descriptors: BTreeMap<String, BlockDescriptor>,
+    allow_unknown_blocks: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,8 +74,141 @@ const DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES: u64 = 262_144;
 const MANDATORY_CALLBACK_FAILURE_POLICIES: [&str; 2] =
     ["pause_run_on_failure", "fail_run_on_failure"];
 const ORDER_CAPABLE_CALLBACK_TARGETS: [&str; 3] = ["webhook", "websocket", "sse"];
+const PRIMITIVE_TYPE_REFS: [&str; 7] = [
+    "Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String",
+];
+
+fn validate_port_type_ref(type_ref: &str) -> Result<(), String> {
+    if type_ref.is_empty()
+        || type_ref.trim() != type_ref
+        || type_ref.chars().any(char::is_whitespace)
+    {
+        return Err("type reference must be non-empty and contain no whitespace".to_owned());
+    }
+    if PRIMITIVE_TYPE_REFS.contains(&type_ref) {
+        return Ok(());
+    }
+    if !type_ref.contains(['<', '>']) {
+        return SchemaId::parse(type_ref)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+    }
+
+    let Some(opening) = type_ref.find('<') else {
+        return Err(format!("invalid type reference {type_ref:?}"));
+    };
+    if opening == 0 || !type_ref.ends_with('>') {
+        return Err(format!("invalid type reference {type_ref:?}"));
+    }
+    let constructor = &type_ref[..opening];
+    let expected_arity = match constructor {
+        "List" | "Optional" => 1,
+        "Map" => 2,
+        _ => return Err(format!("unsupported type constructor {constructor:?}")),
+    };
+    let body = &type_ref[opening + 1..type_ref.len() - 1];
+    let mut arguments = Vec::new();
+    let mut depth = 0_i64;
+    let mut start = 0;
+    for (offset, character) in body.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(format!("invalid type reference {type_ref:?}"));
+                }
+            }
+            ',' if depth == 0 => {
+                arguments.push(&body[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return Err(format!("invalid type reference {type_ref:?}"));
+    }
+    arguments.push(&body[start..]);
+    if arguments.len() != expected_arity || arguments.iter().any(|argument| argument.is_empty()) {
+        return Err(format!("invalid type reference {type_ref:?}"));
+    }
+    for argument in arguments {
+        validate_port_type_ref(argument)?;
+    }
+    Ok(())
+}
+
+fn validate_resource_type_ref(type_ref: &str) -> Result<(), String> {
+    if type_ref.is_empty()
+        || type_ref.trim() != type_ref
+        || type_ref.chars().any(char::is_whitespace)
+    {
+        return Err(
+            "resource type reference must be non-empty and contain no whitespace".to_owned(),
+        );
+    }
+    if type_ref.contains(['@', '/']) {
+        return SchemaId::parse(type_ref)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+    }
+
+    let segments = type_ref.split('.').collect::<Vec<_>>();
+    let valid_segment = |segment: &str| {
+        let mut characters = segment.chars();
+        characters
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+            && characters.all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            })
+    };
+    if segments.len() < 2 || !segments.into_iter().all(valid_segment) {
+        return Err(
+            "opaque resource type reference must use dot-separated identifier segments".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn descriptor_bool(
+    owner: &Map<String, Value>,
+    field_name: &str,
+    default: bool,
+) -> Result<bool, String> {
+    match owner.get(field_name) {
+        None => Ok(default),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| format!("{field_name} must be a boolean")),
+    }
+}
+
+fn descriptor_type_ref(
+    owner: &Map<String, Value>,
+    context: &str,
+    validator: fn(&str) -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    match owner.get("type") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(type_ref)) => {
+            validator(type_ref)
+                .map_err(|error| format!("{context} has invalid type {type_ref}: {error}"))?;
+            Ok(Some(type_ref.clone()))
+        }
+        Some(type_ref) => Err(format!(
+            "{context} has invalid type {type_ref}: type reference must be a string"
+        )),
+    }
+}
 
 impl BlockCatalog {
+    pub fn with_unknown_blocks_allowed(mut self) -> Self {
+        self.allow_unknown_blocks = true;
+        self
+    }
+
     pub fn from_blocks(blocks: &Value) -> Result<Self, String> {
         let blocks = blocks
             .as_array()
@@ -92,6 +226,9 @@ impl BlockCatalog {
                 .and_then(Value::as_str)
                 .ok_or_else(|| format!("block catalog entry {index} is missing typeId"))?
                 .to_owned();
+            if type_id.is_empty() {
+                return Err(format!("block catalog entry {index} is missing typeId"));
+            }
             let mut version = block.get("version").and_then(Value::as_u64);
             if version.is_none()
                 && let Some((parsed_type_id, parsed_version)) = type_id.rsplit_once('@')
@@ -101,127 +238,159 @@ impl BlockCatalog {
             }
             let version =
                 version.ok_or_else(|| format!("block catalog entry {index} is missing version"))?;
-            let inputs = block
-                .get("inputs")
-                .and_then(Value::as_array)
-                .map(|inputs| {
-                    inputs
-                        .iter()
-                        .filter_map(|port| {
-                            let port = port.as_object()?;
-                            let name = port.get("name").and_then(Value::as_str)?;
-                            Some(PortDescriptor {
-                                name: name.to_owned(),
-                                type_ref: port
-                                    .get("type")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_owned),
-                                required: port
-                                    .get("required")
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(true),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let outputs = block
-                .get("outputs")
-                .and_then(Value::as_array)
-                .map(|outputs| {
-                    outputs
-                        .iter()
-                        .filter_map(|port| {
-                            let port = port.as_object()?;
-                            let name = port.get("name").and_then(Value::as_str)?;
-                            Some(PortDescriptor {
-                                name: name.to_owned(),
-                                type_ref: port
-                                    .get("type")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_owned),
-                                required: port
-                                    .get("required")
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(true),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            if version == 0 {
+                return Err(format!("block catalog entry {index} is missing version"));
+            }
+
+            let mut inputs = Vec::new();
+            let mut input_names = BTreeSet::new();
+            let raw_inputs = match block.get("inputs") {
+                None => &[][..],
+                Some(Value::Array(inputs)) => inputs.as_slice(),
+                Some(_) => {
+                    return Err(format!(
+                        "block catalog entry {index} inputs must be an array"
+                    ));
+                }
+            };
+            for (port_index, port) in raw_inputs.iter().enumerate() {
+                let port = port.as_object().ok_or_else(|| {
+                    format!("block catalog entry {index} input {port_index} must be an object")
+                })?;
+                let name = port
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "block catalog entry {index} input {port_index} requires a non-empty name"
+                        )
+                    })?;
+                if !input_names.insert(name) {
+                    return Err(format!(
+                        "block catalog entry {index} has duplicate input {name:?}"
+                    ));
+                }
+                let context = format!("block catalog entry {index} input {name}");
+                inputs.push(PortDescriptor {
+                    name: name.to_owned(),
+                    type_ref: descriptor_type_ref(port, &context, validate_port_type_ref)?,
+                    required: descriptor_bool(port, "required", true)
+                        .map_err(|error| format!("{context} {error}"))?,
+                });
+            }
+
+            let mut outputs = Vec::new();
+            let mut output_names = BTreeSet::new();
+            let raw_outputs = match block.get("outputs") {
+                None => &[][..],
+                Some(Value::Array(outputs)) => outputs.as_slice(),
+                Some(_) => {
+                    return Err(format!(
+                        "block catalog entry {index} outputs must be an array"
+                    ));
+                }
+            };
+            for (port_index, port) in raw_outputs.iter().enumerate() {
+                let port = port.as_object().ok_or_else(|| {
+                    format!("block catalog entry {index} output {port_index} must be an object")
+                })?;
+                let name = port
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "block catalog entry {index} output {port_index} requires a non-empty name"
+                        )
+                    })?;
+                if !output_names.insert(name) {
+                    return Err(format!(
+                        "block catalog entry {index} has duplicate output {name:?}"
+                    ));
+                }
+                let context = format!("block catalog entry {index} output {name}");
+                outputs.push(PortDescriptor {
+                    name: name.to_owned(),
+                    type_ref: descriptor_type_ref(port, &context, validate_port_type_ref)?,
+                    required: descriptor_bool(port, "required", true)
+                        .map_err(|error| format!("{context} {error}"))?,
+                });
+            }
+
             let resource_slots = match block.get("resourceSlots") {
-                Some(Value::Array(slots)) => slots
-                    .iter()
-                    .filter_map(|slot| {
-                        let slot = slot.as_object()?;
-                        let name = slot.get("name").and_then(Value::as_str)?;
-                        Some(ResourceSlotDescriptor {
-                            name: name.to_owned(),
-                            type_ref: slot.get("type").and_then(Value::as_str).map(str::to_owned),
-                            optional: slot
-                                .get("optional")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false),
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-                Some(Value::Object(slots)) => slots
-                    .iter()
-                    .map(|(slot_name, slot)| {
-                        let slot = slot.as_object();
-                        ResourceSlotDescriptor {
-                            name: slot_name.to_owned(),
-                            type_ref: slot
-                                .and_then(|slot| slot.get("type"))
-                                .and_then(Value::as_str)
-                                .map(str::to_owned),
-                            optional: slot
-                                .and_then(|slot| slot.get("optional"))
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false),
+                None => Vec::new(),
+                Some(Value::Array(slots)) => {
+                    let mut descriptors = Vec::new();
+                    let mut names = BTreeSet::new();
+                    for (slot_index, slot) in slots.iter().enumerate() {
+                        let slot = slot.as_object().ok_or_else(|| {
+                            format!(
+                                "block catalog entry {index} resource slot {slot_index} must be an object"
+                            )
+                        })?;
+                        let name = slot
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .filter(|name| !name.trim().is_empty())
+                            .ok_or_else(|| {
+                                format!(
+                                    "block catalog entry {index} resource slot {slot_index} requires a non-empty name"
+                                )
+                            })?;
+                        if !names.insert(name) {
+                            return Err(format!(
+                                "block catalog entry {index} has duplicate resource slot {name:?}"
+                            ));
                         }
-                    })
-                    .collect::<Vec<_>>(),
-                _ => Vec::new(),
+                        let context = format!("block catalog entry {index} resource slot {name}");
+                        descriptors.push(ResourceSlotDescriptor {
+                            name: name.to_owned(),
+                            type_ref: descriptor_type_ref(
+                                slot,
+                                &context,
+                                validate_resource_type_ref,
+                            )?,
+                            optional: descriptor_bool(slot, "optional", false)
+                                .map_err(|error| format!("{context} {error}"))?,
+                        });
+                    }
+                    descriptors
+                }
+                Some(Value::Object(slots)) => {
+                    let mut descriptors = Vec::new();
+                    for (slot_name, slot) in slots {
+                        if slot_name.trim().is_empty() {
+                            return Err(format!(
+                                "block catalog entry {index} resource slot requires a non-empty name"
+                            ));
+                        }
+                        let slot = slot.as_object().ok_or_else(|| {
+                            format!(
+                                "block catalog entry {index} resource slot {slot_name:?} must be an object"
+                            )
+                        })?;
+                        let context =
+                            format!("block catalog entry {index} resource slot {slot_name}");
+                        descriptors.push(ResourceSlotDescriptor {
+                            name: slot_name.to_owned(),
+                            type_ref: descriptor_type_ref(
+                                slot,
+                                &context,
+                                validate_resource_type_ref,
+                            )?,
+                            optional: descriptor_bool(slot, "optional", false)
+                                .map_err(|error| format!("{context} {error}"))?,
+                        });
+                    }
+                    descriptors
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "block catalog entry {index} resourceSlots must be an array or object"
+                    ));
+                }
             };
-            let is_direct_schema_type_ref = |type_ref: &str| {
-                (type_ref.contains('@') || type_ref.contains('/'))
-                    && !type_ref.contains('<')
-                    && !type_ref.contains('>')
-            };
-            for port in &inputs {
-                if let Some(type_ref) = &port.type_ref
-                    && is_direct_schema_type_ref(type_ref)
-                    && let Err(error) = SchemaId::parse(type_ref)
-                {
-                    return Err(format!(
-                        "block catalog entry {index} input {} has invalid type {type_ref}: {error}",
-                        port.name
-                    ));
-                }
-            }
-            for port in &outputs {
-                if let Some(type_ref) = &port.type_ref
-                    && is_direct_schema_type_ref(type_ref)
-                    && let Err(error) = SchemaId::parse(type_ref)
-                {
-                    return Err(format!(
-                        "block catalog entry {index} output {} has invalid type {type_ref}: {error}",
-                        port.name
-                    ));
-                }
-            }
-            for slot in &resource_slots {
-                if let Some(type_ref) = &slot.type_ref
-                    && is_direct_schema_type_ref(type_ref)
-                    && let Err(error) = SchemaId::parse(type_ref)
-                {
-                    return Err(format!(
-                        "block catalog entry {index} resource slot {} has invalid type {type_ref}: {error}",
-                        slot.name
-                    ));
-                }
-            }
             let descriptor = BlockDescriptor {
                 type_id,
                 version,
@@ -229,10 +398,17 @@ impl BlockCatalog {
                 outputs,
                 resource_slots,
             };
-            descriptors.insert(descriptor.block_id(), descriptor);
+            let block_id = descriptor.block_id();
+            if descriptors.contains_key(&block_id) {
+                return Err(format!("duplicate block catalog descriptor {block_id}"));
+            }
+            descriptors.insert(block_id, descriptor);
         }
 
-        Ok(Self { descriptors })
+        Ok(Self {
+            descriptors,
+            allow_unknown_blocks: false,
+        })
     }
 
     pub fn get(&self, block_id: &str) -> Option<&BlockDescriptor> {
@@ -1004,7 +1180,10 @@ fn diagnose_callback_subscription_config(
 }
 
 pub fn compile_graph(document: &Value) -> Plan {
-    compile_graph_with_catalog(document, &BlockCatalog::default())
+    compile_graph_with_catalog(
+        document,
+        &BlockCatalog::default().with_unknown_blocks_allowed(),
+    )
 }
 
 pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
@@ -2674,9 +2853,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
     }
 
-    if let Some(normalized_nodes) = normalized_nodes
-        && !block_catalog.descriptors.is_empty()
-    {
+    if let Some(normalized_nodes) = normalized_nodes {
         let mut inbound_by_node = normalized_nodes
             .keys()
             .map(|node_name| (node_name.as_str(), BTreeSet::<String>::new()))
@@ -2695,49 +2872,55 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     continue;
                 };
                 let source_port = source.split_once('.').map(|(source_owner, source_path)| {
-                    let port_name = source_path
+                    let (port_name, nested) = source_path
                         .split_once('.')
-                        .map_or(source_path, |(port_name, _)| port_name);
-                    (source_owner, port_name)
+                        .map_or((source_path, false), |(port_name, _)| (port_name, true));
+                    (source_owner, port_name, nested)
                 });
                 let target_port = target.split_once('.').map(|(target_owner, target_path)| {
-                    let port_name = target_path
+                    let (port_name, nested) = target_path
                         .split_once('.')
-                        .map_or(target_path, |(port_name, _)| port_name);
-                    (target_owner, port_name)
+                        .map_or((target_path, false), |(port_name, _)| (port_name, true));
+                    (target_owner, port_name, nested)
                 });
 
                 let mut source_type = None;
                 let mut target_type = None;
                 let mut source_required = None;
                 let mut target_required = None;
-                if let Some((source_owner, port_name)) = source_port
-                    && !PSEUDO_NODES.contains(&source_owner)
-                    && let Some(source_node) = normalized_nodes.get(source_owner)
-                    && let Some(descriptor) = source_node
-                        .as_object()
-                        .and_then(|node| node.get("block"))
-                        .and_then(Value::as_str)
-                        .and_then(|block_id| block_catalog.get(block_id))
-                    && !descriptor.outputs.is_empty()
-                {
-                    if let Some(port) = descriptor
-                        .outputs
-                        .iter()
-                        .find(|port| port.name == port_name)
+                if let Some((source_owner, port_name, nested)) = source_port {
+                    if source_owner == "$input" && !nested {
+                        source_type = interface_inputs
+                            .and_then(|ports| ports.get(port_name))
+                            .and_then(Value::as_str);
+                    } else if !PSEUDO_NODES.contains(&source_owner)
+                        && let Some(source_node) = normalized_nodes.get(source_owner)
+                        && let Some(descriptor) = source_node
+                            .as_object()
+                            .and_then(|node| node.get("block"))
+                            .and_then(Value::as_str)
+                            .and_then(|block_id| block_catalog.get(block_id))
                     {
-                        source_type = port.type_ref.as_deref();
-                        source_required = Some(port.required);
-                    } else {
-                        diagnostics.push(Diagnostic::error(
-                            "GB1014",
-                            format!(
-                                "block {} has no output port {:?}",
-                                descriptor.block_id(),
-                                port_name
-                            ),
-                            format!("$.spec.edges[{index}].from"),
-                        ));
+                        if let Some(port) = descriptor
+                            .outputs
+                            .iter()
+                            .find(|port| port.name == port_name)
+                        {
+                            if !nested {
+                                source_type = port.type_ref.as_deref();
+                                source_required = Some(port.required);
+                            }
+                        } else {
+                            diagnostics.push(Diagnostic::error(
+                                "GB1014",
+                                format!(
+                                    "block {} has no output port {:?}",
+                                    descriptor.block_id(),
+                                    port_name
+                                ),
+                                format!("$.spec.edges[{index}].from"),
+                            ));
+                        }
                     }
                 }
 
@@ -2750,31 +2933,41 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 if let Some(inbound_ports) = inbound_by_node.get_mut(target_owner) {
                     inbound_ports.insert(port_name.to_owned());
                 }
-                if let Some((target_owner, port_name)) = target_port
-                    && !PSEUDO_NODES.contains(&target_owner)
-                    && let Some(target_node) = normalized_nodes.get(target_owner)
-                    && let Some(descriptor) = target_node
-                        .as_object()
-                        .and_then(|node| node.get("block"))
-                        .and_then(Value::as_str)
-                        .and_then(|block_id| block_catalog.get(block_id))
-                    && !descriptor.inputs.is_empty()
-                {
-                    if let Some(port) = descriptor.inputs.iter().find(|port| port.name == port_name)
+                if let Some((target_owner, port_name, nested)) = target_port {
+                    if target_owner == "$output" && !nested {
+                        target_type = interface_outputs
+                            .and_then(|ports| ports.get(port_name))
+                            .and_then(Value::as_str);
+                        if target_type.is_some() {
+                            target_required = Some(true);
+                        }
+                    } else if !PSEUDO_NODES.contains(&target_owner)
+                        && let Some(target_node) = normalized_nodes.get(target_owner)
+                        && let Some(descriptor) = target_node
+                            .as_object()
+                            .and_then(|node| node.get("block"))
+                            .and_then(Value::as_str)
+                            .and_then(|block_id| block_catalog.get(block_id))
                     {
-                        target_type = port.type_ref.as_deref();
-                        target_required = Some(port.required);
-                    } else {
-                        invalid_input_port_nodes.insert(target_owner.to_owned());
-                        diagnostics.push(Diagnostic::error(
-                            "GB1013",
-                            format!(
-                                "block {} has no input port {:?}",
-                                descriptor.block_id(),
-                                port_name
-                            ),
-                            format!("$.spec.edges[{index}].to"),
-                        ));
+                        if let Some(port) =
+                            descriptor.inputs.iter().find(|port| port.name == port_name)
+                        {
+                            if !nested {
+                                target_type = port.type_ref.as_deref();
+                                target_required = Some(port.required);
+                            }
+                        } else {
+                            invalid_input_port_nodes.insert(target_owner.to_owned());
+                            diagnostics.push(Diagnostic::error(
+                                "GB1013",
+                                format!(
+                                    "block {} has no input port {:?}",
+                                    descriptor.block_id(),
+                                    port_name
+                                ),
+                                format!("$.spec.edges[{index}].to"),
+                            ));
+                        }
                     }
                 }
 
@@ -2808,6 +3001,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 continue;
             };
             let Some(descriptor) = block_catalog.get(block_id) else {
+                if !block_catalog.allow_unknown_blocks {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1022",
+                        format!("block {block_id:?} is not declared in the block catalog"),
+                        format!("$.spec.nodes.{node_name}.block"),
+                    ));
+                }
                 continue;
             };
             if !descriptor.resource_slots.is_empty() {
