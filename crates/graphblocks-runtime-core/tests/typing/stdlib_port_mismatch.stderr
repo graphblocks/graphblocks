@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+  --> tests/typing/stdlib_port_mismatch.rs:38:22
+   |
+38 |             sources: fuse.hits,
+   |                      ^^^^^^^^^ expected `Port<RetrievalSourcesValue>`, found `Port<SearchHitsValue>`
+   |
+   = note: expected struct `Port<RetrievalSourcesValue>`
+              found struct `Port<SearchHitsValue>`

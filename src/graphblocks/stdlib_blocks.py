@@ -72,13 +72,42 @@ GroundingFailurePolicy: TypeAlias = Literal[
 ]
 
 
-SEARCH_REQUEST: PortType[SearchRequestValue] = PortType("graphblocks.ai/SearchRequest@1")
-FEDERATED_SOURCES: PortType[FederatedSourcesValue] = PortType(
-    "graphblocks.ai/FederatedSources@1"
+SEARCH_REQUEST: PortType[SearchRequestValue] = PortType(
+    "graphblocks.ai/SearchRequest@1",
+    SearchRequestValue,
 )
-ANSWER: PortType[AnswerValue] = PortType("graphblocks.ai/Answer@1")
+FEDERATED_SOURCES: PortType[FederatedSourcesValue] = PortType(
+    "graphblocks.ai/FederatedSources@1",
+    FederatedSourcesValue,
+)
+RETRIEVAL_RESULT: PortType[RetrievalResultValue] = PortType(
+    "graphblocks.ai/RetrievalResult@1",
+    RetrievalResultValue,
+)
+RETRIEVAL_SOURCES: PortType[RetrievalSourcesValue] = PortType(
+    "graphblocks.ai/RetrievalSources@1",
+    RetrievalSourcesValue,
+)
+SEARCH_HITS: PortType[SearchHitsValue] = PortType(
+    "graphblocks.ai/SearchHits@1",
+    SearchHitsValue,
+)
+CONTEXT_PACK: PortType[ContextPackValue] = PortType(
+    "graphblocks.ai/ContextPack@1",
+    ContextPackValue,
+)
+ANSWER: PortType[AnswerValue] = PortType("graphblocks.ai/Answer@1", AnswerValue)
 GROUNDING_VALIDATION: PortType[GroundingValidationValue] = PortType(
-    "graphblocks.ai/GroundingValidation@1"
+    "graphblocks.ai/GroundingValidation@1",
+    GroundingValidationValue,
+)
+STRUCTURED_ITEMS: PortType[StructuredItemsValue] = PortType(
+    "graphblocks.ai/StructuredItems@1",
+    StructuredItemsValue,
+)
+STRING: PortType[StringValue] = PortType(
+    "graphblocks.ai/String@1",
+    StringValue,
 )
 
 
@@ -119,12 +148,14 @@ class RetrieveExecutePlan:
         if self.failure_mode is not None:
             config["failureMode"] = self.failure_mode
         return BoundBlock(
-            "retrieve.execute_plan@1",
-            {"query": query, "sources": sources},
-            config,
-            lambda node_id, owner: RetrieveExecutePlanOutputs(
-                result=NodeOutput(node_id, "result", owner),
-                sources=NodeOutput(node_id, "sources", owner),
+            block_id="retrieve.execute_plan@1",
+            inputs={"query": query, "sources": sources},
+            expected_inputs={"query": SEARCH_REQUEST, "sources": FEDERATED_SOURCES},
+            expected_outputs={"result": RETRIEVAL_RESULT, "sources": RETRIEVAL_SOURCES},
+            config=config,
+            _outputs=lambda node_id, owner: RetrieveExecutePlanOutputs(
+                result=NodeOutput(node_id, "result", RETRIEVAL_RESULT, owner),
+                sources=NodeOutput(node_id, "sources", RETRIEVAL_SOURCES, owner),
             ),
         )
 
@@ -162,11 +193,13 @@ class RetrieveFuse:
         if self.retriever_id is not None:
             config["retrieverId"] = self.retriever_id
         return BoundBlock(
-            "retrieve.fuse@1",
-            {"sources": sources},
-            config,
-            lambda node_id, owner: RetrieveFuseOutputs(
-                hits=NodeOutput(node_id, "hits", owner)
+            block_id="retrieve.fuse@1",
+            inputs={"sources": sources},
+            expected_inputs={"sources": RETRIEVAL_SOURCES},
+            expected_outputs={"hits": SEARCH_HITS},
+            config=config,
+            _outputs=lambda node_id, owner: RetrieveFuseOutputs(
+                hits=NodeOutput(node_id, "hits", SEARCH_HITS, owner)
             ),
         )
 
@@ -197,11 +230,13 @@ class RankDocuments:
         if self.input_limit is not None:
             config["inputLimit"] = self.input_limit
         return BoundBlock(
-            "rank.documents@1",
-            {"query": query, "hits": hits},
-            config,
-            lambda node_id, owner: RankDocumentsOutputs(
-                hits=NodeOutput(node_id, "hits", owner),
+            block_id="rank.documents@1",
+            inputs={"query": query, "hits": hits},
+            expected_inputs={"query": SEARCH_REQUEST, "hits": SEARCH_HITS},
+            expected_outputs={"hits": SEARCH_HITS},
+            config=config,
+            _outputs=lambda node_id, owner: RankDocumentsOutputs(
+                hits=NodeOutput(node_id, "hits", SEARCH_HITS, owner),
             ),
         )
 
@@ -236,11 +271,13 @@ class ContextBuild:
         if self.deduplicate is not None:
             config["deduplicate"] = self.deduplicate
         return BoundBlock(
-            "context.build@1",
-            {"evidence": evidence},
-            config,
-            lambda node_id, owner: ContextBuildOutputs(
-                pack=NodeOutput(node_id, "pack", owner)
+            block_id="context.build@1",
+            inputs={"evidence": evidence},
+            expected_inputs={"evidence": SEARCH_HITS},
+            expected_outputs={"pack": CONTEXT_PACK},
+            config=config,
+            _outputs=lambda node_id, owner: ContextBuildOutputs(
+                pack=NodeOutput(node_id, "pack", CONTEXT_PACK, owner)
             ),
         )
 
@@ -269,16 +306,28 @@ class StructuredGenerate(Generic[StructuredValueT]):
         context: InputRef[ContextPackValue],
     ) -> BoundBlock[StructuredGenerateOutputs[StructuredValueT]]:
         return BoundBlock(
-            "model.structured_generate@1",
-            {"context": context},
-            {"outputSchema": self.output_schema.schema, "response": dict(self.response)},
-            lambda node_id, owner: StructuredGenerateOutputs(
-                value=NodeOutput(node_id, "value", owner),
-                response=NodeOutput(node_id, "response", owner),
-                items=NodeOutput(node_id, "items", owner),
-                schema_id=NodeOutput(node_id, "schemaId", owner),
-                schema_ref=NodeOutput(node_id, "schemaRef", owner),
-                content_digest=NodeOutput(node_id, "contentDigest", owner),
+            block_id="model.structured_generate@1",
+            inputs={"context": context},
+            expected_inputs={"context": CONTEXT_PACK},
+            expected_outputs={
+                "value": self.output_schema,
+                "response": self.output_schema,
+                "items": STRUCTURED_ITEMS,
+                "schemaId": STRING,
+                "schemaRef": STRING,
+                "contentDigest": STRING,
+            },
+            config={
+                "outputSchema": self.output_schema.schema,
+                "response": dict(self.response),
+            },
+            _outputs=lambda node_id, owner: StructuredGenerateOutputs(
+                value=NodeOutput(node_id, "value", self.output_schema, owner),
+                response=NodeOutput(node_id, "response", self.output_schema, owner),
+                items=NodeOutput(node_id, "items", STRUCTURED_ITEMS, owner),
+                schema_id=NodeOutput(node_id, "schemaId", STRING, owner),
+                schema_ref=NodeOutput(node_id, "schemaRef", STRING, owner),
+                content_digest=NodeOutput(node_id, "contentDigest", STRING, owner),
             ),
         )
 
@@ -313,26 +362,44 @@ class AnswerValidateGrounding:
         context: InputRef[ContextPackValue],
     ) -> BoundBlock[AnswerValidateGroundingOutputs]:
         return BoundBlock(
-            "answer.validate_grounding@1",
-            {"response": response, "context": context},
-            {
+            block_id="answer.validate_grounding@1",
+            inputs={"response": response, "context": context},
+            expected_inputs={"response": ANSWER, "context": CONTEXT_PACK},
+            expected_outputs={
+                "candidate": ANSWER,
+                "response": ANSWER,
+                "result": GROUNDING_VALIDATION,
+                "validation": GROUNDING_VALIDATION,
+            },
+            config={
                 "requireCitation": self.require_citation,
                 "onInsufficientEvidence": self.on_insufficient_evidence,
             },
-            lambda node_id, owner: AnswerValidateGroundingOutputs(
-                candidate=NodeOutput(node_id, "candidate", owner),
-                response=NodeOutput(node_id, "response", owner),
-                result=NodeOutput(node_id, "result", owner),
-                validation=NodeOutput(node_id, "validation", owner),
+            _outputs=lambda node_id, owner: AnswerValidateGroundingOutputs(
+                candidate=NodeOutput(node_id, "candidate", ANSWER, owner),
+                response=NodeOutput(node_id, "response", ANSWER, owner),
+                result=NodeOutput(node_id, "result", GROUNDING_VALIDATION, owner),
+                validation=NodeOutput(
+                    node_id,
+                    "validation",
+                    GROUNDING_VALIDATION,
+                    owner,
+                ),
             ),
         )
 
 
 __all__ = [
     "ANSWER",
+    "CONTEXT_PACK",
     "FEDERATED_SOURCES",
     "GROUNDING_VALIDATION",
+    "RETRIEVAL_RESULT",
+    "RETRIEVAL_SOURCES",
     "SEARCH_REQUEST",
+    "SEARCH_HITS",
+    "STRING",
+    "STRUCTURED_ITEMS",
     "AnswerValidateGrounding",
     "AnswerValidateGroundingOutputs",
     "AnswerValue",

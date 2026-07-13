@@ -396,7 +396,7 @@ def run_integration(
                     f"got {sorted(fixture_nodes)}"
                 )
 
-            registry = RuntimeRegistry()
+            registry = RuntimeRegistry(allow_untyped=True)
             block_ids = {str(node["block"]) for node in graph_nodes.values()}
             for block_id in block_ids:
                 registry.register(block_id, FixtureBlock(block_id, fixture_nodes, mock_calls))
@@ -511,7 +511,7 @@ def run_integration(
                 if isinstance(block_type, str) and version is not None and isinstance(implementation, str):
                     manifest_implementations[f"{block_type}@{version}"] = implementation
 
-            registry = RuntimeRegistry()
+            registry = RuntimeRegistry(allow_untyped=True)
             for node_name, raw_node in graph_nodes.items():
                 implementation_spec = worker_nodes[node_name]
                 if not isinstance(raw_node, Mapping) or not isinstance(implementation_spec, Mapping):

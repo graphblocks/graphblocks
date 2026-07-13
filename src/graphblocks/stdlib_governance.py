@@ -155,6 +155,7 @@ def structured_generate_block(
     result: dict[str, Any] = {
         "value": value,
         "response": value,
+        "items": [],
         "schemaId": output_schema,
         "schemaRef": output_schema,
         "contentDigest": canonical_hash(value),
@@ -163,6 +164,10 @@ def structured_generate_block(
         result["items"] = value["items"]
     elif isinstance(value, list):
         result["items"] = value
+    if isinstance(value, dict):
+        for output_name in ("questions", "scores"):
+            if output_name in value:
+                result[output_name] = value[output_name]
     return result
 
 

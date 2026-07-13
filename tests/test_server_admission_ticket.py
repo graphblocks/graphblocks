@@ -167,7 +167,7 @@ def test_executor_never_runs_more_blocks_than_ticket_capacity() -> None:
             active -= 1
         return {"value": f"mocked:{run_id}"}
 
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.mocked-external@1", mocked_external_block)
     queue = AdmissionTicketQueue(
         "external-api",

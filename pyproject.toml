@@ -35,6 +35,7 @@ pdf = [
   "pypdf>=4.0",
 ]
 test = [
+  "mypy>=1.15,<2",
   "pytest>=8.0",
 ]
 
@@ -56,3 +57,14 @@ packages = ["src/graphblocks"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+show_error_codes = true
+warn_unused_ignores = true
+files = [
+  "src/graphblocks/typed.py",
+  "src/graphblocks/stdlib_blocks.py",
+  "tests/typing/valid_typed_graph.py",
+]

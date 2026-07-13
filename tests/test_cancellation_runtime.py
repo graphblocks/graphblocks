@@ -6,7 +6,7 @@ from graphblocks.runtime import CancellationToken, InProcessRuntime, RuntimeRegi
 
 
 def test_pre_cancelled_runtime_starts_no_nodes() -> None:
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
     registry.register("test.value@1", lambda inputs, config, context: {"value": "late"})
     token = CancellationToken()
     token.cancel("user")
@@ -33,7 +33,7 @@ def test_pre_cancelled_runtime_starts_no_nodes() -> None:
 
 def test_runtime_stops_before_next_node_after_cancellation() -> None:
     calls: list[str] = []
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def cancels(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         calls.append("cancel")
@@ -78,4 +78,3 @@ def test_cancellation_token_cancel_is_idempotent() -> None:
 
     assert token.cancelled
     assert token.reason == "first"
-

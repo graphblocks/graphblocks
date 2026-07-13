@@ -1,0 +1,10 @@
+error[E0624]: associated function `node_output` is private
+ --> tests/typing/port_forging.rs:5:44
+  |
+5 |     let _forged: Port<AnswerValue> = Port::node_output(7, "other-node", "candidate");
+  |                                            ^^^^^^^^^^^ private associated function
+  |
+ ::: src/typed_graph.rs
+  |
+  |     fn node_output(builder_id: u64, node_id: &str, port: &str) -> Self {
+  |     ------------------------------------------------------------------ private associated function defined here

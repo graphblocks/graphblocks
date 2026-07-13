@@ -132,6 +132,13 @@ def test_structured_generate_uses_provider_or_fixture_json_and_projects_items() 
     assert result["value"] == {"items": result["items"]}
     assert str(result["contentDigest"]).startswith("sha256:")
 
+    mapping_result = structured_generate_block(
+        {"response": '{"answer":"done"}'},
+        {"outputSchema": "company/Output@1"},
+        CONTEXT,
+    )
+    assert mapping_result["items"] == []
+
     with pytest.raises(ValueError, match="requires inputs.response or config.response"):
         structured_generate_block({}, {"outputSchema": "company/Output@1"}, CONTEXT)
 

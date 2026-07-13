@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
+import re
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -24,10 +28,80 @@ STATIC_MANIFEST_NAMES = {
     ".graphblocks/plugin.yml",
     ".graphblocks/plugin.json",
 }
+_PRIMITIVE_TYPE_REFS = frozenset({"Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String"})
+_TYPE_CONSTRUCTOR_ARITY = {"List": 1, "Map": 2, "Optional": 1}
 
 
-def _is_direct_schema_type_ref(type_ref: str) -> bool:
-    return ("@" in type_ref or "/" in type_ref) and "<" not in type_ref and ">" not in type_ref
+def _validate_type_ref(type_ref: object) -> str:
+    if not isinstance(type_ref, str):
+        raise ValueError("type reference must be a string")
+    if not type_ref or type_ref != type_ref.strip() or any(character.isspace() for character in type_ref):
+        raise ValueError("type reference must be non-empty and contain no whitespace")
+    if type_ref in _PRIMITIVE_TYPE_REFS:
+        return type_ref
+    if "<" not in type_ref and ">" not in type_ref:
+        try:
+            SchemaId.parse(type_ref)
+        except SchemaIdError as error:
+            raise ValueError(str(error)) from error
+        return type_ref
+    opening = type_ref.find("<")
+    if opening < 1 or not type_ref.endswith(">"):
+        raise ValueError(f"invalid type reference {type_ref!r}")
+    constructor = type_ref[:opening]
+    if constructor not in _TYPE_CONSTRUCTOR_ARITY:
+        raise ValueError(f"unsupported type constructor {constructor!r}")
+    body = type_ref[opening + 1 : -1]
+    arguments: list[str] = []
+    depth = 0
+    start = 0
+    for index, character in enumerate(body):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth -= 1
+            if depth < 0:
+                raise ValueError(f"invalid type reference {type_ref!r}")
+        elif character == "," and depth == 0:
+            arguments.append(body[start:index])
+            start = index + 1
+    if depth != 0:
+        raise ValueError(f"invalid type reference {type_ref!r}")
+    arguments.append(body[start:])
+    if len(arguments) != _TYPE_CONSTRUCTOR_ARITY[constructor] or any(not argument for argument in arguments):
+        raise ValueError(f"invalid type reference {type_ref!r}")
+    for argument in arguments:
+        _validate_type_ref(argument)
+    return type_ref
+
+
+def _validate_resource_type_ref(type_ref: object) -> str:
+    if not isinstance(type_ref, str):
+        raise ValueError("resource type reference must be a string")
+    if not type_ref or type_ref != type_ref.strip() or any(character.isspace() for character in type_ref):
+        raise ValueError("resource type reference must be non-empty and contain no whitespace")
+    if "@" in type_ref or "/" in type_ref:
+        try:
+            SchemaId.parse(type_ref)
+        except SchemaIdError as error:
+            raise ValueError(str(error)) from error
+    elif re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)+", type_ref) is None:
+        raise ValueError(
+            "opaque resource type reference must use dot-separated identifier segments"
+        )
+    return type_ref
+
+
+def _descriptor_bool(
+    owner: Mapping[str, object],
+    field_name: str,
+    *,
+    default: bool,
+) -> bool:
+    value = owner.get(field_name, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+    return value
 
 
 def _parse_block_version(value: Any) -> int:
@@ -103,85 +177,137 @@ class BlockDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class BlockCatalog:
-    descriptors: dict[str, BlockDescriptor]
+    descriptors: Mapping[str, BlockDescriptor]
+    allow_unknown_blocks: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "descriptors", MappingProxyType(dict(self.descriptors)))
+        if not isinstance(self.allow_unknown_blocks, bool):
+            raise TypeError("allow_unknown_blocks must be a boolean")
 
     @classmethod
-    def from_blocks(cls, blocks: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> BlockCatalog:
+    def from_blocks(
+        cls,
+        blocks: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> BlockCatalog:
         descriptors: dict[str, BlockDescriptor] = {}
         for block_index, block in enumerate(blocks):
             block_type = block.get("typeId") or block.get("type_id") or block.get("block")
             version = block.get("version")
             if isinstance(block_type, str) and "@" in block_type and version is None:
                 block_type, version = block_type.rsplit("@", 1)
-            if not isinstance(block_type, str) or version is None:
-                continue
+            if not isinstance(block_type, str) or not block_type or version is None:
+                raise ValueError(f"block catalog entry {block_index} requires typeId and version")
             try:
                 parsed_version = _parse_block_version(version)
             except ValueError as error:
                 raise ValueError(f"block catalog entry {block_index} version is invalid: {error}") from error
             inputs: list[PortDescriptor] = []
-            for port in block.get("inputs", []):
-                if isinstance(port, dict) and isinstance(port.get("name"), str):
-                    type_ref = port.get("type")
-                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
-                        try:
-                            SchemaId.parse(type_ref)
-                        except SchemaIdError as error:
-                            raise ValueError(
-                                f"block catalog entry {block_index} input {port['name']} "
-                                f"has invalid type {type_ref}: {error}"
-                            ) from error
-                    inputs.append(
-                        PortDescriptor(
-                            name=port["name"],
-                            type_ref=type_ref,
-                            required=bool(port.get("required", True)),
-                        )
+            input_names: set[str] = set()
+            raw_inputs = block.get("inputs", [])
+            if not isinstance(raw_inputs, list):
+                raise ValueError(f"block catalog entry {block_index} inputs must be a list")
+            for port_index, port in enumerate(raw_inputs):
+                if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
+                    raise ValueError(
+                        f"block catalog entry {block_index} input {port_index} requires a non-empty name"
                     )
+                if port["name"] in input_names:
+                    raise ValueError(
+                        f"block catalog entry {block_index} has duplicate input {port['name']!r}"
+                    )
+                input_names.add(port["name"])
+                type_ref = port.get("type")
+                if type_ref is not None:
+                    try:
+                        type_ref = _validate_type_ref(type_ref)
+                    except ValueError as error:
+                        raise ValueError(
+                            f"block catalog entry {block_index} input {port['name']} "
+                            f"has invalid type {type_ref}: {error}"
+                        ) from error
+                inputs.append(
+                    PortDescriptor(
+                        name=port["name"],
+                        type_ref=type_ref,
+                        required=_descriptor_bool(port, "required", default=True),
+                    )
+                )
             outputs: list[PortDescriptor] = []
-            for port in block.get("outputs", []):
-                if isinstance(port, dict) and isinstance(port.get("name"), str):
-                    type_ref = port.get("type")
-                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
-                        try:
-                            SchemaId.parse(type_ref)
-                        except SchemaIdError as error:
-                            raise ValueError(
-                                f"block catalog entry {block_index} output {port['name']} "
-                                f"has invalid type {type_ref}: {error}"
-                            ) from error
-                    outputs.append(
-                        PortDescriptor(
-                            name=port["name"],
-                            type_ref=type_ref,
-                            required=bool(port.get("required", True)),
-                        )
+            output_names: set[str] = set()
+            raw_outputs = block.get("outputs", [])
+            if not isinstance(raw_outputs, list):
+                raise ValueError(f"block catalog entry {block_index} outputs must be a list")
+            for port_index, port in enumerate(raw_outputs):
+                if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
+                    raise ValueError(
+                        f"block catalog entry {block_index} output {port_index} requires a non-empty name"
                     )
+                if port["name"] in output_names:
+                    raise ValueError(
+                        f"block catalog entry {block_index} has duplicate output {port['name']!r}"
+                    )
+                output_names.add(port["name"])
+                type_ref = port.get("type")
+                if type_ref is not None:
+                    try:
+                        type_ref = _validate_type_ref(type_ref)
+                    except ValueError as error:
+                        raise ValueError(
+                            f"block catalog entry {block_index} output {port['name']} "
+                            f"has invalid type {type_ref}: {error}"
+                        ) from error
+                outputs.append(
+                    PortDescriptor(
+                        name=port["name"],
+                        type_ref=type_ref,
+                        required=_descriptor_bool(port, "required", default=True),
+                    )
+                )
             resource_slots: list[ResourceSlotDescriptor] = []
+            resource_slot_names: set[str] = set()
             raw_slots = block.get("resourceSlots", [])
             if isinstance(raw_slots, dict):
-                raw_slots = [
-                    {"name": name, **slot} if isinstance(slot, dict) else {"name": name}
-                    for name, slot in raw_slots.items()
-                ]
-            for slot in raw_slots:
-                if isinstance(slot, dict) and isinstance(slot.get("name"), str):
-                    type_ref = slot.get("type")
-                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
-                        try:
-                            SchemaId.parse(type_ref)
-                        except SchemaIdError as error:
-                            raise ValueError(
-                                f"block catalog entry {block_index} resource slot {slot['name']} "
-                                f"has invalid type {type_ref}: {error}"
-                            ) from error
-                    resource_slots.append(
-                        ResourceSlotDescriptor(
-                            name=slot["name"],
-                            type_ref=type_ref,
-                            optional=bool(slot.get("optional", False)),
+                normalized_slots: list[dict[str, Any]] = []
+                for name, slot in raw_slots.items():
+                    if not isinstance(slot, dict):
+                        raise ValueError(
+                            f"block catalog entry {block_index} resource slot {name!r} must be a mapping"
                         )
+                    normalized_slots.append({"name": name, **slot})
+                raw_slots = normalized_slots
+            elif not isinstance(raw_slots, list):
+                raise ValueError(
+                    f"block catalog entry {block_index} resourceSlots must be a list or mapping"
+                )
+            for slot_index, slot in enumerate(raw_slots):
+                if not isinstance(slot, dict) or not isinstance(slot.get("name"), str) or not slot["name"]:
+                    raise ValueError(
+                        f"block catalog entry {block_index} resource slot {slot_index} requires a non-empty name"
                     )
+                if slot["name"] in resource_slot_names:
+                    raise ValueError(
+                        f"block catalog entry {block_index} has duplicate resource slot {slot['name']!r}"
+                    )
+                resource_slot_names.add(slot["name"])
+                type_ref = slot.get("type")
+                if type_ref is not None:
+                    try:
+                        type_ref = _validate_resource_type_ref(type_ref)
+                    except ValueError as error:
+                        raise ValueError(
+                            f"block catalog entry {block_index} resource slot {slot['name']} "
+                            f"has invalid type {type_ref}: {error}"
+                        ) from error
+                resource_slots.append(
+                    ResourceSlotDescriptor(
+                        name=slot["name"],
+                        type_ref=type_ref,
+                        optional=_descriptor_bool(slot, "optional", default=False),
+                    )
+                )
             descriptor = BlockDescriptor(
                 str(block_type),
                 parsed_version,
@@ -189,15 +315,22 @@ class BlockCatalog:
                 tuple(outputs),
                 tuple(resource_slots),
             )
+            if descriptor.block_id in descriptors:
+                raise ValueError(f"duplicate block catalog descriptor {descriptor.block_id}")
             descriptors[descriptor.block_id] = descriptor
-        return cls(descriptors)
+        return cls(descriptors, allow_unknown_blocks=allow_unknown_blocks)
 
     @classmethod
-    def from_manifests(cls, manifests: tuple[PluginManifest, ...] | list[PluginManifest]) -> BlockCatalog:
+    def from_manifests(
+        cls,
+        manifests: tuple[PluginManifest, ...] | list[PluginManifest],
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> BlockCatalog:
         blocks: list[dict[str, Any]] = []
         for manifest in manifests:
             blocks.extend(manifest.blocks)
-        return cls.from_blocks(blocks)
+        return cls.from_blocks(blocks, allow_unknown_blocks=allow_unknown_blocks)
 
     def get(self, block_id: str) -> BlockDescriptor | None:
         return self.descriptors.get(block_id)
@@ -269,7 +402,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
     if not isinstance(blocks, list):
         diagnostics.append(Diagnostic("GB2007", "spec.blocks must be a list", "$.spec.blocks"))
         blocks = []
-    seen_blocks: set[tuple[str, str, str]] = set()
+    seen_blocks: set[tuple[str, str]] = set()
     for index, block in enumerate(blocks):
         if not isinstance(block, dict):
             diagnostics.append(Diagnostic("GB2008", "block descriptor must be a mapping", f"$.spec.blocks[{index}]"))
@@ -301,6 +434,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
             if not isinstance(ports, list):
                 diagnostics.append(Diagnostic("GB2015", f"block {direction} must be a list", f"$.spec.blocks[{index}].{direction}"))
                 continue
+            seen_port_names: set[str] = set()
             for port_index, port in enumerate(ports):
                 if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
                     diagnostics.append(
@@ -311,11 +445,30 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
                     )
                     continue
+                if port["name"] in seen_port_names:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block {direction} names must be unique",
+                            f"$.spec.blocks[{index}].{direction}[{port_index}].name",
+                        )
+                    )
+                seen_port_names.add(port["name"])
+                try:
+                    _descriptor_bool(port, "required", default=True)
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block {direction[:-1]} required flag is invalid: {error}",
+                            f"$.spec.blocks[{index}].{direction}[{port_index}].required",
+                        )
+                    )
                 type_ref = port.get("type")
-                if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
+                if type_ref is not None:
                     try:
-                        SchemaId.parse(type_ref)
-                    except SchemaIdError as error:
+                        _validate_type_ref(type_ref)
+                    except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
                                 "InvalidSchemaId",
@@ -326,14 +479,31 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
         resource_slots = block.get("resourceSlots", [])
         if isinstance(resource_slots, list):
             for slot_index, slot in enumerate(resource_slots):
+                if not isinstance(slot, dict) or not isinstance(slot.get("name"), str) or not slot["name"]:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            "block resource slot entries require a non-empty name",
+                            f"$.spec.blocks[{index}].resourceSlots[{slot_index}].name",
+                        )
+                    )
+                    continue
+                try:
+                    _descriptor_bool(slot, "optional", default=False)
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block resource slot optional flag is invalid: {error}",
+                            f"$.spec.blocks[{index}].resourceSlots[{slot_index}].optional",
+                        )
+                    )
                 if (
-                    isinstance(slot, dict)
-                    and isinstance(slot.get("type"), str)
-                    and _is_direct_schema_type_ref(slot["type"])
+                    slot.get("type") is not None
                 ):
                     try:
-                        SchemaId.parse(slot["type"])
-                    except SchemaIdError as error:
+                        _validate_resource_type_ref(slot["type"])
+                    except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
                                 "InvalidSchemaId",
@@ -343,14 +513,31 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
         elif isinstance(resource_slots, dict):
             for slot_name, slot in resource_slots.items():
+                if not isinstance(slot_name, str) or not slot_name or not isinstance(slot, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            "block resource slot entries must be named mappings",
+                            f"$.spec.blocks[{index}].resourceSlots.{slot_name}",
+                        )
+                    )
+                    continue
+                try:
+                    _descriptor_bool(slot, "optional", default=False)
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block resource slot optional flag is invalid: {error}",
+                            f"$.spec.blocks[{index}].resourceSlots.{slot_name}.optional",
+                        )
+                    )
                 if (
-                    isinstance(slot, dict)
-                    and isinstance(slot.get("type"), str)
-                    and _is_direct_schema_type_ref(slot["type"])
+                    slot.get("type") is not None
                 ):
                     try:
-                        SchemaId.parse(slot["type"])
-                    except SchemaIdError as error:
+                        _validate_resource_type_ref(slot["type"])
+                    except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
                                 "InvalidSchemaId",
@@ -358,11 +545,17 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                                 f"$.spec.blocks[{index}].resourceSlots.{slot_name}.type",
                             )
                         )
-        implementation = str(block.get("implementation") or block.get("implementationId") or "")
+        else:
+            diagnostics.append(
+                Diagnostic(
+                    "GB2015",
+                    "block resourceSlots must be a list or mapping",
+                    f"$.spec.blocks[{index}].resourceSlots",
+                )
+            )
         key = (
             str(block_type),
             str(parsed_version) if parsed_version is not None else str(version),
-            implementation,
         )
         if key in seen_blocks:
             diagnostics.append(
@@ -377,6 +570,8 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
     manifests: list[PluginManifest] = []
     with resources.files("graphblocks").joinpath("data/builtin-plugin.yaml").open("r", encoding="utf-8") as stream:
         document = yaml.safe_load(stream)
+    builtin_diagnostics = validate_plugin_manifest(document)
+    diagnostics.extend(builtin_diagnostics.diagnostics)
     manifests.append(plugin_manifest_from_document(document, "graphblocks:data/builtin-plugin.yaml"))
 
     for search_path in paths or []:
@@ -448,3 +643,17 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
         unique.append(manifest)
     unique.sort(key=lambda item: (item.plugin_id, item.version, item.source))
     return PluginRegistry(tuple(unique), DiagnosticSet(tuple(diagnostics)))
+
+
+@lru_cache(maxsize=1)
+def builtin_block_catalog() -> BlockCatalog:
+    """Return the immutable catalog shipped with the core package."""
+
+    registry = discover_plugins(include_installed=False)
+    if not registry.ok:
+        messages = "; ".join(
+            f"{item.code} {item.path}: {item.message}"
+            for item in registry.diagnostics.diagnostics
+        )
+        raise RuntimeError(f"built-in plugin catalog is invalid: {messages}")
+    return BlockCatalog.from_manifests(registry.manifests)

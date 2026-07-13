@@ -9,8 +9,8 @@ fn rust_stdlib_runtime_executes_prompt_render_graph() -> Result<(), String> {
         "metadata": {"name": "runtime-prompt-render"},
         "spec": {
             "interface": {
-                "inputs": {"message": "graphblocks.ai/Text@1"},
-                "outputs": {"prompt": "graphblocks.ai/Text@1"}
+                "inputs": {"message": "graphblocks.ai/Message@1"},
+                "outputs": {"prompt": "graphblocks.ai/Prompt@1"}
             },
             "nodes": {
                 "render": {

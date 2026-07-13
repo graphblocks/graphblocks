@@ -354,12 +354,21 @@ def _main(argv: list[str] | None = None) -> int:
         documents = load_composed_documents(args.path, root=args.composition_root)
         diagnostics: list[dict[str, str]] = []
         ok = True
-        block_catalog = None
-        if args.plugin_path:
-            registry = discover_plugins(args.plugin_path, include_installed=True)
-            block_catalog = BlockCatalog.from_manifests(registry.manifests)
-            ok = ok and registry.ok
-            diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
+        registry = discover_plugins(args.plugin_path, include_installed=True)
+        ok = ok and registry.ok
+        diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
+        try:
+            block_catalog = BlockCatalog.from_manifests(
+                registry.manifests,
+                allow_unknown_blocks=True,
+            )
+        except ValueError as error:
+            ok = False
+            block_catalog = BlockCatalog({})
+            diagnostics.append(
+                Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
+                | {"document": "plugins"}
+            )
         for index, document in enumerate(documents):
             if document.get("kind") == "Graph":
                 plan = compile_graph(document, block_catalog=block_catalog)
@@ -400,16 +409,24 @@ def _main(argv: list[str] | None = None) -> int:
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
             return 1
-        block_catalog = None
-        if args.plugin_path:
-            registry = discover_plugins(args.plugin_path, include_installed=True)
-            block_catalog = BlockCatalog.from_manifests(registry.manifests)
+        registry = discover_plugins(args.plugin_path, include_installed=True)
+        plugin_diagnostics = registry.diagnostics.to_list()
+        try:
+            block_catalog = BlockCatalog.from_manifests(
+                registry.manifests,
+                allow_unknown_blocks=True,
+            )
+        except ValueError as error:
+            block_catalog = BlockCatalog({})
+            plugin_diagnostics.append(
+                Diagnostic("GB2017", f"block catalog is invalid: {error}", "$.plugins").to_dict()
+            )
         plan = compile_graph(graph_documents[0], block_catalog=block_catalog)
         payload: dict[str, object] = {
             "target": args.target,
             "hash": plan.graph_hash,
-            "ok": plan.ok,
-            "diagnostics": plan.diagnostics.to_list(),
+            "ok": registry.ok and not plugin_diagnostics and plan.ok,
+            "diagnostics": [*plugin_diagnostics, *plan.diagnostics.to_list()],
         }
         if args.expand:
             payload["graph"] = plan.normalized
@@ -425,7 +442,7 @@ def _main(argv: list[str] | None = None) -> int:
                 }
             )
         print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0 if plan.ok else 1
+        return 0 if payload["ok"] else 1
     if args.command == "run":
         documents = load_composed_documents(args.path, root=args.composition_root)
         graph_documents = [document for document in documents if document.get("kind") == "Graph"]

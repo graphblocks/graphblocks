@@ -113,12 +113,209 @@ fn block_catalog_allows_descriptor_type_expressions() {
             {
                 "typeId": "control.map",
                 "version": 1,
-                "inputs": [{"name": "items", "type": "List<Any>"}],
-                "outputs": [{"name": "values", "type": "List<Any>"}]
+                "inputs": [
+                    {
+                        "name": "items",
+                        "type": "Optional<Map<String,List<graphblocks.ai/Text@1>>>"
+                    }
+                ],
+                "outputs": [
+                    {
+                        "name": "values",
+                        "type": "Map<graphblocks.ai/Key@1,Optional<Number>>"
+                    }
+                ],
+                "resourceSlots": {
+                    "component": {"type": "haystack.component"},
+                    "model": {"type": "graphblocks.ai/ChatModel@1", "optional": true}
+                }
             }
         ]))
         .is_ok()
     );
+}
+
+#[test]
+fn block_catalog_rejects_malformed_descriptor_shapes() {
+    let cases = [
+        (
+            json!([{"typeId": "test.block", "version": 1, "inputs": {}}]),
+            "inputs must be an array",
+        ),
+        (
+            json!([{"typeId": "test.block", "version": 1, "outputs": [null]}]),
+            "output 0 must be an object",
+        ),
+        (
+            json!([{"typeId": "test.block", "version": 1, "resourceSlots": "model"}]),
+            "resourceSlots must be an array or object",
+        ),
+        (
+            json!([{"typeId": "test.block", "version": 1, "resourceSlots": [null]}]),
+            "resource slot 0 must be an object",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "resourceSlots": {"model": "not-an-object"}
+            }]),
+            "resource slot \"model\" must be an object",
+        ),
+    ];
+
+    for (blocks, expected) in cases {
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(error.contains(expected), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn block_catalog_rejects_missing_or_empty_descriptor_names() {
+    let cases = [
+        json!([{"typeId": "test.block", "version": 1, "inputs": [{}]}]),
+        json!([{"typeId": "test.block", "version": 1, "outputs": [{"name": ""}]}]),
+        json!([{
+            "typeId": "test.block",
+            "version": 1,
+            "resourceSlots": [{"name": "   "}]
+        }]),
+        json!([{"typeId": "test.block", "version": 1, "resourceSlots": {"": {}}}]),
+    ];
+
+    for blocks in cases {
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(
+            error.contains("non-empty name"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn block_catalog_requires_boolean_required_and_optional_flags() {
+    let cases = [
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "inputs": [{"name": "value", "required": "false"}]
+            }]),
+            "required must be a boolean",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "outputs": [{"name": "value", "required": 0}]
+            }]),
+            "required must be a boolean",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "resourceSlots": [{"name": "model", "optional": "true"}]
+            }]),
+            "optional must be a boolean",
+        ),
+    ];
+
+    for (blocks, expected) in cases {
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(error.contains(expected), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn block_catalog_rejects_duplicate_descriptor_and_port_names() {
+    let cases = [
+        (
+            json!([
+                {"typeId": "test.block", "version": 1},
+                {"typeId": "test.block", "version": 1}
+            ]),
+            "duplicate block catalog descriptor test.block@1",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "inputs": [{"name": "value"}, {"name": "value"}]
+            }]),
+            "duplicate input \"value\"",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "outputs": [{"name": "value"}, {"name": "value"}]
+            }]),
+            "duplicate output \"value\"",
+        ),
+        (
+            json!([{
+                "typeId": "test.block",
+                "version": 1,
+                "resourceSlots": [{"name": "model"}, {"name": "model"}]
+            }]),
+            "duplicate resource slot \"model\"",
+        ),
+    ];
+
+    for (blocks, expected) in cases {
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(error.contains(expected), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn block_catalog_rejects_malformed_port_type_expressions() {
+    let invalid_types = [
+        json!(""),
+        json!("List<>"),
+        json!("Map<String>"),
+        json!("Optional<String,String>"),
+        json!("Set<String>"),
+        json!("List<Map<String,Any>"),
+        json!("List< String>"),
+        json!(42),
+    ];
+
+    for invalid_type in invalid_types {
+        let blocks = json!([{
+            "typeId": "test.block",
+            "version": 1,
+            "inputs": [{"name": "value", "type": invalid_type}]
+        }]);
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(
+            error.contains("input value has invalid type"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn block_catalog_rejects_invalid_resource_type_references() {
+    for invalid_type in [
+        json!("???"),
+        json!("<>"),
+        json!("model,provider"),
+        json!("."),
+        json!(7),
+    ] {
+        let blocks = json!([{
+            "typeId": "test.block",
+            "version": 1,
+            "resourceSlots": [{"name": "model", "type": invalid_type}]
+        }]);
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(
+            error.contains("resource slot model has invalid type"),
+            "unexpected error: {error}"
+        );
+    }
 }
 
 #[test]
@@ -257,7 +454,7 @@ fn compile_graph_rejects_unknown_input_port() -> Result<(), String> {
                 "source": {"block": "text.source@1"},
                 "sink": {"block": "text.sink@1"}
             },
-            "edges": [{"from": "source.value", "to": "sink.missing"}]
+            "edges": [{"from": "source.value", "to": "sink.missing.field"}]
         }
     });
 
@@ -301,7 +498,7 @@ fn compile_graph_rejects_unknown_output_port() -> Result<(), String> {
                 "source": {"block": "text.source@1"},
                 "sink": {"block": "text.sink@1"}
             },
-            "edges": [{"from": "source.missing", "to": "sink.text"}]
+            "edges": [{"from": "source.missing.field", "to": "sink.text"}]
         }
     });
 
@@ -871,6 +1068,437 @@ fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_rejects_graph_interface_block_port_type_mismatch() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.echo",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ],
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "interface-type-mismatch"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Number@1"},
+                "outputs": {"value": "graphblocks.ai/Number@1"}
+            },
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1018", "GB1018"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_accepts_matching_graph_interface_block_port_types() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.echo",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ],
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "matching-interface-types"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"}
+            },
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(plan.ok());
+    Ok(())
+}
+
+#[test]
+fn compile_graph_accepts_dynamic_pseudo_ports_when_interface_is_absent() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.echo",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ],
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "dynamic-interface"},
+        "spec": {
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(plan.ok());
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_unknown_nested_graph_interface_ports() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-nested-interface-ports"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "graphblocks.ai/Payload@1"},
+                "outputs": {"payload": "graphblocks.ai/Payload@1"}
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [
+                {"from": "$input.missing.field", "to": "sink.value"},
+                {"from": "source.value", "to": "$output.missing.field"}
+            ]
+        }
+    });
+
+    for plan in [
+        compile_graph(&graph),
+        compile_graph_with_catalog(&graph, &catalog),
+    ] {
+        let errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            errors
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB1014", "GB1013"]
+        );
+        assert_eq!(
+            errors[0].message,
+            "graph interface has no input port \"missing\""
+        );
+        assert_eq!(errors[0].path, "$.spec.edges[0].from");
+        assert_eq!(
+            errors[1].message,
+            "graph interface has no output port \"missing\""
+        );
+        assert_eq!(errors[1].path, "$.spec.edges[1].to");
+    }
+    Ok(())
+}
+
+#[test]
+fn compile_graph_accepts_declared_nested_interface_ports_without_field_type_inference()
+-> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "declared-nested-interface-ports"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "graphblocks.ai/Payload@1"},
+                "outputs": {"payload": "graphblocks.ai/Payload@1"}
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [
+                {"from": "$input.payload.field", "to": "sink.value"},
+                {"from": "source.value", "to": "$output.payload.field"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(plan.ok());
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_graph_interface_pseudo_nodes_in_wrong_direction() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "wrong-pseudo-direction"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"}
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [
+                {"from": "$output.value", "to": "sink.value"},
+                {"from": "source.value", "to": "$input.value"}
+            ]
+        }
+    });
+
+    for plan in [
+        compile_graph(&graph),
+        compile_graph_with_catalog(&graph, &catalog),
+    ] {
+        let errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            errors
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB1020", "GB1020"]
+        );
+        assert_eq!(
+            errors[0].message,
+            "$output cannot be used as an edge source"
+        );
+        assert_eq!(errors[0].path, "$.spec.edges[0].from");
+        assert_eq!(errors[1].message, "$input cannot be used as an edge target");
+        assert_eq!(errors[1].path, "$.spec.edges[1].to");
+    }
+    Ok(())
+}
+
+#[test]
+fn compile_graph_preserves_any_wildcard_for_node_to_node_ports() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "any.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "Any"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "node-any-wildcard"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "any.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(plan.ok());
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_edges_against_empty_descriptor_port_directions() -> Result<(), String> {
+    let cases = [
+        (
+            json!([
+                {"typeId": "test.source", "version": 1, "outputs": []},
+                {
+                    "typeId": "test.sink",
+                    "version": 1,
+                    "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}]
+                }
+            ]),
+            "GB1014",
+        ),
+        (
+            json!([
+                {
+                    "typeId": "test.source",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}]
+                },
+                {"typeId": "test.sink", "version": 1, "inputs": []}
+            ]),
+            "GB1013",
+        ),
+    ];
+
+    for (blocks, expected_code) in cases {
+        let catalog = BlockCatalog::from_blocks(&blocks)?;
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "empty-descriptor-port-direction"},
+            "spec": {
+                "nodes": {
+                    "source": {"block": "test.source@1"},
+                    "sink": {"block": "test.sink@1"}
+                },
+                "edges": [{"from": "source.value", "to": "sink.value"}]
+            }
+        });
+
+        let plan = compile_graph_with_catalog(&graph, &catalog);
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_code]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn compile_graph_checks_nested_node_parent_ports_without_field_type_inference() -> Result<(), String>
+{
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "test.source",
+            "version": 1,
+            "outputs": [
+                {"name": "payload", "type": "graphblocks.ai/Payload@1"},
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "test.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "payload", "type": "graphblocks.ai/Payload@1", "required": false},
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        }
+    ]))?;
+
+    for edge in [
+        json!({"from": "source.payload.field", "to": "sink.value"}),
+        json!({"from": "source.value", "to": "sink.payload.field"}),
+    ] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "nested-node-port"},
+            "spec": {
+                "nodes": {
+                    "source": {"block": "test.source@1"},
+                    "sink": {"block": "test.sink@1"}
+                },
+                "edges": [edge]
+            }
+        });
+
+        let plan = compile_graph_with_catalog(&graph, &catalog);
+        assert!(plan.ok());
+    }
+    Ok(())
+}
+
+#[test]
 fn compile_graph_rejects_optional_output_to_required_input() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
@@ -910,6 +1538,72 @@ fn compile_graph_rejects_optional_output_to_required_input() -> Result<(), Strin
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
         vec!["GB1015"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_optional_block_output_to_graph_output() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "branch.maybe_text",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "optional-output-graph-output"},
+        "spec": {
+            "interface": {
+                "outputs": {"value": "graphblocks.ai/Text@1"}
+            },
+            "nodes": {
+                "maybe": {"block": "branch.maybe_text@1"}
+            },
+            "edges": [{"from": "maybe.value", "to": "$output.value"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1015"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_with_catalog_rejects_undeclared_blocks() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-block"},
+        "spec": {
+            "nodes": {
+                "unknown": {"block": "test.unknown@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1022"]
     );
     Ok(())
 }

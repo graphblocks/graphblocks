@@ -37,6 +37,98 @@ def test_block_catalog_allows_port_type_expressions() -> None:
     assert catalog.get("control.map@1") is not None
 
 
+@pytest.mark.parametrize("type_ref", ["List<Any", "Tuple<Any>", "Map<String>", 42])
+def test_block_catalog_rejects_malformed_type_expressions(type_ref: object) -> None:
+    with pytest.raises(ValueError, match="invalid type"):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "bad.block",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": type_ref}],
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize("field_name", ["required", "optional"])
+def test_block_catalog_rejects_non_boolean_contract_flags(field_name: str) -> None:
+    block: dict[str, object] = {"typeId": "bad.flags", "version": 1}
+    if field_name == "required":
+        block["inputs"] = [{"name": "value", "type": "Any", field_name: "false"}]
+    else:
+        block["resourceSlots"] = [
+            {"name": "model", "type": "resources/Model@1", field_name: "false"}
+        ]
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a boolean"):
+        BlockCatalog.from_blocks([block])  # type: ignore[list-item]
+
+
+def test_block_catalog_rejects_duplicate_block_contracts() -> None:
+    with pytest.raises(ValueError, match="duplicate block catalog descriptor test.echo@1"):
+        BlockCatalog.from_blocks(
+            [
+                {"typeId": "test.echo", "version": 1},
+                {"typeId": "test.echo", "version": 1},
+            ]
+        )
+
+
+@pytest.mark.parametrize("direction", ["inputs", "outputs"])
+def test_block_catalog_rejects_duplicate_port_names(direction: str) -> None:
+    with pytest.raises(ValueError, match=f"duplicate {direction[:-1]} 'value'"):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "test.duplicate_ports",
+                    "version": 1,
+                    direction: [
+                        {"name": "value", "type": "graphblocks.ai/Text@1"},
+                        {"name": "value", "type": "graphblocks.ai/Text@1"},
+                    ],
+                }
+            ]
+        )
+
+
+def test_block_catalog_descriptors_are_immutable() -> None:
+    catalog = BlockCatalog.from_blocks([{"typeId": "test.echo", "version": 1}])
+
+    with pytest.raises(TypeError):
+        catalog.descriptors["test.other@1"] = catalog.descriptors["test.echo@1"]  # type: ignore[index]
+
+
+def test_compile_with_catalog_rejects_undeclared_blocks_by_default() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unknown-block"},
+        "spec": {"nodes": {"unknown": {"block": "test.unknown@1"}}},
+    }
+
+    plan = compile_graph(graph, block_catalog=BlockCatalog({}))
+
+    assert not plan.ok
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1022"]
+
+
+def test_open_catalog_explicitly_allows_undeclared_blocks() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "dynamic-block"},
+        "spec": {"nodes": {"dynamic": {"block": "test.dynamic@1"}}},
+    }
+
+    plan = compile_graph(
+        graph,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+
+    assert plan.ok
+
+
 @pytest.mark.parametrize("version", [True, 0, 1.0, "", "+1", "01", "1.0", "one"])
 def test_block_catalog_rejects_non_canonical_block_versions(version: object) -> None:
     with pytest.raises(
@@ -78,7 +170,7 @@ def test_compile_rejects_edge_to_unknown_input_port() -> None:
                 "source": {"block": "text.source@1"},
                 "sink": {"block": "text.sink@1"},
             },
-            "edges": [{"from": "source.value", "to": "sink.missing"}],
+            "edges": [{"from": "source.value", "to": "sink.missing.field"}],
         },
     }
 
@@ -112,7 +204,7 @@ def test_compile_rejects_edge_from_unknown_output_port() -> None:
                 "source": {"block": "text.source@1"},
                 "sink": {"block": "text.sink@1"},
             },
-            "edges": [{"from": "source.missing", "to": "sink.text"}],
+            "edges": [{"from": "source.missing.field", "to": "sink.text"}],
         },
     }
 
@@ -203,6 +295,35 @@ def test_compile_rejects_optional_output_to_required_input() -> None:
     assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1015"]
 
 
+def test_compile_rejects_optional_block_output_to_graph_output() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "branch.maybe_text",
+                "version": 1,
+                "outputs": [
+                    {"name": "value", "type": "graphblocks.ai/Text@1", "required": False}
+                ],
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "optional-output-graph-output"},
+        "spec": {
+            "interface": {"outputs": {"value": "graphblocks.ai/Text@1"}},
+            "nodes": {"maybe": {"block": "branch.maybe_text@1"}},
+            "edges": [{"from": "maybe.value", "to": "$output.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not plan.ok
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1015"]
+
+
 def test_compile_rejects_port_type_mismatch() -> None:
     catalog = BlockCatalog.from_blocks(
         [
@@ -268,3 +389,448 @@ def test_compile_accepts_matching_port_types() -> None:
     plan = compile_graph(graph, block_catalog=catalog)
 
     assert "GB1018" not in [item.code for item in plan.diagnostics.diagnostics]
+
+
+@pytest.mark.parametrize(
+    ("input_schema", "output_schema"),
+    [
+        ("graphblocks.ai/Number@1", "graphblocks.ai/Text@1"),
+        ("graphblocks.ai/Text@1", "graphblocks.ai/Number@1"),
+    ],
+    ids=["graph-input", "graph-output"],
+)
+def test_compile_rejects_graph_interface_block_port_type_mismatch(
+    input_schema: str,
+    output_schema: str,
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.echo",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "interface-type-mismatch"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": input_schema},
+                "outputs": {"value": output_schema},
+            },
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == [
+        "GB1018"
+    ]
+
+
+def test_compile_accepts_matching_graph_interface_block_port_types() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.echo",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "matching-interface-types"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"},
+            },
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert plan.ok
+
+
+def test_compile_accepts_dynamic_pseudo_ports_when_graph_interface_is_absent() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.echo",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "dynamic-interface"},
+        "spec": {
+            "nodes": {"echo": {"block": "text.echo@1"}},
+            "edges": [
+                {"from": "$input.value", "to": "echo.value"},
+                {"from": "echo.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert plan.ok
+
+
+@pytest.mark.parametrize(
+    ("edge", "expected_code", "expected_message", "expected_path"),
+    [
+        (
+            {"from": "$input.missing.field", "to": "sink.value"},
+            "GB1014",
+            "graph interface has no input port 'missing'",
+            "$.spec.edges[0].from",
+        ),
+        (
+            {"from": "source.value", "to": "$output.missing.field"},
+            "GB1013",
+            "graph interface has no output port 'missing'",
+            "$.spec.edges[0].to",
+        ),
+    ],
+    ids=["input", "output"],
+)
+@pytest.mark.parametrize("use_catalog", [False, True], ids=["no-catalog", "catalog"])
+def test_compile_rejects_unknown_nested_graph_interface_port(
+    edge: dict[str, str],
+    expected_code: str,
+    expected_message: str,
+    expected_path: str,
+    use_catalog: bool,
+) -> None:
+    catalog = (
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "text.source",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                },
+                {
+                    "typeId": "text.sink",
+                    "version": 1,
+                    "inputs": [
+                        {
+                            "name": "value",
+                            "type": "graphblocks.ai/Text@1",
+                            "required": False,
+                        }
+                    ],
+                },
+            ]
+        )
+        if use_catalog
+        else None
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unknown-nested-interface-port"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "graphblocks.ai/Payload@1"},
+                "outputs": {"payload": "graphblocks.ai/Payload@1"},
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [edge],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
+    assert [(item.code, item.message, item.path) for item in errors] == [
+        (expected_code, expected_message, expected_path)
+    ]
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [
+        {"from": "$input.payload.field", "to": "sink.value"},
+        {"from": "source.value", "to": "$output.payload.field"},
+    ],
+    ids=["input", "output"],
+)
+def test_compile_accepts_declared_nested_graph_interface_port_without_field_type_inference(
+    edge: dict[str, str],
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            },
+            {
+                "typeId": "text.sink",
+                "version": 1,
+                "inputs": [
+                    {
+                        "name": "value",
+                        "type": "graphblocks.ai/Text@1",
+                        "required": False,
+                    }
+                ],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "declared-nested-interface-port"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "graphblocks.ai/Payload@1"},
+                "outputs": {"payload": "graphblocks.ai/Payload@1"},
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [edge],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
+
+
+@pytest.mark.parametrize(
+    ("edge", "expected_message", "expected_path"),
+    [
+        (
+            {"from": "$output.value", "to": "sink.value"},
+            "$output cannot be used as an edge source",
+            "$.spec.edges[0].from",
+        ),
+        (
+            {"from": "source.value", "to": "$input.value"},
+            "$input cannot be used as an edge target",
+            "$.spec.edges[0].to",
+        ),
+    ],
+    ids=["output-as-source", "input-as-target"],
+)
+@pytest.mark.parametrize("use_catalog", [False, True], ids=["no-catalog", "catalog"])
+def test_compile_rejects_graph_interface_pseudo_node_in_wrong_direction(
+    edge: dict[str, str],
+    expected_message: str,
+    expected_path: str,
+    use_catalog: bool,
+) -> None:
+    catalog = (
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "text.source",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                },
+                {
+                    "typeId": "text.sink",
+                    "version": 1,
+                    "inputs": [
+                        {
+                            "name": "value",
+                            "type": "graphblocks.ai/Text@1",
+                            "required": False,
+                        }
+                    ],
+                },
+            ]
+        )
+        if use_catalog
+        else None
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "wrong-pseudo-direction"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"},
+            },
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [edge],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
+    assert [(item.code, item.message, item.path) for item in errors] == [
+        ("GB1020", expected_message, expected_path)
+    ]
+
+
+def test_compile_preserves_any_wildcard_for_node_to_node_ports() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "any.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "Any"}],
+            },
+            {
+                "typeId": "text.sink",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "node-any-wildcard"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "any.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert "GB1018" not in [item.code for item in plan.diagnostics.diagnostics]
+
+
+@pytest.mark.parametrize(
+    ("source_outputs", "sink_inputs", "expected_code"),
+    [
+        (
+            [],
+            [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            "GB1014",
+        ),
+        (
+            [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            [],
+            "GB1013",
+        ),
+    ],
+    ids=["empty-outputs", "empty-inputs"],
+)
+def test_compile_rejects_edge_against_empty_descriptor_port_direction(
+    source_outputs: list[dict[str, str]],
+    sink_inputs: list[dict[str, str]],
+    expected_code: str,
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {"typeId": "test.source", "version": 1, "outputs": source_outputs},
+            {"typeId": "test.sink", "version": 1, "inputs": sink_inputs},
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "empty-descriptor-port-direction"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "test.source@1"},
+                "sink": {"block": "test.sink@1"},
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == [
+        expected_code
+    ]
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [
+        {"from": "source.payload.field", "to": "sink.value"},
+        {"from": "source.value", "to": "sink.payload.field"},
+    ],
+    ids=["nested-source", "nested-target"],
+)
+def test_compile_checks_nested_node_parent_port_without_inferring_field_type(
+    edge: dict[str, str],
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.source",
+                "version": 1,
+                "outputs": [
+                    {"name": "payload", "type": "graphblocks.ai/Payload@1"},
+                    {"name": "value", "type": "graphblocks.ai/Text@1"},
+                ],
+            },
+            {
+                "typeId": "test.sink",
+                "version": 1,
+                "inputs": [
+                    {
+                        "name": "payload",
+                        "type": "graphblocks.ai/Payload@1",
+                        "required": False,
+                    },
+                    {
+                        "name": "value",
+                        "type": "graphblocks.ai/Text@1",
+                        "required": False,
+                    },
+                ],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "nested-node-port"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "test.source@1"},
+                "sink": {"block": "test.sink@1"},
+            },
+            "edges": [edge],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not [item for item in plan.diagnostics.diagnostics if item.severity == "error"]

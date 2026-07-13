@@ -8,7 +8,7 @@ from graphblocks.runtime import InProcessRuntime, RuntimeRegistry
 
 def test_runtime_releases_owner_leases_after_success() -> None:
     pool = InMemoryLeasePool({"model": 1})
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def leases_resource(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         context["lease_pool"].acquire("model", owner=context["run_id"])
@@ -37,7 +37,7 @@ def test_runtime_releases_owner_leases_after_success() -> None:
 
 def test_runtime_releases_owner_leases_after_failure() -> None:
     pool = InMemoryLeasePool({"model": 1})
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def leases_then_fails(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         context["lease_pool"].acquire("model", owner=context["run_id"])
@@ -55,4 +55,3 @@ def test_runtime_releases_owner_leases_after_failure() -> None:
 
     assert result.status == "failed"
     assert pool.available("model") == 1
-

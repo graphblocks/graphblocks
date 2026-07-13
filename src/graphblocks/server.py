@@ -3757,7 +3757,12 @@ class GraphBlocksServerApp:
                 ):
                     raise ValueError("run request admissionUnits must be a positive integer")
 
-                plan = compile_graph(graph)
+                block_catalog = self.registry.compilation_catalog()
+                plan = (
+                    compile_graph(graph, block_catalog=block_catalog)
+                    if block_catalog is not None
+                    else compile_graph(graph)
+                )
                 plan_errors = [
                     item
                     for item in plan.diagnostics.diagnostics

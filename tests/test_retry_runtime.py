@@ -7,7 +7,7 @@ from graphblocks.runtime import InProcessRuntime, RuntimeRegistry
 
 def test_runtime_retries_node_until_success() -> None:
     attempts = {"count": 0}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def flaky_block(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         attempts["count"] += 1
@@ -43,7 +43,7 @@ def test_runtime_preserves_idempotency_key_across_effect_retries() -> None:
     for effect in ("external_write", "filesystem_write"):
         attempts = {"count": 0}
         seen_idempotency_keys: list[str | None] = []
-        registry = RuntimeRegistry()
+        registry = RuntimeRegistry(allow_untyped=True)
 
         def flaky_write(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
             attempts["count"] += 1
@@ -92,7 +92,7 @@ def test_runtime_preserves_idempotency_key_across_effect_retries() -> None:
 
 def test_runtime_fails_after_retry_attempts_are_exhausted() -> None:
     attempts = {"count": 0}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def always_fails(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         attempts["count"] += 1

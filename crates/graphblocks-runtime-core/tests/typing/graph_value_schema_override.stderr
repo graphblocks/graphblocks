@@ -1,0 +1,5 @@
+error[E0438]: const `SCHEMA` is not a member of trait `GraphValue`
+  --> tests/typing/graph_value_schema_override.rs:10:5
+   |
+10 |     const SCHEMA: &'static str = "graphblocks.ai/Answer@1";
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not a member of trait `GraphValue`

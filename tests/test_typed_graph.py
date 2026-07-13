@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from graphblocks.compiler import compile_graph
@@ -8,7 +10,9 @@ from graphblocks.stdlib_blocks import (
     ANSWER,
     FEDERATED_SOURCES,
     GROUNDING_VALIDATION,
+    RETRIEVAL_RESULT,
     SEARCH_REQUEST,
+    AnswerValue,
     AnswerValidateGrounding,
     ContextBuild,
     RankDocuments,
@@ -17,7 +21,7 @@ from graphblocks.stdlib_blocks import (
     RetrieveFuse,
     StructuredGenerate,
 )
-from graphblocks.typed import GraphBuilder, PortType
+from graphblocks.typed import BoundBlock, GraphBuilder, GraphOutput, NodeOutput, PortType
 
 
 def _build_rag_graph() -> dict[str, object]:
@@ -118,7 +122,209 @@ def test_typed_graph_requires_every_declared_output_to_be_published() -> None:
 
 def test_port_type_requires_a_canonical_schema_id() -> None:
     with pytest.raises(ValueError, match="major version suffix"):
-        PortType("graphblocks.ai/Answer")
+        PortType("graphblocks.ai/Answer", AnswerValue)
+
+
+def test_graph_interface_rejects_internal_collection_type_references() -> None:
+    graph = GraphBuilder("invalid-interface-type")
+
+    with pytest.raises(ValueError, match="major version"):
+        graph.input("hits", PortType("List<graphblocks.ai/SearchHit@1>", object))
+
+
+def test_typed_block_rejects_incompatible_input_wiring_at_runtime() -> None:
+    graph = GraphBuilder("wrong-input-types")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+
+    with pytest.raises(TypeError, match="input 'query'.*SearchRequestValue"):
+        graph.add(
+            "retrieve",
+            RetrieveExecutePlan().bind(
+                query=cast(Any, sources),
+                sources=cast(Any, query),
+            ),
+        )
+
+
+def test_typed_block_rejects_missing_and_unexpected_input_keys() -> None:
+    graph = GraphBuilder("wrong-input-keys")
+    query = graph.input("query", SEARCH_REQUEST)
+
+    with pytest.raises(ValueError, match="input keys.*missing.*query.*unexpected.*message"):
+        BoundBlock(
+            block_id="test.echo@1",
+            inputs={"message": query},
+            expected_inputs={"query": SEARCH_REQUEST},
+            expected_outputs={},
+            config={},
+            _outputs=lambda _node_id, _owner: None,
+        )
+
+
+def test_typed_block_rejects_missing_declared_output() -> None:
+    graph = GraphBuilder(
+        "missing-block-output",
+        block_catalog=BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "test.answer",
+                    "version": 1,
+                    "outputs": [{"name": "answer", "type": ANSWER.schema}],
+                }
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="output keys.*missing.*answer"):
+        graph.add(
+            "answer",
+            BoundBlock(
+                block_id="test.answer@1",
+                inputs={},
+                expected_inputs={},
+                expected_outputs={"answer": ANSWER},
+                config={},
+                _outputs=lambda _node_id, _owner: None,
+            ),
+        )
+
+
+def test_typed_graph_rejects_incompatible_published_output_at_runtime() -> None:
+    graph = GraphBuilder("wrong-output-type")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+    candidate = graph.output("candidate", ANSWER)
+    retrieve = graph.add(
+        "retrieve",
+        RetrieveExecutePlan().bind(query=query, sources=sources),
+    )
+
+    with pytest.raises(TypeError, match="graph output 'candidate'.*AnswerValue"):
+        graph.publish(candidate, cast(Any, retrieve.result))
+
+
+def test_typed_graph_rejects_same_marker_with_different_schema() -> None:
+    graph = GraphBuilder(
+        "wrong-output-schema",
+        block_catalog=BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "test.answer",
+                    "version": 1,
+                    "outputs": [{"name": "answer", "type": ANSWER.schema}],
+                }
+            ]
+        ),
+    )
+    candidate_type: PortType[AnswerValue] = PortType(
+        "company.example/Answer@1",
+        AnswerValue,
+    )
+    candidate = graph.output("candidate", candidate_type)
+    answer_source = graph.add(
+        "answer",
+        BoundBlock(
+            block_id="test.answer@1",
+            inputs={},
+            expected_inputs={},
+            expected_outputs={"answer": ANSWER},
+            config={},
+            _outputs=lambda node_id, owner: NodeOutput(
+                node_id,
+                "answer",
+                ANSWER,
+                owner,
+            ),
+        ),
+    )
+
+    with pytest.raises(TypeError, match="company.example/Answer@1"):
+        graph.publish(candidate, answer_source)
+
+
+def test_typed_graph_rejects_self_certified_stdlib_output_contract() -> None:
+    graph = GraphBuilder("self-certified-block")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+
+    with pytest.raises(ValueError, match="no catalog output port 'answer'"):
+        graph.add(
+            "retrieve",
+            BoundBlock(
+                block_id="retrieve.execute_plan@1",
+                inputs={"query": query, "sources": sources},
+                expected_inputs={"query": SEARCH_REQUEST, "sources": FEDERATED_SOURCES},
+                expected_outputs={"answer": ANSWER},
+                config={},
+                _outputs=lambda node_id, owner: NodeOutput(
+                    node_id,
+                    "answer",
+                    ANSWER,
+                    owner,
+                ),
+            ),
+        )
+
+
+def test_typed_graph_rejects_forged_node_output_identity() -> None:
+    graph = GraphBuilder("forged-output")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+    candidate = graph.output("candidate", ANSWER)
+    retrieve = graph.add(
+        "retrieve",
+        RetrieveExecutePlan().bind(query=query, sources=sources),
+    )
+    forged = NodeOutput(
+        "retrieve",
+        "candidate",
+        ANSWER,
+        retrieve.result._owner,
+    )
+
+    with pytest.raises(ValueError, match="was not issued"):
+        graph.publish(candidate, forged)
+
+
+def test_typed_graph_rejects_forged_graph_output_identity() -> None:
+    graph = GraphBuilder("forged-graph-output")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+    candidate = graph.output("candidate", ANSWER)
+    retrieve = graph.add(
+        "retrieve",
+        RetrieveExecutePlan().bind(query=query, sources=sources),
+    )
+    forged = GraphOutput(
+        candidate.name,
+        RETRIEVAL_RESULT,
+        candidate._owner,
+    )
+
+    with pytest.raises(ValueError, match="was not issued"):
+        graph.publish(cast(Any, forged), retrieve.result)
+
+
+def test_typed_graph_rejects_forged_input_reference_identity() -> None:
+    graph = GraphBuilder("forged-input")
+    query = graph.input("query", SEARCH_REQUEST)
+    sources = graph.input("sources", FEDERATED_SOURCES)
+    forged_query = NodeOutput(
+        "missing",
+        "query",
+        SEARCH_REQUEST,
+        query._owner,
+    )
+
+    with pytest.raises(ValueError, match="not an issued node output"):
+        graph.add(
+            "retrieve",
+            RetrieveExecutePlan().bind(
+                query=cast(Any, forged_query),
+                sources=sources,
+            ),
+        )
 
 
 def test_typed_stdlib_configs_reject_invalid_literals() -> None:

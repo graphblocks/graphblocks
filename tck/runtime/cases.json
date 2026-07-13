@@ -10,10 +10,10 @@
       "spec": {
         "interface": {
           "inputs": {
-            "message": "graphblocks.ai/Text@1"
+            "message": "graphblocks.ai/Message@1"
           },
           "outputs": {
-            "prompt": "graphblocks.ai/Text@1"
+            "prompt": "graphblocks.ai/Prompt@1"
           }
         },
         "nodes": {
@@ -193,7 +193,7 @@
             "messages": "graphblocks.ai/Messages@1"
           },
           "outputs": {
-            "candidate": "graphblocks.ai/AssistantCandidate@1"
+            "candidate": "graphblocks.ai/TurnCandidate@1"
           }
         },
         "nodes": {

@@ -37,7 +37,7 @@ def test_parse_duration_seconds_rejects_unsupported_values() -> None:
 
 def test_runtime_provides_timeout_deadline_to_block_context() -> None:
     seen_deadline = {"value": None}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def observes_deadline(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         seen_deadline["value"] = context["deadline_monotonic"]
@@ -66,7 +66,7 @@ def test_runtime_provides_timeout_deadline_to_block_context() -> None:
 
 
 def test_runtime_fails_node_that_exceeds_timeout() -> None:
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def slow_block(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         time.sleep(0.02)
@@ -98,7 +98,7 @@ def test_runtime_fails_node_that_exceeds_timeout() -> None:
 
 def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token() -> None:
     seen: dict[str, object] = {}
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def cooperative_block(
         inputs: dict[str, Any],
@@ -139,7 +139,7 @@ def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token() ->
 @pytest.mark.parametrize("timeout", ("soon", "0s", "-1s", "nan", "inf"))
 def test_compile_and_runtime_reject_invalid_timeout_before_invoking_block(timeout: str) -> None:
     invoked = False
-    registry = RuntimeRegistry()
+    registry = RuntimeRegistry(allow_untyped=True)
 
     def observes_deadline(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         nonlocal invoked

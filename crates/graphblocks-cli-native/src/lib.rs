@@ -1,5 +1,6 @@
-use graphblocks_compiler::compiler::compile_graph;
+use graphblocks_compiler::compiler::compile_graph_with_catalog;
 use graphblocks_compiler::diagnostics::Diagnostic;
+use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json;
 use serde::Deserialize;
 use serde_json::Value;
@@ -115,7 +116,22 @@ pub struct NativeRuntimeReport {
 }
 
 pub fn run_compiler_workflow(document: &Value, mode: NativeCliMode) -> NativeCliReport {
-    let plan = compile_graph(document);
+    let block_catalog = match stdlib_block_catalog() {
+        Ok(block_catalog) => block_catalog,
+        Err(error) => {
+            return NativeCliReport {
+                ok: false,
+                graph_hash: None,
+                normalized: None,
+                diagnostics: vec![Diagnostic::error(
+                    "GB9001",
+                    format!("failed to construct the built-in block catalog: {error}"),
+                    "$.spec.nodes",
+                )],
+            };
+        }
+    };
+    let plan = compile_graph_with_catalog(document, &block_catalog);
     let ok = plan.ok();
     let include_normalized = matches!(mode, NativeCliMode::Plan { expand: true });
 
