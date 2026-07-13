@@ -371,6 +371,63 @@ def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
     ]
 
 
+@pytest.mark.parametrize("descriptor_relative", [True, False])
+def test_wheel_matrix_rejects_manifest_swapped_to_fifo_without_blocking(
+    tmp_path,
+    monkeypatch,
+    descriptor_relative: bool,
+) -> None:
+    make_fifo = getattr(os, "mkfifo", None)
+    non_blocking = getattr(os, "O_NONBLOCK", 0)
+    if make_fifo is None or not non_blocking:
+        pytest.skip("FIFO non-blocking opens are unavailable")
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    manifest_path = root / "pyproject.toml"
+    _write_valid_wheel_manifest(manifest_path)
+    original_open = os.open
+    swapped = False
+
+    def swap_to_fifo(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if descriptor_relative:
+            should_swap = dir_fd is not None and os.fspath(path) == manifest_path.name
+        else:
+            should_swap = dir_fd is None and os.fspath(path) == os.fspath(manifest_path)
+        if should_swap and not swapped:
+            swapped = True
+            manifest_path.unlink()
+            make_fifo(manifest_path)
+            assert flags & non_blocking, "manifest opens must not block on FIFOs"
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(packages_module.os, "open", swap_to_fifo)
+    if descriptor_relative:
+        monkeypatch.setattr(packages_module.os, "supports_dir_fd", {swap_to_fifo})
+    else:
+        monkeypatch.delattr(packages_module.os, "O_NOFOLLOW")
+
+    matrix = build_wheel_matrix(
+        root,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "escaped-wheel",
+                    "kind": "pure_python",
+                    "manifest": "pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert swapped
+    assert matrix.targets == ()
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        ("WheelManifestInvalid", "$.artifacts[0].manifest")
+    ]
+
+
 def test_package_catalog_doctor_rejects_manifest_outside_root(tmp_path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -440,3 +497,48 @@ def test_package_catalog_doctor_reports_malformed_manifest_path(tmp_path) -> Non
         "PackageArtifactManifestInvalid",
         "$.artifacts.escaped-wheel.manifest",
     ) in [(item.code, item.path) for item in diagnostics.diagnostics]
+
+
+def test_package_catalog_doctor_compares_manifest_dependencies_canonically(
+    tmp_path,
+) -> None:
+    (tmp_path / "base.toml").write_text(
+        """
+[project]
+name = "base-wheel"
+version = "1.0.0"
+dependencies = []
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "feature.toml").write_text(
+        """
+[project]
+name = "feature-wheel"
+version = "1.0.0"
+dependencies = ["BASE_WHEEL~=1.0"]
+""".strip(),
+        encoding="utf-8",
+    )
+    diagnostics = doctor_package_catalog(
+        {
+            "artifacts": [
+                {
+                    "distribution": "Base.Wheel",
+                    "kind": "pure_python",
+                    "manifest": "base.toml",
+                    "dependsOn": [],
+                },
+                {
+                    "distribution": "Feature_Wheel",
+                    "kind": "pure_python",
+                    "manifest": "feature.toml",
+                    "dependsOn": ["BASE---WHEEL"],
+                },
+            ],
+            "components": [],
+        },
+        root=tmp_path,
+    )
+
+    assert diagnostics.diagnostics == ()

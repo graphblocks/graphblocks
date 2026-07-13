@@ -548,6 +548,87 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
     assert left.content_digest() == right.content_digest()
 
 
+def test_package_lock_canonicalizes_all_distribution_references() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultSelection": {
+            "artifacts": ["Feature...Wheel"],
+            "components": ["Feature_Component"],
+            "excludedCategories": [],
+        },
+        "artifacts": [
+            {"distribution": "Base.Wheel", "dependsOn": []},
+            {
+                "distribution": "Feature_Wheel",
+                "dependsOn": ["BASE---WHEEL"],
+                "versionConstraint": "~=1.0",
+            },
+        ],
+        "components": [
+            {
+                "name": "Base.Component",
+                "artifact": "BASE_WHEEL",
+                "default": False,
+                "dependsOn": [],
+            },
+            {
+                "name": "Feature_Component",
+                "artifact": "FEATURE...WHEEL",
+                "default": True,
+                "dependsOn": ["Base.Component"],
+                "forbiddenDependencies": ["Blocked_Component"],
+            },
+        ],
+    }
+
+    lock = build_package_lock(
+        catalog,
+        requested=("Feature_Component", "FEATURE_WHEEL"),
+    )
+    entries = {entry.distribution: entry for entry in lock.entries}
+
+    assert lock.requested == ("Feature_Component", "feature-wheel")
+    assert lock.artifacts == ("base-wheel", "feature-wheel")
+    assert set(entries) == {"Base.Component", "Feature_Component"}
+    assert entries["Feature_Component"].artifact == "feature-wheel"
+    assert entries["Feature_Component"].dependencies == ("Base.Component",)
+    assert entries["Feature_Component"].forbidden_dependencies == (
+        "Blocked_Component",
+    )
+    assert lock.entry("Feature_Component") == entries["Feature_Component"]
+    assert lock.entry("feature-component") is None
+
+
+def test_package_lock_prefers_an_exact_component_over_an_artifact_alias() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "artifacts": [
+            {"distribution": "foo-bar", "dependsOn": []},
+            {"distribution": "other", "dependsOn": []},
+        ],
+        "components": [
+            {
+                "name": "Foo_Bar",
+                "artifact": "other",
+                "default": False,
+                "dependsOn": [],
+            }
+        ],
+    }
+
+    lock = build_package_lock(
+        catalog,
+        requested=("Foo_Bar",),
+        include_default=False,
+    )
+
+    assert lock.requested == ("Foo_Bar",)
+    assert lock.artifacts == ("other",)
+    assert [entry.component for entry in lock.entries] == ["Foo_Bar"]
+
+
 def test_package_lock_rejects_unknown_selection_and_component_artifact() -> None:
     catalog = {
         "catalogVersion": 1,
@@ -734,8 +815,8 @@ def test_package_lock_records_validate_component_artifact_and_uniqueness() -> No
         )
 
 
-@pytest.mark.parametrize("duplicate", ("graphblocks_core", "graphblocks.core", "graphblocks---core"))
-def test_package_lock_rejects_canonical_distribution_duplicates(duplicate: str) -> None:
+@pytest.mark.parametrize("alias", ("graphblocks_core", "graphblocks.core", "graphblocks---core"))
+def test_package_lock_preserves_exact_component_identity(alias: str) -> None:
     entry = PackageLockEntry(
         "graphblocks-core",
         "graphblocks",
@@ -746,8 +827,8 @@ def test_package_lock_rejects_canonical_distribution_duplicates(duplicate: str) 
         None,
         None,
     )
-    duplicate_entry = PackageLockEntry(
-        duplicate,
+    aliased_component_entry = PackageLockEntry(
+        alias,
         "graphblocks",
         None,
         None,
@@ -757,15 +838,21 @@ def test_package_lock_rejects_canonical_distribution_duplicates(duplicate: str) 
         None,
     )
 
-    with pytest.raises(ValueError, match="package lock entries must have unique distributions"):
-        PackageLock(1, "1.0", requested=(), entries=(entry, duplicate_entry))
+    lock = PackageLock(
+        1,
+        "1.0",
+        requested=(),
+        entries=(entry, aliased_component_entry),
+    )
+
+    assert [item.component for item in lock.entries] == ["graphblocks-core", alias]
     with pytest.raises(ValueError, match="package lock artifacts must be unique"):
         PackageLock(
             1,
             "1.0",
             requested=(),
             entries=(entry,),
-            artifacts=("graphblocks-core", duplicate),
+            artifacts=("graphblocks-core", alias),
         )
 
 
@@ -795,6 +882,49 @@ def test_package_catalog_doctor_rejects_canonical_distribution_duplicates(
     assert [item.code for item in diagnostics.diagnostics] == [
         "PackageArtifactDuplicateDistribution"
     ]
+
+
+def test_package_catalog_doctor_resolves_all_canonical_distribution_references() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultSelection": {
+                "artifacts": ["Feature...Wheel"],
+                "components": ["Feature_Component"],
+                "excludedCategories": [],
+            },
+            "artifacts": [
+                {"distribution": "Base.Wheel", "dependsOn": []},
+                {
+                    "distribution": "Feature_Wheel",
+                    "dependsOn": ["BASE---WHEEL"],
+                },
+            ],
+            "components": [
+                {
+                    "name": "Base.Component",
+                    "artifact": "BASE_WHEEL",
+                    "default": False,
+                    "dependsOn": [],
+                },
+                {
+                    "name": "Feature_Component",
+                    "artifact": "FEATURE...WHEEL",
+                    "default": True,
+                    "dependsOn": ["Base.Component"],
+                },
+            ],
+            "releaseTrains": {
+                "extensions": {"components": ["Feature_Component"]},
+            },
+            "extensionComponents": {
+                "features": ["Feature_Component"],
+            },
+        }
+    )
+
+    assert diagnostics.diagnostics == ()
 
 
 def test_package_catalog_doctor_reports_component_mapping_and_conformance_errors() -> None:

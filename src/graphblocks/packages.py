@@ -72,8 +72,13 @@ class PackageLockEntry:
     forbidden_dependencies: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        _validate_non_empty_string("package lock entry", "distribution", self.distribution)
-        _validate_non_empty_string("package lock entry", "artifact", self.artifact)
+        _validate_non_empty_string(
+            "package lock entry", "distribution", self.distribution
+        )
+        artifact = _validate_non_empty_string(
+            "package lock entry", "artifact", self.artifact
+        )
+        object.__setattr__(self, "artifact", canonicalize_name(artifact.strip()))
         _validate_optional_non_empty_string("package lock entry", "version_constraint", self.version_constraint)
         _validate_optional_non_empty_string("package lock entry", "import_package", self.import_package)
         if not isinstance(self.default, bool):
@@ -88,7 +93,11 @@ class PackageLockEntry:
         object.__setattr__(
             self,
             "forbidden_dependencies",
-            _validate_string_tuple("package lock entry", "forbidden_dependencies", self.forbidden_dependencies),
+            _validate_string_tuple(
+                "package lock entry",
+                "forbidden_dependencies",
+                self.forbidden_dependencies,
+            ),
         )
 
     @property
@@ -125,16 +134,25 @@ class PackageLock:
         if self.catalog_version <= 0:
             raise ValueError("package lock catalog_version must be positive")
         _validate_non_empty_string("package lock", "spec_version", self.spec_version)
-        object.__setattr__(self, "requested", _validate_string_tuple("package lock", "requested", self.requested))
+        object.__setattr__(
+            self,
+            "requested",
+            _validate_string_tuple("package lock", "requested", self.requested),
+        )
         entries = tuple(self.entries)
         if any(not isinstance(entry, PackageLockEntry) for entry in entries):
             raise ValueError("package lock entries must be PackageLockEntry")
-        distributions = [canonicalize_name(entry.distribution) for entry in entries]
+        distributions = [entry.distribution for entry in entries]
         if len(set(distributions)) != len(distributions):
             raise ValueError("package lock entries must have unique distributions")
         object.__setattr__(self, "entries", entries)
-        artifacts = _validate_string_tuple("package lock", "artifacts", self.artifacts)
-        if len({canonicalize_name(artifact) for artifact in artifacts}) != len(artifacts):
+        artifacts = tuple(
+            canonicalize_name(artifact.strip())
+            for artifact in _validate_string_tuple(
+                "package lock", "artifacts", self.artifacts
+            )
+        )
+        if len(set(artifacts)) != len(artifacts):
             raise ValueError("package lock artifacts must be unique")
         object.__setattr__(self, "artifacts", tuple(sorted(artifacts)))
         object.__setattr__(
@@ -307,11 +325,18 @@ def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for component in catalog.get("components", []):
         if isinstance(component, dict):
+            name = component.get("name")
+            raw_artifact = component.get("artifact")
+            artifact = (
+                canonicalize_name(raw_artifact.strip())
+                if isinstance(raw_artifact, str) and raw_artifact.strip()
+                else raw_artifact
+            )
             rows.append(
                 {
-                    "component": component.get("name"),
-                    "artifact": component.get("artifact"),
-                    "distribution": component.get("name"),
+                    "component": name,
+                    "artifact": artifact,
+                    "distribution": name,
                     "import": component.get("import"),
                     "default": component.get("default", False),
                     "layer": component.get("layer"),
@@ -345,7 +370,9 @@ def _package_dependency_closure(
     direct_dependencies = [
         dependency
         for dependency in raw_direct_dependencies
-        if isinstance(dependency, str) and dependency in packages_by_distribution
+        if isinstance(dependency, str)
+        and dependency.strip()
+        and dependency in packages_by_distribution
     ]
     closure: set[str] = set()
     stack = list(reversed(direct_dependencies))
@@ -360,7 +387,10 @@ def _package_dependency_closure(
         stack.extend(
             nested
             for nested in reversed(raw_nested_dependencies)
-            if isinstance(nested, str) and nested in packages_by_distribution and nested not in closure
+            if isinstance(nested, str)
+            and nested.strip()
+            and nested in packages_by_distribution
+            and nested not in closure
         )
     return closure
 
@@ -371,16 +401,31 @@ def build_package_lock(
     requested: tuple[str, ...] = (),
     include_default: bool = True,
 ) -> PackageLock:
-    artifacts_by_distribution = {
-        artifact["distribution"]: artifact
-        for artifact in catalog.get("artifacts", [])
-        if isinstance(artifact, dict) and isinstance(artifact.get("distribution"), str)
-    }
-    components_by_name = {
-        component["name"]: component
-        for component in catalog.get("components", [])
-        if isinstance(component, dict) and isinstance(component.get("name"), str)
-    }
+    artifacts_by_distribution: dict[str, dict[str, Any]] = {}
+    for artifact in catalog.get("artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        distribution = artifact.get("distribution")
+        if not isinstance(distribution, str) or not distribution.strip():
+            continue
+        canonical_distribution = canonicalize_name(distribution.strip())
+        if canonical_distribution in artifacts_by_distribution:
+            raise ValueError(
+                f"duplicate package artifact distribution {distribution.strip()!r}"
+            )
+        artifacts_by_distribution[canonical_distribution] = artifact
+
+    components_by_name: dict[str, dict[str, Any]] = {}
+    for component in catalog.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        name = component.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        exact_name = name.strip()
+        if exact_name in components_by_name:
+            raise ValueError(f"duplicate package component name {name.strip()!r}")
+        components_by_name[exact_name] = component
     default_selection = catalog.get("defaultSelection")
     default_selection = default_selection if isinstance(default_selection, dict) else {}
 
@@ -388,26 +433,31 @@ def build_package_lock(
     component_roots: list[str] = []
     if include_default:
         artifact_roots.extend(
-            artifact
+            canonicalize_name(artifact.strip())
             for artifact in default_selection.get("artifacts", [])
-            if isinstance(artifact, str) and artifact
+            if isinstance(artifact, str) and artifact.strip()
         )
         component_roots.extend(
             component
             for component in default_selection.get("components", [])
-            if isinstance(component, str) and component
+            if isinstance(component, str) and component.strip()
         )
+    normalized_requested: list[str] = []
     for selection in requested:
-        matched = False
-        if selection in artifacts_by_distribution:
-            matched = True
-            if selection not in artifact_roots:
-                artifact_roots.append(selection)
-        if selection in components_by_name:
-            matched = True
+        canonical_selection = (
+            canonicalize_name(selection.strip())
+            if isinstance(selection, str) and selection.strip()
+            else ""
+        )
+        if isinstance(selection, str) and selection in components_by_name:
             if selection not in component_roots:
                 component_roots.append(selection)
-        if not matched:
+            normalized_requested.append(selection)
+        elif canonical_selection in artifacts_by_distribution:
+            if canonical_selection not in artifact_roots:
+                artifact_roots.append(canonical_selection)
+            normalized_requested.append(canonical_selection)
+        else:
             raise ValueError(f"unknown package selection {selection}")
 
     selected: set[str] = set()
@@ -423,7 +473,7 @@ def build_package_lock(
         {
             component
             for component in default_selection.get("components", [])
-            if isinstance(component, str) and component
+            if isinstance(component, str) and component.strip()
         }
         if include_default
         else set()
@@ -451,7 +501,9 @@ def build_package_lock(
             dependencies = [
                 dependency
                 for dependency in component.get("dependsOn", [])
-                if isinstance(dependency, str) and dependency.strip() and dependency not in selected
+                if isinstance(dependency, str)
+                and dependency.strip()
+                and dependency not in selected
             ]
             for dependency in reversed(dependencies):
                 stack.append((dependency, False))
@@ -461,7 +513,7 @@ def build_package_lock(
         forbidden_dependencies = {
             dependency
             for dependency in component.get("forbiddenDependencies", [])
-            if isinstance(dependency, str) and dependency
+            if isinstance(dependency, str) and dependency.strip()
         }
         selected_forbidden = sorted(forbidden_dependencies & selected)
         if selected_forbidden:
@@ -484,9 +536,14 @@ def build_package_lock(
     selected_artifacts = set(artifact_roots)
     for component_name in selected:
         artifact = components_by_name[component_name].get("artifact")
-        if not isinstance(artifact, str) or artifact not in artifacts_by_distribution:
+        canonical_artifact = (
+            canonicalize_name(artifact.strip())
+            if isinstance(artifact, str) and artifact.strip()
+            else ""
+        )
+        if canonical_artifact not in artifacts_by_distribution:
             raise ValueError(f"component {component_name!r} maps to unknown artifact {artifact!r}")
-        selected_artifacts.add(artifact)
+        selected_artifacts.add(canonical_artifact)
 
     artifact_roots_to_resolve = set(selected_artifacts)
     selected_artifacts.clear()
@@ -509,23 +566,25 @@ def build_package_lock(
             artifact_visiting.add(artifact_name)
             artifact_stack.append((artifact_name, True))
             for dependency in reversed(artifact.get("dependsOn", [])):
-                if isinstance(dependency, str) and dependency not in selected_artifacts:
-                    artifact_stack.append((dependency, False))
+                if isinstance(dependency, str) and dependency.strip():
+                    canonical_dependency = canonicalize_name(dependency.strip())
+                    if canonical_dependency not in selected_artifacts:
+                        artifact_stack.append((canonical_dependency, False))
 
     entries: list[PackageLockEntry] = []
     for component_name in sorted(selected):
         component = components_by_name[component_name]
-        artifact_name = str(component["artifact"])
+        artifact_name = canonicalize_name(str(component["artifact"]).strip())
         artifact = artifacts_by_distribution[artifact_name]
         dependencies = tuple(
             dependency
             for dependency in component.get("dependsOn", [])
-            if isinstance(dependency, str) and dependency
+            if isinstance(dependency, str) and dependency.strip()
         )
         forbidden_dependencies = tuple(
             dependency
             for dependency in component.get("forbiddenDependencies", [])
-            if isinstance(dependency, str) and dependency
+            if isinstance(dependency, str) and dependency.strip()
         )
         entries.append(
             PackageLockEntry(
@@ -555,7 +614,7 @@ def build_package_lock(
     return PackageLock(
         catalog_version=int(catalog.get("catalogVersion", 0)),
         spec_version=str(catalog.get("specVersion", "")),
-        requested=tuple(requested),
+        requested=tuple(normalized_requested),
         entries=tuple(entries),
         artifacts=tuple(selected_artifacts),
         excluded_categories=excluded_categories,
@@ -582,6 +641,13 @@ def _read_manifest_beneath_root(root_path: Path, manifest_ref: str) -> tuple[Pat
         | getattr(os, "O_CLOEXEC", 0)
     )
     no_follow = getattr(os, "O_NOFOLLOW", 0)
+    manifest_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+        | no_follow
+    )
     supports_dir_fd = os.open in getattr(os, "supports_dir_fd", set())
     manifest_text: str | None = None
     if supports_dir_fd and no_follow:
@@ -601,7 +667,7 @@ def _read_manifest_beneath_root(root_path: Path, manifest_ref: str) -> tuple[Pat
                 raise IsADirectoryError(str(candidate))
             file_fd = os.open(
                 relative_path.parts[-1],
-                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+                manifest_flags,
                 dir_fd=directory_fd,
             )
             if not stat.S_ISREG(os.fstat(file_fd).st_mode):
@@ -657,7 +723,7 @@ def _read_manifest_beneath_root(root_path: Path, manifest_ref: str) -> tuple[Pat
         try:
             file_fd = os.open(
                 candidate,
-                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow,
+                manifest_flags,
             )
             opened_stat = os.fstat(file_fd)
             if not stat.S_ISREG(opened_stat.st_mode):
@@ -1234,7 +1300,6 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
     raw_artifacts = catalog.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
     artifacts_by_distribution: dict[str, dict[str, Any]] = {}
-    canonical_artifact_distributions: set[str] = set()
     if not isinstance(raw_artifacts, list):
         diagnostics.append(
             Diagnostic(
@@ -1265,7 +1330,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
             continue
         distribution = distribution.strip()
         canonical_distribution = canonicalize_name(distribution)
-        if canonical_distribution in canonical_artifact_distributions:
+        if canonical_distribution in artifacts_by_distribution:
             diagnostics.append(
                 Diagnostic(
                     "PackageArtifactDuplicateDistribution",
@@ -1274,8 +1339,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 )
             )
             continue
-        artifacts_by_distribution[distribution] = artifact
-        canonical_artifact_distributions.add(canonical_distribution)
+        artifacts_by_distribution[canonical_distribution] = artifact
 
     raw_components = catalog.get("components", [])
     components = raw_components if isinstance(raw_components, list) else []
@@ -1341,7 +1405,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                         f"$.artifacts.{distribution}.dependsOn[{index}]",
                     )
                 )
-            elif dependency not in artifacts_by_distribution:
+            elif canonicalize_name(dependency.strip()) not in artifacts_by_distribution:
                 diagnostics.append(
                     Diagnostic(
                         "PackageArtifactDependencyMissing",
@@ -1364,9 +1428,11 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                 path.append(current)
             artifact = artifacts_by_distribution[current]
             dependencies = [
-                dependency
+                canonicalize_name(dependency.strip())
                 for dependency in artifact.get("dependsOn", [])
-                if isinstance(dependency, str) and dependency in artifacts_by_distribution
+                if isinstance(dependency, str)
+                and dependency.strip()
+                and canonicalize_name(dependency.strip()) in artifacts_by_distribution
             ]
             if next_index >= len(dependencies):
                 artifact_states[current] = "done"
@@ -1406,7 +1472,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     f"$.components.{name}.artifact",
                 )
             )
-        elif artifact not in artifacts_by_distribution:
+        elif canonicalize_name(artifact.strip()) not in artifacts_by_distribution:
             diagnostics.append(
                 Diagnostic(
                     "PackageComponentArtifactUnknown",
@@ -1577,7 +1643,7 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     f"$.defaultSelection.artifacts[{index}]",
                 )
             )
-        elif artifact not in artifacts_by_distribution:
+        elif canonicalize_name(artifact.strip()) not in artifacts_by_distribution:
             diagnostics.append(
                 Diagnostic(
                     "PackageDefaultArtifactMissing",
@@ -1869,9 +1935,9 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                     continue
 
                 expected_dependencies = tuple(
-                    dependency
+                    canonicalize_name(dependency.strip())
                     for dependency in artifact.get("dependsOn", [])
-                    if isinstance(dependency, str) and dependency
+                    if isinstance(dependency, str) and dependency.strip()
                 )
                 dependencies = project.get("dependencies", [])
                 actual_dependencies: list[str] = []
