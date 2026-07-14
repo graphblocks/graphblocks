@@ -254,11 +254,38 @@ class SchemaManifest:
         root_path = Path(root)
         if not root_path.is_dir():
             raise SchemaManifestError(f"schema root is not a directory: {root_path}")
+        try:
+            resolved_root = root_path.resolve(strict=True)
+        except OSError as error:
+            raise SchemaManifestError(
+                f"schema root could not be resolved: {root_path}"
+            ) from error
         entries: list[SchemaManifestEntry] = []
         for path in sorted(root_path.rglob("*.json")):
+            relative_path = path.relative_to(root_path)
+            candidate = root_path
+            try:
+                for part in relative_path.parts:
+                    candidate = candidate / part
+                    if candidate.is_symlink():
+                        raise SchemaManifestError(
+                            f"{path}: schema documents must be regular non-symlinked files"
+                        )
+                resolved_path = path.resolve(strict=True)
+                resolved_path.relative_to(resolved_root)
+            except SchemaManifestError:
+                raise
+            except (OSError, ValueError) as error:
+                raise SchemaManifestError(
+                    f"{path}: schema document must remain within its schema root"
+                ) from error
+            if not path.is_file():
+                raise SchemaManifestError(
+                    f"{path}: schema documents must be regular non-symlinked files"
+                )
             try:
                 document = canonical_loads(path.read_text(encoding="utf-8"))
-            except ValueError as error:
+            except (OSError, ValueError) as error:
                 raise SchemaManifestError(f"{path}: invalid strict JSON schema document") from error
             if not isinstance(document, Mapping):
                 raise SchemaManifestError(f"{path}: JSON schema document must be an object")

@@ -280,6 +280,24 @@ def test_schema_manifest_rejects_non_standard_json_constants(tmp_path: Path) -> 
         SchemaManifest.from_directory(tmp_path)
 
 
+def test_schema_manifest_rejects_symlinked_schema_documents(tmp_path: Path) -> None:
+    root = tmp_path / "schemas"
+    root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"$id":"example.com/Outside.schema.json"}', encoding="utf-8")
+    (root / "inside.json").symlink_to(outside)
+
+    with pytest.raises(SchemaManifestError, match="regular non-symlinked files"):
+        SchemaManifest.from_directory(root)
+
+
+def test_schema_manifest_rejects_non_regular_json_candidates(tmp_path: Path) -> None:
+    (tmp_path / "directory.json").mkdir()
+
+    with pytest.raises(SchemaManifestError, match="regular non-symlinked files"):
+        SchemaManifest.from_directory(tmp_path)
+
+
 @pytest.mark.parametrize(
     "path",
     ["../schema.json", "/schema.json", "schemas//schema.json", "schemas\\schema.json", "C:/schema.json"],
