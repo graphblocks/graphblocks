@@ -1841,16 +1841,29 @@ def compile_graph(
             seen_edge_identities.add(edge_identity)
             for key, endpoint in (("from", source), ("to", target)):
                 owner, separator, endpoint_path = endpoint.partition(".")
+                endpoint_parts = endpoint_path.split(".")
                 if (
                     not separator
                     or not owner
                     or not endpoint_path
-                    or any(not part for part in endpoint_path.split("."))
+                    or any(not part for part in endpoint_parts)
                 ):
                     diagnostics.append(
                         Diagnostic(
                             "GB1020",
                             f"edge {key} endpoint must include a port path",
+                            f"$.spec.edges[{index}].{key}",
+                        )
+                    )
+                    continue
+                if any(
+                    part.isascii() and part.isdigit()
+                    for part in endpoint_parts[1:]
+                ):
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1020",
+                            f"edge {key} endpoint must not contain numeric nested path segments",
                             f"$.spec.edges[{index}].{key}",
                         )
                     )

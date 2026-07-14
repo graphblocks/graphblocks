@@ -3054,6 +3054,20 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     ));
                     continue;
                 }
+                if endpoint_path
+                    .split('.')
+                    .skip(1)
+                    .any(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        format!(
+                            "edge {key} endpoint must not contain numeric nested path segments"
+                        ),
+                        format!("$.spec.edges[{index}].{key}"),
+                    ));
+                    continue;
+                }
                 if key == "from" && owner == "$output" {
                     diagnostics.push(Diagnostic::error(
                         "GB1020",

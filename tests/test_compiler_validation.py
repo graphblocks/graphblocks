@@ -172,6 +172,90 @@ def test_compile_preserves_supported_input_to_output_pseudo_edge() -> None:
     assert _error_diagnostics(graph) == []
 
 
+def test_compile_rejects_explicit_numeric_nested_source_path() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "numeric-source-path"},
+        "spec": {
+            "interface": {
+                "inputs": {"items": "schemas/Items@1"},
+                "outputs": {"result": "schemas/Item@1"},
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.items.0", "to": "$output.result"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1020",
+            "edge from endpoint must not contain numeric nested path segments",
+            "$.spec.edges[0].from",
+        )
+    ]
+
+
+def test_compile_rejects_list_shorthand_numeric_target_paths() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "numeric-shorthand-targets"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "first": "schemas/Item@1",
+                    "second": "schemas/Item@1",
+                }
+            },
+            "nodes": {
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"items": ["$input.first", "$input.second"]},
+                }
+            },
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1020",
+            "edge to endpoint must not contain numeric nested path segments",
+            "$.spec.edges[0].to",
+        ),
+        (
+            "GB1020",
+            "edge to endpoint must not contain numeric nested path segments",
+            "$.spec.edges[1].to",
+        ),
+    ]
+
+
+def test_compile_preserves_nested_object_endpoint_paths() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "nested-object-paths"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "schemas/Payload@1"},
+                "outputs": {"result": "schemas/Result@1"},
+            },
+            "nodes": {},
+            "edges": [
+                {
+                    "from": "$input.payload.field",
+                    "to": "$output.result.field",
+                },
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == []
+
+
 def test_compile_discovery_mode_still_validates_known_builtin_blocks() -> None:
     graph = _unknown_block_graph()
     spec = graph["spec"]

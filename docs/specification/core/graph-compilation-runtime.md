@@ -44,8 +44,11 @@ JSON equality without scalar coercion, so for example boolean `true`, integer
 
 Every edge endpoint MUST contain an owner and port path. `$input` is valid only
 as an edge source and `$output` only as an edge target; the opposite directions
-MUST fail compilation. Ordinary executable graphs MUST be acyclic unless a
-selected runtime profile explicitly defines a bounded cycle construct.
+MUST fail compilation. Every segment after the root port denotes an object key;
+a segment made only of ASCII decimal digits MUST fail compilation with `GB1020`.
+List-valued wiring shorthand that lowers to such a segment is therefore not
+executable. Ordinary executable graphs MUST be acyclic unless a selected runtime
+profile explicitly defines a bounded cycle construct.
 
 <a id="GB-GCR-PLAN-001"></a>
 

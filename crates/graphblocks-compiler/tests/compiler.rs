@@ -1624,6 +1624,104 @@ fn compile_graph_accepts_declared_nested_interface_ports_without_field_type_infe
 }
 
 #[test]
+fn compile_graph_rejects_explicit_numeric_nested_source_path() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "numeric-source-path"},
+        "spec": {
+            "interface": {
+                "inputs": {"items": "schemas/Items@1"},
+                "outputs": {"result": "schemas/Item@1"}
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.items.0", "to": "$output.result"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB1020");
+    assert_eq!(
+        errors[0].message,
+        "edge from endpoint must not contain numeric nested path segments"
+    );
+    assert_eq!(errors[0].path, "$.spec.edges[0].from");
+}
+
+#[test]
+fn compile_graph_rejects_list_shorthand_numeric_target_paths() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "numeric-shorthand-targets"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "first": "schemas/Item@1",
+                    "second": "schemas/Item@1"
+                }
+            },
+            "nodes": {
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"items": ["$input.first", "$input.second"]}
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 2);
+    for (index, error) in errors.iter().enumerate() {
+        assert_eq!(error.code, "GB1020");
+        assert_eq!(
+            error.message,
+            "edge to endpoint must not contain numeric nested path segments"
+        );
+        assert_eq!(error.path, format!("$.spec.edges[{index}].to"));
+    }
+}
+
+#[test]
+fn compile_graph_preserves_nested_object_endpoint_paths() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "nested-object-paths"},
+        "spec": {
+            "interface": {
+                "inputs": {"payload": "schemas/Payload@1"},
+                "outputs": {"result": "schemas/Result@1"}
+            },
+            "nodes": {},
+            "edges": [
+                {
+                    "from": "$input.payload.field",
+                    "to": "$output.result.field"
+                }
+            ]
+        }
+    });
+
+    assert!(compile_graph_for_discovery(&graph).ok());
+}
+
+#[test]
 fn compile_graph_rejects_graph_interface_pseudo_nodes_in_wrong_direction() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
