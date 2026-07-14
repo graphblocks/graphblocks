@@ -37,9 +37,6 @@
               "requireOwnershipFence": true
             },
             "attemptFencing": true
-          },
-          "outputs": {
-            "operation": "wait.operation"
           }
         },
         "wait": {
