@@ -115,17 +115,22 @@ spec:
       when: formal.hardGatePassed
       flow: {leasePool: synthesis-license}
       config: {checks: [synthesis, timing, area, power_estimation]}
+    aggregateChecks:
+      block: check.aggregate@1
+      inputs:
+        fast: fast.results
+        formal: formal.results
+        synthesis: synthesis.results
     gate:
       block: gate.evaluate@1
-      inputs:
-        checks: [fast.results, formal.results, synthesis.results]
+      inputs: {checks: aggregateChecks.results}
       policies:
         integrity: trusted-oracle-unchanged
     seal:
       block: trial.seal_result@1
       inputs:
         changeSet: apply.changeSet
-        checks: [fast.results, formal.results, synthesis.results]
+        checks: aggregateChecks.results
         leases: reserve.leases
         gate: gate.result
       outputs:

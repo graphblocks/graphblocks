@@ -4481,9 +4481,21 @@ def _exercise_verified_rtl_workspace_trial(
     commit_node = nodes.get("commit")
     reserve_node = trial_nodes.get("reserve")
     formal_node = trial_nodes.get("formal")
+    aggregate_checks_node = trial_nodes.get("aggregateChecks")
+    gate_node = trial_nodes.get("gate")
+    seal_node = trial_nodes.get("seal")
     if any(
         not isinstance(node, Mapping)
-        for node in (review_node, verify_node, commit_node, reserve_node, formal_node)
+        for node in (
+            review_node,
+            verify_node,
+            commit_node,
+            reserve_node,
+            formal_node,
+            aggregate_checks_node,
+            gate_node,
+            seal_node,
+        )
     ):
         raise RuntimeError("verified RTL governance nodes are missing")
     assert isinstance(review_node, Mapping)
@@ -4491,6 +4503,9 @@ def _exercise_verified_rtl_workspace_trial(
     assert isinstance(commit_node, Mapping)
     assert isinstance(reserve_node, Mapping)
     assert isinstance(formal_node, Mapping)
+    assert isinstance(aggregate_checks_node, Mapping)
+    assert isinstance(gate_node, Mapping)
+    assert isinstance(seal_node, Mapping)
     review_config = review_node.get("config")
     verify_config = verify_node.get("config")
     reserve_config = reserve_node.get("config")
@@ -4542,6 +4557,22 @@ def _exercise_verified_rtl_workspace_trial(
         or formal_node.get("flow") != {"leasePool": "formal-license"}
     ):
         raise RuntimeError("verified RTL budget reservation and lease-pool contract does not match")
+    seal_inputs = seal_node.get("inputs")
+    if (
+        aggregate_checks_node.get("block") != "check.aggregate@1"
+        or aggregate_checks_node.get("inputs")
+        != {
+            "fast": "fast.results",
+            "formal": "formal.results",
+            "synthesis": "synthesis.results",
+        }
+        or gate_node.get("block") != "gate.evaluate@1"
+        or gate_node.get("inputs") != {"checks": "aggregateChecks.results"}
+        or seal_node.get("block") != "trial.seal_result@1"
+        or not isinstance(seal_inputs, Mapping)
+        or seal_inputs.get("checks") != "aggregateChecks.results"
+    ):
+        raise RuntimeError("verified RTL trial checks must use explicit aggregation")
 
     base = WorkspaceSnapshot(
         workspace_id="workspace-rtl",
