@@ -373,7 +373,11 @@ def _inputs(
 def _promotion_payload_and_files(
     module: ModuleType,
 ) -> tuple[dict[str, object], dict[str, bytes]]:
-    candidate_workflow_identity = (
+    promotion_workflow_identity = (
+        f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
+        f"{module.PROMOTION_SIGSTORE_WORKFLOW}@{RELEASE_REF}"
+    )
+    ci_workflow_identity = (
         f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
         f"{module.SIGSTORE_WORKFLOW}@{RELEASE_REF}"
     )
@@ -394,7 +398,10 @@ def _promotion_payload_and_files(
     )
     matrix_runs = [
         {
-            "runId": f"matrix-run-{index}",
+            "runId": (
+                "https://github.com/graphblocks/graphblocks/actions/runs/"
+                f"{1000 + index}/attempts/1"
+            ),
             "status": "success",
             "complete": True,
             "candidateRef": RELEASE_REF,
@@ -407,8 +414,8 @@ def _promotion_payload_and_files(
         }
         for index in range(1, 4)
     ]
-    for run in matrix_runs:
-        reports[str(run["runId"])] = dict(run)
+    for index, run in enumerate(matrix_runs, start=1):
+        reports[f"matrix-run-{index}"] = dict(run)
     applications = [
         {
             "applicationId": "application-one",
@@ -469,13 +476,18 @@ def _promotion_payload_and_files(
         report_files[report_path] = report_bytes
         report_files[signature_path] = signature_bytes
         report_digests[report_id] = f"sha256:{report_sha256}"
+        certificate_identity = (
+            ci_workflow_identity
+            if set(report) == module.MATRIX_PROMOTION_REPORT_KEYS
+            else promotion_workflow_identity
+        )
         report_artifacts.append(
             {
                 "path": report_path,
                 "sha256": report_sha256,
                 "signaturePath": signature_path,
                 "signatureSha256": module._sha256_bytes(signature_bytes),
-                "certificateIdentity": candidate_workflow_identity,
+                "certificateIdentity": certificate_identity,
                 "certificateOidcIssuer": module.SIGSTORE_ISSUER,
             }
         )
@@ -502,8 +514,11 @@ def _promotion_payload_and_files(
             },
         },
         "supportedMatrixRuns": [
-            {**run, "attestationDigest": report_digests[str(run["runId"])]}
-            for run in matrix_runs
+            {
+                **run,
+                "attestationDigest": report_digests[f"matrix-run-{index}"],
+            }
+            for index, run in enumerate(matrix_runs, start=1)
         ],
         "soak": {
             "startedAt": "2026-06-01T00:00:00Z",
@@ -1021,10 +1036,14 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
     module = _load_module()
     inputs = _inputs(module, tmp_path, stable_version="1.0.0")
     promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
-    verified: list[str] = []
+    verified: list[tuple[str, str]] = []
 
     def record_verification(**arguments: object) -> None:
-        verified.append(arguments["report_snapshot"].path.name)
+        report_snapshot = arguments["report_snapshot"]
+        assert isinstance(report_snapshot, module.FileSnapshot)
+        expected_identity = arguments["expected_certificate_identity"]
+        assert isinstance(expected_identity, str)
+        verified.append((report_snapshot.path.name, expected_identity))
 
     module._verify_promotion_report_signature = record_verification
     module.assemble_release_bundle(
@@ -1038,7 +1057,17 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
     )
 
     assert len(verified) == 22
-    assert len(set(verified)) == 11
+    assert len({name for name, _identity in verified}) == 11
+    ci_identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/"
+        "ci.yml@refs/tags/v1.0.0-rc.1"
+    )
+    promotion_identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.1"
+    )
+    assert [identity for _name, identity in verified].count(ci_identity) == 6
+    assert [identity for _name, identity in verified].count(promotion_identity) == 16
 
     missing_promotion = _write_promotion_evidence(
         module, tmp_path / "missing" / "promotion.json"
@@ -1082,9 +1111,200 @@ def test_promotion_report_signature_rejects_a_self_declared_signer(tmp_path: Pat
             certificate_oidc_issuer=module.SIGSTORE_ISSUER,
             expected_certificate_identity=(
                 "https://github.com/graphblocks/graphblocks/.github/workflows/"
-                "ci.yml@refs/tags/v1.0.0-rc.1"
+                "promotion-reports.yml@refs/tags/v1.0.0-rc.1"
             ),
             cosign="cosign",
+        )
+
+
+@pytest.mark.parametrize(
+    ("report_type", "payload"),
+    (
+        (
+            "candidate-manifest",
+            {
+                "formatVersion": 1,
+                "releaseRef": RELEASE_REF,
+                "releaseVersion": RELEASE_VERSION,
+                "gitCommit": CANDIDATE_COMMIT,
+            },
+        ),
+        (
+            "soak-application",
+            {
+                "applicationId": "application-one",
+                "nontrivial": True,
+                "startedAt": "2026-06-01T00:00:00Z",
+                "endedAt": "2026-06-15T00:00:00Z",
+            },
+        ),
+        (
+            "api-review",
+            {
+                "reviewerIdentity": "reviewer-api@example.test",
+                "approved": True,
+                "candidateRef": RELEASE_REF,
+                "candidateCommit": CANDIDATE_COMMIT,
+            },
+        ),
+        (
+            "security-review",
+            {
+                "reviewerIdentity": "reviewer-security@example.test",
+                "approved": True,
+                "candidateRef": RELEASE_REF,
+                "candidateCommit": CANDIDATE_COMMIT,
+            },
+        ),
+        (
+            "stable-scope",
+            {
+                "unresolvedCritical": 0,
+                "unresolvedHigh": 0,
+                "unexplainedFlakes": 0,
+            },
+        ),
+        (
+            "protected-final-ref",
+            {"releaseRef": "refs/tags/v1.0.0", "protected": True},
+        ),
+        (
+            "staged-rehearsal",
+            {
+                "environment": "staging",
+                "authorized": True,
+                "realExternalActions": True,
+                "authorizedBy": "release-operator@example.test",
+                "operations": [
+                    {"operation": operation, "status": "success"}
+                    for operation in ("publish", "rollback", "yank", "restore")
+                ],
+            },
+        ),
+    ),
+)
+def test_candidate_workflow_can_validate_and_freeze_each_promotion_report_type(
+    tmp_path: Path,
+    report_type: str,
+    payload: dict[str, object],
+) -> None:
+    module = _load_module()
+    input_path = tmp_path / f"{report_type}-input.json"
+    input_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    output_dir = tmp_path / f"{report_type}-frozen"
+
+    frozen = module.freeze_promotion_report(
+        input_path=input_path,
+        output_dir=output_dir,
+        report_type=report_type,
+        candidate_ref=RELEASE_REF,
+        candidate_commit=CANDIDATE_COMMIT,
+    )
+
+    assert frozen.path == output_dir / "report.json"
+    assert frozen.data == module._canonical_json_bytes(payload)
+    assert frozen.sha256 == module._sha256_bytes(frozen.data)
+
+
+def test_candidate_ci_freezes_one_canonical_matrix_run_attestation(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    run_id = (
+        "https://github.com/graphblocks/graphblocks/actions/runs/123456/attempts/2"
+    )
+
+    frozen = module.freeze_candidate_matrix_report(
+        output_dir=tmp_path / "frozen",
+        candidate_ref=RELEASE_REF,
+        candidate_commit=CANDIDATE_COMMIT,
+        run_id=run_id,
+    )
+
+    candidate_manifest = {
+        "formatVersion": 1,
+        "releaseRef": RELEASE_REF,
+        "releaseVersion": RELEASE_VERSION,
+        "gitCommit": CANDIDATE_COMMIT,
+    }
+    expected = {
+        "runId": run_id,
+        "status": "success",
+        "complete": True,
+        "candidateRef": RELEASE_REF,
+        "candidateCommit": CANDIDATE_COMMIT,
+        "candidateManifestDigest": "sha256:"
+        + module._sha256_bytes(module._canonical_json_bytes(candidate_manifest)),
+        "supportedMatrix": [
+            {"os": os_name, "python": python_version}
+            for os_name, python_version in module.SUPPORTED_PLATFORM_MATRIX
+        ],
+    }
+    assert frozen.data == module._canonical_json_bytes(expected)
+
+
+def test_candidate_ci_rejects_a_noncanonical_matrix_run_identity(tmp_path: Path) -> None:
+    module = _load_module()
+
+    with pytest.raises(module.ReleaseBundleError, match="run-attempt identity"):
+        module.freeze_candidate_matrix_report(
+            output_dir=tmp_path / "frozen",
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+            run_id="matrix-run-1",
+        )
+
+
+def test_candidate_manifest_freeze_rejects_extra_fields(tmp_path: Path) -> None:
+    module = _load_module()
+    input_path = tmp_path / "candidate-manifest.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "formatVersion": 1,
+                "releaseRef": RELEASE_REF,
+                "releaseVersion": RELEASE_VERSION,
+                "gitCommit": CANDIDATE_COMMIT,
+                "selfDeclaredSuccess": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="does not bind this candidate"):
+        module.freeze_promotion_report(
+            input_path=input_path,
+            output_dir=tmp_path / "frozen",
+            report_type="candidate-manifest",
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
+        )
+
+
+def test_candidate_workflow_rejects_a_report_for_another_candidate(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    input_path = tmp_path / "review.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "reviewerIdentity": "reviewer-api@example.test",
+                "approved": True,
+                "candidateRef": RELEASE_REF,
+                "candidateCommit": COMMIT,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="does not approve this candidate"):
+        module.freeze_promotion_report(
+            input_path=input_path,
+            output_dir=tmp_path / "frozen",
+            report_type="api-review",
+            candidate_ref=RELEASE_REF,
+            candidate_commit=CANDIDATE_COMMIT,
         )
 
 
@@ -1978,11 +2198,94 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     assert not (
         root / "docs" / "project" / "releases" / "v1.0.0-promotion-evidence.json"
     ).exists()
+    freeze_matrix = aggregate_steps[
+        "Freeze the successful candidate matrix attestation"
+    ]
+    assert freeze_matrix["if"] == "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')"
+    assert freeze_matrix["env"] == {
+        "RUN_ATTEMPT_ID": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+    }
+    freeze_matrix_command = freeze_matrix["run"]
+    assert "freeze-candidate-matrix-report" in freeze_matrix_command
+    assert '--candidate-ref "$GITHUB_REF"' in freeze_matrix_command
+    assert '--candidate-commit "$GITHUB_SHA"' in freeze_matrix_command
+    assert '--run-id "$RUN_ATTEMPT_ID"' in freeze_matrix_command
+    frozen_matrix_upload = aggregate_steps[
+        "Retain the exact frozen candidate matrix attestation"
+    ]
+    assert frozen_matrix_upload["if"] == (
+        "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')"
+    )
+    assert frozen_matrix_upload["with"]["name"] == (
+        "graphblocks-frozen-candidate-matrix-report"
+    )
+    assert frozen_matrix_upload["with"]["path"] == (
+        "dist/frozen-candidate-matrix-report/report.json"
+    )
     unsigned_upload = aggregate_steps["Retain frozen unsigned release bundle"]
     assert unsigned_upload["with"]["name"] == (
         "graphblocks-unsigned-release-candidate-bundle"
     )
     assert unsigned_upload["with"]["path"] == "dist/release-bundle"
+
+    matrix_signing = jobs["candidate-matrix-signing"]
+    assert matrix_signing["needs"] == ["release-ref-gate", "release-evidence"]
+    assert "needs.release-ref-gate.outputs.release_ref == github.ref" in matrix_signing[
+        "if"
+    ]
+    assert "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')" in matrix_signing[
+        "if"
+    ]
+    assert matrix_signing["permissions"] == {"id-token": "write"}
+    matrix_signing_steps = {
+        step["name"]: step for step in matrix_signing["steps"]
+    }
+    matrix_signing_actions = [
+        step["uses"] for step in matrix_signing["steps"] if "uses" in step
+    ]
+    assert matrix_signing_actions == [
+        "actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53",
+        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+        "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+    ]
+    matrix_download = matrix_signing_steps[
+        "Download the exact frozen candidate matrix attestation"
+    ]
+    assert matrix_download["with"] == {
+        "name": "graphblocks-frozen-candidate-matrix-report",
+        "path": "dist/signed-candidate-matrix-report",
+    }
+    matrix_signing_command = matrix_signing_steps[
+        "Keyless-sign and directly verify the fixed matrix attestation"
+    ]
+    assert matrix_signing_command["env"] == {
+        "CERTIFICATE_IDENTITY": "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@${{ needs.release-ref-gate.outputs.release_ref }}",
+        "CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+    }
+    matrix_command = matrix_signing_command["run"]
+    assert matrix_command.count("cosign ") == 2
+    assert matrix_command.count(
+        "dist/signed-candidate-matrix-report/report.json"
+    ) == 2
+    assert matrix_command.count(
+        "dist/signed-candidate-matrix-report/report.sigstore.json"
+    ) == 2
+    all_matrix_signing_commands = "\n".join(
+        step["run"] for step in matrix_signing["steps"] if "run" in step
+    ).lower()
+    for forbidden in ("python", "pip", "install -e", "tools/", "release_supply_chain"):
+        assert forbidden not in all_matrix_signing_commands
+    matrix_upload = matrix_signing_steps[
+        "Retain the signed candidate matrix attestation"
+    ]
+    assert matrix_upload["with"]["name"] == (
+        "graphblocks-signed-candidate-matrix-report-"
+        "${{ github.run_id }}-${{ github.run_attempt }}"
+    )
+    assert matrix_upload["with"]["path"].splitlines() == [
+        "dist/signed-candidate-matrix-report/report.json",
+        "dist/signed-candidate-matrix-report/report.sigstore.json",
+    ]
 
     signing = jobs["release-signing"]
     assert signing["needs"] == ["release-ref-gate", "release-evidence"]
@@ -2028,3 +2331,72 @@ def test_ci_enforces_pinned_platform_aggregation_and_isolated_release_signing() 
     ]
     assert signed_upload["with"]["name"] == "graphblocks-release-candidate-bundle"
     assert signed_upload["with"]["path"] == "dist/release-bundle"
+
+
+def test_candidate_promotion_report_workflow_freezes_before_isolated_signing() -> None:
+    root = Path(__file__).parents[1]
+    workflow_path = root / ".github" / "workflows" / "promotion-reports.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+
+    assert set(triggers) == {"workflow_dispatch"}
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    module = _load_module()
+    assert inputs["report_type"]["options"] == list(module.PROMOTION_REPORT_TYPES)
+    assert "matrix-run" not in inputs["report_type"]["options"]
+    assert inputs["report_json"] == {
+        "description": "Public JSON report content; the validation job canonicalizes it",
+        "required": True,
+        "type": "string",
+    }
+    assert workflow["permissions"] == {}
+
+    jobs = workflow["jobs"]
+    validation = jobs["validate-report"]
+    assert validation["permissions"] == {"contents": "read"}
+    assert "id-token" not in json.dumps(validation)
+    assert "github.repository == 'graphblocks/graphblocks'" in validation["if"]
+    assert "startsWith(github.ref, 'refs/tags/v1.0.0-rc.')" in validation["if"]
+    validation_steps = {step["name"]: step for step in validation["steps"]}
+    freeze_command = validation_steps["Validate and freeze the public report"]["run"]
+    assert "freeze-promotion-report" in freeze_command
+    assert "--candidate-ref \"$GITHUB_REF\"" in freeze_command
+    assert "--candidate-commit \"$GITHUB_SHA\"" in freeze_command
+    frozen_upload = validation_steps[
+        "Retain the exact frozen report for the signing boundary"
+    ]
+    assert frozen_upload["with"]["name"] == "graphblocks-frozen-promotion-report"
+    assert frozen_upload["with"]["path"] == "dist/frozen-promotion-report/report.json"
+
+    signing = jobs["sign-report"]
+    assert signing["needs"] == ["validate-report"]
+    assert signing["permissions"] == {"id-token": "write"}
+    signing_steps = {step["name"]: step for step in signing["steps"]}
+    signing_actions = [step["uses"] for step in signing["steps"] if "uses" in step]
+    assert signing_actions == [
+        "actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53",
+        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+        "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+    ]
+    assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in signing_actions)
+    exact_download = signing_steps["Download the exact frozen report"]
+    assert exact_download["with"] == {
+        "name": "graphblocks-frozen-promotion-report",
+        "path": "dist/signed-promotion-report",
+    }
+    signing_command = signing_steps[
+        "Keyless-sign and directly verify the fixed promotion report"
+    ]
+    assert signing_command["env"] == {
+        "CERTIFICATE_IDENTITY": "https://github.com/graphblocks/graphblocks/.github/workflows/promotion-reports.yml@${{ needs.validate-report.outputs.candidate_ref }}",
+        "CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+    }
+    command = signing_command["run"]
+    assert command.count("cosign ") == 2
+    assert command.count("dist/signed-promotion-report/report.json") == 2
+    assert command.count("dist/signed-promotion-report/report.sigstore.json") == 2
+    all_signing_commands = "\n".join(
+        step["run"] for step in signing["steps"] if "run" in step
+    ).lower()
+    for forbidden in ("python", "pip", "install -e", "tools/", "release_supply_chain"):
+        assert forbidden not in all_signing_commands

@@ -237,12 +237,15 @@ SHA-256 digest and an adjacent Sigstore bundle. The record gives the exact safe
 relative paths, file hashes, signature hashes, certificate identities, and
 issuer. The assembler resolves regular non-symlink files, rejects unreferenced
 or substituted reports, verifies every signature, and validates each report's
-content against the corresponding promotion claim. All report signatures use
-the exact existing `graphblocks/graphblocks` CI workflow identity at the
-candidate tag; identities selected by the evidence are never accepted as
-signature authorities. The signed API/security payloads bind the distinct
-reviewer principals reported by that trusted workflow, and the signed rehearsal
-payload binds its authorizer. The assembler validates the complete record
+content against the corresponding promotion claim. Matrix attestations must use
+the `graphblocks/graphblocks` CI workflow identity at the candidate tag; the
+deterministic candidate-manifest report and later operator reports use the
+dedicated promotion-report workflow identity at that same tag. Identities
+selected by the evidence are never accepted as signature authorities. Each
+matrix report binds the canonical GitHub Actions run/attempt URL that produced
+it. The signed API/security payloads bind the distinct reviewer principals
+reported by their trusted workflow, and the signed rehearsal payload binds its
+authorizer. The assembler validates the complete record
 against the clean, full-history final checkout. Only
 release documentation, the two Python package manifests, the public version
 constant, and the two version-bearing testing compatibility snapshots may
@@ -307,6 +310,32 @@ installer. Public verification of a final bundle requires Cosign both for the
 retained promotion reports and for the final in-bundle manifest signature; the
 executing binary's observed identity must equal the recorded identity.
 
+For an RC tag, the no-OIDC release-evidence job runs only after the Python,
+installed-artifact, example, and Rust jobs succeed. It emits exactly one
+canonical matrix attestation for that workflow attempt, binding the candidate
+ref and commit, the deterministic candidate-manifest digest, the closed
+four-combination matrix, and the canonical
+`https://github.com/graphblocks/graphblocks/actions/runs/<run>/attempts/<attempt>`
+identity. A separate `id-token: write`-only job signs and directly verifies that
+fixed report under the CI workflow identity. Re-running the complete candidate
+workflow can produce another distinct attempt attestation; the manual report
+workflow cannot create or sign matrix claims.
+
+The deterministic candidate-manifest and post-candidate operational reports
+are signed by manually dispatching
+`.github/workflows/promotion-reports.yml` with the exact candidate tag as the
+workflow ref, a closed report type, and the public JSON report content. A first
+job with only `contents: read` checks out that candidate, admits only canonical
+`v1.0.0-rc.N` refs, validates the report against its type and candidate binding,
+canonicalizes it, and uploads one fixed `report.json`. The dependent signing job
+has only `id-token: write`; it does not check out source, install packages, or
+run project code. It downloads that exact frozen artifact, signs and directly
+verifies the fixed paths with Cosign 3.0.6, and retains the report and adjacent
+Sigstore bundle for assembly. The workflow must be present before the candidate
+tag is cut so that the candidate manifest, reviews, real application soak,
+defect audit, protected-ref observation, and staged rehearsal can be signed
+after they actually occur without moving or rebuilding the candidate tag.
+
 Branch pushes and pull requests exercise the validator tests and
 four-combination installed-artifact matrix without receiving an OIDC signing
 token; they do not claim that the external signature gate passed. RC manifests
@@ -319,6 +348,8 @@ No record exists there yet and this document does not fabricate one, so a final
 tag currently fails closed. A release operator must place independently
 verifiable evidence at that path only after the real soak, reviews, protected
 ref observation, clean matrices, defect/flake audit, and authorized staged
-publish/rollback/yank/restore rehearsal have occurred. The deterministic
+publish/rollback/yank/restore rehearsal have occurred, using the retained
+CI outputs for matrix attestations and the candidate-tag promotion-report
+workflow outputs for the remaining report/signature pairs. The deterministic
 in-bundle dry run remains useful candidate evidence, but it cannot satisfy or
 replace that real staged-rehearsal attestation.

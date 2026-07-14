@@ -202,6 +202,24 @@ jobs:
             --builder-id "$BUILDER_ID" \
             --invocation-id "$INVOCATION_ID" \
             --cosign cosign
+      - name: Freeze the successful candidate matrix attestation
+        if: startsWith(github.ref, 'refs/tags/v1.0.0-rc.')
+        env:
+          RUN_ATTEMPT_ID: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: >-
+          python tools/release_supply_chain.py freeze-candidate-matrix-report
+          --output-dir dist/frozen-candidate-matrix-report
+          --candidate-ref "$GITHUB_REF"
+          --candidate-commit "$GITHUB_SHA"
+          --run-id "$RUN_ATTEMPT_ID"
+      - name: Retain the exact frozen candidate matrix attestation
+        if: startsWith(github.ref, 'refs/tags/v1.0.0-rc.')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-frozen-candidate-matrix-report
+          path: dist/frozen-candidate-matrix-report/report.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Retain frozen unsigned release bundle
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -209,6 +227,51 @@ jobs:
           path: dist/release-bundle
           if-no-files-found: error
           retention-days: 30
+
+  candidate-matrix-signing:
+    name: Keyless-sign successful candidate matrix attestation
+    needs:
+      - release-ref-gate
+      - release-evidence
+    if: >-
+      needs.release-ref-gate.outputs.release_ref == github.ref &&
+      startsWith(github.ref, 'refs/tags/v1.0.0-rc.')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the exact frozen candidate matrix attestation
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: graphblocks-frozen-candidate-matrix-report
+          path: dist/signed-candidate-matrix-report
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Keyless-sign and directly verify the fixed matrix attestation
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@${{ needs.release-ref-gate.outputs.release_ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign sign-blob --yes \
+            --bundle dist/signed-candidate-matrix-report/report.sigstore.json \
+            dist/signed-candidate-matrix-report/report.json
+          cosign verify-blob \
+            --bundle dist/signed-candidate-matrix-report/report.sigstore.json \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            dist/signed-candidate-matrix-report/report.json
+      - name: Retain the signed candidate matrix attestation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: graphblocks-signed-candidate-matrix-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/signed-candidate-matrix-report/report.json
+            dist/signed-candidate-matrix-report/report.sigstore.json
+          if-no-files-found: error
+          retention-days: 90
 
   release-signing:
     name: Keyless-sign frozen release manifest

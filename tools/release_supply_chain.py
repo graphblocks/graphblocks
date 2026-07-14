@@ -48,8 +48,18 @@ EXPECTATIONS_NAME = "release-expectations.json"
 SIGSTORE_ISSUER = "https://token.actions.githubusercontent.com"
 SIGSTORE_REPOSITORY = "graphblocks/graphblocks"
 SIGSTORE_WORKFLOW = ".github/workflows/ci.yml"
+PROMOTION_SIGSTORE_WORKFLOW = ".github/workflows/promotion-reports.yml"
 SIGNATURE_BUNDLE_NAME = "release-manifest.sigstore.json"
 PROMOTION_EVIDENCE_NAME = "promotion-evidence.json"
+PROMOTION_REPORT_TYPES = (
+    "candidate-manifest",
+    "soak-application",
+    "api-review",
+    "security-review",
+    "stable-scope",
+    "protected-final-ref",
+    "staged-rehearsal",
+)
 PROMOTION_DOCUMENTATION_PATHS = {
     "CHANGELOG.md",
     "README.md",
@@ -74,6 +84,19 @@ SUPPORTED_PLATFORM_MATRIX = (
     ("ubuntu-latest", "3.12"),
     ("windows-latest", "3.11"),
     ("windows-latest", "3.12"),
+)
+MATRIX_PROMOTION_REPORT_KEYS = {
+    "runId",
+    "status",
+    "complete",
+    "candidateRef",
+    "candidateCommit",
+    "candidateManifestDigest",
+    "supportedMatrix",
+}
+CI_RUN_ATTEMPT_ID = re.compile(
+    rf"https://github\.com/{re.escape(SIGSTORE_REPOSITORY)}/actions/runs/"
+    r"[1-9][0-9]*/attempts/[1-9][0-9]*"
 )
 RUNTIME_WHEEL_INTERPRETER = "cp311"
 SUPPORTED_NATIVE_WHEEL_COUNT = len(
@@ -256,6 +279,14 @@ def _require_exact_keys(
 def _require_nonempty_string(value: object, *, owner: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ReleaseBundleError(f"{owner} must be a nonempty string")
+    return value
+
+
+def _require_ci_run_attempt_id(value: object, *, owner: str) -> str:
+    if not isinstance(value, str) or CI_RUN_ATTEMPT_ID.fullmatch(value) is None:
+        raise ReleaseBundleError(
+            f"{owner} must be a canonical graphblocks/graphblocks CI run-attempt identity"
+        )
     return value
 
 
@@ -715,8 +746,14 @@ def _promotion_report_artifacts(
         certificate_oidc_issuer = _require_nonempty_string(
             record.get("certificateOidcIssuer"), owner=f"{owner} certificate issuer"
         )
+        trusted_workflow = (
+            SIGSTORE_WORKFLOW
+            if set(report_payload) == MATRIX_PROMOTION_REPORT_KEYS
+            else PROMOTION_SIGSTORE_WORKFLOW
+        )
         candidate_workflow_identity = (
-            f"https://github.com/{SIGSTORE_REPOSITORY}/{SIGSTORE_WORKFLOW}@"
+            f"https://github.com/{SIGSTORE_REPOSITORY}/"
+            f"{trusted_workflow}@"
             f"{candidate_ref}"
         )
         _verify_promotion_report_signature(
@@ -742,6 +779,235 @@ def _promotion_report(
     if artifact is None:
         raise ReleaseBundleError(f"{owner} does not resolve to a signed report artifact")
     return artifact[0]
+
+
+def _candidate_manifest_report(
+    *,
+    candidate_ref: str,
+    candidate_commit: str,
+) -> dict[str, object]:
+    return {
+        "formatVersion": 1,
+        "releaseRef": candidate_ref,
+        "releaseVersion": _release_version_from_ref(candidate_ref),
+        "gitCommit": candidate_commit,
+    }
+
+
+def _write_frozen_promotion_report(
+    payload: Mapping[str, object],
+    *,
+    output_dir: Path,
+    owner: str,
+) -> FileSnapshot:
+    if output_dir.is_symlink() or output_dir.exists():
+        raise ReleaseBundleError("frozen promotion report output must not already exist")
+    try:
+        output_dir.mkdir(parents=True)
+        output_path = output_dir / "report.json"
+        _write_json(output_path, payload)
+    except OSError as error:
+        raise ReleaseBundleError("frozen promotion report could not be written") from error
+    return _snapshot_regular_file(output_path, owner=owner)
+
+
+def freeze_candidate_matrix_report(
+    *,
+    output_dir: Path,
+    candidate_ref: str,
+    candidate_commit: str,
+    run_id: str,
+) -> FileSnapshot:
+    """Freeze one successful matrix claim from the gated candidate CI run."""
+
+    if RELEASE_CANDIDATE_REF.fullmatch(candidate_ref) is None:
+        raise ReleaseBundleError(
+            "matrix reports must be frozen from a canonical release-candidate ref"
+        )
+    if GIT_COMMIT.fullmatch(candidate_commit) is None:
+        raise ReleaseBundleError("matrix report candidate commit is invalid")
+    canonical_run_id = _require_ci_run_attempt_id(run_id, owner="matrix run id")
+    candidate_manifest = _candidate_manifest_report(
+        candidate_ref=candidate_ref,
+        candidate_commit=candidate_commit,
+    )
+    payload: dict[str, object] = {
+        "runId": canonical_run_id,
+        "status": "success",
+        "complete": True,
+        "candidateRef": candidate_ref,
+        "candidateCommit": candidate_commit,
+        "candidateManifestDigest": "sha256:"
+        + _sha256_bytes(_canonical_json_bytes(candidate_manifest)),
+        "supportedMatrix": [
+            {"os": os_name, "python": python_version}
+            for os_name, python_version in SUPPORTED_PLATFORM_MATRIX
+        ],
+    }
+    return _write_frozen_promotion_report(
+        payload,
+        output_dir=output_dir,
+        owner="frozen candidate matrix report",
+    )
+
+
+def freeze_promotion_report(
+    *,
+    input_path: Path,
+    output_dir: Path,
+    report_type: str,
+    candidate_ref: str,
+    candidate_commit: str,
+) -> FileSnapshot:
+    """Validate and canonically freeze one report before entering the OIDC job."""
+
+    if report_type not in PROMOTION_REPORT_TYPES:
+        raise ReleaseBundleError("promotion report type is not supported")
+    if RELEASE_CANDIDATE_REF.fullmatch(candidate_ref) is None:
+        raise ReleaseBundleError(
+            "promotion reports must be frozen from a canonical release-candidate ref"
+        )
+    if GIT_COMMIT.fullmatch(candidate_commit) is None:
+        raise ReleaseBundleError("promotion report candidate commit is invalid")
+
+    owner = f"{report_type} promotion report"
+    input_snapshot = _snapshot_regular_file(input_path, owner=owner)
+    payload = _json_from_snapshot(input_snapshot, owner=owner)
+    if report_type == "candidate-manifest":
+        if payload != _candidate_manifest_report(
+            candidate_ref=candidate_ref,
+            candidate_commit=candidate_commit,
+        ):
+            raise ReleaseBundleError(
+                "candidate manifest promotion report does not bind this candidate"
+            )
+    elif report_type == "soak-application":
+        report = _require_exact_keys(
+            payload,
+            {"applicationId", "nontrivial", "startedAt", "endedAt"},
+            owner=owner,
+        )
+        _require_nonempty_string(
+            report.get("applicationId"), owner="soak application id"
+        )
+        started_at = _parse_utc_timestamp(
+            report.get("startedAt"), owner="soak application start"
+        )
+        ended_at = _parse_utc_timestamp(
+            report.get("endedAt"), owner="soak application end"
+        )
+        if (
+            report.get("nontrivial") is not True
+            or started_at >= ended_at
+            or ended_at > datetime.now(timezone.utc)
+            or (ended_at - started_at).total_seconds() < 14 * 24 * 60 * 60
+        ):
+            raise ReleaseBundleError(
+                "soak application promotion report is not a completed 14-day nontrivial soak"
+            )
+    elif report_type in {"api-review", "security-review"}:
+        report = _require_exact_keys(
+            payload,
+            {"reviewerIdentity", "approved", "candidateRef", "candidateCommit"},
+            owner=owner,
+        )
+        _require_nonempty_string(
+            report.get("reviewerIdentity"), owner=f"{report_type} reviewer identity"
+        )
+        if (
+            report.get("approved") is not True
+            or report.get("candidateRef") != candidate_ref
+            or report.get("candidateCommit") != candidate_commit
+        ):
+            raise ReleaseBundleError(
+                f"{report_type} promotion report does not approve this candidate"
+            )
+    elif report_type == "stable-scope":
+        report = _require_exact_keys(
+            payload,
+            {"unresolvedCritical", "unresolvedHigh", "unexplainedFlakes"},
+            owner=owner,
+        )
+        if any(
+            not isinstance(report.get(name), int)
+            or isinstance(report.get(name), bool)
+            or report.get(name) != 0
+            for name in ("unresolvedCritical", "unresolvedHigh", "unexplainedFlakes")
+        ):
+            raise ReleaseBundleError(
+                "stable-scope promotion report contains unresolved release blockers"
+            )
+    elif report_type == "protected-final-ref":
+        report = _require_exact_keys(
+            payload,
+            {"releaseRef", "protected"},
+            owner=owner,
+        )
+        if report != {"releaseRef": "refs/tags/v1.0.0", "protected": True}:
+            raise ReleaseBundleError(
+                "protected-ref promotion report does not bind the final release ref"
+            )
+    else:
+        report = _require_exact_keys(
+            payload,
+            {
+                "environment",
+                "authorized",
+                "realExternalActions",
+                "authorizedBy",
+                "operations",
+            },
+            owner=owner,
+        )
+        _require_nonempty_string(
+            report.get("authorizedBy"), owner="staged rehearsal authorizer"
+        )
+        operations = report.get("operations")
+        if not isinstance(operations, list) or len(operations) != 4:
+            raise ReleaseBundleError(
+                "staged rehearsal promotion report must contain four operations"
+            )
+        observed_operations: dict[str, str] = {}
+        for index, raw_operation in enumerate(operations):
+            operation = _require_exact_keys(
+                raw_operation,
+                {"operation", "status"},
+                owner=f"staged rehearsal operation {index}",
+            )
+            name = _require_nonempty_string(
+                operation.get("operation"),
+                owner=f"staged rehearsal operation {index} name",
+            )
+            status = _require_nonempty_string(
+                operation.get("status"),
+                owner=f"staged rehearsal operation {index} status",
+            )
+            if name in observed_operations:
+                raise ReleaseBundleError(
+                    "staged rehearsal promotion report contains duplicate operations"
+                )
+            observed_operations[name] = status
+        if (
+            report.get("environment") != "staging"
+            or report.get("authorized") is not True
+            or report.get("realExternalActions") is not True
+            or observed_operations
+            != {
+                "publish": "success",
+                "rollback": "success",
+                "yank": "success",
+                "restore": "success",
+            }
+        ):
+            raise ReleaseBundleError(
+                "staged rehearsal promotion report is not an authorized real rehearsal"
+            )
+
+    return _write_frozen_promotion_report(
+        payload,
+        output_dir=output_dir,
+        owner="frozen promotion report",
+    )
 
 
 def _validate_promotion_evidence(
@@ -852,11 +1118,9 @@ def _validate_promotion_evidence(
         candidate_manifest_digest,
         owner="stable promotion candidate manifest",
     )
-    if (
-        candidate_manifest.get("releaseRef") != candidate_ref
-        or candidate_manifest.get("gitCommit") != candidate_commit
-        or candidate_manifest.get("releaseVersion")
-        != _release_version_from_ref(candidate_ref)
+    if candidate_manifest != _candidate_manifest_report(
+        candidate_ref=candidate_ref,
+        candidate_commit=candidate_commit,
     ):
         raise ReleaseBundleError(
             "stable promotion candidate manifest does not bind the prior candidate"
@@ -889,7 +1153,7 @@ def _validate_promotion_evidence(
             },
             owner=f"stable promotion matrix run {index}",
         )
-        run_id = _require_nonempty_string(
+        run_id = _require_ci_run_attempt_id(
             run.get("runId"), owner=f"stable promotion matrix run {index} id"
         )
         attestation_digest = _require_prefixed_sha256(
@@ -3393,6 +3657,19 @@ def main(argv: list[str] | None = None) -> int:
     assemble.add_argument("--invocation-id", required=True)
     assemble.add_argument("--promotion-evidence", type=Path)
     assemble.add_argument("--cosign", default="cosign")
+    freeze_matrix_report = subparsers.add_parser("freeze-candidate-matrix-report")
+    freeze_matrix_report.add_argument("--output-dir", type=Path, required=True)
+    freeze_matrix_report.add_argument("--candidate-ref", required=True)
+    freeze_matrix_report.add_argument("--candidate-commit", required=True)
+    freeze_matrix_report.add_argument("--run-id", required=True)
+    freeze_report = subparsers.add_parser("freeze-promotion-report")
+    freeze_report.add_argument("--input", type=Path, required=True)
+    freeze_report.add_argument("--output-dir", type=Path, required=True)
+    freeze_report.add_argument(
+        "--report-type", choices=PROMOTION_REPORT_TYPES, required=True
+    )
+    freeze_report.add_argument("--candidate-ref", required=True)
+    freeze_report.add_argument("--candidate-commit", required=True)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--bundle-dir", type=Path, required=True)
     verify.add_argument("--signature-bundle", type=Path)
@@ -3417,6 +3694,29 @@ def main(argv: list[str] | None = None) -> int:
             cosign=args.cosign,
         )
         print(f"assembled release bundle in {args.output_dir}")
+    elif args.command == "freeze-candidate-matrix-report":
+        frozen_report = freeze_candidate_matrix_report(
+            output_dir=args.output_dir.resolve(),
+            candidate_ref=args.candidate_ref,
+            candidate_commit=args.candidate_commit,
+            run_id=args.run_id,
+        )
+        print(
+            "froze candidate matrix report "
+            f"sha256:{frozen_report.sha256} in {frozen_report.path}"
+        )
+    elif args.command == "freeze-promotion-report":
+        frozen_report = freeze_promotion_report(
+            input_path=args.input.resolve(),
+            output_dir=args.output_dir.resolve(),
+            report_type=args.report_type,
+            candidate_ref=args.candidate_ref,
+            candidate_commit=args.candidate_commit,
+        )
+        print(
+            "froze promotion report "
+            f"sha256:{frozen_report.sha256} in {frozen_report.path}"
+        )
     else:
         verify_release_bundle(
             bundle_dir=args.bundle_dir.resolve(),
