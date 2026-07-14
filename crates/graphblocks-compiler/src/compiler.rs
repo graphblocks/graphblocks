@@ -3015,6 +3015,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         .and_then(|spec| spec.get("edges"))
         .and_then(Value::as_array)
     {
+        let mut seen_edge_identities = BTreeSet::<(String, String)>::new();
         for (index, edge) in edges.iter().enumerate() {
             let Some(edge) = edge.as_object() else {
                 diagnostics.push(Diagnostic::error(
@@ -3034,6 +3035,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 ));
                 continue;
             };
+            if !seen_edge_identities.insert((source.to_owned(), target.to_owned())) {
+                diagnostics.push(Diagnostic::error(
+                    "GB1005",
+                    format!("duplicate edge identity '{source}' -> '{target}'"),
+                    format!("$.spec.edges[{index}]"),
+                ));
+            }
             for (key, endpoint) in [("from", source), ("to", target)] {
                 let Some((owner, endpoint_path)) = endpoint.split_once('.') else {
                     diagnostics.push(Diagnostic::error(

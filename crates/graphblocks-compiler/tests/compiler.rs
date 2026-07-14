@@ -598,6 +598,136 @@ fn compile_graph_reports_unknown_edge_endpoint() {
 }
 
 #[test]
+fn compile_graph_rejects_duplicate_edge_identity() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "duplicate-edge"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "schemas/Value@1"},
+                "outputs": {"value": "schemas/Value@1"}
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.value", "to": "$output.value"},
+                {"from": "$input.value", "to": "$output.value"}
+            ]
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB1005");
+    assert_eq!(
+        errors[0].message,
+        "duplicate edge identity '$input.value' -> '$output.value'"
+    );
+    assert_eq!(errors[0].path, "$.spec.edges[1]");
+}
+
+#[test]
+fn compile_graph_rejects_edge_duplicated_by_input_shorthand() {
+    let edge = json!({"from": "$input.message", "to": "sink.message"});
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "duplicate-shorthand-edge"},
+        "spec": {
+            "interface": {"inputs": {"message": "schemas/Message@1"}},
+            "nodes": {
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"message": "$input.message"}
+                }
+            },
+            "edges": [edge.clone()]
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        plan.normalized["spec"]["edges"],
+        json!([edge.clone(), edge])
+    );
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB1005");
+    assert_eq!(
+        errors[0].message,
+        "duplicate edge identity '$input.message' -> 'sink.message'"
+    );
+    assert_eq!(errors[0].path, "$.spec.edges[1]");
+}
+
+#[test]
+fn compile_graph_collapses_symmetric_input_and_output_shorthand() {
+    let edge = json!({"from": "source.message", "to": "sink.message"});
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "symmetric-shorthand-edge"},
+        "spec": {
+            "nodes": {
+                "source": {
+                    "block": "test.source@1",
+                    "outputs": {"message": "sink.message"}
+                },
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"message": "source.message"}
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    assert!(plan.ok());
+    assert_eq!(plan.normalized["spec"]["edges"], json!([edge]));
+}
+
+#[test]
+fn compile_graph_preserves_distinct_edge_identities() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "distinct-edges"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "first": "schemas/Value@1",
+                    "second": "schemas/Value@1"
+                },
+                "outputs": {
+                    "first": "schemas/Value@1",
+                    "second": "schemas/Value@1"
+                }
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.first", "to": "$output.first"},
+                {"from": "$input.first", "to": "$output.second"},
+                {"from": "$input.second", "to": "$output.second"}
+            ]
+        }
+    });
+
+    assert!(compile_graph_for_discovery(&graph).ok());
+}
+
+#[test]
 fn compile_graph_warns_for_dead_nodes_when_outputs_are_declared() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

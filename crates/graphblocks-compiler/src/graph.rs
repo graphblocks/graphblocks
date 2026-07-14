@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde_json::{Map, Value};
 
 use graphblocks_schema::resource_schema_errors;
@@ -74,6 +76,8 @@ pub fn normalize_graph(document: &Value) -> Value {
     };
 
     let mut edges = Vec::<(String, String)>::new();
+    let mut input_edges = Vec::<(String, String)>::new();
+    let mut output_edges = Vec::<(String, String)>::new();
     if let Some(Value::Array(existing_edges)) = spec.remove("edges") {
         for edge in existing_edges {
             let Value::Object(edge) = edge else {
@@ -106,7 +110,7 @@ pub fn normalize_graph(document: &Value) -> Value {
             while let Some((port_path, value)) = stack.pop() {
                 match value {
                     Value::String(source) => {
-                        edges.push((source, format!("{node_name}.{port_path}")));
+                        input_edges.push((source, format!("{node_name}.{port_path}")));
                     }
                     Value::Object(values) => {
                         for (key, nested) in values {
@@ -128,7 +132,7 @@ pub fn normalize_graph(document: &Value) -> Value {
             while let Some((port_path, value)) = stack.pop() {
                 match value {
                     Value::String(target) => {
-                        edges.push((format!("{node_name}.{port_path}"), target));
+                        output_edges.push((format!("{node_name}.{port_path}"), target));
                     }
                     Value::Object(values) => {
                         for (key, nested) in values {
@@ -153,6 +157,14 @@ pub fn normalize_graph(document: &Value) -> Value {
             node.insert("bindings".to_owned(), Value::Object(bindings));
         }
     }
+
+    let input_edge_identities = input_edges.iter().cloned().collect::<BTreeSet<_>>();
+    edges.extend(input_edges);
+    edges.extend(
+        output_edges
+            .into_iter()
+            .filter(|edge| !input_edge_identities.contains(edge)),
+    );
 
     let mut sorted_nodes = Map::new();
     for node_name in node_names {

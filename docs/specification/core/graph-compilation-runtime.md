@@ -55,7 +55,10 @@ profile explicitly defines a bounded cycle construct.
 Normalization and expansion MUST be deterministic. A physical plan MUST bind
 the normalized graph, resolved blocks and packages, target, policy inputs, and
 compiler version into canonical evidence. Identical inputs MUST produce the same
-plan hash.
+plan hash. Matching input-side and output-side shorthand declarations are two
+views of one connection and MUST normalize to one edge. Explicit edges remain
+independent declarations; an explicit edge matching shorthand, or another
+explicit edge, MUST fail as a duplicate edge identity.
 
 ## Execution
 

@@ -209,6 +209,8 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
         spec["nodes"] = nodes
 
     edges: list[dict[str, str]] = []
+    input_edges: list[dict[str, str]] = []
+    output_edges: list[dict[str, str]] = []
     existing_edges = spec.get("edges", [])
     if isinstance(existing_edges, list):
         for edge in existing_edges:
@@ -225,7 +227,9 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
             while stack:
                 port_path, value = stack.pop()
                 if isinstance(value, str):
-                    edges.append({"from": value, "to": f"{node_name}.{port_path}"})
+                    input_edges.append(
+                        {"from": value, "to": f"{node_name}.{port_path}"}
+                    )
                 elif isinstance(value, dict):
                     for key, nested in value.items():
                         stack.append((f"{port_path}.{key}", nested))
@@ -238,7 +242,9 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
             while stack:
                 port_path, value = stack.pop()
                 if isinstance(value, str):
-                    edges.append({"from": f"{node_name}.{port_path}", "to": value})
+                    output_edges.append(
+                        {"from": f"{node_name}.{port_path}", "to": value}
+                    )
                 elif isinstance(value, dict):
                     for key, nested in value.items():
                         stack.append((f"{port_path}.{key}", nested))
@@ -249,6 +255,16 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
         if connection is not None and "bindings" not in node:
             node["bindings"] = {"default": connection}
 
+    input_edge_identities = {
+        (edge["from"], edge["to"])
+        for edge in input_edges
+    }
+    edges.extend(input_edges)
+    edges.extend(
+        edge
+        for edge in output_edges
+        if (edge["from"], edge["to"]) not in input_edge_identities
+    )
     spec["nodes"] = {name: nodes[name] for name in sorted(nodes)}
     spec["edges"] = sorted(edges, key=lambda item: (item["from"], item["to"]))
     return normalized

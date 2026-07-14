@@ -276,6 +276,32 @@ def test_compile_rejects_edge_duplicated_by_input_shorthand() -> None:
     ]
 
 
+def test_compile_collapses_symmetric_input_and_output_shorthand() -> None:
+    edge = {"from": "source.message", "to": "sink.message"}
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "symmetric-shorthand-edge"},
+        "spec": {
+            "nodes": {
+                "source": {
+                    "block": "test.source@1",
+                    "outputs": {"message": "sink.message"},
+                },
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"message": "source.message"},
+                },
+            },
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
+
+    assert plan.ok
+    assert plan.normalized["spec"]["edges"] == [edge]
+
+
 def test_normalize_graph_rejects_unknown_graph_versions() -> None:
     with pytest.raises(ValueError, match="GB0002"):
         normalize_graph(
