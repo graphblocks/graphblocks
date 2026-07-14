@@ -42,6 +42,7 @@ codes:
   - {code: GB1002, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge or condition references an unknown node.}
   - {code: GB1003, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A required block input has no producer.}
   - {code: GB1004, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: warning, meaning: A graph declares outputs but no edge writes to the graph output interface.}
+  - {code: GB1005, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Two normalized graph edges share the same source and target identity.}
   - {code: GB1006, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Connection shorthand is combined with explicit bindings.}
   - {code: GB1011, status: active, tier: stable, owner: compiler, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Retrying an effectful node lacks an idempotency key.}
   - {code: GB1013, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge target names an input port that does not exist.}

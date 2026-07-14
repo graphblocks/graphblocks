@@ -73,6 +73,33 @@ def test_compile_reports_oversized_schema_version_as_diagnostic() -> None:
     ]
 
 
+def test_compile_rejects_duplicate_edge_identity() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "duplicate-edge"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "schemas/Value@1"},
+                "outputs": {"value": "schemas/Value@1"},
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.value", "to": "$output.value"},
+                {"from": "$input.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1005",
+            "duplicate edge identity '$input.value' -> '$output.value'",
+            "$.spec.edges[1]",
+        )
+    ]
+
+
 def test_compile_discovery_mode_still_validates_known_builtin_blocks() -> None:
     graph = _unknown_block_graph()
     spec = graph["spec"]

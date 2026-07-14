@@ -1819,6 +1819,7 @@ def compile_graph(
     guard_dependencies: set[tuple[str, str]] = set()
 
     if isinstance(edges, list):
+        seen_edge_identities: set[tuple[str, str]] = set()
         for index, edge in enumerate(edges):
             if not isinstance(edge, dict):
                 diagnostics.append(Diagnostic("GB0010", "edge must be a mapping", f"$.spec.edges[{index}]"))
@@ -1828,6 +1829,16 @@ def compile_graph(
             if not isinstance(source, str) or not isinstance(target, str):
                 diagnostics.append(Diagnostic("GB0011", "edge.from and edge.to must be strings", f"$.spec.edges[{index}]"))
                 continue
+            edge_identity = (source, target)
+            if edge_identity in seen_edge_identities:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1005",
+                        f"duplicate edge identity {source!r} -> {target!r}",
+                        f"$.spec.edges[{index}]",
+                    )
+                )
+            seen_edge_identities.add(edge_identity)
             for key, endpoint in (("from", source), ("to", target)):
                 owner, separator, endpoint_path = endpoint.partition(".")
                 if (

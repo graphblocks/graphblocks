@@ -242,6 +242,40 @@ def test_node_inputs_are_normalized_to_edges() -> None:
     assert {"from": "lookup.value", "to": "render.context.current"} in normalized["spec"]["edges"]
 
 
+def test_compile_rejects_edge_duplicated_by_input_shorthand() -> None:
+    edge = {"from": "$input.message", "to": "render.message"}
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "duplicate-shorthand-edge"},
+        "spec": {
+            "interface": {"inputs": {"message": "graphblocks.ai/Text@1"}},
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "inputs": {"message": "$input.message"},
+                }
+            },
+            "edges": [edge],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
+
+    assert plan.normalized["spec"]["edges"] == [edge, edge]
+    assert [
+        (diagnostic.code, diagnostic.message, diagnostic.path)
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ] == [
+        (
+            "GB1005",
+            "duplicate edge identity '$input.message' -> 'render.message'",
+            "$.spec.edges[1]",
+        )
+    ]
+
+
 def test_normalize_graph_rejects_unknown_graph_versions() -> None:
     with pytest.raises(ValueError, match="GB0002"):
         normalize_graph(
