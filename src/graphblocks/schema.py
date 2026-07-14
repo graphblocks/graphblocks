@@ -498,8 +498,15 @@ def resource_schema_errors(
             pending.append((value, path, depth, True))
             pending.extend(
                 (child, (*path, key), depth + 1, False)
-                for key, child in value.items()
-                if isinstance(key, str) and not _has_unicode_surrogate(key)
+                for key, child in sorted(
+                    (
+                        (key, child)
+                        for key, child in value.items()
+                        if isinstance(key, str) and not _has_unicode_surrogate(key)
+                    ),
+                    key=lambda item: item[0],
+                    reverse=True,
+                )
             )
         elif isinstance(value, list):
             if id(value) in active_containers:

@@ -206,6 +206,39 @@ def test_resource_schema_errors_are_stable_across_mapping_order() -> None:
     )
 
 
+def test_excessive_depth_diagnostics_are_stable_across_mapping_order() -> None:
+    def deep_branch() -> object:
+        value: object = None
+        for _ in range(65):
+            value = {"next": value}
+        return value
+
+    left = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "stable-depth"},
+        "spec": {
+            "nodes": {},
+            "extensions": {"a": deep_branch(), "b": deep_branch()},
+        },
+    }
+    right = deepcopy(left)
+    right["spec"]["extensions"] = {
+        "b": deep_branch(),
+        "a": deep_branch(),
+    }
+
+    left_violations = resource_schema_errors(left, schema_root=ROOT / "schemas")
+    right_violations = resource_schema_errors(right, schema_root=ROOT / "schemas")
+
+    assert left_violations == right_violations
+    assert left_violations[0].keyword == "maxDepth"
+    assert left_violations[0].path.startswith("$.spec.extensions.a")
+    assert graphblocks.compile_graph(left).graph_hash == graphblocks.compile_graph(
+        right
+    ).graph_hash
+
+
 def test_invalid_authoritative_schema_fails_closed(tmp_path: Path) -> None:
     relative_path = RESOURCE_SCHEMA_PATHS[("graphblocks.ai/v1alpha3", "Graph")]
     schema_path = tmp_path / relative_path
