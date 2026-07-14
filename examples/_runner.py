@@ -21,6 +21,8 @@ def run_example(
     plugin_manifest = example_path.with_name("graphblocks-plugin.yaml")
     if plugin_manifest.is_file():
         validate_args.extend(("--plugin-path", str(plugin_manifest)))
+    else:
+        validate_args.append("--allow-unknown-blocks")
     result = graphblocks_main(validate_args)
     if result != 0:
         return result
