@@ -5930,10 +5930,11 @@ def _exercise_direct_file_analysis(
         }
         or generated_inputs != {"analysis": "analyze.result"}
         or bundle_inputs != {
-            "outputs": ["analyze.result"],
+            "outputs": "analyze.results",
             "evidence": "analyze.sourceRefs",
-            "artifacts": ["generateArtifact.artifact"],
+            "artifacts": "generateArtifact.artifacts",
         }
+        or bundle_node.get("outputs") != {"result": "$output.result"}
     ):
         raise RuntimeError("direct-file analysis and generated artifact dataflow does not match")
     if (

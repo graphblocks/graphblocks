@@ -34,10 +34,10 @@ spec:
     bundle:
       block: result.bundle@1
       inputs:
-        outputs:
-          - analyze.result
+        outputs: analyze.results
         evidence: analyze.sourceRefs
-        artifacts:
-          - generateArtifact.artifact
+        artifacts: generateArtifact.artifacts
+      outputs:
+        result: $output.result
       config:
         requireGeneratedArtifact: true
