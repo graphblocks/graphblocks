@@ -88,6 +88,34 @@ fn output_gate_resumes_pending_holdback_state() -> Result<(), OutputGateError> {
 }
 
 #[test]
+fn output_gate_handles_maximum_restored_sequences_without_overflow() -> Result<(), OutputGateError>
+{
+    let mut gate = OutputDeliveryGate::from_state(
+        "stream-max",
+        "response-max",
+        Vec::<GenerationChunk>::new(),
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+    )?;
+
+    assert!(gate.commit_accepted_output().is_empty());
+    assert_eq!(
+        gate.record_chunk(GenerationChunk::text(
+            "stream-max",
+            "response-max",
+            u64::MAX,
+            "duplicate",
+        )),
+        Err(OutputGateError::NonMonotonicSequence {
+            last_generated_sequence: u64::MAX,
+            attempted_sequence: u64::MAX,
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn sentence_flush_boundary_holds_incomplete_accepted_suffix() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
         OutputDeliveryPolicy::bounded_holdback(

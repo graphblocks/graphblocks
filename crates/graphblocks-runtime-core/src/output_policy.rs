@@ -1408,7 +1408,9 @@ impl OutputDeliveryGate {
             return Vec::new();
         }
 
-        let delivered_after = self.last_client_delivered_sequence + 1;
+        let Some(delivered_after) = self.last_client_delivered_sequence.checked_add(1) else {
+            return Vec::new();
+        };
         let accepted_through = self.flushable_accepted_sequence(flush_context);
         if delivered_after > accepted_through {
             return Vec::new();
@@ -1418,7 +1420,10 @@ impl OutputDeliveryGate {
         let mut sequence = delivered_after;
         while sequence <= accepted_through && self.pending.contains_key(&sequence) {
             ready_sequences.push(sequence);
-            sequence += 1;
+            let Some(next_sequence) = sequence.checked_add(1) else {
+                break;
+            };
+            sequence = next_sequence;
         }
         let mut deliverable = Vec::new();
         for sequence in ready_sequences {
@@ -1439,9 +1444,11 @@ impl OutputDeliveryGate {
 
         let mut flushable_sequence = self.last_client_delivered_sequence;
         let mut accumulated_text = String::new();
-        for sequence in
-            (self.last_client_delivered_sequence + 1)..=self.last_policy_accepted_sequence
-        {
+        let Some(first_pending_sequence) = self.last_client_delivered_sequence.checked_add(1)
+        else {
+            return flushable_sequence;
+        };
+        for sequence in first_pending_sequence..=self.last_policy_accepted_sequence {
             let Some(chunk) = self.pending.get(&sequence) else {
                 break;
             };
@@ -1500,7 +1507,11 @@ impl OutputDeliveryGate {
                 attempted_sequence: chunk.sequence,
             });
         }
-        if chunk.sequence != self.last_generated_sequence + 1 {
+        if self
+            .last_generated_sequence
+            .checked_add(1)
+            .is_none_or(|expected_sequence| chunk.sequence != expected_sequence)
+        {
             return Err(OutputGateError::NonContiguousSequence {
                 last_generated_sequence: self.last_generated_sequence,
                 attempted_sequence: chunk.sequence,
