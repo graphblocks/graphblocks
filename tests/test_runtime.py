@@ -249,7 +249,9 @@ def test_runtime_converts_checkpoint_serialization_errors_to_terminal_failure() 
     assert pool.available("model") == 1
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "wait"
-    assert "JSON serializable" in failed[0].payload["error"]
+    assert failed[0].payload["error"] == (
+        "async.await_callback@1 output must be valid strict JSON"
+    )
 
 
 def test_runtime_converts_mixed_output_key_errors_to_terminal_failure() -> None:
@@ -281,7 +283,9 @@ def test_runtime_converts_mixed_output_key_errors_to_terminal_failure() -> None:
     assert pool.available("model") == 1
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "produce"
-    assert "not supported" in failed[0].payload["error"]
+    assert failed[0].payload["error"] == (
+        "test.produce@1 output must be valid strict JSON"
+    )
 
 
 def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
