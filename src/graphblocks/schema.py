@@ -12,7 +12,12 @@ import re
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from .canonical import (
+    _has_unicode_surrogate,
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+)
 
 
 SCHEMA_MANIFEST_VERSION = 1
@@ -442,12 +447,26 @@ def resource_schema_errors(
                         message="resource object keys must be strings",
                     )
                 )
+            if any(
+                isinstance(key, str) and _has_unicode_surrogate(key)
+                for key in value
+            ):
+                json_domain_violations.append(
+                    ResourceSchemaViolation(
+                        code="GB0014",
+                        path=_json_path(path),
+                        keyword="unicodeScalar",
+                        message=(
+                            "resource object keys must contain only Unicode scalar values"
+                        ),
+                    )
+                )
             active_containers.add(id(value))
             pending.append((value, path, depth, True))
             pending.extend(
                 (child, (*path, key), depth + 1, False)
                 for key, child in value.items()
-                if isinstance(key, str)
+                if isinstance(key, str) and not _has_unicode_surrogate(key)
             )
         elif isinstance(value, list):
             if id(value) in active_containers:
@@ -475,6 +494,15 @@ def resource_schema_errors(
                     path=_json_path(path),
                     keyword="finiteNumber",
                     message="resource numbers must be finite",
+                )
+            )
+        elif isinstance(value, str) and _has_unicode_surrogate(value):
+            json_domain_violations.append(
+                ResourceSchemaViolation(
+                    code="GB0014",
+                    path=_json_path(path),
+                    keyword="unicodeScalar",
+                    message="resource strings must contain only Unicode scalar values",
                 )
             )
         elif not (

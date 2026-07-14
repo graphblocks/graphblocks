@@ -74,6 +74,9 @@ def test_typed_value_rejects_non_json_values_at_construction() -> None:
     with pytest.raises(ValueError, match="canonical JSON"):
         TypedValue.from_value({"schema": "schemas/Message@1", "value": object()})
 
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", "\ud800")
+
 
 def test_typed_value_rejects_python_only_json_like_values() -> None:
     with pytest.raises(ValueError, match="canonical JSON"):
@@ -100,6 +103,8 @@ def test_typed_value_rejects_recursive_values(container_kind: str) -> None:
     ("invalid_value", "expected_path", "expected_keyword"),
     [
         ({1: "not a JSON object key"}, "$.spec.extensions", "jsonObjectKey"),
+        ("\ud800", "$.spec.extensions", "unicodeScalar"),
+        ({"\udfff": "value"}, "$.spec.extensions", "unicodeScalar"),
         (math.nan, "$.spec.extensions", "finiteNumber"),
         (math.inf, "$.spec.extensions", "finiteNumber"),
         (-math.inf, "$.spec.extensions", "finiteNumber"),

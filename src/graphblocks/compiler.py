@@ -772,7 +772,14 @@ def compile_graph(
         violation
         for violation in resource_schema_errors(document)
         if violation.keyword
-        in {"finiteNumber", "jsonObjectKey", "jsonValue", "maxDepth", "recursive"}
+        in {
+            "finiteNumber",
+            "jsonObjectKey",
+            "jsonValue",
+            "maxDepth",
+            "recursive",
+            "unicodeScalar",
+        }
     )
     if domain_violations:
         invalid_resource_identity = {

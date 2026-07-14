@@ -112,6 +112,43 @@ def test_canonical_json_rejects_duplicate_object_keys() -> None:
         canonical_loads('{"policy":"deny","policy":"allow"}')
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '"\\ud800"',
+        '["valid", "\\udfff"]',
+        '{"\\ud800":"value"}',
+    ],
+)
+def test_canonical_json_load_rejects_unicode_surrogates(payload: str) -> None:
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        canonical_loads(payload)
+
+
+def test_canonical_json_load_accepts_a_valid_surrogate_pair() -> None:
+    value = canonical_loads('"\\ud83d\\ude00"')
+
+    assert value == "😀"
+    assert canonical_dumps(value) == '"😀"'
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "\ud800",
+        ["valid", "\udfff"],
+        {"\ud800": "value"},
+    ],
+)
+def test_canonical_json_dump_and_hash_reject_unicode_surrogates(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        canonical_dumps(value)
+    with pytest.raises(ValueError, match="Unicode scalar values"):
+        canonical_hash(value)
+
+
 @pytest.mark.parametrize("container_kind", ["mapping", "array"])
 def test_canonical_json_rejects_recursive_values(container_kind: str) -> None:
     if container_kind == "mapping":

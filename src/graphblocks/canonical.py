@@ -22,8 +22,12 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _has_unicode_surrogate(value: str) -> bool:
+    return any("\ud800" <= character <= "\udfff" for character in value)
+
+
 def canonical_loads(value: str | bytes | bytearray) -> Any:
-    return json.loads(
+    decoded = json.loads(
         value,
         parse_float=lambda token: (
             float(token)
@@ -34,6 +38,24 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
         parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
         object_pairs_hook=_reject_duplicate_keys,
     )
+    pending_values = [decoded]
+    while pending_values:
+        current_value = pending_values.pop()
+        if isinstance(current_value, str):
+            if _has_unicode_surrogate(current_value):
+                raise ValueError(
+                    "canonical JSON strings must contain only Unicode scalar values"
+                )
+        elif isinstance(current_value, dict):
+            for key, child_value in current_value.items():
+                if _has_unicode_surrogate(key):
+                    raise ValueError(
+                        "canonical JSON strings must contain only Unicode scalar values"
+                    )
+                pending_values.append(child_value)
+        elif isinstance(current_value, list):
+            pending_values.extend(current_value)
+    return decoded
 
 
 def canonical_dumps(value: Any) -> str:
@@ -54,6 +76,10 @@ def canonical_dumps(value: Any) -> str:
             for key, child_value in current_value.items():
                 if not isinstance(key, str):
                     raise TypeError("canonical JSON object keys must be strings")
+                if _has_unicode_surrogate(key):
+                    raise ValueError(
+                        "canonical JSON strings must contain only Unicode scalar values"
+                    )
                 occupied_strings.add(key)
                 pending_values.append((child_value, False))
         elif isinstance(current_value, list | tuple):
@@ -63,6 +89,10 @@ def canonical_dumps(value: Any) -> str:
             pending_values.append((current_value, True))
             pending_values.extend((item, False) for item in current_value)
         elif isinstance(current_value, str):
+            if _has_unicode_surrogate(current_value):
+                raise ValueError(
+                    "canonical JSON strings must contain only Unicode scalar values"
+                )
             occupied_strings.add(current_value)
         elif isinstance(current_value, Decimal):
             has_decimal = True
