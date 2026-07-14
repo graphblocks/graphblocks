@@ -60,6 +60,7 @@ def _trust_test_source(
     module._current_git_tree = lambda: TREE
     module._assert_clean_source_checkout = lambda: None
     module._observe_cosign_identity = lambda _executable="cosign": dict(COSIGN_IDENTITY)
+    module._verify_promotion_report_signature = lambda **_arguments: None
     module._promotion_source_diff = lambda **_arguments: {
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
@@ -369,8 +370,116 @@ def _inputs(
     return inputs
 
 
-def _promotion_payload(module: ModuleType) -> dict[str, object]:
-    candidate_manifest_digest = "sha256:" + "a" * 64
+def _promotion_payload_and_files(
+    module: ModuleType,
+) -> tuple[dict[str, object], dict[str, bytes]]:
+    candidate_workflow_identity = (
+        f"https://github.com/{module.SIGSTORE_REPOSITORY}/"
+        f"{module.SIGSTORE_WORKFLOW}@{RELEASE_REF}"
+    )
+    reports: dict[str, dict[str, object]] = {
+        "candidate-manifest": {
+            "formatVersion": 1,
+            "releaseRef": RELEASE_REF,
+            "releaseVersion": RELEASE_VERSION,
+            "gitCommit": CANDIDATE_COMMIT,
+        }
+    }
+    report_files: dict[str, bytes] = {}
+    candidate_manifest_bytes = module._canonical_json_bytes(
+        reports["candidate-manifest"]
+    )
+    candidate_manifest_digest = "sha256:" + module._sha256_bytes(
+        candidate_manifest_bytes
+    )
+    matrix_runs = [
+        {
+            "runId": f"matrix-run-{index}",
+            "status": "success",
+            "complete": True,
+            "candidateRef": RELEASE_REF,
+            "candidateCommit": CANDIDATE_COMMIT,
+            "candidateManifestDigest": candidate_manifest_digest,
+            "supportedMatrix": [
+                {"os": os_name, "python": python_version}
+                for os_name, python_version in module.SUPPORTED_PLATFORM_MATRIX
+            ],
+        }
+        for index in range(1, 4)
+    ]
+    for run in matrix_runs:
+        reports[str(run["runId"])] = dict(run)
+    applications = [
+        {
+            "applicationId": "application-one",
+            "nontrivial": True,
+            "startedAt": "2026-06-01T00:00:00Z",
+            "endedAt": "2026-06-15T00:00:00Z",
+        },
+        {
+            "applicationId": "application-two",
+            "nontrivial": True,
+            "startedAt": "2026-06-01T00:00:00Z",
+            "endedAt": "2026-06-15T00:00:00Z",
+        },
+    ]
+    for application in applications:
+        reports[str(application["applicationId"])] = dict(application)
+    for review_name, reviewer in (
+        ("api", "reviewer-api@example.test"),
+        ("security", "reviewer-security@example.test"),
+    ):
+        reports[f"{review_name}-review"] = {
+            "reviewerIdentity": reviewer,
+            "approved": True,
+            "candidateRef": RELEASE_REF,
+            "candidateCommit": CANDIDATE_COMMIT,
+        }
+    reports["protected-final-ref"] = {
+        "releaseRef": "refs/tags/v1.0.0",
+        "protected": True,
+    }
+    rehearsal_report = {
+        "environment": "staging",
+        "authorized": True,
+        "realExternalActions": True,
+        "authorizedBy": "release-operator@example.test",
+        "operations": [
+            {"operation": operation, "status": "success"}
+            for operation in ("publish", "rollback", "yank", "restore")
+        ],
+    }
+    reports["staged-rehearsal"] = rehearsal_report
+    reports["stable-scope"] = {
+        "unresolvedCritical": 0,
+        "unresolvedHigh": 0,
+        "unexplainedFlakes": 0,
+    }
+
+    report_digests: dict[str, str] = {}
+    report_artifacts: list[dict[str, str]] = []
+    for report_id, report in sorted(reports.items()):
+        report_path = f"promotion-reports/{report_id}.json"
+        signature_path = f"promotion-reports/{report_id}.sigstore.json"
+        report_bytes = module._canonical_json_bytes(report)
+        report_sha256 = module._sha256_bytes(report_bytes)
+        signature_bytes = module._canonical_json_bytes(
+            {"signedReportSha256": report_sha256, "testFixture": True}
+        )
+        report_files[report_path] = report_bytes
+        report_files[signature_path] = signature_bytes
+        report_digests[report_id] = f"sha256:{report_sha256}"
+        report_artifacts.append(
+            {
+                "path": report_path,
+                "sha256": report_sha256,
+                "signaturePath": signature_path,
+                "signatureSha256": module._sha256_bytes(signature_bytes),
+                "certificateIdentity": candidate_workflow_identity,
+                "certificateOidcIssuer": module.SIGSTORE_ISSUER,
+            }
+        )
+
     payload: dict[str, object] = {
         "formatVersion": 1,
         "release": {
@@ -384,7 +493,7 @@ def _promotion_payload(module: ModuleType) -> dict[str, object]:
         "candidate": {
             "releaseRef": RELEASE_REF,
             "gitCommit": CANDIDATE_COMMIT,
-            "manifestDigest": candidate_manifest_digest,
+            "manifestDigest": report_digests["candidate-manifest"],
             "sourceDiff": {
                 "digest": PROMOTION_SOURCE_DIFF["digest"],
                 "changes": [
@@ -393,78 +502,78 @@ def _promotion_payload(module: ModuleType) -> dict[str, object]:
             },
         },
         "supportedMatrixRuns": [
-            {
-                "runId": f"matrix-run-{index}",
-                "status": "success",
-                "complete": True,
-                "candidateRef": RELEASE_REF,
-                "candidateCommit": CANDIDATE_COMMIT,
-                "candidateManifestDigest": candidate_manifest_digest,
-                "supportedMatrix": [
-                    {"os": os_name, "python": python_version}
-                    for os_name, python_version in module.SUPPORTED_PLATFORM_MATRIX
-                ],
-                "attestationDigest": "sha256:" + character * 64,
-            }
-            for index, character in enumerate(("b", "c", "d"), start=1)
+            {**run, "attestationDigest": report_digests[str(run["runId"])]}
+            for run in matrix_runs
         ],
         "soak": {
             "startedAt": "2026-06-01T00:00:00Z",
             "endedAt": "2026-06-15T00:00:00Z",
             "applications": [
                 {
-                    "applicationId": "application-one",
+                    "applicationId": application["applicationId"],
                     "nontrivial": True,
-                    "reportDigest": "sha256:" + "e" * 64,
-                },
-                {
-                    "applicationId": "application-two",
-                    "nontrivial": True,
-                    "reportDigest": "sha256:" + "f" * 64,
-                },
+                    "reportDigest": report_digests[str(application["applicationId"])],
+                }
+                for application in applications
             ],
         },
         "reviews": {
             "api": {
                 "reviewerIdentity": "reviewer-api@example.test",
                 "approved": True,
-                "reportDigest": "sha256:" + "1" * 64,
+                "reportDigest": report_digests["api-review"],
             },
             "security": {
                 "reviewerIdentity": "reviewer-security@example.test",
                 "approved": True,
-                "reportDigest": "sha256:" + "2" * 64,
+                "reportDigest": report_digests["security-review"],
             },
         },
         "stableScope": {
             "unresolvedCritical": 0,
             "unresolvedHigh": 0,
             "unexplainedFlakes": 0,
+            "reportDigest": report_digests["stable-scope"],
         },
         "protectedFinalRef": {
             "releaseRef": "refs/tags/v1.0.0",
             "protected": True,
-            "reportDigest": "sha256:" + "3" * 64,
+            "reportDigest": report_digests["protected-final-ref"],
         },
         "stagedRehearsal": {
             "environment": "staging",
             "authorized": True,
             "realExternalActions": True,
             "authorizedBy": "release-operator@example.test",
-            "reportDigest": "sha256:" + "4" * 64,
-            "operations": [
-                {"operation": operation, "status": "success"}
-                for operation in ("publish", "rollback", "yank", "restore")
-            ],
+            "reportDigest": report_digests["staged-rehearsal"],
+            "operations": rehearsal_report["operations"],
         },
+        "reportArtifacts": report_artifacts,
     }
     payload["contentDigest"] = canonical_hash(payload)
-    return payload
+    return payload, report_files
+
+
+def _promotion_payload(module: ModuleType) -> dict[str, object]:
+    return _promotion_payload_and_files(module)[0]
+
+
+def _write_promotion_payload(
+    module: ModuleType,
+    path: Path,
+    payload: dict[str, object],
+) -> Path:
+    _baseline, report_files = _promotion_payload_and_files(module)
+    for relative_path, data in report_files.items():
+        target = path.parent / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    path.write_bytes(module._canonical_json_bytes(payload))
+    return path
 
 
 def _write_promotion_evidence(module: ModuleType, path: Path) -> Path:
-    path.write_bytes(module._canonical_json_bytes(_promotion_payload(module)))
-    return path
+    return _write_promotion_payload(module, path, _promotion_payload(module))
 
 
 def _assemble(module: ModuleType, tmp_path: Path) -> Path:
@@ -798,9 +907,24 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     assert provenance["predicate"]["buildDefinition"]["internalParameters"][
         "promotionEvidence"
     ] == promotion_binding
-    assert module.verify_release_bundle(bundle_dir=bundle)["readiness"] == (
-        "promotion-authorized-signature-required"
+    with pytest.raises(module.ReleaseBundleError, match="requires its Sigstore signature"):
+        module.verify_release_bundle(bundle_dir=bundle)
+    signature = bundle / module.SIGNATURE_BUNDLE_NAME
+    signature.write_text("{}", encoding="utf-8")
+    signature_verifications: list[dict[str, object]] = []
+    module._verify_sigstore_signature = lambda **arguments: signature_verifications.append(
+        arguments
     )
+    certificate_identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@"
+        "refs/tags/v1.0.0"
+    )
+    assert module.verify_release_bundle(
+        bundle_dir=bundle,
+        signature_bundle=signature,
+        certificate_identity=certificate_identity,
+    )["readiness"] == "promotion-authorized-signature-required"
+    assert len(signature_verifications) == 1
     self_declared = dict(manifest)
     self_declared["readiness"] = "stable"
     (bundle / "release-manifest.json").write_bytes(
@@ -815,7 +939,7 @@ def test_final_release_binds_promotion_evidence_and_requires_signature(
     (
         ("final-source", "exact final ref and version"),
         ("source-diff", "does not match the candidate and final commits"),
-        ("candidate-manifest", "matrix run is incomplete"),
+        ("candidate-manifest", "does not resolve to a signed report"),
         ("short-soak", "at least 14 days"),
         ("reviewer", "reviews must be independent"),
         ("noncanonical-digest", "lowercase SHA-256 digest"),
@@ -855,7 +979,7 @@ def test_final_release_rejects_promotion_evidence_substitution(
     payload.pop("contentDigest")
     payload["contentDigest"] = canonical_hash(payload)
     evidence = tmp_path / f"promotion-{substitution}.json"
-    evidence.write_bytes(module._canonical_json_bytes(payload))
+    _write_promotion_payload(module, evidence, payload)
     snapshot = module._snapshot_regular_file(evidence, owner="test promotion evidence")
 
     with pytest.raises(module.ReleaseBundleError, match=message):
@@ -889,6 +1013,167 @@ def test_final_release_verification_rejects_promotion_evidence_tampering(
 
     with pytest.raises(module.ReleaseBundleError, match="does not match manifest"):
         module.verify_release_bundle(bundle_dir=bundle)
+
+
+def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path, stable_version="1.0.0")
+    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    verified: list[str] = []
+
+    def record_verification(**arguments: object) -> None:
+        verified.append(arguments["report_snapshot"].path.name)
+
+    module._verify_promotion_report_signature = record_verification
+    module.assemble_release_bundle(
+        platform_inputs_dir=inputs,
+        output_dir=tmp_path / "bundle",
+        git_commit=COMMIT,
+        release_ref="refs/tags/v1.0.0",
+        builder_id=BUILDER_ID,
+        invocation_id=INVOCATION_ID,
+        promotion_evidence=promotion,
+    )
+
+    assert len(verified) == 22
+    assert len(set(verified)) == 11
+
+    missing_promotion = _write_promotion_evidence(
+        module, tmp_path / "missing" / "promotion.json"
+    )
+    first_report = next((missing_promotion.parent / "promotion-reports").glob("*.json"))
+    if first_report.name.endswith(".sigstore.json"):
+        first_report = next(
+            path
+            for path in (missing_promotion.parent / "promotion-reports").glob("*.json")
+            if not path.name.endswith(".sigstore.json")
+        )
+    first_report.unlink()
+    with pytest.raises(module.ReleaseBundleError, match="missing"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "missing-bundle",
+            git_commit=COMMIT,
+            release_ref="refs/tags/v1.0.0",
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+            promotion_evidence=missing_promotion,
+        )
+
+
+def test_promotion_report_signature_rejects_a_self_declared_signer(tmp_path: Path) -> None:
+    module = _load_module()
+    report_path = tmp_path / "report.json"
+    signature_path = tmp_path / "report.sigstore.json"
+    report_path.write_bytes(module._canonical_json_bytes({"approved": True}))
+    signature_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(module.ReleaseBundleError, match="trusted attestor"):
+        module._verify_promotion_report_signature(
+            report_snapshot=module._snapshot_regular_file(
+                report_path, owner="test promotion report"
+            ),
+            signature_snapshot=module._snapshot_regular_file(
+                signature_path, owner="test promotion signature"
+            ),
+            certificate_identity="https://github.com/attacker/workflow@refs/heads/main",
+            certificate_oidc_issuer=module.SIGSTORE_ISSUER,
+            expected_certificate_identity=(
+                "https://github.com/graphblocks/graphblocks/.github/workflows/"
+                "ci.yml@refs/tags/v1.0.0-rc.1"
+            ),
+            cosign="cosign",
+        )
+
+
+def test_final_release_rejects_future_and_out_of_period_soak_evidence(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    _trust_test_source(module, stable_version="1.0.0")
+    future = _promotion_payload(module)
+    future["soak"]["endedAt"] = "2099-06-15T00:00:00Z"
+    future.pop("contentDigest")
+    future["contentDigest"] = canonical_hash(future)
+    future_path = _write_promotion_payload(
+        module, tmp_path / "future" / "promotion.json", future
+    )
+    with pytest.raises(module.ReleaseBundleError, match="must not end in the future"):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(future_path, owner="future promotion"),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+    outside, report_files = _promotion_payload_and_files(module)
+    report_path = "promotion-reports/application-one.json"
+    report = json.loads(report_files[report_path])
+    report["startedAt"] = "2026-05-31T23:59:59Z"
+    report_bytes = module._canonical_json_bytes(report)
+    report_sha256 = module._sha256_bytes(report_bytes)
+    record = next(
+        item for item in outside["reportArtifacts"] if item["path"] == report_path
+    )
+    old_digest = "sha256:" + record["sha256"]
+    record["sha256"] = report_sha256
+    application = next(
+        item
+        for item in outside["soak"]["applications"]
+        if item["reportDigest"] == old_digest
+    )
+    application["reportDigest"] = "sha256:" + report_sha256
+    outside.pop("contentDigest")
+    outside["contentDigest"] = canonical_hash(outside)
+    outside_path = _write_promotion_payload(
+        module, tmp_path / "outside" / "promotion.json", outside
+    )
+    (outside_path.parent / report_path).write_bytes(report_bytes)
+    with pytest.raises(module.ReleaseBundleError, match="does not cover the soak period"):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(outside_path, owner="outside promotion"),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+
+def test_final_bundle_standalone_verification_rechecks_source_diff(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path, stable_version="1.0.0")
+    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+    bundle = tmp_path / "bundle"
+    module.assemble_release_bundle(
+        platform_inputs_dir=inputs,
+        output_dir=bundle,
+        git_commit=COMMIT,
+        release_ref="refs/tags/v1.0.0",
+        builder_id=BUILDER_ID,
+        invocation_id=INVOCATION_ID,
+        promotion_evidence=promotion,
+    )
+    calls = 0
+
+    def observe_source_diff(**_arguments: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "digest": PROMOTION_SOURCE_DIFF["digest"],
+            "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
+        }
+
+    module._promotion_source_diff = observe_source_diff
+    with pytest.raises(module.ReleaseBundleError, match="requires its Sigstore signature"):
+        module.verify_release_bundle(bundle_dir=bundle)
+    assert calls == 1
 
 
 def test_release_artifact_set_requires_pep625_sdists_and_exact_seven_file_union() -> None:
@@ -1307,6 +1592,57 @@ def test_release_bundle_rejects_sbom_without_dependency_graph(tmp_path: Path) ->
             builder_id=BUILDER_ID,
             invocation_id=INVOCATION_ID,
         )
+
+
+@pytest.mark.parametrize("mutation", ("missing-runtime-row", "extra-testing-edge"))
+def test_release_bundle_requires_exact_first_party_sbom_dependency_rows(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    sbom_path = next(inputs.iterdir()) / "platform-evidence" / "sbom.cdx.json"
+    sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+    if mutation == "missing-runtime-row":
+        sbom["dependencies"] = [
+            row
+            for row in sbom["dependencies"]
+            if row["ref"] != "pkg:pypi/graphblocks-runtime@0.1.0"
+        ]
+        message = "exact graphblocks-runtime runtime edges"
+    else:
+        testing_row = next(
+            row
+            for row in sbom["dependencies"]
+            if row["ref"].startswith("pkg:pypi/graphblocks-testing@")
+        )
+        testing_row["dependsOn"].append("pkg:pypi/PyYAML@6.0.2")
+        message = "exact graphblocks-testing runtime edges"
+    sbom_path.write_text(json.dumps(sbom, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(module.ReleaseBundleError, match=message):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+
+def test_first_party_dependency_manifest_identity_failure_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.tomllib,
+        "loads",
+        lambda _source: {"project": {"name": "unexpected", "dependencies": []}},
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match="runtime dependencies are invalid"):
+        module._first_party_runtime_dependencies()
 
 
 def test_release_bundle_rejects_sbom_missing_installed_distribution(

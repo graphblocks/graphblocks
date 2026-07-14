@@ -181,10 +181,12 @@ declared commit. The bundle records both that commit and its Git tree id.
 
 The SBOM carries a dedicated component for every published wheel filename and
 SHA-256 digest, in addition to its distribution/version identity. Platform
-validation requires all direct runtime dependencies and their CycloneDX
-relationships, records the exact installed runtime distribution closure, and
-requires every member of that closure in the SBOM. Aggregation preserves the
-complete dependency graph.
+validation requires exactly one installed-version component and one exact
+CycloneDX dependency row for each of `graphblocks`, `graphblocks-runtime`, and
+`graphblocks-testing`; each row's edges must equal that package's declared
+direct runtime dependencies. It also records the exact installed runtime
+distribution closure and requires every member of that closure in the SBOM.
+Aggregation preserves the complete dependency graph.
 Provenance
 binds the Git commit, the exact artifact union, all platform TCK/acceptance and
 identity digests, the aggregate SBOM, the four build environments, and pinned
@@ -219,8 +221,9 @@ JSON file. The record must use canonical JSON and carry a self-verifying
   including a lowercase SHA-256 digest and a sorted closed change list;
 - at least three distinct, successful, complete attestations covering the
   exact supported operating-system/Python matrix and the same candidate;
-- a soak of at least 14 days in at least two distinct applications explicitly
-  attested as non-trivial;
+- a completed, non-future soak of at least 14 days in at least two distinct
+  applications explicitly attested as non-trivial, each of whose signed report
+  intervals covers the declared soak period;
 - approved API and security reports from distinct reviewer identities;
 - zero unresolved critical/high stable-scope defects and zero unexplained
   flakes;
@@ -228,9 +231,19 @@ JSON file. The record must use canonical JSON and carry a self-verifying
 - an authorized real staging rehearsal in which publish, rollback, yank, and
   restore each succeeded.
 
-Every candidate, run, application, review, ref-protection, and rehearsal report
-is referenced by a canonical lowercase SHA-256 digest. The assembler validates
-the complete record against the clean, full-history final checkout. Only
+Every candidate, run, application, review, stable-scope defect audit,
+ref-protection, and rehearsal report is referenced by a canonical lowercase
+SHA-256 digest and an adjacent Sigstore bundle. The record gives the exact safe
+relative paths, file hashes, signature hashes, certificate identities, and
+issuer. The assembler resolves regular non-symlink files, rejects unreferenced
+or substituted reports, verifies every signature, and validates each report's
+content against the corresponding promotion claim. All report signatures use
+the exact existing `graphblocks/graphblocks` CI workflow identity at the
+candidate tag; identities selected by the evidence are never accepted as
+signature authorities. The signed API/security payloads bind the distinct
+reviewer principals reported by that trusted workflow, and the signed rehearsal
+payload binds its authorizer. The assembler validates the complete record
+against the clean, full-history final checkout. Only
 release documentation, the two Python package manifests, the public version
 constant, and the two version-bearing testing compatibility snapshots may
 differ from the candidate. Non-documentation files must be exact
@@ -244,25 +257,28 @@ checked-in record is itself part of that final tree. The release manifest binds
 the final commit and tree, copies the validated record to
 `promotion-evidence.json`, lists its exact file record and content digest, and
 binds the same record in provenance. Standalone verification repeats the
-record's closed structural and semantic checks and includes it in the exact
-file closure; clean-checkout assembly is the step that recomputes the Git
-ancestry and source diff. Internal consistency checks reject partial candidate,
-source-diff, or matrix-run substitution, and the final Sigstore signature
-freezes the validated result.
+record's closed structural and semantic checks, re-resolves and verifies every
+retained signed report, and recomputes the candidate ancestry and exact Git
+source diff from a full-history checkout. It never disables the source-diff
+check merely because the bundle was already assembled. Internal consistency
+checks reject partial candidate, source-diff, report, or matrix-run
+substitution, and the final Sigstore signature freezes the validated result.
 
-The compact promotion record binds operational reports by digest rather than
-embedding them. The validator can prove that the record is complete,
-internally consistent, and signed with the release, but it cannot independently
-prove the truth of an external review or staging service. The authorized
-release operator must verify those reports before admitting the record; their
-distinct digests make that decision auditable without copying sensitive report
-contents into the public bundle.
+The promotion record binds operational reports by digest and path rather than
+embedding them in one JSON object. Assembly copies the canonical report files
+and their Sigstore bundles into `promotion-reports/`, lists every file in the
+manifest metadata closure, and retains them for independent verification.
+Promotion evidence therefore must not contain secrets or sensitive report
+contents that cannot be published with the release bundle.
 
 Passing promotion evidence does not make an unsigned artifact stable. Its
 manifest readiness is `promotion-authorized-signature-required`, and the only
 remaining external gate is the pinned keyless signing identity. A successful
-signature-aware bundle verification is required for a final stable claim; a
-manifest that self-declares `stable` is rejected. RC manifests remain
+signature-aware public bundle verification is required for a final stable
+claim; the assembler alone may invoke the explicit private structural check
+before the final manifest signature exists. Public verification of an unsigned
+final bundle fails closed, and a manifest that self-declares `stable` is
+rejected. RC manifests remain
 `candidate` with all promotion gates outstanding.
 
 Only the canonical `graphblocks/graphblocks` CI workflow on `v1.0.0` or an
@@ -284,11 +300,12 @@ the canonical repository, workflow, and ref identity before uploading the
 signed bundle.
 
 The unsigned assembly job observes and parses `cosign version`, fails unless it
-reports the pinned 3.0.6 release, and records the exact output in the manifest
-and provenance. The signing boundary installs that same release through the
-commit-pinned installer. Cosign is not required for unsigned standalone bundle
-inspection; project-level signature verification still requires the executing
-binary's observed identity to equal the signed identity.
+reports the pinned 3.0.6 release, uses that binary to verify every promotion
+report signature, and records the exact output in the manifest and provenance.
+The signing boundary installs that same release through the commit-pinned
+installer. Public verification of a final bundle requires Cosign both for the
+retained promotion reports and for the final in-bundle manifest signature; the
+executing binary's observed identity must equal the recorded identity.
 
 Branch pushes and pull requests exercise the validator tests and
 four-combination installed-artifact matrix without receiving an OIDC signing

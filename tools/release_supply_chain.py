@@ -86,6 +86,11 @@ PINNED_RELEASE_TOOLS = {
     "cosign": PINNED_COSIGN_VERSION,
     "rustc": PINNED_RUSTC_VERSION,
 }
+FIRST_PARTY_RUNTIME_DEPENDENCIES = {
+    "graphblocks": frozenset({"jsonschema", "packaging", "pyyaml"}),
+    "graphblocks-runtime": frozenset(),
+    "graphblocks-testing": frozenset({"graphblocks"}),
+}
 
 
 class ReleaseBundleError(RuntimeError):
@@ -565,6 +570,180 @@ def _promotion_source_diff(
     return observed
 
 
+def _promotion_report_path(root: Path, value: object, *, owner: str) -> Path:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise ReleaseBundleError(f"{owner} has an invalid path")
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or relative.as_posix() != value
+        or not relative.parts
+        or relative.parts[0] != "promotion-reports"
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ReleaseBundleError(f"{owner} has an invalid path")
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        try:
+            mode = current.lstat().st_mode
+        except OSError as error:
+            raise ReleaseBundleError(f"{owner} path is missing") from error
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ReleaseBundleError(f"{owner} path has an unsafe parent")
+    return root.joinpath(*relative.parts)
+
+
+def _verify_promotion_report_signature(
+    *,
+    report_snapshot: FileSnapshot,
+    signature_snapshot: FileSnapshot,
+    certificate_identity: str,
+    certificate_oidc_issuer: str,
+    expected_certificate_identity: str,
+    cosign: str | Sequence[str],
+) -> None:
+    if certificate_identity != expected_certificate_identity:
+        raise ReleaseBundleError(
+            "promotion report signature identity does not match its trusted attestor"
+        )
+    if certificate_oidc_issuer != SIGSTORE_ISSUER:
+        raise ReleaseBundleError(
+            "promotion report signature issuer is not GitHub Actions"
+        )
+    if _observe_cosign_identity(cosign).get("version") != PINNED_COSIGN_VERSION:
+        raise ReleaseBundleError("promotion report signature verifier is not pinned")
+    with TemporaryDirectory(prefix="graphblocks-promotion-verify-") as temporary_root:
+        frozen_report = Path(temporary_root) / "report.json"
+        frozen_signature = Path(temporary_root) / "report.sigstore.json"
+        frozen_report.write_bytes(report_snapshot.data)
+        frozen_signature.write_bytes(signature_snapshot.data)
+        try:
+            subprocess.run(
+                [
+                    *_tool_command(cosign),
+                    "verify-blob",
+                    str(frozen_report),
+                    "--bundle",
+                    str(frozen_signature),
+                    "--certificate-identity",
+                    certificate_identity,
+                    "--certificate-oidc-issuer",
+                    certificate_oidc_issuer,
+                ],
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise ReleaseBundleError(
+                "promotion report signature verification failed"
+            ) from error
+
+
+def _promotion_report_artifacts(
+    value: object,
+    *,
+    root: Path,
+    candidate_ref: str,
+    cosign: str | Sequence[str],
+) -> tuple[
+    dict[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]],
+    tuple[FileSnapshot, ...],
+]:
+    if not isinstance(value, list) or not value:
+        raise ReleaseBundleError("stable promotion evidence has no signed report artifacts")
+    reports: dict[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]] = {}
+    snapshots: list[FileSnapshot] = []
+    observed_paths: set[str] = set()
+    for index, raw_record in enumerate(value):
+        owner = f"stable promotion report artifact {index}"
+        record = _require_exact_keys(
+            raw_record,
+            {
+                "path",
+                "sha256",
+                "signaturePath",
+                "signatureSha256",
+                "certificateIdentity",
+                "certificateOidcIssuer",
+            },
+            owner=owner,
+        )
+        sha256 = record.get("sha256")
+        signature_sha256 = record.get("signatureSha256")
+        if (
+            not isinstance(sha256, str)
+            or CANONICAL_SHA256.fullmatch(sha256) is None
+            or not isinstance(signature_sha256, str)
+            or CANONICAL_SHA256.fullmatch(signature_sha256) is None
+        ):
+            raise ReleaseBundleError(f"{owner} has an invalid digest")
+        digest = f"sha256:{sha256}"
+        if digest in reports:
+            raise ReleaseBundleError("stable promotion report digests must be unique")
+        report_path = _promotion_report_path(root, record.get("path"), owner=owner)
+        signature_path = _promotion_report_path(
+            root,
+            record.get("signaturePath"),
+            owner=f"{owner} signature",
+        )
+        relative_paths = {
+            report_path.relative_to(root).as_posix(),
+            signature_path.relative_to(root).as_posix(),
+        }
+        if len(relative_paths) != 2 or observed_paths & relative_paths:
+            raise ReleaseBundleError("stable promotion report artifact paths must be unique")
+        observed_paths.update(relative_paths)
+        report_snapshot = _snapshot_regular_file(report_path, owner=owner)
+        signature_snapshot = _snapshot_regular_file(
+            signature_path, owner=f"{owner} signature"
+        )
+        if (
+            report_snapshot.sha256 != sha256
+            or signature_snapshot.sha256 != signature_sha256
+        ):
+            raise ReleaseBundleError(
+                "stable promotion report artifact digest does not match its file"
+            )
+        report_payload = _json_from_snapshot(report_snapshot, owner=owner)
+        if report_snapshot.data != _canonical_json_bytes(report_payload):
+            raise ReleaseBundleError(
+                "stable promotion report artifacts must use canonical JSON formatting"
+            )
+        certificate_identity = _require_nonempty_string(
+            record.get("certificateIdentity"), owner=f"{owner} certificate identity"
+        )
+        certificate_oidc_issuer = _require_nonempty_string(
+            record.get("certificateOidcIssuer"), owner=f"{owner} certificate issuer"
+        )
+        candidate_workflow_identity = (
+            f"https://github.com/{SIGSTORE_REPOSITORY}/{SIGSTORE_WORKFLOW}@"
+            f"{candidate_ref}"
+        )
+        _verify_promotion_report_signature(
+            report_snapshot=report_snapshot,
+            signature_snapshot=signature_snapshot,
+            certificate_identity=certificate_identity,
+            certificate_oidc_issuer=certificate_oidc_issuer,
+            expected_certificate_identity=candidate_workflow_identity,
+            cosign=cosign,
+        )
+        reports[digest] = (report_payload, report_snapshot, signature_snapshot)
+        snapshots.extend((report_snapshot, signature_snapshot))
+    return reports, tuple(snapshots)
+
+
+def _promotion_report(
+    reports: Mapping[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]],
+    digest: str,
+    *,
+    owner: str,
+) -> dict[str, object]:
+    artifact = reports.get(digest)
+    if artifact is None:
+        raise ReleaseBundleError(f"{owner} does not resolve to a signed report artifact")
+    return artifact[0]
+
+
 def _validate_promotion_evidence(
     snapshot: FileSnapshot,
     *,
@@ -573,7 +752,8 @@ def _validate_promotion_evidence(
     release_ref: str,
     release_version: str,
     verify_source_diff: bool,
-) -> tuple[dict[str, object], str]:
+    cosign: str | Sequence[str] = "cosign",
+) -> tuple[dict[str, object], str, tuple[FileSnapshot, ...]]:
     owner = "stable promotion evidence"
     payload = _json_from_snapshot(snapshot, owner=owner)
     if snapshot.data != _canonical_json_bytes(payload):
@@ -593,6 +773,7 @@ def _validate_promotion_evidence(
             "stableScope",
             "protectedFinalRef",
             "stagedRehearsal",
+            "reportArtifacts",
             "contentDigest",
         },
         owner=owner,
@@ -660,6 +841,27 @@ def _validate_promotion_evidence(
             raise ReleaseBundleError(
                 "stable promotion source diff does not match the candidate and final commits"
             )
+    reports, report_snapshots = _promotion_report_artifacts(
+        payload.get("reportArtifacts"),
+        root=snapshot.path.parent,
+        candidate_ref=candidate_ref,
+        cosign=cosign,
+    )
+    candidate_manifest = _promotion_report(
+        reports,
+        candidate_manifest_digest,
+        owner="stable promotion candidate manifest",
+    )
+    if (
+        candidate_manifest.get("releaseRef") != candidate_ref
+        or candidate_manifest.get("gitCommit") != candidate_commit
+        or candidate_manifest.get("releaseVersion")
+        != _release_version_from_ref(candidate_ref)
+    ):
+        raise ReleaseBundleError(
+            "stable promotion candidate manifest does not bind the prior candidate"
+        )
+    used_report_digests = {candidate_manifest_digest}
 
     matrix_runs = payload.get("supportedMatrixRuns")
     if not isinstance(matrix_runs, list) or len(matrix_runs) < 3:
@@ -715,6 +917,18 @@ def _validate_promotion_evidence(
             )
         run_ids.add(run_id)
         run_digests.add(attestation_digest)
+        run_report = _promotion_report(
+            reports,
+            attestation_digest,
+            owner=f"stable promotion matrix run {index}",
+        )
+        if run_report != {
+            key: value for key, value in run.items() if key != "attestationDigest"
+        }:
+            raise ReleaseBundleError(
+                "stable promotion matrix report does not bind its run attestation"
+            )
+        used_report_digests.add(attestation_digest)
 
     soak = _require_exact_keys(
         payload.get("soak"),
@@ -727,6 +941,10 @@ def _validate_promotion_evidence(
     ended_at = _parse_utc_timestamp(
         soak.get("endedAt"), owner="stable promotion soak end"
     )
+    if started_at >= ended_at or ended_at > datetime.now(timezone.utc):
+        raise ReleaseBundleError(
+            "stable promotion soak must be complete and must not end in the future"
+        )
     if (ended_at - started_at).total_seconds() < 14 * 24 * 60 * 60:
         raise ReleaseBundleError("stable promotion soak must be at least 14 days")
     applications = soak.get("applications")
@@ -760,6 +978,33 @@ def _validate_promotion_evidence(
             )
         application_ids.add(application_id)
         application_digests.add(report_digest)
+        application_report = _require_exact_keys(
+            _promotion_report(
+                reports,
+                report_digest,
+                owner=f"stable promotion soak application {index}",
+            ),
+            {"applicationId", "nontrivial", "startedAt", "endedAt"},
+            owner=f"stable promotion soak application {index} report",
+        )
+        application_started_at = _parse_utc_timestamp(
+            application_report.get("startedAt"),
+            owner=f"stable promotion soak application {index} report start",
+        )
+        application_ended_at = _parse_utc_timestamp(
+            application_report.get("endedAt"),
+            owner=f"stable promotion soak application {index} report end",
+        )
+        if (
+            application_report.get("applicationId") != application_id
+            or application_report.get("nontrivial") is not True
+            or application_started_at != started_at
+            or application_ended_at != ended_at
+        ):
+            raise ReleaseBundleError(
+                "stable promotion soak application report does not cover the soak period"
+            )
+        used_report_digests.add(report_digest)
 
     reviews = _require_exact_keys(
         payload.get("reviews"),
@@ -792,10 +1037,30 @@ def _validate_promotion_evidence(
             )
         reviewer_identities.add(reviewer)
         review_digests.add(report_digest)
+        review_report = _promotion_report(
+            reports,
+            report_digest,
+            owner=f"stable promotion {review_name} review",
+        )
+        if review_report != {
+            "reviewerIdentity": reviewer,
+            "approved": True,
+            "candidateRef": candidate_ref,
+            "candidateCommit": candidate_commit,
+        }:
+            raise ReleaseBundleError(
+                f"stable promotion {review_name} report does not bind the candidate review"
+            )
+        used_report_digests.add(report_digest)
 
     stable_scope = _require_exact_keys(
         payload.get("stableScope"),
-        {"unresolvedCritical", "unresolvedHigh", "unexplainedFlakes"},
+        {
+            "unresolvedCritical",
+            "unresolvedHigh",
+            "unexplainedFlakes",
+            "reportDigest",
+        },
         owner="stable promotion stable-scope defect status",
     )
     if any(
@@ -808,13 +1073,28 @@ def _validate_promotion_evidence(
             "stable promotion requires zero unresolved critical/high defects and "
             "unexplained flakes"
         )
+    stable_scope_report_digest = _require_prefixed_sha256(
+        stable_scope.get("reportDigest"),
+        owner="stable promotion stable-scope report digest",
+    )
+    if _promotion_report(
+        reports,
+        stable_scope_report_digest,
+        owner="stable promotion stable-scope defect status",
+    ) != {
+        key: value for key, value in stable_scope.items() if key != "reportDigest"
+    }:
+        raise ReleaseBundleError(
+            "stable promotion stable-scope report does not bind defect status"
+        )
+    used_report_digests.add(stable_scope_report_digest)
 
     protected_ref = _require_exact_keys(
         payload.get("protectedFinalRef"),
         {"releaseRef", "protected", "reportDigest"},
         owner="stable promotion protected final ref",
     )
-    _require_prefixed_sha256(
+    protected_ref_digest = _require_prefixed_sha256(
         protected_ref.get("reportDigest"),
         owner="stable promotion protected final ref report digest",
     )
@@ -822,6 +1102,15 @@ def _validate_promotion_evidence(
         "protected"
     ) is not True:
         raise ReleaseBundleError("stable promotion final ref is not attested as protected")
+    if _promotion_report(
+        reports,
+        protected_ref_digest,
+        owner="stable promotion protected final ref",
+    ) != {"releaseRef": release_ref, "protected": True}:
+        raise ReleaseBundleError(
+            "stable promotion protected final ref report does not bind the final ref"
+        )
+    used_report_digests.add(protected_ref_digest)
 
     rehearsal = _require_exact_keys(
         payload.get("stagedRehearsal"),
@@ -839,7 +1128,7 @@ def _validate_promotion_evidence(
         rehearsal.get("authorizedBy"),
         owner="stable promotion staged rehearsal authorizer",
     )
-    _require_prefixed_sha256(
+    rehearsal_report_digest = _require_prefixed_sha256(
         rehearsal.get("reportDigest"),
         owner="stable promotion staged rehearsal report digest",
     )
@@ -884,7 +1173,20 @@ def _validate_promotion_evidence(
             "stable promotion requires an authorized real staged "
             "publish/rollback/yank/restore rehearsal"
         )
-    return payload, content_digest
+    if _promotion_report(
+        reports,
+        rehearsal_report_digest,
+        owner="stable promotion staged rehearsal",
+    ) != {key: value for key, value in rehearsal.items() if key != "reportDigest"}:
+        raise ReleaseBundleError(
+            "stable promotion staged rehearsal report does not bind the rehearsal"
+        )
+    used_report_digests.add(rehearsal_report_digest)
+    if used_report_digests != set(reports):
+        raise ReleaseBundleError(
+            "stable promotion evidence contains unreferenced signed report artifacts"
+        )
+    return payload, content_digest, report_snapshots
 
 
 def _release_expectations_snapshot(
@@ -1047,23 +1349,39 @@ def _sbom_release_artifacts(payload: Mapping[str, object]) -> dict[str, dict[str
     return observed
 
 
-def _required_graphblocks_dependencies(root: Path = ROOT) -> set[str]:
+def _first_party_runtime_dependencies(
+    root: Path = ROOT,
+) -> dict[str, set[str]]:
+    manifests = (
+        root / "pyproject.toml",
+        root / "packages" / "graphblocks-runtime" / "pyproject.toml",
+        root / "packages" / "graphblocks-testing" / "pyproject.toml",
+    )
     try:
-        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
-            "project"
-        ]
-        dependencies = project["dependencies"]
-        if not isinstance(dependencies, list):
-            raise TypeError
-        return {
-            canonicalize_name(Requirement(str(requirement)).name)
-            for requirement in dependencies
-        }
+        observed: dict[str, set[str]] = {}
+        for manifest in manifests:
+            project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
+            name = canonicalize_name(str(project["name"]))
+            dependencies = project["dependencies"]
+            if not isinstance(dependencies, list):
+                raise TypeError
+            observed[name] = {
+                canonicalize_name(Requirement(str(requirement)).name)
+                for requirement in dependencies
+            }
+        if set(observed) != {
+            "graphblocks",
+            "graphblocks-runtime",
+            "graphblocks-testing",
+        }:
+            raise ValueError
+        return observed
     except (
         OSError,
         UnicodeError,
         KeyError,
         TypeError,
+        ValueError,
         tomllib.TOMLDecodeError,
         InvalidRequirement,
     ) as error:
@@ -1172,26 +1490,71 @@ def _validate_sbom(
         )
     dependency_graph = _sbom_dependency_graph(payload)
     _references, references_by_name = _sbom_component_references(payload)
-    required_dependencies = _required_graphblocks_dependencies()
+    first_party_dependencies = FIRST_PARTY_RUNTIME_DEPENDENCIES
+    required_dependencies = set().union(*first_party_dependencies.values())
     missing_dependencies = sorted(required_dependencies - set(references_by_name))
     if missing_dependencies:
         raise ReleaseBundleError(
             "SBOM omits required runtime dependencies: "
             + ", ".join(missing_dependencies)
         )
-    graphblocks_refs = references_by_name.get("graphblocks", set())
-    required_refs = {
-        reference
-        for name in required_dependencies
-        for reference in references_by_name.get(name, set())
-    }
-    if not graphblocks_refs or not any(
-        required_refs.issubset(dependency_graph.get(reference, set()))
-        for reference in graphblocks_refs
-    ):
-        raise ReleaseBundleError(
-            "SBOM dependency graph does not bind graphblocks runtime dependencies"
-        )
+    references, references_by_name = _sbom_component_references(payload)
+    expected_versions = (
+        {
+            name: installed_distributions[name]
+            for name in first_party_dependencies
+            if name in installed_distributions
+        }
+        if installed_distributions is not None
+        else {
+            distribution: version
+            for filename in artifacts
+            for distribution, version in (_artifact_identity(filename),)
+            if distribution in first_party_dependencies
+        }
+    )
+    for distribution, dependencies in first_party_dependencies.items():
+        version = expected_versions.get(distribution)
+        matching_refs = {
+            reference
+            for reference in references_by_name.get(distribution, set())
+            if reference in references
+            and canonicalize_name(references[reference][0]) == distribution
+            and references[reference][1] == version
+        }
+        if len(matching_refs) != 1 or set(
+            references_by_name.get(distribution, set())
+        ) != matching_refs:
+            raise ReleaseBundleError(
+                f"SBOM must contain exactly one {distribution} component at its installed version"
+            )
+        expected_dependency_refs: set[str] = set()
+        for dependency in dependencies:
+            dependency_version = (
+                installed_distributions.get(dependency)
+                if installed_distributions is not None
+                else None
+            )
+            matching_dependency_refs = {
+                reference
+                for reference in references_by_name.get(dependency, set())
+                if dependency_version is None
+                or (
+                    reference in references
+                    and canonicalize_name(references[reference][0]) == dependency
+                    and references[reference][1] == dependency_version
+                )
+            }
+            if len(matching_dependency_refs) != 1:
+                raise ReleaseBundleError(
+                    "SBOM dependency components do not match the installed distribution closure"
+                )
+            expected_dependency_refs.update(matching_dependency_refs)
+        first_party_ref = next(iter(matching_refs))
+        if dependency_graph.get(first_party_ref) != expected_dependency_refs:
+            raise ReleaseBundleError(
+                f"SBOM dependency graph does not contain the exact {distribution} runtime edges"
+            )
 
 
 def _copy_snapshots(
@@ -1882,6 +2245,13 @@ def assemble_release_bundle(
         raise ReleaseBundleError("git commit must be a full lowercase hexadecimal object id")
     release_version = _release_version_from_ref(release_ref)
     distribution_versions = _first_party_versions()
+    if _first_party_runtime_dependencies() != {
+        name: set(dependencies)
+        for name, dependencies in FIRST_PARTY_RUNTIME_DEPENDENCIES.items()
+    }:
+        raise ReleaseBundleError(
+            "first-party runtime dependency policy does not match package manifests"
+        )
     for stable_distribution in ("graphblocks", "graphblocks-testing"):
         if distribution_versions.get(stable_distribution) != release_version:
             raise ReleaseBundleError(
@@ -1902,6 +2272,8 @@ def assemble_release_bundle(
         raise ReleaseBundleError("checked-out Git tree id is invalid")
     promotion_snapshot: FileSnapshot | None = None
     promotion_content_digest: str | None = None
+    promotion_report_snapshots: tuple[FileSnapshot, ...] = ()
+    cosign_identity = _observe_cosign_identity(cosign)
     if release_ref == "refs/tags/v1.0.0":
         if promotion_evidence is None:
             raise ReleaseBundleError(
@@ -1911,19 +2283,23 @@ def assemble_release_bundle(
             promotion_evidence,
             owner="stable promotion evidence",
         )
-        _promotion_payload, promotion_content_digest = _validate_promotion_evidence(
+        (
+            _promotion_payload,
+            promotion_content_digest,
+            promotion_report_snapshots,
+        ) = _validate_promotion_evidence(
             promotion_snapshot,
             git_commit=git_commit,
             git_tree=git_tree,
             release_ref=release_ref,
             release_version=release_version,
             verify_source_diff=True,
+            cosign=cosign,
         )
     elif promotion_evidence is not None:
         raise ReleaseBundleError(
             "release candidates must not supply stable promotion evidence"
         )
-    cosign_identity = _observe_cosign_identity(cosign)
     expectations_payload = _release_expectations_snapshot(
         git_commit=git_commit,
         git_tree=git_tree,
@@ -2016,6 +2392,7 @@ def assemble_release_bundle(
         relative_to=output_dir,
     )
     promotion_record: dict[str, object] | None = None
+    copied_promotion_reports: list[FileSnapshot] = []
     if promotion_snapshot is not None:
         promotion_path = output_dir / PROMOTION_EVIDENCE_NAME
         promotion_path.write_bytes(promotion_snapshot.data)
@@ -2023,6 +2400,18 @@ def assemble_release_bundle(
             _snapshot_regular_file(promotion_path, owner="copied stable promotion evidence"),
             relative_to=output_dir,
         )
+        for report_snapshot in promotion_report_snapshots:
+            relative_path = report_snapshot.path.relative_to(
+                promotion_snapshot.path.parent
+            )
+            report_path = output_dir / relative_path
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_bytes(report_snapshot.data)
+            copied_promotion_reports.append(
+                _snapshot_regular_file(
+                    report_path, owner="copied stable promotion report artifact"
+                )
+            )
 
     checksum_path = output_dir / "SHA256SUMS"
     checksum_path.write_text(
@@ -2092,6 +2481,11 @@ def assemble_release_bundle(
                 if promotion_record is not None
                 else ()
             ),
+            *(
+                tuple(snapshot.path for snapshot in copied_promotion_reports)
+                if promotion_record is not None
+                else ()
+            ),
         )
     )
     if _current_git_commit() != git_commit or _current_git_tree() != git_tree:
@@ -2154,7 +2548,7 @@ def assemble_release_bundle(
         ),
     }
     _write_json(output_dir / "release-manifest.json", manifest)
-    verify_release_bundle(bundle_dir=output_dir)
+    _verify_release_bundle(bundle_dir=output_dir, require_stable_signature=False)
     return manifest
 
 
@@ -2598,13 +2992,14 @@ def _verify_platform_evidence(
     return build_environments, installed_release_distributions
 
 
-def verify_release_bundle(
+def _verify_release_bundle(
     *,
     bundle_dir: Path,
     signature_bundle: Path | None = None,
     certificate_identity: str | None = None,
     certificate_oidc_issuer: str = SIGSTORE_ISSUER,
     cosign: str | Sequence[str] = "cosign",
+    require_stable_signature: bool,
 ) -> dict[str, object]:
     manifest_path = bundle_dir / "release-manifest.json"
     manifest_snapshot = _snapshot_regular_file(manifest_path, owner="release manifest")
@@ -2793,7 +3188,7 @@ def verify_release_bundle(
         "rehearsal.json",
         *((PROMOTION_EVIDENCE_NAME,) if is_final else ()),
     }
-    if set(metadata) != required_metadata:
+    if not required_metadata.issubset(metadata):
         raise ReleaseBundleError("release manifest metadata set is incomplete")
     checksum = metadata.get("SHA256SUMS")
     sbom_record = metadata.get("SBOM.cdx.json")
@@ -2831,14 +3226,19 @@ def verify_release_bundle(
             owner="retained stable promotion evidence",
         )
         promotion_snapshot = snapshots[PROMOTION_EVIDENCE_NAME]
-        _validated_promotion_payload, promotion_content_digest = (
+        (
+            _validated_promotion_payload,
+            promotion_content_digest,
+            promotion_report_snapshots,
+        ) = (
             _validate_promotion_evidence(
                 promotion_snapshot,
                 git_commit=commit,
                 git_tree=git_tree,
                 release_ref=release_ref,
                 release_version=release_version,
-                verify_source_diff=False,
+                verify_source_diff=True,
+                cosign=cosign,
             )
         )
         if promotion_payload != _validated_promotion_payload or raw_promotion_binding.get(
@@ -2848,10 +3248,16 @@ def verify_release_bundle(
                 "release manifest stable promotion evidence digest is invalid"
             )
         promotion_binding = raw_promotion_binding
+        required_metadata.update(
+            snapshot.path.relative_to(bundle_dir).as_posix()
+            for snapshot in promotion_report_snapshots
+        )
     elif "promotionEvidence" in manifest:
         raise ReleaseBundleError(
             "release candidate manifest must not bind stable promotion evidence"
         )
+    if set(metadata) != required_metadata:
+        raise ReleaseBundleError("release manifest metadata set is incomplete or unexpected")
     expectations_payload = _json_from_snapshot(
         snapshots[EXPECTATIONS_NAME],
         owner="release expectations",
@@ -2920,7 +3326,29 @@ def verify_release_bundle(
         )
     elif certificate_identity is not None:
         raise ReleaseBundleError("certificate identity was provided without a signature bundle")
+    elif is_final and require_stable_signature:
+        raise ReleaseBundleError(
+            "final stable release verification requires its Sigstore signature bundle"
+        )
     return manifest
+
+
+def verify_release_bundle(
+    *,
+    bundle_dir: Path,
+    signature_bundle: Path | None = None,
+    certificate_identity: str | None = None,
+    certificate_oidc_issuer: str = SIGSTORE_ISSUER,
+    cosign: str | Sequence[str] = "cosign",
+) -> dict[str, object]:
+    return _verify_release_bundle(
+        bundle_dir=bundle_dir,
+        signature_bundle=signature_bundle,
+        certificate_identity=certificate_identity,
+        certificate_oidc_issuer=certificate_oidc_issuer,
+        cosign=cosign,
+        require_stable_signature=True,
+    )
 
 
 def _current_git_commit() -> str:
