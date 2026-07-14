@@ -15,6 +15,7 @@ import json
 import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import MappingProxyType
 from typing import Literal, get_args
 
 from graphblocks.application_event import (
@@ -382,6 +383,8 @@ def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
 _MAX_TCK_EVIDENCE_DEPTH = 64
 
 
+# Base ``dict`` descriptors bypass subclass mutator overrides, so these values
+# are disposable public views; canonical evidence is stored in mapping proxies.
 class _FrozenEvidenceDict(dict[str, object]):
     def _immutable(self, *_args: object, **_kwargs: object) -> None:
         raise TypeError("TCK evidence is immutable")
@@ -447,7 +450,7 @@ def _freeze_tck_evidence(
                     _active_containers=active_containers,
                     _depth=_depth + 1,
                 )
-            return _FrozenEvidenceDict(frozen)
+            return MappingProxyType(frozen)
         finally:
             active_containers.remove(identity)
     if isinstance(value, (list, tuple)):
@@ -477,11 +480,18 @@ def _freeze_tck_evidence(
     )
 
 
-def _thaw_tck_evidence(value: object) -> object:
+def _materialize_tck_evidence(value: object, *, mutable: bool) -> object:
     if isinstance(value, Mapping):
-        return {key: _thaw_tck_evidence(item) for key, item in value.items()}
+        mapping = {
+            key: _materialize_tck_evidence(item, mutable=mutable)
+            for key, item in value.items()
+        }
+        return mapping if mutable else _FrozenEvidenceDict(mapping)
     if isinstance(value, tuple):
-        return [_thaw_tck_evidence(item) for item in value]
+        items = tuple(
+            _materialize_tck_evidence(item, mutable=mutable) for item in value
+        )
+        return list(items) if mutable else _FrozenEvidenceList(items)
     return value
 
 
@@ -891,6 +901,21 @@ class TckResult:
     diagnostics: tuple[dict[str, str], ...] = field(default_factory=tuple)
     observed: dict[str, object] = field(default_factory=dict)
 
+    def __getattribute__(self, name: str) -> object:
+        value = object.__getattribute__(self, name)
+        if name == "observed" and isinstance(value, MappingProxyType):
+            return _materialize_tck_evidence(value, mutable=False)
+        if (
+            name == "diagnostics"
+            and isinstance(value, tuple)
+            and all(isinstance(diagnostic, MappingProxyType) for diagnostic in value)
+        ):
+            return tuple(
+                _materialize_tck_evidence(diagnostic, mutable=False)
+                for diagnostic in value
+            )
+        return value
+
     def __post_init__(self) -> None:
         if not isinstance(self.case_id, str) or not self.case_id.strip():
             raise ValueError("TCK result case_id must not be empty")
@@ -913,13 +938,24 @@ class TckResult:
         object.__setattr__(self, "diagnostics", tuple(diagnostics))
         object.__setattr__(self, "observed", _freeze_tck_evidence(self.observed))
 
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        return (
+            type(self),
+            (self.case_id, self.kind, self.status, self.diagnostics, self.observed),
+        )
+
     def result_contract(self) -> dict[str, object]:
+        diagnostics = object.__getattribute__(self, "diagnostics")
+        observed = object.__getattribute__(self, "observed")
         return {
             "case_id": self.case_id,
             "kind": self.kind,
             "status": self.status,
-            "diagnostics": [_thaw_tck_evidence(diagnostic) for diagnostic in self.diagnostics],
-            "observed": _thaw_tck_evidence(self.observed),
+            "diagnostics": [
+                _materialize_tck_evidence(diagnostic, mutable=True)
+                for diagnostic in diagnostics
+            ],
+            "observed": _materialize_tck_evidence(observed, mutable=True),
         }
 
 
@@ -992,16 +1028,17 @@ class TckReport:
         run_store_paths: set[str] = set()
         journal_store_paths: set[str] = set()
         for result in self.results:
-            runtime = result.observed.get("runtime")
+            observed = result.observed
+            runtime = observed.get("runtime")
             if runtime == "native":
                 native_case_count += 1
-            reason = result.observed.get("native_fallback_reason")
+            reason = observed.get("native_fallback_reason")
             if isinstance(reason, str) and reason:
                 fallback_reasons[reason] = fallback_reasons.get(reason, 0) + 1
-            run_store_path = result.observed.get("run_store_path")
+            run_store_path = observed.get("run_store_path")
             if isinstance(run_store_path, str) and run_store_path:
                 run_store_paths.add(run_store_path)
-            journal_store_path = result.observed.get("journal_store_path")
+            journal_store_path = observed.get("journal_store_path")
             if isinstance(journal_store_path, str) and journal_store_path:
                 journal_store_paths.add(journal_store_path)
         return {

@@ -110,6 +110,44 @@ def test_tck_result_evidence_is_deeply_immutable(monkeypatch) -> None:
     assert result.result_contract() == initial_contract
 
 
+def test_tck_evidence_resists_base_dict_mutation_bypass(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    result = graphblocks_testing.TckResult(
+        "compiler/base-dict-bypass",
+        "compiler",
+        "passed",
+        diagnostics=({"code": "GB3001", "message": "original"},),
+        observed={"nested": {"value": "original"}},
+    )
+    report = graphblocks_testing.TckReport(
+        profile="local",
+        results=(result,),
+        suite="compiler",
+        implementation="graphblocks-python",
+        implementation_version="1.0.0",
+        fixture_digest="sha256:" + "1" * 64,
+    )
+    initial_result = result.result_contract()
+    initial_report = report.report_contract()
+    initial_digest = report.content_digest()
+
+    dict.__setitem__(result.observed, "injected", True)
+    dict.__setitem__(result.observed["nested"], "value", "mutated")
+    dict.__setitem__(result.diagnostics[0], "message", "mutated")
+
+    assert result.result_contract() == initial_result
+    assert report.report_contract() == initial_report
+    assert report.content_digest() == initial_digest
+    assert dataclasses.asdict(report)["results"][0]["observed"] == initial_result[
+        "observed"
+    ]
+    restored_report = pickle.loads(pickle.dumps(report))
+    dict.__setitem__(restored_report.results[0].observed, "injected", True)
+    assert restored_report == report
+    assert restored_report.content_digest() == initial_digest
+
+
 def test_tck_result_frozen_lists_have_consistent_equality(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
