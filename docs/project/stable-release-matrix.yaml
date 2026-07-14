@@ -1,0 +1,370 @@
+matrixVersion: 1
+targetRelease: '1.0'
+currentReadiness: blocked
+compatibilityPolicy: ../specification/reference/compatibility-policy.md
+diagnosticRegistry: ../specification/reference/diagnostic-codes.yaml
+tierDefinitions:
+  stable: Compatibility promise after every applicable release gate passes.
+  preview: Shipped for evaluation; documented breaking changes may occur in a minor release.
+  internal: Build or verification implementation with no supported public API.
+  reserved: Name or future surface only; no usable implementation or compatibility promise.
+
+artifacts:
+  - id: pypi:graphblocks
+    ecosystem: python
+    kind: distribution
+    path: pyproject.toml
+    tier: stable
+    readiness: blocked
+    stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+    exclusions: [GB-C2-AI-APPLICATION, GB-C3-GOVERNED-RUNTIME, GB-C4-PRODUCTION, GB-X1-ORCHESTRATION, GB-X2-VOICE, GB-X3-DURABLE-STREAM, external-integrations]
+  - id: pypi:graphblocks-testing
+    ecosystem: python
+    kind: distribution
+    path: packages/graphblocks-testing/pyproject.toml
+    tier: stable
+    readiness: blocked
+    stableProfiles: [GB-C0-SCHEMA, GB-C1-LOCAL-RUNTIME]
+  - id: pypi:graphblocks-runtime
+    ecosystem: python
+    kind: distribution
+    path: packages/graphblocks-runtime/pyproject.toml
+    tier: preview
+    readiness: implemented-preview
+  - id: crate:graphblocks-schema
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-schema/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-types
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-types/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-compiler
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-compiler/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-flow
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-flow/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-runtime-core
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-runtime-core/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-runtime-seq
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-runtime-seq/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-runtime-durable
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-runtime-durable/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-protocol
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-protocol/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-telemetry
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-telemetry/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-python
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks-python/Cargo.toml
+    tier: internal
+  - id: crate:graphblocks-cli-native
+    ecosystem: rust
+    kind: binary-crate
+    path: crates/graphblocks-cli-native/Cargo.toml
+    tier: internal
+  - id: executable:graphblocks-native
+    ecosystem: native
+    kind: executable
+    source: crate:graphblocks-cli-native
+    tier: preview
+    readiness: implemented-preview
+  - id: crate:graphblocksd
+    ecosystem: rust
+    kind: binary-and-library-crate
+    path: crates/graphblocksd/Cargo.toml
+    tier: internal
+  - id: executable:graphblocksd
+    ecosystem: native
+    kind: executable
+    source: crate:graphblocksd
+    tier: internal
+  - id: crate:graphblocks
+    ecosystem: rust
+    kind: library-crate
+    path: crates/graphblocks/Cargo.toml
+    tier: reserved
+  - id: npm:graphblocks
+    ecosystem: npm
+    kind: package
+    path: packages/graphblocks-npm/package.json
+    tier: reserved
+  - id: helm:graphblocks-operator
+    ecosystem: kubernetes
+    kind: helm-and-oci-artifact
+    path: packages/graphblocks-operator/Chart.yaml
+    tier: internal
+
+profiles:
+  - id: GB-C0-SCHEMA
+    implementation: python-reference
+    tier: stable
+    readiness: blocked
+    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA, REL-CLOSED-WORLD, REL-DIAGNOSTICS, REL-TRACEABILITY, REL-INSTALLED-TCK]
+  - id: GB-C1-LOCAL-RUNTIME
+    implementation: python-reference
+    tier: stable
+    readiness: blocked
+    extends: [GB-C0-SCHEMA]
+    requiredGates: [REL-API-SNAPSHOT, REL-RUNTIME-CORRECTNESS, REL-INSTALLED-TCK]
+  - id: GB-C2-AI-APPLICATION
+    implementation: python-reference
+    tier: preview
+    roadmap: active
+  - id: GB-C3-GOVERNED-RUNTIME
+    implementation: python-reference
+    tier: preview
+    roadmap: active
+  - id: GB-C4-PRODUCTION
+    implementation: python-reference
+    tier: preview
+    roadmap: active
+    blockers: [restart-durable-accepted-runs, authenticated-idempotent-resume, worker-crash-recovery, fencing, production-adapter-evidence]
+  - id: GB-X1-ORCHESTRATION
+    implementation: python-reference
+    tier: preview
+    qualifier: provisional
+    roadmap: active
+  - id: GB-X2-VOICE
+    implementation: python-reference
+    tier: preview
+    qualifier: experimental
+    roadmap: active
+  - id: GB-X3-DURABLE-STREAM
+    implementation: python-reference
+    tier: preview
+    qualifier: experimental
+    roadmap: active
+
+wireVersions:
+  - id: graphblocks.ai/v1:Graph
+    apiVersion: graphblocks.ai/v1
+    kind: Graph
+    tier: stable
+    readiness: candidate-enforced
+    mode: read-write-canonical
+    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA]
+  - id: graphblocks.ai/v1:PluginManifest
+    apiVersion: graphblocks.ai/v1
+    kind: PluginManifest
+    tier: stable
+    readiness: candidate-enforced
+    mode: read-write-canonical
+    requiredGates: [REL-WIRE-V1, REL-CLOSED-SCHEMA]
+  - id: graphblocks.ai/v1alpha3:Graph
+    apiVersion: graphblocks.ai/v1alpha3
+    kind: Graph
+    tier: preview
+    readiness: implemented-preview
+    mode: migration-input-at-1.0
+  - id: graphblocks.ai/v1alpha2:Graph
+    apiVersion: graphblocks.ai/v1alpha2
+    kind: Graph
+    tier: preview
+    readiness: legacy
+    mode: migration-only
+  - id: graphblocks.ai/v1alpha1:Graph
+    apiVersion: graphblocks.ai/v1alpha1
+    kind: Graph
+    tier: preview
+    readiness: legacy
+    mode: migration-only
+  - id: graphblocks.ai/v1alpha1:Application
+    apiVersion: graphblocks.ai/v1alpha1
+    kind: Application
+    tier: preview
+    mode: read-write-preview
+  - id: graphblocks.ai/v1alpha1:Binding
+    apiVersion: graphblocks.ai/v1alpha1
+    kind: Binding
+    tier: preview
+    mode: read-write-preview
+  - id: graphblocks.ai/v1alpha1:PluginManifest
+    apiVersion: graphblocks.ai/v1alpha1
+    kind: PluginManifest
+    tier: preview
+    mode: migration-input-at-1.0
+  - id: graphblocks.ai/composition/v1alpha1:GraphFragment
+    apiVersion: graphblocks.ai/composition/v1alpha1
+    kind: GraphFragment
+    tier: preview
+    mode: authoring-preview
+  - id: graphblocks.ai/composition/v1alpha1:Graph.composition
+    apiVersion: graphblocks.ai/composition/v1alpha1
+    kind: Graph.composition
+    tier: preview
+    mode: authoring-preview
+  - id: graphblocks.voice/v1alpha1:extension
+    apiVersion: graphblocks.voice/v1alpha1
+    kind: extension
+    tier: preview
+    qualifier: experimental
+
+integrations:
+  - {id: graphblocks-pdf, tier: preview}
+  - {id: graphblocks-qdrant, tier: preview}
+  - {id: graphblocks-mcp, tier: preview}
+  - {id: graphblocks-openapi, tier: preview}
+  - {id: graphblocks-openai, tier: preview}
+  - {id: graphblocks-haystack, tier: preview}
+  - {id: graphblocks-policy-opa, tier: preview}
+  - {id: graphblocks-policy-cedar, tier: preview}
+  - {id: graphblocks-budget-postgres, tier: preview}
+  - {id: graphblocks-usage-postgres, tier: preview}
+  - {id: graphblocks-kubernetes, tier: preview}
+  - {id: graphblocks-terraform, tier: preview}
+  - {id: graphblocks-oci, tier: preview}
+  - {id: graphblocks-gitops, tier: preview}
+  - {id: graphblocks-otel, tier: preview}
+  - {id: graphblocks-langfuse, tier: preview}
+  - {id: graphblocks-prometheus, tier: preview}
+  - {id: graphblocks-dashboards, tier: preview}
+  - {id: graphblocks-webrtc, tier: preview}
+  - {id: graphblocks-websocket-media, tier: preview}
+  - {id: graphblocks-openai-realtime, tier: preview}
+  - {id: graphblocks-silero-vad, tier: preview}
+  - {id: graphblocks-kafka, tier: preview}
+  - {id: graphblocks-nats, tier: preview}
+  - {id: graphblocks-sqs, tier: preview}
+  - {id: graphblocks-pubsub, tier: preview}
+  - {id: graphblocks-scripted, tier: internal}
+  - {id: repository-fakes, tier: internal}
+  - {id: acceptance-harness-adapters, tier: internal}
+
+releaseGates:
+  - id: REL-API-SNAPSHOT
+    description: Stable Python signatures and CLI JSON and exit-code contracts are snapshotted.
+    readiness: candidate-enforced
+    evidence:
+      - compatibility/stable-python-surface.yaml
+      - compatibility/stable-python-api.json
+      - compatibility/stable-cli-cases.yaml
+      - compatibility/stable-cli-contracts.json
+      - compatibility/stable-testing-surface.yaml
+      - compatibility/stable-testing-api.json
+      - compatibility/stable-testing-cli-cases.yaml
+      - compatibility/stable-testing-cli-contracts.json
+      - tools/check_compatibility.py
+    blockers: [compatibility-review]
+  - id: REL-WIRE-V1
+    description: Closed graphblocks.ai/v1 Graph and PluginManifest resources and alpha migrations exist.
+    readiness: candidate-enforced
+    evidence:
+      - schemas/graphblocks.ai/v1/graph.schema.json
+      - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+      - src/graphblocks/migration.py
+      - tests/test_migration.py
+      - tck/migration/cases.json
+  - id: REL-CLOSED-SCHEMA
+    description: Every stable resource is validated by every claimed stable reader.
+    readiness: candidate-enforced
+    evidence:
+      - schemas/graphblocks.ai/v1/graph.schema.json
+      - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+      - src/graphblocks/schema.py
+      - src/graphblocks/plugins.py
+      - tests/test_schema_values.py
+      - tests/test_plugins.py
+      - tck/schema/resources.json
+  - {id: REL-CLOSED-WORLD, description: Unknown blocks fail compilation by default and discovery is explicitly opt-in.}
+  - {id: REL-DIAGNOSTICS, description: All stable diagnostics are registered and compatibility-tested.}
+  - id: REL-TRACEABILITY
+    description: Every stable normative requirement has executable evidence.
+    readiness: candidate-enforced
+    evidence:
+      - src/graphblocks/data/conformance-profiles.yaml
+      - docs/project/stable-requirements.yaml
+      - tests/test_stable_traceability.py
+  - {id: REL-RUNTIME-CORRECTNESS, description: C1 lifecycle cancellation journal bounded-flow and tool gates pass.}
+  - id: REL-INSTALLED-TCK
+    description: Digest-bound TCK and acceptance evidence comes from installed release artifacts.
+    readiness: candidate-enforced
+    evidence:
+      - tools/verify_wheelhouse.py
+      - tests/test_wheelhouse_schema_verification.py
+      - .github/workflows/ci.yml
+  - id: REL-PLATFORM-MATRIX
+    description: Install typing and runtime gates pass on every published platform; upgrade is explicitly exempt only for v1.0.0.
+    readiness: candidate-enforced-with-first-stable-upgrade-exemption
+    platforms:
+      operatingSystems: [ubuntu-latest, windows-latest]
+      pythonVersions: ['3.11', '3.12']
+    codeEnforced:
+      - source tests typing and runtime checks on every platform combination
+      - pinned-Rust wheel build and clean offline install on every platform combination
+      - installed-artifact TCK and acceptance evidence on every platform combination
+      - retained digest-bound evidence per platform combination
+      - final v1.0.0 promotion evidence carries the closed first-stable-release upgrade exemption
+    evidence:
+      - tools/verify_wheelhouse.py
+      - .github/workflows/ci.yml
+    blockers: []
+  - id: REL-SUPPLY-CHAIN
+    description: Checksums SBOM provenance signatures publish and rollback are verified.
+    readiness: promotion-contract-enforced-external-evidence-absent
+    requiredExternalEvidencePath: docs/project/releases/v1.0.0-promotion-evidence.json
+    evidence:
+      - tools/verify_wheelhouse.py
+      - tools/release_supply_chain.py
+      - tests/test_wheelhouse_schema_verification.py
+      - tests/test_release_supply_chain.py
+      - .github/workflows/ci.yml
+    codeEnforced:
+      - separate first-party publish artifacts and third-party install-only dependency wheels
+      - exact four-platform aggregation with deterministic universal-wheel deduplication
+      - canonical artifact SHA-256 manifest
+      - pinned CycloneDX SBOM generation with exact wheel filename and hash bindings
+      - required runtime dependency components and preserved CycloneDX dependency relationships
+      - checked-in suite case fixture implementation version and acceptance evidence validation
+      - git/artifact/platform/TCK/acceptance/SBOM/tool-bound in-toto SLSA provenance
+      - pinned pip build hatchling maturin CycloneDX Rust and Cosign tool identities
+      - exact CPython patch platform runner-image and resolved build-distribution identities
+      - exact v1.0.0 or canonical positive-integer rc ref gate before OIDC admission
+      - unsigned source build aggregation and verification with no OIDC permission
+      - source-free OIDC signing job with only id-token write permission
+      - full-commit action pins and pinned Cosign release inside the OIDC boundary
+      - fixed manifest path issuer and GraphBlocks workflow/ref identity verification directly with Cosign
+      - in-closure non-symlink Sigstore bundle and descriptor-backed snapshot verification
+      - zero-mutation publish rollback yank and restore rehearsal
+      - fail-closed self-contained bundle verification
+      - final-ref-only regular non-symlink canonical promotion-evidence admission
+      - exact final ref/version evidence plus manifest-bound final commit/tree
+      - distinct ancestor prior-RC manifest and digest-bound release-metadata-only source diff
+      - three distinct complete supported-matrix attestations and fourteen-day two-application soak validation
+      - distinct approved API/security review and zero critical/high defect or unexplained-flake validation
+      - protected-final-ref and authorized real staged publish rollback yank restore validation
+      - promotion evidence manifest provenance standalone-verification and signed-file-closure binding
+      - promotion-authorized final readiness remains signature-required
+    blockers:
+      - protected-release-ref-signature
+      - three-clean-supported-matrix-attestations
+      - fourteen-day-two-application-soak
+      - independent-api-and-security-reviews
+      - zero-critical-high-defects-and-unexplained-flakes
+      - protected-final-ref-attestation
+      - authorized-real-staged-publish-rollback-yank-restore-rehearsal
+      - promotion-evidence-record-at-fixed-path
+  - {id: REL-RC-SOAK, description: An unchanged RC completes independent review and a two-to-four-week application soak.}

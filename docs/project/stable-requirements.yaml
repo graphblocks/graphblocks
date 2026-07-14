@@ -1,0 +1,211 @@
+traceabilityVersion: 2
+targetRelease: '1.0'
+profileCatalog: ../../src/graphblocks/data/conformance-profiles.yaml
+scope: Candidate-stable requirements for the pure-Python GB-C0-SCHEMA and GB-C1-LOCAL-RUNTIME claims.
+normativeSections:
+  docs/specification/core/canonical-data-model.md:
+    - Values and identity
+    - Versions and migration
+  docs/specification/core/graph-compilation-runtime.md:
+    - Graph validation
+    - Local scheduling and outcomes
+    - Catalog-backed local invocation
+    - Untyped compatibility mode
+    - Conditional local execution
+    - Local output projection
+    - Local timeout and retry
+    - Python/native boundary
+  docs/specification/core/packages-and-plugins.md:
+    - Static discovery
+    - Block descriptors
+    - Port types and catalog closure
+    - Plugin authority and failures
+  docs/specification/reference/versioning-and-diagnostics.md:
+    - Resource versions
+    - Alpha migration boundary
+    - Diagnostic contracts
+profiles:
+  GB-C0-SCHEMA:
+    status: normative
+    extends: []
+    requirements:
+      - id: canonical-schema-roundtrip
+        clauses:
+          - GB-CDM-VALUES-001
+          - GB-CDM-NUMBERS-001
+        implementation:
+          - src/graphblocks/canonical.py
+          - src/graphblocks/schema.py
+        schemas:
+          - schemas/graphblocks.ai/v1/graph.schema.json
+          - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+        tckSuites: [schema]
+        evidence:
+          - tests/test_canonical.py
+          - tests/test_schema_values.py
+          - tests/test_resource_schema_validation.py
+          - tck/schema/cases.json
+          - tck/schema/typed-values.json
+          - tck/schema/resources.json
+      - id: graph-parse-normalize-hash
+        clauses:
+          - GB-CDM-IDENTITY-001
+          - GB-CDM-NORMALIZATION-001
+          - GB-GCR-GRAPH-VALIDATION-001
+          - GB-GCR-CLOSED-WORLD-001
+          - GB-GCR-TYPING-001
+          - GB-GCR-PREDICATES-001
+          - GB-GCR-ENDPOINTS-001
+          - GB-GCR-PLAN-001
+        implementation:
+          - src/graphblocks/canonical.py
+          - src/graphblocks/compiler.py
+        schemas:
+          - schemas/graphblocks.ai/v1/graph.schema.json
+        tckSuites: [compiler]
+        evidence:
+          - tests/test_canonical.py
+          - tests/test_compiler_tck.py
+          - tests/test_compiler_validation.py
+          - tck/compiler/cases.json
+      - id: plugin-manifest-validation
+        clauses:
+          - GB-PKG-DISCOVERY-001
+          - GB-PKG-DESCRIPTORS-001
+          - GB-PKG-BLOCK-VERSIONS-001
+          - GB-PKG-PREDICATES-001
+          - GB-PKG-PORT-TYPES-001
+          - GB-PKG-PLUGIN-AUTHORITY-001
+        implementation:
+          - src/graphblocks/plugins.py
+          - src/graphblocks/schema.py
+        schemas:
+          - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+        tckSuites: []
+        evidence:
+          - tests/test_plugins.py
+          - tests/test_descriptor_validation.py
+          - tests/test_resource_schema_validation.py
+      - id: migration-reader
+        clauses:
+          - GB-CDM-MIGRATION-001
+          - GB-CDM-MIGRATION-002
+          - GB-VER-RESOURCE-VERSIONS-001
+          - GB-VER-ALPHA-MIGRATION-001
+          - GB-VER-DIAGNOSTIC-SEVERITY-001
+        implementation:
+          - src/graphblocks/migration.py
+        schemas:
+          - schemas/graphblocks.ai/v1/graph.schema.json
+          - schemas/graphblocks.ai/v1/plugin-manifest.schema.json
+        tckSuites: []
+        evidence:
+          - tests/test_migration.py
+          - tests/test_plugins.py
+  GB-C1-LOCAL-RUNTIME:
+    status: normative
+    extends:
+      - GB-C0-SCHEMA
+    requirements:
+      - id: deterministic-local-scheduler
+        clauses:
+          - GB-GCR-SCHEDULING-001
+          - GB-GCR-CONDITIONAL-EXECUTION-001
+        implementation:
+          - src/graphblocks/runtime.py
+        schemas: []
+        tckSuites: [runtime]
+        evidence:
+          - tests/test_runtime.py
+          - tests/test_stdlib_runtime_contracts.py
+          - tck/runtime/cases.json
+      - id: typed-ports
+        clauses:
+          - GB-GCR-TYPING-001
+          - GB-GCR-SCHEDULING-001
+          - GB-GCR-LANGUAGE-BOUNDARY-001
+        implementation:
+          - src/graphblocks/compiler.py
+          - src/graphblocks/plugins.py
+          - src/graphblocks/runtime.py
+          - src/graphblocks/typed.py
+        schemas: []
+        tckSuites: [runtime]
+        evidence:
+          - tests/test_compiler_validation.py
+          - tests/test_descriptor_validation.py
+          - tests/test_typed_graph_typing.py
+          - tests/test_runtime.py
+      - id: outcome
+        clauses:
+          - GB-GCR-SCHEDULING-001
+          - GB-GCR-OUTPUT-PROJECTION-001
+        implementation:
+          - src/graphblocks/outcome.py
+          - src/graphblocks/runtime.py
+          - src/graphblocks/tools.py
+        schemas: []
+        tckSuites: [application-events, tool-result]
+        evidence:
+          - tests/test_outcome_readiness.py
+          - tests/test_application_event.py
+          - tests/test_tool_facade.py
+          - tck/application-events/cases.json
+          - tck/tool-result/cases.json
+      - id: cancellation
+        clauses:
+          - GB-GCR-TIMEOUT-RETRY-001
+        implementation:
+          - src/graphblocks/runtime.py
+          - src/graphblocks/tools.py
+        schemas: []
+        tckSuites: [tool-lifecycle]
+        evidence:
+          - tests/test_cancellation_runtime.py
+          - tests/test_timeout_runtime.py
+          - tck/tool-lifecycle/cases.json
+      - id: journal
+        clauses:
+          - GB-GCR-SCHEDULING-001
+          - GB-GCR-CONDITIONAL-EXECUTION-001
+        implementation:
+          - src/graphblocks/runtime.py
+        schemas: []
+        tckSuites: [runtime]
+        evidence:
+          - tests/test_runtime.py
+          - tests/test_runtime_package.py
+          - tck/runtime/cases.json
+      - id: local-flow
+        clauses:
+          - GB-GCR-CONDITIONAL-EXECUTION-001
+          - GB-GCR-TIMEOUT-RETRY-001
+        implementation:
+          - src/graphblocks/compiler.py
+          - src/graphblocks/runtime.py
+          - src/graphblocks/tools.py
+        schemas: []
+        tckSuites: [retry, sequence, tool-execution]
+        evidence:
+          - tests/test_runtime.py
+          - tests/test_timeout_runtime.py
+          - tests/test_tool_facade.py
+          - tck/retry/cases.json
+          - tck/sequence/cases.json
+          - tck/tool-execution/cases.json
+      - id: local-runtime-api
+        clauses:
+          - GB-GCR-CATALOG-RUNTIME-001
+          - GB-GCR-UNTYPED-COMPAT-001
+          - GB-GCR-LANGUAGE-BOUNDARY-001
+        implementation:
+          - src/graphblocks/__init__.py
+          - src/graphblocks/runtime.py
+          - packages/graphblocks-testing/src/graphblocks_testing/__init__.py
+        schemas: []
+        tckSuites: [runtime]
+        evidence:
+          - compatibility/stable-python-surface.yaml
+          - compatibility/stable-testing-surface.yaml
+          - tests/test_compatibility_snapshots.py
+          - tests/test_testing_package.py
