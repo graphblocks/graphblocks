@@ -202,7 +202,47 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
     if len(paths) != len(set(paths)):
         raise ValueError(f"{policy_path.name} contains duplicate paths")
 
-    stable_type_names = {path.split(".", 2)[1] for path in paths}
+    raw_referenced_types = policy.get("referencedTypes", [])
+    if not isinstance(raw_referenced_types, list):
+        raise ValueError(f"{policy_path.name} referencedTypes must be a list")
+    referenced_types: list[dict[str, object]] = []
+    referenced_type_names: set[str] = set()
+    for entry in raw_referenced_types:
+        if not isinstance(entry, dict):
+            raise ValueError("stable Python referenced types must be mappings")
+        path = entry.get("path")
+        kind = entry.get("kind")
+        if not isinstance(path, str) or kind not in {"type-alias", "opaque-type"}:
+            raise ValueError(
+                "stable Python referenced types require a path and supported kind"
+            )
+        value = _resolve_import_path(path, package=package)
+        name = path.split(".", 2)[1]
+        if name in referenced_type_names:
+            raise ValueError(f"{policy_path.name} contains duplicate referenced types")
+        referenced_type_names.add(name)
+        if kind == "type-alias":
+            referenced_types.append(
+                {"path": path, "kind": kind, "value": str(value)}
+            )
+        else:
+            module = getattr(value, "__module__", None)
+            qualname = getattr(value, "__qualname__", None)
+            if not isinstance(module, str) or not isinstance(qualname, str):
+                raise ValueError(f"stable opaque type {path!r} has no identity")
+            referenced_types.append(
+                {
+                    "path": path,
+                    "kind": kind,
+                    "module": module,
+                    "qualname": qualname,
+                }
+            )
+
+    stable_type_names = {
+        *(path.split(".", 2)[1] for path in paths),
+        *referenced_type_names,
+    }
     symbols: list[dict[str, object]] = []
     for entry, path, profile, value in resolved:
         declared_kind = entry.get("kind", "callable")
@@ -255,12 +295,15 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
         if dataclass_contract is not None:
             contract["dataclass"] = dataclass_contract
         symbols.append(contract)
-    return {
+    snapshot = {
         "snapshotVersion": policy.get("snapshotVersion"),
         "targetRelease": policy.get("targetRelease"),
         "readiness": policy.get("readiness"),
         "symbols": symbols,
     }
+    if referenced_types:
+        snapshot["referencedTypes"] = referenced_types
+    return snapshot
 
 
 def build_python_snapshot() -> dict[str, object]:

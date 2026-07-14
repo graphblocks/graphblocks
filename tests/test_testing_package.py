@@ -76,6 +76,109 @@ def test_tck_report_requires_nonempty_identified_native_evidence(monkeypatch) ->
     }
 
 
+def test_tck_result_evidence_is_deeply_immutable(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    observed = {"nested": {"items": [1, {"value": "original"}]}}
+    diagnostic = {"code": "GB3001", "message": "original"}
+    result = graphblocks_testing.TckResult(
+        "compiler/immutable",
+        "compiler",
+        "passed",
+        diagnostics=(diagnostic,),
+        observed=observed,
+    )
+    initial_contract = result.result_contract()
+
+    observed["nested"]["items"][1]["value"] = "mutated"
+    diagnostic["message"] = "mutated"
+
+    assert result.result_contract() == initial_contract
+    with pytest.raises(TypeError):
+        result.observed["nested"]["changed"] = True
+    returned = result.result_contract()
+    returned["observed"]["nested"]["items"][1]["value"] = "returned-mutation"
+    assert result.result_contract() == initial_contract
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+    ),
+)
+def test_tck_result_rejects_nonfinite_evidence_numbers(monkeypatch, value) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    with pytest.raises(ValueError, match="must be finite"):
+        graphblocks_testing.TckResult(
+            "compiler/nonfinite", "compiler", "passed", observed={"value": value}
+        )
+
+
+def test_tck_result_rejects_recursive_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+
+    with pytest.raises(ValueError, match="must not contain cycles"):
+        graphblocks_testing.TckResult(
+            "compiler/recursive", "compiler", "passed", observed=recursive
+        )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    (
+        (("", "compiler", "passed"), "case_id"),
+        (("compiler/case", "unknown", "passed"), "kind"),
+        (("compiler/case", "compiler", "skipped"), "status"),
+    ),
+)
+def test_tck_result_rejects_invalid_identity_contracts(
+    monkeypatch,
+    arguments,
+    message,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    with pytest.raises(ValueError, match=message):
+        graphblocks_testing.TckResult(*arguments)
+
+
+def test_tck_report_rejects_duplicate_and_mismatched_results(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    compiler_result = graphblocks_testing.TckResult(
+        "shared/case", "compiler", "passed"
+    )
+    runtime_result = graphblocks_testing.TckResult(
+        "runtime/case", "runtime", "passed"
+    )
+    arguments = {
+        "profile": "local",
+        "suite": "compiler",
+        "implementation": "graphblocks-python",
+        "implementation_version": "1.0.0",
+        "fixture_digest": "sha256:" + "1" * 64,
+    }
+
+    with pytest.raises(ValueError, match="unique"):
+        graphblocks_testing.TckReport(
+            results=(compiler_result, compiler_result), **arguments
+        )
+    with pytest.raises(ValueError, match="match the report suite"):
+        graphblocks_testing.TckReport(results=(runtime_result,), **arguments)
+
+
 def test_testing_package_exposes_deterministic_in_process_runtime(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -8011,6 +8114,20 @@ def test_tck_suite_manifest_digest_binds_auxiliary_fixtures(tmp_path, monkeypatc
     assert first.fixture_digest != second.fixture_digest
 
 
+def test_tck_suite_discovery_rejects_empty_roots_and_suites(tmp_path, monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    with pytest.raises(ValueError, match="at least one nonempty suite"):
+        graphblocks_testing.load_tck_suite_manifests(tmp_path)
+
+    empty_suite = tmp_path / "compiler"
+    empty_suite.mkdir()
+    (empty_suite / "cases.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="at least one case"):
+        graphblocks_testing.load_tck_suite_manifests(tmp_path)
+
+
 def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -8401,7 +8518,9 @@ def test_testing_package_run_all_rejects_non_runtime_native_suite(
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     policy = tmp_path / "policy"
     policy.mkdir()
-    (policy / "cases.json").write_text("[]", encoding="utf-8")
+    (policy / "cases.json").write_text(
+        '[{"name":"native-profile-placeholder"}]', encoding="utf-8"
+    )
 
     exit_code = graphblocks_testing.main(
         ["run-all", str(tmp_path), "--profile", "native", "--json"]

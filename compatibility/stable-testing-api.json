@@ -1,5 +1,23 @@
 {
   "readiness": "candidate",
+  "referencedTypes": [
+    {
+      "kind": "type-alias",
+      "path": "graphblocks_testing.TckCaseKind",
+      "value": "typing.Literal['compiler', 'runtime', 'schema', 'policy', 'approval-review', 'application-events', 'application-protocol', 'sequence', 'exhaustion', 'budget-race', 'conversation', 'documents', 'deployment', 'durable', 'migration', 'orchestration', 'rag', 'retry', 'tool-lifecycle', 'tool-execution', 'tool-result', 'usage', 'voice']"
+    },
+    {
+      "kind": "type-alias",
+      "path": "graphblocks_testing.TckResultStatus",
+      "value": "typing.Literal['passed', 'failed']"
+    },
+    {
+      "kind": "opaque-type",
+      "module": "graphblocks_testing",
+      "path": "graphblocks_testing.TckCase",
+      "qualname": "TckCase"
+    }
+  ],
   "snapshotVersion": 1,
   "symbols": [
     {
@@ -60,7 +78,10 @@
       "path": "graphblocks_testing.TckResult",
       "profile": "GB-C0-SCHEMA",
       "signature": "(case_id: 'str', kind: 'TckCaseKind', status: 'TckResultStatus', diagnostics: 'tuple[dict[str, str], ...]' = <factory>, observed: 'dict[str, object]' = <factory>) -> None",
-      "typeReferences": []
+      "typeReferences": [
+        "TckCaseKind",
+        "TckResultStatus"
+      ]
     },
     {
       "kind": "function",
@@ -313,6 +334,7 @@
       "profile": "GB-C1-LOCAL-RUNTIME",
       "signature": "(self, cases: 'tuple[TckCase, ...]') -> 'TckReport'",
       "typeReferences": [
+        "TckCase",
         "TckReport"
       ]
     },
@@ -330,7 +352,9 @@
       "path": "graphblocks_testing.load_tck_cases_for_suite",
       "profile": "GB-C0-SCHEMA",
       "signature": "(suite: 'str', path: 'str | Path') -> 'tuple[TckCase, ...]'",
-      "typeReferences": []
+      "typeReferences": [
+        "TckCase"
+      ]
     }
   ],
   "targetRelease": "1.0"

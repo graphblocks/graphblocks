@@ -15,7 +15,8 @@ import json
 import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal
+from types import MappingProxyType
+from typing import Literal, get_args
 
 from graphblocks.application_event import (
     APPLICATION_COMMAND_KINDS,
@@ -311,6 +312,8 @@ TckCaseKind = Literal[
     "voice",
 ]
 TckResultStatus = Literal["passed", "failed"]
+_TCK_CASE_KINDS = frozenset(get_args(TckCaseKind))
+_TCK_RESULT_STATUSES = frozenset(get_args(TckResultStatus))
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
 FaultKind = Literal[
@@ -375,6 +378,68 @@ def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
     if "dependencies are not ready" in message:
         return "dependencies_not_ready"
     return type(error).__name__
+
+
+class _FrozenEvidenceList(tuple[object, ...]):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, (list, tuple)):
+            return tuple(self) == tuple(other)
+        return False
+
+    __hash__ = tuple.__hash__
+
+
+def _freeze_tck_evidence(
+    value: object,
+    *,
+    _active_containers: set[int] | None = None,
+) -> object:
+    active_containers = set() if _active_containers is None else _active_containers
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError("TCK evidence must not contain cycles")
+        active_containers.add(identity)
+        try:
+            frozen: dict[str, object] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("TCK evidence mappings require string keys")
+                frozen[key] = _freeze_tck_evidence(
+                    item, _active_containers=active_containers
+                )
+            return MappingProxyType(frozen)
+        finally:
+            active_containers.remove(identity)
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in active_containers:
+            raise ValueError("TCK evidence must not contain cycles")
+        active_containers.add(identity)
+        try:
+            return _FrozenEvidenceList(
+                _freeze_tck_evidence(item, _active_containers=active_containers)
+                for item in value
+            )
+        finally:
+            active_containers.remove(identity)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("TCK evidence numbers must be finite")
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise ValueError("TCK evidence numbers must be finite")
+    if value is None or isinstance(value, (bool, int, float, str, Decimal)):
+        return value
+    raise ValueError(
+        f"TCK evidence contains unsupported value type {type(value).__name__}"
+    )
+
+
+def _thaw_tck_evidence(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw_tck_evidence(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_tck_evidence(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -784,16 +849,34 @@ class TckResult:
     observed: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "diagnostics", tuple(dict(diagnostic) for diagnostic in self.diagnostics))
-        object.__setattr__(self, "observed", dict(self.observed))
+        if not isinstance(self.case_id, str) or not self.case_id.strip():
+            raise ValueError("TCK result case_id must not be empty")
+        if self.kind not in _TCK_CASE_KINDS:
+            raise ValueError(f"unsupported TCK result kind {self.kind!r}")
+        if self.status not in _TCK_RESULT_STATUSES:
+            raise ValueError(f"unsupported TCK result status {self.status!r}")
+        diagnostics: list[Mapping[str, object]] = []
+        for index, diagnostic in enumerate(self.diagnostics):
+            if not isinstance(diagnostic, Mapping) or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in diagnostic.items()
+            ):
+                raise ValueError(
+                    f"TCK result diagnostic {index} must map strings to strings"
+                )
+            diagnostics.append(_freeze_tck_evidence(diagnostic))
+        if not isinstance(self.observed, Mapping):
+            raise ValueError("TCK result observed evidence must be a mapping")
+        object.__setattr__(self, "diagnostics", tuple(diagnostics))
+        object.__setattr__(self, "observed", _freeze_tck_evidence(self.observed))
 
     def result_contract(self) -> dict[str, object]:
         return {
             "case_id": self.case_id,
             "kind": self.kind,
             "status": self.status,
-            "diagnostics": [dict(diagnostic) for diagnostic in self.diagnostics],
-            "observed": dict(self.observed),
+            "diagnostics": [_thaw_tck_evidence(diagnostic) for diagnostic in self.diagnostics],
+            "observed": _thaw_tck_evidence(self.observed),
         }
 
 
@@ -807,7 +890,23 @@ class TckReport:
     fixture_digest: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "results", tuple(self.results))
+        for name, value in (
+            ("profile", self.profile),
+            ("suite", self.suite),
+            ("implementation", self.implementation),
+            ("implementation_version", self.implementation_version),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"TCK report {name} must not be empty")
+        results = tuple(self.results)
+        if any(not isinstance(result, TckResult) for result in results):
+            raise ValueError("TCK report results must contain only TckResult values")
+        case_ids = tuple(result.case_id for result in results)
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("TCK report result case ids must be unique")
+        if any(result.kind != self.suite for result in results):
+            raise ValueError("TCK report result kinds must match the report suite")
+        object.__setattr__(self, "results", results)
 
     @property
     def evidence_valid(self) -> bool:
@@ -907,6 +1006,8 @@ class TckSuiteManifest:
         ):
             raise ValueError("TCK suite fixture_digest must be a canonical sha256 digest")
         case_ids = tuple(str(case_id) for case_id in self.case_ids)
+        if not case_ids:
+            raise ValueError("TCK suite must contain at least one case")
         if any(not case_id.strip() for case_id in case_ids):
             raise ValueError("TCK suite case ids must not be empty")
         auxiliary_paths = tuple(str(path) for path in self.auxiliary_paths)
@@ -2609,6 +2710,8 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
                 ),
             )
         )
+    if not manifests:
+        raise ValueError("TCK root must contain at least one nonempty suite")
     return tuple(manifests)
 
 

@@ -6,6 +6,10 @@ description: >-
   for the first stable graphblocks-testing distribution. TckCase values remain
   opaque because their fields span preview profiles; acceptance and production
   release-gate helpers also remain preview.
+referencedTypes:
+  - {path: graphblocks_testing.TckCaseKind, kind: type-alias}
+  - {path: graphblocks_testing.TckResultStatus, kind: type-alias}
+  - {path: graphblocks_testing.TckCase, kind: opaque-type}
 symbols:
   - {path: graphblocks_testing.TckResult, profile: GB-C0-SCHEMA}
   - {path: graphblocks_testing.TckResult.result_contract, profile: GB-C0-SCHEMA}

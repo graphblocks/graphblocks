@@ -8,7 +8,7 @@ import sys
 import yaml
 
 import graphblocks
-from tools.check_compatibility import _check_or_update
+from tools.check_compatibility import _check_or_update, build_testing_snapshot
 
 
 ROOT = Path(__file__).parents[1]
@@ -146,6 +146,34 @@ def test_stable_testing_surface_is_deliberate_and_profile_bounded() -> None:
         entry["path"].startswith("graphblocks_testing.")
         for entry in snapshot["symbols"]
     )
+    referenced_types = {
+        entry["path"]: entry for entry in snapshot["referencedTypes"]
+    }
+    assert referenced_types["graphblocks_testing.TckCaseKind"]["kind"] == "type-alias"
+    assert referenced_types["graphblocks_testing.TckResultStatus"]["value"] == (
+        "typing.Literal['passed', 'failed']"
+    )
+    assert referenced_types["graphblocks_testing.TckCase"] == {
+        "kind": "opaque-type",
+        "module": "graphblocks_testing",
+        "path": "graphblocks_testing.TckCase",
+        "qualname": "TckCase",
+    }
+    result_symbol = next(
+        entry
+        for entry in snapshot["symbols"]
+        if entry["path"] == "graphblocks_testing.TckResult"
+    )
+    assert result_symbol["typeReferences"] == ["TckCaseKind", "TckResultStatus"]
+
+
+def test_stable_testing_snapshot_binds_referenced_type_alias_values(monkeypatch) -> None:
+    expected = build_testing_snapshot()
+    import graphblocks_testing
+
+    monkeypatch.setattr(graphblocks_testing, "TckResultStatus", object())
+
+    assert build_testing_snapshot() != expected
 
 
 def test_stable_testing_cli_snapshot_covers_list_and_run_all_contracts() -> None:
