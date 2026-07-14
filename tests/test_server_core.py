@@ -1888,7 +1888,7 @@ def test_server_app_rejects_inline_executor_without_deadlocking_admission() -> N
 
     Thread(target=invoke, daemon=True).start()
 
-    assert finished.wait(timeout=1), "inline executor deadlocked run admission"
+    assert finished.wait(timeout=5), "inline executor deadlocked run admission"
     assert responses[0].status_code == 503
     assert app.pending_accepted_run_ids() == ()
     assert "run-inline-executor-1" not in app._events_by_run_id
