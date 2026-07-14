@@ -80,6 +80,42 @@ def test_stable_plugin_blocks_require_capabilities_and_config_schema() -> None:
     ]
 
 
+def test_plugin_manifest_reports_recursive_required_when_as_a_diagnostic() -> None:
+    required_when: dict[str, object] = {}
+    required_when["not"] = required_when
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "example.recursive"},
+        "spec": {
+            "pluginId": "example.recursive",
+            "version": "1.0.0",
+            "capabilities": [],
+            "blocks": [
+                {
+                    "typeId": "example.echo",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                    "outputs": [
+                        {
+                            "name": "value",
+                            "required": False,
+                            "requiredWhen": required_when,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    diagnostics = validate_plugin_manifest(document)
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("GB0014", "$.spec.blocks[0].outputs[0].requiredWhen.not")
+    ]
+
+
 def test_stable_plugin_config_schema_is_meta_validated_as_draft_2020_12() -> None:
     diagnostics = validate_plugin_manifest(
         {

@@ -43,6 +43,7 @@ _OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
 )
 _MAX_OUTPUT_REQUIREDNESS_DEPTH = 16
 _MAX_OUTPUT_REQUIREDNESS_OPERANDS = 16
+_ENDPOINT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _MISSING = object()
 _STABLE_CORE_BLOCK_IDS = frozenset(
     {
@@ -203,6 +204,24 @@ def _descriptor_bool(
     value = owner.get(field_name, default)
     if not isinstance(value, bool):
         raise ValueError(f"{field_name} must be a boolean")
+    return value
+
+
+def _validate_descriptor_name(value: object, *, field_name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(f"{field_name} must be a non-empty string without whitespace")
+    return value
+
+
+def _validate_endpoint_name(value: object, *, field_name: str) -> str:
+    if not isinstance(value, str) or _ENDPOINT_NAME_PATTERN.fullmatch(value) is None:
+        raise ValueError(
+            f"{field_name} must match ^[A-Za-z][A-Za-z0-9_-]*$"
+        )
     return value
 
 
@@ -494,6 +513,17 @@ class PortDescriptor:
     required: bool = True
     required_when: OutputRequirednessPredicate | None = None
 
+    def __post_init__(self) -> None:
+        _validate_endpoint_name(self.name, field_name="port name")
+        if self.type_ref is not None:
+            _validate_type_ref(self.type_ref)
+        if not isinstance(self.required, bool):
+            raise TypeError("port required must be a boolean")
+        if self.required_when is not None and not isinstance(
+            self.required_when, OutputRequirednessPredicate
+        ):
+            raise TypeError("port required_when must be an OutputRequirednessPredicate")
+
     def required_for(self, config: Mapping[str, object], *, phase: str) -> bool:
         return self.required or (
             self.required_when is not None
@@ -506,6 +536,13 @@ class ResourceSlotDescriptor:
     name: str
     type_ref: str | None = None
     optional: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_descriptor_name(self.name, field_name="resource slot name")
+        if self.type_ref is not None:
+            _validate_resource_type_ref(self.type_ref)
+        if not isinstance(self.optional, bool):
+            raise TypeError("resource slot optional must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,6 +560,41 @@ class BlockDescriptor:
     )
 
     def __post_init__(self) -> None:
+        type_id = _validate_descriptor_name(self.type_id, field_name="block type_id")
+        if "@" in type_id:
+            raise ValueError("block type_id must not include a version suffix")
+        if (
+            not isinstance(self.version, int)
+            or isinstance(self.version, bool)
+            or self.version < 1
+        ):
+            raise ValueError("block version must be a positive integer")
+        inputs = tuple(self.inputs)
+        outputs = tuple(self.outputs)
+        resource_slots = tuple(self.resource_slots)
+        if not all(isinstance(port, PortDescriptor) for port in inputs):
+            raise TypeError("block inputs must contain only PortDescriptor values")
+        if not all(isinstance(port, PortDescriptor) for port in outputs):
+            raise TypeError("block outputs must contain only PortDescriptor values")
+        if not all(
+            isinstance(slot, ResourceSlotDescriptor) for slot in resource_slots
+        ):
+            raise TypeError(
+                "block resource_slots must contain only ResourceSlotDescriptor values"
+            )
+        if any(port.required_when is not None for port in inputs):
+            raise ValueError("block inputs must not declare required_when")
+        for field_name, descriptors in (
+            ("input", inputs),
+            ("output", outputs),
+            ("resource slot", resource_slots),
+        ):
+            names = [descriptor.name for descriptor in descriptors]
+            if len(names) != len(set(names)):
+                raise ValueError(f"block {field_name} names must be unique")
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(self, "resource_slots", resource_slots)
         object.__setattr__(self, "capabilities", _block_capabilities(self.capabilities))
         object.__setattr__(
             self,
@@ -796,6 +868,19 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
     schema_violations = ()
     if not isinstance(document, dict):
         return DiagnosticSet((Diagnostic("GB2001", "plugin manifest must be a mapping"),))
+    domain_violations = tuple(
+        violation
+        for violation in resource_schema_errors(document)
+        if violation.keyword
+        in {"finiteNumber", "jsonObjectKey", "jsonValue", "maxDepth", "recursive"}
+    )
+    if domain_violations:
+        return DiagnosticSet(
+            tuple(
+                Diagnostic(violation.code, violation.message, violation.path)
+                for violation in domain_violations
+            )
+        )
     try:
         document = _migrate_document_unchecked(document)
     except MigrationError as error:

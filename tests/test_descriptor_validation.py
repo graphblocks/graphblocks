@@ -7,6 +7,8 @@ from graphblocks.plugins import (
     BlockCatalog,
     BlockDescriptor,
     OutputRequirednessPredicate,
+    PortDescriptor,
+    ResourceSlotDescriptor,
     evaluate_output_requiredness,
     parse_output_requiredness_predicate,
 )
@@ -17,6 +19,66 @@ def test_direct_block_catalog_rejects_descriptor_identity_mismatch() -> None:
 
     with pytest.raises(ValueError, match="does not match descriptor 'actual.block@1'"):
         BlockCatalog({"claimed.block@1": descriptor})
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        lambda: PortDescriptor(""),
+        lambda: PortDescriptor("bad port"),
+        lambda: PortDescriptor("value", type_ref="schemas/Value"),
+        lambda: PortDescriptor("value", required="yes"),
+        lambda: ResourceSlotDescriptor(""),
+        lambda: ResourceSlotDescriptor("model", type_ref="Model"),
+        lambda: ResourceSlotDescriptor("model", optional=1),
+    ],
+)
+def test_direct_port_and_resource_slot_descriptors_enforce_invariants(
+    descriptor: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        descriptor()  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("name", ["nested.value", "1value", "value/path"])
+def test_direct_port_descriptor_rejects_ambiguous_endpoint_names(name: str) -> None:
+    with pytest.raises(ValueError, match="port name must match"):
+        PortDescriptor(name)
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        lambda: BlockDescriptor("", 1),
+        lambda: BlockDescriptor("bad block", 1),
+        lambda: BlockDescriptor("bad.block@1", 1),
+        lambda: BlockDescriptor("bad.block", 0),
+        lambda: BlockDescriptor("bad.block", True),
+        lambda: BlockDescriptor("bad.block", 1, inputs=(object(),)),
+        lambda: BlockDescriptor(
+            "bad.block",
+            1,
+            inputs=(PortDescriptor("value"), PortDescriptor("value")),
+        ),
+        lambda: BlockDescriptor(
+            "bad.block",
+            1,
+            inputs=(
+                PortDescriptor(
+                    "value",
+                    required_when=OutputRequirednessPredicate(
+                        operator="phase", phase="resumed"
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_direct_block_descriptors_enforce_catalog_invariants(
+    descriptor: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        descriptor()  # type: ignore[operator]
 
 
 def test_block_catalog_rejects_invalid_port_schema_ids() -> None:
