@@ -3039,6 +3039,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         .and_then(Value::as_array)
     {
         let mut seen_edge_identities = BTreeSet::<(String, String)>::new();
+        let mut source_by_target = BTreeMap::<String, String>::new();
         for (index, edge) in edges.iter().enumerate() {
             let Some(edge) = edge.as_object() else {
                 diagnostics.push(Diagnostic::error(
@@ -3058,12 +3059,26 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 ));
                 continue;
             };
-            if !seen_edge_identities.insert((source.to_owned(), target.to_owned())) {
+            let duplicate_identity =
+                !seen_edge_identities.insert((source.to_owned(), target.to_owned()));
+            if duplicate_identity {
                 diagnostics.push(Diagnostic::error(
                     "GB1005",
                     format!("duplicate edge identity '{source}' -> '{target}'"),
                     format!("$.spec.edges[{index}]"),
                 ));
+            } else if let Some(existing_source) = source_by_target.get(target) {
+                if existing_source != source {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1007",
+                        format!(
+                            "multiple distinct edge sources write target '{target}': '{existing_source}' and '{source}'"
+                        ),
+                        format!("$.spec.edges[{index}]"),
+                    ));
+                }
+            } else {
+                source_by_target.insert(target.to_owned(), source.to_owned());
             }
             for (key, endpoint) in [("from", source), ("to", target)] {
                 let Some((owner, endpoint_path)) = endpoint.split_once('.') else {

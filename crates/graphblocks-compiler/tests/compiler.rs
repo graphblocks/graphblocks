@@ -672,6 +672,52 @@ fn compile_graph_rejects_edge_duplicated_by_input_shorthand() {
 }
 
 #[test]
+fn compile_graph_rejects_distinct_explicit_and_shorthand_sources_for_one_target() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "competing-shorthand-source"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1"
+                }
+            },
+            "nodes": {
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"value": "$input.left"}
+                }
+            },
+            "edges": [{"from": "$input.right", "to": "sink.value"}]
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+    let errors = plan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        plan.normalized["spec"]["edges"],
+        json!([
+            {"from": "$input.left", "to": "sink.value"},
+            {"from": "$input.right", "to": "sink.value"}
+        ])
+    );
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "GB1007");
+    assert_eq!(
+        errors[0].message,
+        "multiple distinct edge sources write target 'sink.value': '$input.left' and '$input.right'"
+    );
+    assert_eq!(errors[0].path, "$.spec.edges[1]");
+}
+
+#[test]
 fn compile_graph_collapses_symmetric_input_and_output_shorthand() {
     let edge = json!({"from": "source.message", "to": "sink.message"});
     let graph = json!({
@@ -699,32 +745,71 @@ fn compile_graph_collapses_symmetric_input_and_output_shorthand() {
 }
 
 #[test]
-fn compile_graph_preserves_distinct_edge_identities() {
+fn compile_graph_allows_one_source_to_fan_out_to_multiple_targets() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
         "kind": "Graph",
-        "metadata": {"name": "distinct-edges"},
+        "metadata": {"name": "edge-fan-out"},
         "spec": {
             "interface": {
-                "inputs": {
-                    "first": "schemas/Value@1",
-                    "second": "schemas/Value@1"
-                },
+                "inputs": {"value": "schemas/Value@1"},
                 "outputs": {
-                    "first": "schemas/Value@1",
-                    "second": "schemas/Value@1"
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1"
                 }
             },
             "nodes": {},
             "edges": [
-                {"from": "$input.first", "to": "$output.first"},
-                {"from": "$input.first", "to": "$output.second"},
-                {"from": "$input.second", "to": "$output.second"}
+                {"from": "$input.value", "to": "$output.left"},
+                {"from": "$input.value", "to": "$output.right"}
             ]
         }
     });
 
     assert!(compile_graph_for_discovery(&graph).ok());
+}
+
+#[test]
+fn compile_graph_rejects_distinct_sources_writing_the_same_target() {
+    for target in ["sink.value", "$output.value"] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "competing-edge-sources"},
+            "spec": {
+                "interface": {
+                    "inputs": {
+                        "left": "schemas/Value@1",
+                        "right": "schemas/Value@1"
+                    },
+                    "outputs": {"value": "schemas/Value@1"}
+                },
+                "nodes": {"sink": {"block": "test.sink@1"}},
+                "edges": [
+                    {"from": "$input.left", "to": target},
+                    {"from": "$input.right", "to": target}
+                ]
+            }
+        });
+
+        let plan = compile_graph_for_discovery(&graph);
+        let errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{target}: {:?}", plan.diagnostics);
+        assert_eq!(errors[0].code, "GB1007", "{target}");
+        assert_eq!(
+            errors[0].message,
+            format!(
+                "multiple distinct edge sources write target '{target}': '$input.left' and '$input.right'"
+            ),
+            "{target}"
+        );
+        assert_eq!(errors[0].path, "$.spec.edges[1]", "{target}");
+    }
 }
 
 #[test]
