@@ -288,6 +288,48 @@ def test_compile_rejects_edge_duplicated_by_input_shorthand() -> None:
     ]
 
 
+def test_compile_rejects_distinct_explicit_and_shorthand_sources_for_one_target() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "competing-shorthand-source"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1",
+                }
+            },
+            "nodes": {
+                "sink": {
+                    "block": "test.sink@1",
+                    "inputs": {"value": "$input.left"},
+                }
+            },
+            "edges": [{"from": "$input.right", "to": "sink.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
+
+    assert plan.normalized["spec"]["edges"] == [
+        {"from": "$input.left", "to": "sink.value"},
+        {"from": "$input.right", "to": "sink.value"},
+    ]
+    assert [
+        (diagnostic.code, diagnostic.message, diagnostic.path)
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ] == [
+        (
+            "GB1007",
+            "multiple distinct edge sources write target 'sink.value': "
+            "'$input.left' and '$input.right'",
+            "$.spec.edges[1]",
+        )
+    ]
+
+
 def test_compile_collapses_symmetric_input_and_output_shorthand() -> None:
     edge = {"from": "source.message", "to": "sink.message"}
     graph = {

@@ -100,6 +100,64 @@ def test_compile_rejects_duplicate_edge_identity() -> None:
     ]
 
 
+@pytest.mark.parametrize("target", ["sink.value", "$output.value"])
+def test_compile_rejects_distinct_sources_writing_the_same_target(
+    target: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "competing-edge-sources"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1",
+                },
+                "outputs": {"value": "schemas/Value@1"},
+            },
+            "nodes": {"sink": {"block": "test.sink@1"}},
+            "edges": [
+                {"from": "$input.left", "to": target},
+                {"from": "$input.right", "to": target},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1007",
+            f"multiple distinct edge sources write target {target!r}: "
+            "'$input.left' and '$input.right'",
+            "$.spec.edges[1]",
+        )
+    ]
+
+
+def test_compile_allows_one_source_to_fan_out_to_multiple_targets() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "edge-fan-out"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "schemas/Value@1"},
+                "outputs": {
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1",
+                },
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.value", "to": "$output.left"},
+                {"from": "$input.value", "to": "$output.right"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == []
+
+
 @pytest.mark.parametrize("pseudo_source", ["$state", "$context", "$execution"])
 def test_compile_rejects_local_runtime_unsupported_pseudo_sources(
     pseudo_source: str,

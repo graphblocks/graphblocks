@@ -60,6 +60,11 @@ views of one connection and MUST normalize to one edge. Explicit edges remain
 independent declarations; an explicit edge matching shorthand, or another
 explicit edge, MUST fail as a duplicate edge identity.
 
+Each normalized target endpoint MUST have at most one distinct source. Distinct
+sources writing the same block input or graph output MUST fail with `GB1007`.
+One source MAY fan out to multiple targets, and symmetric input-side and
+output-side shorthand remains the single connection described above.
+
 ## Execution
 
 ### Local scheduling and outcomes

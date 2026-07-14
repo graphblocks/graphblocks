@@ -33,6 +33,40 @@ def _accept_callback_receipt(
     return True
 
 
+def test_runtime_rejects_competing_sources_before_overwriting_a_node_input() -> None:
+    calls: list[dict[str, object]] = []
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+
+    def sink(inputs, config, context):
+        calls.append(dict(inputs))
+        return {}
+
+    registry.register("test.sink@1", sink)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "competing-runtime-inputs"},
+        "spec": {
+            "nodes": {"sink": {"block": "test.sink@1"}},
+            "edges": [
+                {"from": "$input.left", "to": "sink.value"},
+                {"from": "$input.right", "to": "sink.value"},
+            ],
+        },
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"GB1007 \$\.spec\.edges\[1\]: multiple distinct edge sources "
+            r"write target 'sink\.value': '\$input\.left' and '\$input\.right'"
+        ),
+    ):
+        InProcessRuntime(registry).run(graph, {"left": "left", "right": "right"})
+
+    assert calls == []
+
+
 def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
     calls: list[str] = []
     registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
