@@ -204,18 +204,25 @@ reference server retains checkpoints and executors in process; this continuation
 does not survive process restart. A restart-durable or remote-worker claim
 requires a durable runtime implementation.
 
-The native stdlib runtime provides a preview, single-process/single-worker
-SQLite continuation through `checkpointStorePath`. It does not coordinate
-concurrent workers or provide a distributed checkpoint lease/claim service.
+The native stdlib runtime provides a preview, local-filesystem SQLite
+continuation through `checkpointStorePath`. Cooperating processes that resume
+the same run through the same checkpoint store are serialized by a lock file
+adjacent to that store. Every such process MUST resolve the checkpoint path and
+adjacent lock to the same shared filesystem and lock inode; separate filesystem
+namespaces or aliases are not coordinated. This serialization does not provide
+a distributed checkpoint lease/claim service.
 A graph that reaches `async.await_callback@1` with
 checkpointing enabled returns `waiting_callback`, persists the canonical
 checkpoint, and leaves the run and journal nonterminal. `asyncOperationStorePath`
 selects the SQLite async-operation receipt store and defaults to the checkpoint
-store. These options and `callbackReceipt` are available through the raw native
-JSON entry point, the Rust `StdlibRunOptions` builder, and the
-`graphblocks_runtime.run_stdlib_graph` wrapper. A later invocation with the same
-graph, inputs, `runId`, store paths, deployment provenance, and the
-shared callback receipt envelope reloads the checkpoint and may resume it. The
+store. These options, `callbackReceipt`, and `callbackAdmissionHmacKey` are
+available through the raw native JSON entry point and the Rust
+`StdlibRunOptions` builder; the Python wrapper exposes the key as
+`callback_admission_hmac_key`. The native CLI accepts the name of an environment
+variable containing the key, not the key itself as an argument. A later
+invocation with the same graph, inputs, `runId`, store paths, deployment
+provenance, shared callback receipt envelope, and separately injected admission
+key reloads the checkpoint and may resume it. The
 checkpoint digest binds the deployment provenance so a continuation
 cannot silently cross release or physical-plan identity. The receipt must carry
 matching operation, run, node, attempt,
@@ -227,11 +234,16 @@ non-empty authentication, policy, and budget decision identifiers; the
 compatible release digest; run, operation, node, attempt, checkpoint, and
 checkpoint-state identities; a positive ownership fencing epoch plus owner,
 lease, and fence-token identities; and schema-verification identity to the same
-schema, payload digest, and verifier as the receipt.
+schema, payload digest, and verifier as the receipt. The decision MUST include
+an `hmac-sha256` signature made with a deployment-owned key of at least 32
+bytes. The runtime verifies that signature over the domain-separated canonical
+decision; callback-supplied claims without the separately injected key are not
+trusted admission evidence.
 
 These are trusted pre-admission assertions, not authorities implemented by the
 native stdlib runtime. Before invoking it, the embedding ingress/coordinator
-MUST authenticate the assertion producer and MUST obtain fresh authentication,
+MUST authenticate the assertion producer, MUST keep and inject the HMAC key
+outside the callback envelope, and MUST obtain fresh authentication,
 policy, budget, compatible-release, schema-validation, and ownership/lease
 decisions from deployment-owned authorities. The native runtime checks the
 assertion shape and its structured identity/digest bindings; it does not query

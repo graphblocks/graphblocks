@@ -693,6 +693,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         checkpoint_store_path="/tmp/graphblocks-checkpoints.sqlite3",
         async_operation_store_path="/tmp/graphblocks-operations.sqlite3",
         callback_receipt={"operation_id": "operation-1"},
+        callback_admission_hmac_key="callback-admission-key-material-0001",
         deployment_provenance={
             "release_digest": "sha256:release",
             "deployment_revision_id": "revision-1",
@@ -1320,6 +1321,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 '{"kind":"Graph"}',
                 '{"message":{"text":"hi"}}',
                 '{"asyncOperationStorePath":"/tmp/graphblocks-operations.sqlite3",'
+                '"callbackAdmissionHmacKey":"callback-admission-key-material-0001",'
                 '"callbackReceipt":{"operation_id":"operation-1"},'
                 '"checkpointStorePath":"/tmp/graphblocks-checkpoints.sqlite3",'
                 '"deploymentProvenance":{"deployment_revision_id":"revision-1",'

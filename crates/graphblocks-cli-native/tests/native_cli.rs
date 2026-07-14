@@ -1,9 +1,10 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_cli_native::{
     NativeCliMode, NativeDocumentError, load_graph_document, load_single_graph_document,
-    run_compiler_workflow, run_stdlib_workflow,
+    run_compiler_workflow, run_stdlib_workflow, run_stdlib_workflow_with_options,
 };
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
@@ -268,6 +269,118 @@ fn native_run_executes_stdlib_graph_with_inputs() {
 }
 
 #[test]
+fn native_run_forwards_runtime_persistence_options() {
+    let graph = prompt_graph("Native {message.text}");
+
+    let report = run_stdlib_workflow_with_options(
+        &graph,
+        &json!({"message": {"text": "ok"}}),
+        &json!({"runId": "run-native-options-1"}),
+    );
+
+    assert!(report.ok);
+    assert_eq!(
+        report
+            .result
+            .as_ref()
+            .and_then(|result| result.get("runId"))
+            .and_then(Value::as_str),
+        Some("run-native-options-1")
+    );
+}
+
+#[test]
+fn native_run_reports_durable_callback_suspension_as_success() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock follows unix epoch")
+        .as_nanos();
+    let store_path =
+        std::env::temp_dir().join(format!("graphblocks-native-cli-callback-{unique}.sqlite3"));
+    let store_path_option = store_path.to_string_lossy().into_owned();
+
+    let report = run_stdlib_workflow_with_options(
+        &native_callback_graph(),
+        &json!({}),
+        &json!({
+            "runId": "run-native-cli-callback-1",
+            "checkpointStorePath": &store_path_option,
+            "asyncOperationStorePath": &store_path_option,
+            "runStorePath": &store_path_option,
+            "journalStorePath": &store_path_option
+        }),
+    );
+
+    assert!(report.ok, "{:?}", report.error);
+    assert_eq!(
+        report
+            .result
+            .as_ref()
+            .and_then(|result| result.get("status"))
+            .and_then(Value::as_str),
+        Some("waiting_callback")
+    );
+    let _ = std::fs::remove_file(store_path);
+}
+
+fn native_callback_graph() -> Value {
+    json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "native-cli-callback"},
+        "spec": {
+            "interface": {"outputs": {"wait": "graphblocks.ai/AsyncWait@1"}},
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "operation-native-cli-1",
+                        "runId": "run-native-cli-callback-1",
+                        "nodeId": "wait",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "idempotencyKey": "operation-idempotency-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1000,
+                        "submittedAtUnixMs": 1050,
+                        "timeoutMs": 60000,
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "outputs": {"operation": "wait.operation"}
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "checkpoint": true,
+                        "onTimeout": "fail",
+                        "timeoutMs": 60000,
+                        "idempotencyKey": "operation-idempotency-1",
+                        "callback": {"required": true, "schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "inputs": {"operation": "start.operation"},
+                    "outputs": {"wait": "$output.wait"}
+                }
+            }
+        }
+    })
+}
+
+#[test]
 fn native_run_reports_failed_runtime_status_as_not_ok() {
     let graph = prompt_graph("Native {message.text}");
 
@@ -309,6 +422,35 @@ fn native_binary_run_accepts_input_json() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(
         payload.pointer("/outputs/prompt").and_then(Value::as_str),
         Some("CLI ok"),
+    );
+    Ok(())
+}
+
+#[test]
+fn native_binary_run_exposes_runtime_run_options() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-native"))
+        .args([
+            "run",
+            "--run-id",
+            "run-native-cli-options-1",
+            "--input-json",
+            r#"{"message":{"text":"ok"}}"#,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("native binary stdin pipe was not available")?;
+    stdin.write_all(serde_json::to_string(&prompt_graph("CLI {message.text}"))?.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<Value>(&output.stdout)?;
+    assert_eq!(
+        payload.get("runId").and_then(Value::as_str),
+        Some("run-native-cli-options-1")
     );
     Ok(())
 }

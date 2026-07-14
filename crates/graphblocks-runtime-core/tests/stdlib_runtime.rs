@@ -73,6 +73,46 @@ fn rust_stdlib_runtime_projects_nested_node_and_input_source_paths() -> Result<(
 }
 
 #[test]
+fn rust_stdlib_runtime_rejects_unsupported_pseudo_node_edges_during_preflight() {
+    for pseudo_node in ["$context", "$state", "$execution"] {
+        for (source, target) in [
+            (
+                format!("{pseudo_node}.context"),
+                "generate.context".to_owned(),
+            ),
+            (
+                "generate.response".to_owned(),
+                format!("{pseudo_node}.response"),
+            ),
+        ] {
+            let graph = json!({
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": "unsupported-pseudo-node"},
+                "spec": {
+                    "nodes": {
+                        "generate": {
+                            "block": "model.generate@1",
+                            "config": {"response": "ok"}
+                        }
+                    },
+                    "edges": [{"from": source, "to": target}]
+                }
+            });
+
+            let error = run_stdlib_graph_json(&graph.to_string(), "{}")
+                .expect_err("unsupported pseudo-node edges must not be silently discarded");
+            assert!(
+                error
+                    .to_string()
+                    .contains("does not support pseudo-node edge"),
+                "unexpected error for {pseudo_node}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn rust_stdlib_runtime_preserves_tool_implementation_mappings() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -459,7 +499,7 @@ fn rust_stdlib_agent_run_rejects_unresolved_tool_entries() -> Result<(), String>
 }
 
 #[test]
-fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), String> {
+fn rust_stdlib_async_blocks_require_checkpoint_persistence_to_await_callback() {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -521,23 +561,17 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
             }
         }
     });
-    let result = run_graph(&graph, &json!({"changeset": {"id": "changeset-1"}}))?;
+    let error = run_graph(&graph, &json!({"changeset": {"id": "changeset-1"}}))
+        .expect_err("awaiting a callback without checkpoint persistence must fail closed");
 
-    assert_eq!(result["status"], "succeeded");
-    assert_eq!(result["outputs"]["wait"]["state"], "waiting_callback");
     assert_eq!(
-        result["outputs"]["wait"]["operation"]["operation_id"],
-        "op-ci-1"
+        error,
+        "native callback suspension requires checkpointStorePath"
     );
-    assert_eq!(result["outputs"]["wait"]["operation"]["kind"], "ci_job");
-    assert_eq!(result["outputs"]["wait"]["checkpoint"], true);
-    assert_eq!(result["outputs"]["wait"]["onTimeout"], "fail");
-    assert_eq!(result["outputs"]["wait"]["timeoutMs"], 800);
-    Ok(())
 }
 
 #[test]
-fn rust_stdlib_async_await_callback_accepts_explicit_infinite_wait_policy() -> Result<(), String> {
+fn rust_stdlib_async_await_callback_accepts_infinite_wait_before_requiring_persistence() {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -597,16 +631,13 @@ fn rust_stdlib_async_await_callback_accepts_explicit_infinite_wait_policy() -> R
             }
         }
     });
-    let result = run_graph(&graph, &json!({}))?;
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("valid infinite callback wait still requires checkpoint persistence");
 
-    assert_eq!(result["status"], "succeeded");
-    assert_eq!(result["outputs"]["wait"]["state"], "waiting_callback");
     assert_eq!(
-        result["outputs"]["wait"]["infiniteWaitPolicy"],
-        "operator_review_required"
+        error,
+        "native callback suspension requires checkpointStorePath"
     );
-    assert!(result["outputs"]["wait"].get("timeoutMs").is_none());
-    Ok(())
 }
 
 #[test]

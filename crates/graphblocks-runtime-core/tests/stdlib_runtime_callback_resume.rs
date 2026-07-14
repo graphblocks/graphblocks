@@ -1,10 +1,15 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Barrier};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_with_options_json;
+use hmac::{Hmac, Mac};
 use rusqlite::Connection;
 use serde_json::{Value, json};
+use sha2::Sha256;
+
+const CALLBACK_ADMISSION_HMAC_KEY: &str = "native-callback-test-admission-key-material-v1";
 
 fn sqlite_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -54,12 +59,36 @@ fn callback_receipt(waiting: &Value, admitted: bool) -> Value {
             "verified_by": receipt["verified_by"]
         }
     });
+    sign_callback_admission(&mut receipt);
     receipt
+}
+
+fn sign_callback_admission(receipt: &mut Value) {
+    let admission = receipt["resume_admission"]
+        .as_object_mut()
+        .expect("callback admission is an object");
+    admission.remove("signature");
+    let admission_digest = canonical_hash(&Value::Object(admission.clone()));
+    let message = format!("graphblocks.trusted-callback-resume-admission.v1\n{admission_digest}");
+    let mut mac = Hmac::<Sha256>::new_from_slice(CALLBACK_ADMISSION_HMAC_KEY.as_bytes())
+        .expect("test callback admission HMAC key is valid");
+    mac.update(message.as_bytes());
+    let signature = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    admission.insert(
+        "signature".to_owned(),
+        json!(format!("hmac-sha256:{signature}")),
+    );
 }
 
 fn callback_receipt_with_denied_decision(waiting: &Value) -> Value {
     let mut receipt = callback_receipt(waiting, false);
     receipt["resume_admission"]["policy_decision_id"] = json!("policy-denial-1");
+    sign_callback_admission(&mut receipt);
     receipt
 }
 
@@ -149,7 +178,8 @@ fn options(path: &Path, receipt: Option<Value>) -> Value {
         "checkpointStorePath": path,
         "asyncOperationStorePath": path,
         "runStorePath": path,
-        "journalStorePath": path
+        "journalStorePath": path,
+        "callbackAdmissionHmacKey": CALLBACK_ADMISSION_HMAC_KEY
     });
     if let Some(receipt) = receipt {
         options["callbackReceipt"] = receipt;
@@ -236,6 +266,46 @@ fn native_callback_run_suspends_and_returns_a_canonical_checkpoint() -> Result<(
     assert_eq!(run(&repeat_path, None)?, waiting);
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(repeat_path);
+    Ok(())
+}
+
+#[test]
+fn native_callback_suspension_requires_checkpoint_persistence() {
+    let error = run_stdlib_graph_with_options_json(
+        &callback_graph().to_string(),
+        "{}",
+        r#"{"runId":"run-native-callback-1"}"#,
+    )
+    .expect_err("callback suspension without a checkpoint store must fail closed");
+
+    assert_eq!(
+        error.to_string(),
+        "native callback suspension requires checkpointStorePath"
+    );
+}
+
+#[test]
+fn native_callback_receipt_is_rejected_without_checkpoint_persistence() -> Result<(), String> {
+    let path = sqlite_path("receipt-without-checkpoint");
+    let waiting = run(&path, None)?;
+    let options = json!({
+        "runId": "run-native-callback-1",
+        "callbackReceipt": callback_receipt(&waiting, true),
+        "callbackAdmissionHmacKey": CALLBACK_ADMISSION_HMAC_KEY
+    });
+
+    let error = run_stdlib_graph_with_options_json(
+        &callback_graph().to_string(),
+        "{}",
+        &options.to_string(),
+    )
+    .expect_err("callback receipt without a checkpoint store must fail closed");
+
+    assert_eq!(
+        error.to_string(),
+        "runtime callbackReceipt requires checkpointStorePath"
+    );
+    let _ = std::fs::remove_file(path);
     Ok(())
 }
 
@@ -383,6 +453,68 @@ fn native_callback_requires_a_positive_trusted_schema_validation_assertion() -> 
         .expect_err("a trusted admission with schema_validated=false must fail closed");
 
     assert_eq!(error, "native async callback rejected");
+    assert_eq!(async_operation_state(&path)?, "waiting_callback");
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn native_callback_admission_requires_a_host_trusted_signature() -> Result<(), String> {
+    let path = sqlite_path("unsigned-admission");
+    let waiting = run(&path, None)?;
+    let mut unsigned = callback_receipt(&waiting, true);
+    unsigned["resume_admission"]
+        .as_object_mut()
+        .expect("callback admission is an object")
+        .remove("signature");
+
+    let error = run(&path, Some(unsigned))
+        .expect_err("payload-provided admission claims must not authorize a resume");
+
+    assert_eq!(error, "native async callback rejected");
+    assert_eq!(async_operation_state(&path)?, "waiting_callback");
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn native_callback_admission_signature_binds_schema_and_payload_claims() -> Result<(), String> {
+    let path = sqlite_path("tampered-admission");
+    let waiting = run(&path, None)?;
+    let mut forged = callback_receipt(&waiting, true);
+    forged["payload"] = json!({"unexpected": "shape"});
+    let forged_digest = canonical_hash(&forged["payload"]);
+    forged["payload_digest"] = json!(forged_digest);
+    forged["resume_admission"]["schema_verification"]["payload_digest"] =
+        forged["payload_digest"].clone();
+
+    let error = run(&path, Some(forged))
+        .expect_err("callback claims changed after trusted verification must fail closed");
+
+    assert_eq!(error, "native async callback rejected");
+    assert_eq!(async_operation_state(&path)?, "waiting_callback");
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn native_callback_receipt_requires_trusted_key_configuration() -> Result<(), String> {
+    let path = sqlite_path("missing-admission-key");
+    let waiting = run(&path, None)?;
+    let mut untrusted_options = options(&path, Some(callback_receipt(&waiting, true)));
+    untrusted_options
+        .as_object_mut()
+        .expect("runtime options are an object")
+        .remove("callbackAdmissionHmacKey");
+
+    let error = run_stdlib_graph_with_options_json(
+        &callback_graph().to_string(),
+        "{}",
+        &untrusted_options.to_string(),
+    )
+    .expect_err("callback admission without trusted verifier key must fail closed");
+
+    assert_eq!(error.to_string(), "native async callback rejected");
     assert_eq!(async_operation_state(&path)?, "waiting_callback");
     let _ = std::fs::remove_file(path);
     Ok(())
@@ -547,6 +679,48 @@ fn duplicate_native_callback_is_idempotent() -> Result<(), String> {
     let error = run(&path, Some(identity_conflict))
         .expect_err("a completed duplicate must still match checkpoint identity");
     assert!(error.contains("native async callback rejected"));
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn concurrent_native_callback_resumes_are_serialized_atomically() -> Result<(), String> {
+    let path = sqlite_path("concurrent-resume");
+    let waiting = run(&path, None)?;
+    let receipt = callback_receipt(&waiting, true);
+    let barrier = Arc::new(Barrier::new(2));
+    let workers = (0..2)
+        .map(|_| {
+            let path = path.clone();
+            let receipt = receipt.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                run(&path, Some(receipt))
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = workers
+        .into_iter()
+        .map(|worker| {
+            worker
+                .join()
+                .map_err(|_| "callback resume worker panicked".to_owned())?
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    assert_eq!(results[0], results[1]);
+    assert_eq!(results[0]["status"], "succeeded");
+    assert_eq!(accepted_callback_event_counts(&path)?, (1, 1));
+    assert_eq!(
+        results[0]["journal"]
+            .as_array()
+            .expect("journal is an array")
+            .iter()
+            .filter(|record| record["kind"] == "external_callback_received")
+            .count(),
+        1
+    );
     let _ = std::fs::remove_file(path);
     Ok(())
 }

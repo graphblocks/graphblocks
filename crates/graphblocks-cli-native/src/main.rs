@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 
 use graphblocks_cli_native::{
-    NativeCliMode, load_graph_document, run_compiler_workflow, run_stdlib_workflow,
+    NativeCliMode, load_graph_document, run_compiler_workflow, run_stdlib_workflow_with_options,
 };
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
@@ -12,6 +12,7 @@ fn main() {
     let mut expand = false;
     let mut graph_name: Option<String> = None;
     let mut input_json = "{}".to_owned();
+    let mut runtime_options = serde_json::Map::new();
     while let Some(arg) = args.next() {
         match (command.as_deref(), arg.as_str()) {
             (Some("plan"), "--expand") => {
@@ -30,6 +31,70 @@ fn main() {
                     std::process::exit(2);
                 };
                 input_json = value;
+            }
+            (
+                Some("run"),
+                "--run-id"
+                | "--checkpoint-store-path"
+                | "--async-operation-store-path"
+                | "--run-store-path"
+                | "--journal-store-path"
+                | "--application-event-store-path",
+            ) => {
+                let Some(value) = args.next() else {
+                    eprintln!("{arg} requires a string argument");
+                    std::process::exit(2);
+                };
+                let option_name = match arg.as_str() {
+                    "--run-id" => "runId",
+                    "--checkpoint-store-path" => "checkpointStorePath",
+                    "--async-operation-store-path" => "asyncOperationStorePath",
+                    "--run-store-path" => "runStorePath",
+                    "--journal-store-path" => "journalStorePath",
+                    "--application-event-store-path" => "applicationEventStorePath",
+                    _ => {
+                        eprintln!("unsupported runtime path option: {arg}");
+                        std::process::exit(2);
+                    }
+                };
+                runtime_options.insert(option_name.to_owned(), Value::String(value));
+            }
+            (Some("run"), "--callback-receipt-json") => {
+                let Some(value) = args.next() else {
+                    eprintln!("--callback-receipt-json requires a JSON object argument");
+                    std::process::exit(2);
+                };
+                match serde_json::from_str::<Value>(&value) {
+                    Ok(receipt) if receipt.is_object() => {
+                        runtime_options.insert("callbackReceipt".to_owned(), receipt);
+                    }
+                    Ok(_) => {
+                        eprintln!("--callback-receipt-json must decode to a JSON object");
+                        std::process::exit(2);
+                    }
+                    Err(error) => {
+                        eprintln!("failed to parse --callback-receipt-json as JSON: {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            (Some("run"), "--callback-admission-hmac-key-env") => {
+                let Some(variable) = args.next() else {
+                    eprintln!(
+                        "--callback-admission-hmac-key-env requires an environment variable name"
+                    );
+                    std::process::exit(2);
+                };
+                let key = match std::env::var(&variable) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        eprintln!(
+                            "failed to read callback admission HMAC key from {variable:?}: {error}"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                runtime_options.insert("callbackAdmissionHmacKey".to_owned(), Value::String(key));
             }
             _ => {
                 eprintln!("unsupported argument: {arg}");
@@ -63,7 +128,8 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        let report = run_stdlib_workflow(&document, &inputs);
+        let report =
+            run_stdlib_workflow_with_options(&document, &inputs, &Value::Object(runtime_options));
         if let Some(error) = report.error {
             eprintln!("native runtime execution failed: {error}");
             std::process::exit(1);
@@ -87,7 +153,7 @@ fn main() {
         Some("plan") => NativeCliMode::Plan { expand },
         _ => {
             eprintln!(
-                "usage: graphblocks-native <validate|plan|run> [--expand] [--graph NAME] [--input-json JSON] < graph.(json|yaml)"
+                "usage: graphblocks-native <validate|plan|run> [--expand] [--graph NAME] [--input-json JSON] [--run-id ID] [--checkpoint-store-path PATH] [--async-operation-store-path PATH] [--run-store-path PATH] [--journal-store-path PATH] [--application-event-store-path PATH] [--callback-receipt-json JSON] [--callback-admission-hmac-key-env NAME] < graph.(json|yaml)"
             );
             std::process::exit(2);
         }

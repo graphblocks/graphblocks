@@ -1,7 +1,7 @@
 use graphblocks_compiler::compiler::compile_graph_with_catalog;
 use graphblocks_compiler::diagnostics::Diagnostic;
 use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
-use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json;
+use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_with_options_json;
 use serde::Deserialize;
 use serde_json::Value;
 use std::error::Error;
@@ -154,6 +154,14 @@ pub fn run_compiler_workflow(document: &Value, mode: NativeCliMode) -> NativeCli
 }
 
 pub fn run_stdlib_workflow(document: &Value, inputs: &Value) -> NativeRuntimeReport {
+    run_stdlib_workflow_with_options(document, inputs, &Value::Object(serde_json::Map::new()))
+}
+
+pub fn run_stdlib_workflow_with_options(
+    document: &Value,
+    inputs: &Value,
+    options: &Value,
+) -> NativeRuntimeReport {
     let graph_json = match serde_json::to_string(document) {
         Ok(graph_json) => graph_json,
         Err(error) => {
@@ -174,16 +182,27 @@ pub fn run_stdlib_workflow(document: &Value, inputs: &Value) -> NativeRuntimeRep
             };
         }
     };
-    let result_json = match run_stdlib_graph_json(&graph_json, &inputs_json) {
-        Ok(result_json) => result_json,
+    let options_json = match serde_json::to_string(options) {
+        Ok(options_json) => options_json,
         Err(error) => {
             return NativeRuntimeReport {
                 ok: false,
                 result: None,
-                error: Some(error.to_string()),
+                error: Some(format!("failed to serialize runtime options: {error}")),
             };
         }
     };
+    let result_json =
+        match run_stdlib_graph_with_options_json(&graph_json, &inputs_json, &options_json) {
+            Ok(result_json) => result_json,
+            Err(error) => {
+                return NativeRuntimeReport {
+                    ok: false,
+                    result: None,
+                    error: Some(error.to_string()),
+                };
+            }
+        };
     let result = match serde_json::from_str::<Value>(&result_json) {
         Ok(result) => result,
         Err(error) => {
@@ -194,7 +213,10 @@ pub fn run_stdlib_workflow(document: &Value, inputs: &Value) -> NativeRuntimeRep
             };
         }
     };
-    let ok = result.get("status").and_then(Value::as_str) == Some("succeeded");
+    let ok = matches!(
+        result.get("status").and_then(Value::as_str),
+        Some("succeeded" | "waiting_callback")
+    );
     NativeRuntimeReport {
         ok,
         result: Some(result),

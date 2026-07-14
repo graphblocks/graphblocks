@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::fs::{File, OpenOptions};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_compiler::canonical::canonical_hash;
@@ -8,8 +10,10 @@ use graphblocks_compiler::compiler::{
     BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
 };
 use graphblocks_compiler::diagnostics::Severity;
+use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+use sha2::Sha256;
 
 use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
@@ -36,6 +40,9 @@ use crate::tool::{
 use crate::tool_result::ToolEffectOutcome;
 use crate::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use crate::typed_graph::GraphDocument;
+
+type HmacSha256 = Hmac<Sha256>;
+const MIN_CALLBACK_ADMISSION_HMAC_KEY_BYTES: usize = 32;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StdlibRuntimeError {
@@ -95,7 +102,7 @@ impl StdlibRunStatus {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct StdlibRunOptions {
     pub run_id: Option<String>,
     pub run_store_path: Option<String>,
@@ -104,7 +111,40 @@ pub struct StdlibRunOptions {
     pub checkpoint_store_path: Option<String>,
     pub async_operation_store_path: Option<String>,
     pub callback_receipt: Option<Value>,
+    pub callback_admission_hmac_key: Option<String>,
     pub deployment_provenance: Option<RunDeploymentProvenance>,
+}
+
+impl fmt::Debug for StdlibRunOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StdlibRunOptions")
+            .field("run_id", &self.run_id)
+            .field("run_store_path", &self.run_store_path)
+            .field("journal_store_path", &self.journal_store_path)
+            .field(
+                "application_event_store_path",
+                &self.application_event_store_path,
+            )
+            .field("checkpoint_store_path", &self.checkpoint_store_path)
+            .field(
+                "async_operation_store_path",
+                &self.async_operation_store_path,
+            )
+            .field(
+                "callback_receipt",
+                &self.callback_receipt.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "callback_admission_hmac_key",
+                &self
+                    .callback_admission_hmac_key
+                    .as_ref()
+                    .map(|_| "<redacted>"),
+            )
+            .field("deployment_provenance", &self.deployment_provenance)
+            .finish()
+    }
 }
 
 impl StdlibRunOptions {
@@ -140,6 +180,15 @@ impl StdlibRunOptions {
 
     pub fn with_callback_receipt(mut self, receipt: Value) -> Self {
         self.callback_receipt = Some(receipt);
+        self
+    }
+
+    /// Supplies host-trusted key material used to verify callback resume admissions.
+    ///
+    /// This key is runtime configuration, not callback payload data, and must be
+    /// injected by the trusted ingress host after authenticating the callback.
+    pub fn with_callback_admission_hmac_key(mut self, key: impl Into<String>) -> Self {
+        self.callback_admission_hmac_key = Some(key.into());
         self
     }
 
@@ -179,6 +228,12 @@ impl StdlibRunOptions {
         }
         if let Some(receipt) = &self.callback_receipt {
             value.insert("callbackReceipt".to_owned(), receipt.clone());
+        }
+        if let Some(key) = &self.callback_admission_hmac_key {
+            value.insert(
+                "callbackAdmissionHmacKey".to_owned(),
+                Value::String(key.clone()),
+            );
         }
         if let Some(provenance) = &self.deployment_provenance {
             value.insert(
@@ -675,6 +730,11 @@ fn run_stdlib_graph_values(
         .get("callbackReceipt")
         .or_else(|| options.get("callback_receipt"))
         .filter(|value| !value.is_null());
+    let callback_admission_hmac_key = optional_options_string(
+        options,
+        "callbackAdmissionHmacKey",
+        "callback_admission_hmac_key",
+    )?;
     let deployment_provenance = options
         .get("deploymentProvenance")
         .or_else(|| options.get("deployment_provenance"))
@@ -698,9 +758,15 @@ fn run_stdlib_graph_values(
             run_store_path,
             journal_store_path,
             callback_receipt,
+            callback_admission_hmac_key,
             initial_output_values,
             deployment_provenance: deployment_provenance.as_ref(),
         });
+    }
+    if callback_receipt.is_some() {
+        return Err(StdlibRuntimeError::invalid(
+            "runtime callbackReceipt requires checkpointStorePath",
+        ));
     }
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
     let mut executor = StdlibExecutor {
@@ -717,6 +783,11 @@ fn run_stdlib_graph_values(
     let result = runtime.run(&mut executor).map_err(|error| {
         StdlibRuntimeError::runtime(format!("stdlib runtime execution failed: {error:?}"))
     })?;
+    if executor.suspension.is_some() {
+        return Err(StdlibRuntimeError::invalid(
+            "native callback suspension requires checkpointStorePath",
+        ));
+    }
     let output_values = if result.status == TestRunStatus::Succeeded {
         executor.output_values
     } else {
@@ -749,6 +820,7 @@ struct NativeCallbackRunRequest<'a> {
     run_store_path: Option<&'a str>,
     journal_store_path: Option<&'a str>,
     callback_receipt: Option<&'a Value>,
+    callback_admission_hmac_key: Option<&'a str>,
     initial_output_values: Value,
     deployment_provenance: Option<&'a RunDeploymentProvenance>,
 }
@@ -758,6 +830,7 @@ struct NativeCallbackEvidenceContext<'a> {
     async_operation_store_path: &'a str,
     run_store_path: Option<&'a str>,
     journal_store_path: Option<&'a str>,
+    callback_admission_hmac_key: Option<&'a str>,
     inputs: &'a Value,
     deployment_provenance: Option<&'a RunDeploymentProvenance>,
 }
@@ -768,6 +841,7 @@ impl<'a> From<&NativeCallbackRunRequest<'a>> for NativeCallbackEvidenceContext<'
             async_operation_store_path: request.async_operation_store_path,
             run_store_path: request.run_store_path,
             journal_store_path: request.journal_store_path,
+            callback_admission_hmac_key: request.callback_admission_hmac_key,
             inputs: request.inputs,
             deployment_provenance: request.deployment_provenance,
         }
@@ -855,7 +929,9 @@ fn run_native_callback_graph_values(
 ) -> Result<StdlibRunResult, StdlibRuntimeError> {
     let admission = request
         .callback_receipt
-        .map(validate_native_callback_receipt_shape)
+        .map(|receipt| {
+            validate_native_callback_receipt_shape(receipt, request.callback_admission_hmac_key)
+        })
         .transpose()?;
     if admission
         .as_ref()
@@ -865,9 +941,8 @@ fn run_native_callback_graph_values(
     }
     let stored = load_native_callback_run(request.checkpoint_store_path, request.run_id)?;
     match (stored, request.callback_receipt) {
-        (Some(stored), Some(receipt)) => resume_native_callback_run(
+        (Some(_), Some(receipt)) => resume_native_callback_run(
             request,
-            stored,
             receipt,
             admission
                 .as_ref()
@@ -899,6 +974,7 @@ fn run_native_callback_graph_values(
             mark_native_callback_phase(
                 request.checkpoint_store_path,
                 request.run_id,
+                stored.phase,
                 reconciled_phase,
             )?;
             Ok(stored.result)
@@ -996,10 +1072,13 @@ fn start_native_callback_run(
         request.checkpoint_store_path,
         &checkpoint,
         &waiting,
-        NativeCallbackCoordinatorPhase::WaitingEvidencePending,
-        None,
-        None,
-        None,
+        NativeCallbackPersistence {
+            expected_phase: None,
+            phase: NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+            callback_idempotency_key: None,
+            callback_payload_digest: None,
+            callback_receipt: None,
+        },
     )?;
     let stored = StoredNativeCallbackRun {
         checkpoint,
@@ -1013,6 +1092,7 @@ fn start_native_callback_run(
     mark_native_callback_phase(
         request.checkpoint_store_path,
         request.run_id,
+        NativeCallbackCoordinatorPhase::WaitingEvidencePending,
         NativeCallbackCoordinatorPhase::WaitingCallback,
     )?;
     Ok(waiting)
@@ -1020,10 +1100,17 @@ fn start_native_callback_run(
 
 fn resume_native_callback_run(
     request: NativeCallbackRunRequest<'_>,
-    mut stored: StoredNativeCallbackRun,
     receipt: &Value,
     admission: &TrustedNativeCallbackResumeAdmission,
 ) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    // Serialize reload, callback acceptance, replay, and terminal persistence for
+    // this run across threads and worker processes. The persistent lock inode is
+    // intentional: unlinking it could let a waiter lock a different inode while
+    // the current owner is still in the critical section.
+    let _resume_lock =
+        acquire_native_callback_resume_lock(request.checkpoint_store_path, request.run_id)?;
+    let mut stored = load_native_callback_run(request.checkpoint_store_path, request.run_id)?
+        .ok_or_else(native_callback_rejected)?;
     let evidence_context = NativeCallbackEvidenceContext::from(&request);
     validate_native_checkpoint_identity(
         &stored.checkpoint,
@@ -1057,6 +1144,7 @@ fn resume_native_callback_run(
             mark_native_callback_phase(
                 request.checkpoint_store_path,
                 request.run_id,
+                stored.phase,
                 NativeCallbackCoordinatorPhase::Terminal,
             )?;
             return Ok(stored.result);
@@ -1109,8 +1197,10 @@ fn resume_native_callback_run(
                 mark_native_callback_phase(
                     request.checkpoint_store_path,
                     request.run_id,
+                    stored.phase,
                     NativeCallbackCoordinatorPhase::WaitingCallback,
                 )?;
+                stored.phase = NativeCallbackCoordinatorPhase::WaitingCallback;
                 accept_native_callback(request.async_operation_store_path, receipt, admission)?;
             }
             _ => return Err(native_callback_rejected()),
@@ -1119,10 +1209,13 @@ fn resume_native_callback_run(
             request.checkpoint_store_path,
             &stored.checkpoint,
             &stored.result,
-            NativeCallbackCoordinatorPhase::CallbackAccepted,
-            Some(callback_idempotency_key),
-            Some(callback_payload_digest),
-            Some(receipt),
+            NativeCallbackPersistence {
+                expected_phase: Some(stored.phase),
+                phase: NativeCallbackCoordinatorPhase::CallbackAccepted,
+                callback_idempotency_key: Some(callback_idempotency_key),
+                callback_payload_digest: Some(callback_payload_digest),
+                callback_receipt: Some(receipt),
+            },
         )?;
         stored.phase = NativeCallbackCoordinatorPhase::CallbackAccepted;
         stored.callback_idempotency_key = Some(callback_idempotency_key.to_owned());
@@ -1213,10 +1306,13 @@ fn resume_native_callback_run(
         request.checkpoint_store_path,
         &stored.checkpoint,
         &resumed,
-        NativeCallbackCoordinatorPhase::TerminalEvidencePending,
-        Some(callback_idempotency_key),
-        Some(callback_payload_digest),
-        Some(receipt),
+        NativeCallbackPersistence {
+            expected_phase: Some(NativeCallbackCoordinatorPhase::CallbackAccepted),
+            phase: NativeCallbackCoordinatorPhase::TerminalEvidencePending,
+            callback_idempotency_key: Some(callback_idempotency_key),
+            callback_payload_digest: Some(callback_payload_digest),
+            callback_receipt: Some(receipt),
+        },
     )?;
     let terminal = StoredNativeCallbackRun {
         checkpoint: stored.checkpoint,
@@ -1230,9 +1326,51 @@ fn resume_native_callback_run(
     mark_native_callback_phase(
         request.checkpoint_store_path,
         request.run_id,
+        NativeCallbackCoordinatorPhase::TerminalEvidencePending,
         NativeCallbackCoordinatorPhase::Terminal,
     )?;
     Ok(resumed)
+}
+
+struct NativeCallbackResumeLock {
+    _file: File,
+}
+
+fn acquire_native_callback_resume_lock(
+    checkpoint_store_path: &str,
+    run_id: &str,
+) -> Result<NativeCallbackResumeLock, StdlibRuntimeError> {
+    let mut lock_path = PathBuf::from(checkpoint_store_path);
+    let file_name = lock_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            StdlibRuntimeError::invalid("checkpointStorePath cannot identify a callback lock")
+        })?;
+    let run_digest = canonical_hash(&Value::String(run_id.to_owned()));
+    lock_path.set_file_name(format!(
+        "{file_name}.{}.callback-resume.lock",
+        run_digest.trim_start_matches("sha256:")
+    ));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to open native callback resume lock: {error}"
+            ))
+        })?;
+    file.lock().map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to acquire native callback resume lock: {error}"
+        ))
+    })?;
+    Ok(NativeCallbackResumeLock { _file: file })
 }
 
 fn native_callback_connection(path: &str) -> Result<Connection, StdlibRuntimeError> {
@@ -1437,15 +1575,27 @@ fn load_native_callback_run(
     .transpose()
 }
 
+struct NativeCallbackPersistence<'a> {
+    expected_phase: Option<NativeCallbackCoordinatorPhase>,
+    phase: NativeCallbackCoordinatorPhase,
+    callback_idempotency_key: Option<&'a str>,
+    callback_payload_digest: Option<&'a str>,
+    callback_receipt: Option<&'a Value>,
+}
+
 fn persist_native_callback_run(
     path: &str,
     checkpoint: &Value,
     result: &StdlibRunResult,
-    phase: NativeCallbackCoordinatorPhase,
-    callback_idempotency_key: Option<&str>,
-    callback_payload_digest: Option<&str>,
-    callback_receipt: Option<&Value>,
+    persistence: NativeCallbackPersistence<'_>,
 ) -> Result<(), StdlibRuntimeError> {
+    let NativeCallbackPersistence {
+        expected_phase,
+        phase,
+        callback_idempotency_key,
+        callback_payload_digest,
+        callback_receipt,
+    } = persistence;
     let connection = native_callback_connection(path)?;
     let checkpoint_json =
         serde_json::to_string(checkpoint).map_err(StdlibRuntimeError::serialization)?;
@@ -1469,8 +1619,37 @@ fn persist_native_callback_run(
     } else {
         (None, None)
     };
-    connection
-        .execute(
+    let changed = if let Some(expected_phase) = expected_phase {
+        connection.execute(
+            "
+            UPDATE native_callback_checkpoints
+               SET checkpoint_json = ?2,
+                   state_digest = ?3,
+                   status = ?4,
+                   result_json = ?5,
+                   callback_idempotency_key = ?6,
+                   callback_payload_digest = ?7,
+                   callback_receipt_json = ?8,
+                   terminal_journal_position = ?9,
+                   terminal_journal_digest = ?10
+             WHERE run_id = ?1 AND status = ?11
+            ",
+            params![
+                result.run_id,
+                checkpoint_json,
+                state_digest,
+                phase.as_str(),
+                result_json,
+                callback_idempotency_key,
+                callback_payload_digest,
+                callback_receipt_json,
+                terminal_journal_position,
+                terminal_journal_digest,
+                expected_phase.as_str(),
+            ],
+        )
+    } else {
+        connection.execute(
             "
             INSERT INTO native_callback_checkpoints (
                 run_id,
@@ -1484,16 +1663,6 @@ fn persist_native_callback_run(
                 terminal_journal_position,
                 terminal_journal_digest
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(run_id) DO UPDATE SET
-                checkpoint_json = excluded.checkpoint_json,
-                state_digest = excluded.state_digest,
-                status = excluded.status,
-                result_json = excluded.result_json,
-                callback_idempotency_key = excluded.callback_idempotency_key,
-                callback_payload_digest = excluded.callback_payload_digest,
-                callback_receipt_json = excluded.callback_receipt_json,
-                terminal_journal_position = excluded.terminal_journal_position,
-                terminal_journal_digest = excluded.terminal_journal_digest
             ",
             params![
                 result.run_id,
@@ -1508,24 +1677,33 @@ fn persist_native_callback_run(
                 terminal_journal_digest,
             ],
         )
-        .map_err(|error| {
-            StdlibRuntimeError::runtime(format!(
-                "failed to persist native callback checkpoint: {error}"
-            ))
-        })?;
+    }
+    .map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to persist native callback checkpoint: {error}"
+        ))
+    })?;
+    if changed != 1 {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback coordinator phase changed concurrently",
+        ));
+    }
     Ok(())
 }
 
 fn mark_native_callback_phase(
     path: &str,
     run_id: &str,
+    expected_phase: NativeCallbackCoordinatorPhase,
     phase: NativeCallbackCoordinatorPhase,
 ) -> Result<(), StdlibRuntimeError> {
     let connection = native_callback_connection(path)?;
     let changed = connection
         .execute(
-            "UPDATE native_callback_checkpoints SET status = ?2 WHERE run_id = ?1",
-            params![run_id, phase.as_str()],
+            "UPDATE native_callback_checkpoints
+                SET status = ?2
+              WHERE run_id = ?1 AND status = ?3",
+            params![run_id, phase.as_str(), expected_phase.as_str()],
         )
         .map_err(|error| {
             StdlibRuntimeError::runtime(format!(
@@ -1534,7 +1712,7 @@ fn mark_native_callback_phase(
         })?;
     if changed != 1 {
         return Err(StdlibRuntimeError::runtime(
-            "native callback coordinator disappeared during reconciliation",
+            "native callback coordinator phase changed concurrently",
         ));
     }
     Ok(())
@@ -1544,7 +1722,11 @@ fn reconcile_native_callback_evidence(
     context: NativeCallbackEvidenceContext<'_>,
     stored: &StoredNativeCallbackRun,
 ) -> Result<(), StdlibRuntimeError> {
-    reconcile_native_callback_operation(context.async_operation_store_path, stored)?;
+    reconcile_native_callback_operation(
+        context.async_operation_store_path,
+        context.callback_admission_hmac_key,
+        stored,
+    )?;
     reconcile_native_callback_run(context, stored)?;
     if let Some(path) = context.journal_store_path {
         reconcile_native_callback_journal(path, &stored.result)?;
@@ -1554,6 +1736,7 @@ fn reconcile_native_callback_evidence(
 
 fn reconcile_native_callback_operation(
     path: &str,
+    callback_admission_hmac_key: Option<&str>,
     stored: &StoredNativeCallbackRun,
 ) -> Result<(), StdlibRuntimeError> {
     let operation_id = stored
@@ -1599,7 +1782,8 @@ fn reconcile_native_callback_operation(
                 "accepted native callback coordinator is missing its receipt",
             )
         })?;
-        let admission = validate_native_callback_receipt_shape(receipt)?;
+        let admission =
+            validate_native_callback_receipt_shape(receipt, callback_admission_hmac_key)?;
         validate_persisted_native_callback_acceptance(&store, receipt, &admission)?;
         return Ok(());
     }
@@ -1611,7 +1795,8 @@ fn reconcile_native_callback_operation(
                     "terminal native callback coordinator is missing its receipt",
                 )
             })?;
-            let admission = validate_native_callback_receipt_shape(receipt)?;
+            let admission =
+                validate_native_callback_receipt_shape(receipt, callback_admission_hmac_key)?;
             if !admission.authorized {
                 return Err(StdlibRuntimeError::runtime(
                     "terminal native callback coordinator has a denied receipt",
@@ -1625,7 +1810,8 @@ fn reconcile_native_callback_operation(
                     "terminal native callback coordinator is missing its receipt",
                 )
             })?;
-            let admission = validate_native_callback_receipt_shape(receipt)?;
+            let admission =
+                validate_native_callback_receipt_shape(receipt, callback_admission_hmac_key)?;
             if !admission.authorized {
                 return Err(StdlibRuntimeError::runtime(
                     "terminal native callback coordinator has a denied receipt",
@@ -2159,6 +2345,7 @@ fn value_object_to_btree(
 
 fn validate_native_callback_receipt_shape(
     receipt: &Value,
+    callback_admission_hmac_key: Option<&str>,
 ) -> Result<TrustedNativeCallbackResumeAdmission, StdlibRuntimeError> {
     let Some(receipt) = receipt.as_object() else {
         return Err(native_callback_rejected());
@@ -2221,6 +2408,7 @@ fn validate_native_callback_receipt_shape(
     {
         return Err(trusted_native_callback_admission_rejected());
     }
+    verify_trusted_native_callback_admission(admission, callback_admission_hmac_key)?;
     let outcome = trusted_admission_string(admission, "outcome")?;
     let authorized = match outcome.as_str() {
         "authorized" => true,
@@ -2267,6 +2455,37 @@ fn validate_native_callback_receipt_shape(
         payload_digest: trusted_admission_string(schema_verification, "payload_digest")?,
         schema_verified_by: trusted_admission_string(schema_verification, "verified_by")?,
     })
+}
+
+fn verify_trusted_native_callback_admission(
+    admission: &serde_json::Map<String, Value>,
+    callback_admission_hmac_key: Option<&str>,
+) -> Result<(), StdlibRuntimeError> {
+    let key = callback_admission_hmac_key
+        .filter(|key| key.len() >= MIN_CALLBACK_ADMISSION_HMAC_KEY_BYTES)
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    let signature = admission
+        .get("signature")
+        .and_then(Value::as_str)
+        .and_then(|signature| signature.strip_prefix("hmac-sha256:"))
+        .filter(|signature| signature.len() == 64 && signature.is_ascii())
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    let mut signature_bytes = [0_u8; 32];
+    for (index, output) in signature_bytes.iter_mut().enumerate() {
+        let start = index * 2;
+        *output = u8::from_str_radix(&signature[start..start + 2], 16)
+            .map_err(|_| trusted_native_callback_admission_rejected())?;
+    }
+
+    let mut unsigned_admission = admission.clone();
+    unsigned_admission.remove("signature");
+    let admission_digest = canonical_hash(&Value::Object(unsigned_admission));
+    let message = format!("graphblocks.trusted-callback-resume-admission.v1\n{admission_digest}");
+    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
+        .map_err(|_| trusted_native_callback_admission_rejected())?;
+    mac.update(message.as_bytes());
+    mac.verify_slice(&signature_bytes)
+        .map_err(|_| trusted_native_callback_admission_rejected())
 }
 
 fn trusted_admission_string(
@@ -2557,7 +2776,11 @@ fn accept_native_callback(
     let schema_id = receipt["schema_id"]
         .as_str()
         .expect("native callback schema was validated");
-    let registry = ToolSchemaRegistry::new([JsonSchema::new(schema_id, JsonSchemaNode::any())])
+    // The trusted admission signature binds the external schema verifier,
+    // verification id, schema id, and payload digest. The local registry still
+    // enforces the callback envelope's object contract instead of silently
+    // accepting arbitrary JSON under an `Any` schema.
+    let registry = ToolSchemaRegistry::new([JsonSchema::new(schema_id, JsonSchemaNode::object())])
         .map_err(|error| {
             StdlibRuntimeError::runtime(format!(
                 "failed to build callback schema registry: {error:?}"
@@ -2602,7 +2825,7 @@ fn accept_native_callback(
             submission,
             &registry,
             AsyncCallbackResumeDecision::ResumeAuthorized {
-                authentication_verified: true,
+                authentication_verified: admission.authorized,
                 policy_decision_id: admission.policy_decision_id.clone(),
                 budget_reservation_id: admission.budget_reservation_id.clone(),
                 compatible_release_id: admission.compatible_release_digest.clone(),
@@ -2944,6 +3167,11 @@ fn build_runtime_bridge_plan(
                 "node {node_id:?} when reference {when:?} must include a non-empty owner and port path"
             )));
         }
+        if matches!(source_owner, "$context" | "$state" | "$execution") {
+            return Err(StdlibRuntimeError::invalid(format!(
+                "native stdlib runtime does not support {source_owner} references"
+            )));
+        }
         conditions_by_node.insert(
             node_id.clone(),
             ScheduledCondition::new(
@@ -2966,6 +3194,13 @@ fn build_runtime_bridge_plan(
         };
         let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
         let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
+        if matches!(source_owner, "$context" | "$state" | "$execution")
+            || matches!(target_owner, "$context" | "$state" | "$execution")
+        {
+            return Err(StdlibRuntimeError::invalid(format!(
+                "native stdlib runtime does not support pseudo-node edge {source:?} -> {target:?}"
+            )));
+        }
         if source_owner.starts_with('$') && source_owner != "$input" {
             continue;
         }
@@ -7549,6 +7784,21 @@ mod tests {
         for record in result["journal"].as_array().expect("journal is array") {
             assert_eq!(record["runId"], "run-native-requested-1");
         }
+    }
+
+    #[test]
+    fn stdlib_runtime_options_debug_redacts_callback_secrets() {
+        let secret = "callback-admission-secret-that-must-not-leak";
+        let receipt_sentinel = "callback-receipt-secret-that-must-not-leak";
+        let options = StdlibRunOptions::default()
+            .with_callback_admission_hmac_key(secret)
+            .with_callback_receipt(json!({"sentinel": receipt_sentinel}));
+
+        let rendered = format!("{options:?}");
+
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains(receipt_sentinel));
+        assert!(rendered.contains("<redacted>"));
     }
 
     #[test]

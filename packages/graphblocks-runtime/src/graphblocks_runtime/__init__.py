@@ -443,6 +443,7 @@ def run_stdlib_graph(
     checkpoint_store_path: str | None = None,
     async_operation_store_path: str | None = None,
     callback_receipt: dict[str, object] | None = None,
+    callback_admission_hmac_key: str | None = None,
     deployment_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if (
@@ -452,6 +453,7 @@ def run_stdlib_graph(
         or checkpoint_store_path is not None
         or async_operation_store_path is not None
         or callback_receipt is not None
+        or callback_admission_hmac_key is not None
         or deployment_provenance is not None
     ):
         options: dict[str, object] = {}
@@ -467,6 +469,8 @@ def run_stdlib_graph(
             options["asyncOperationStorePath"] = async_operation_store_path
         if callback_receipt is not None:
             options["callbackReceipt"] = callback_receipt
+        if callback_admission_hmac_key is not None:
+            options["callbackAdmissionHmacKey"] = callback_admission_hmac_key
         if deployment_provenance is not None:
             options["deploymentProvenance"] = deployment_provenance
         return _json_object_result(
