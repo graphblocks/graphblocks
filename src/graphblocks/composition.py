@@ -20,7 +20,7 @@ from .migration import (
     MigrationError,
     migrate_document,
 )
-from .schema import SchemaId, SchemaIdError
+from .schema import SchemaId, SchemaIdError, resource_schema_errors
 
 
 COMPOSITION_API_VERSION = "graphblocks.ai/composition/v1alpha1"
@@ -818,6 +818,11 @@ class _Composer:
                     path=error.path,
                     source=document.logical_source,
                 ) from error
+            _require_valid_preview_graph(
+                source_graph,
+                source=document.logical_source,
+                migration_error=error,
+            )
         source_graph = _normalize_graph_unchecked(source_graph)
         if composition is None:
             if source_slot_nodes:
@@ -948,10 +953,14 @@ class _Composer:
             )
         try:
             graph = migrate_document(graph)
-        except MigrationError:
+        except MigrationError as error:
             # A composed graph containing preview-only fragment fields remains
             # an alpha graph; stable-representable results migrate to v1.
-            pass
+            _require_valid_preview_graph(
+                graph,
+                source=document.logical_source,
+                migration_error=error,
+            )
         return _normalize_graph_unchecked(graph)
 
     def _resolve_slot(
@@ -1378,6 +1387,7 @@ def _validate_fragment_envelope(document: _SourceDocument) -> None:
         )
     for edge in edges:
         _edge(edge, document.logical_source)
+    _validate_imported_resource_schema(document)
 
 
 def _validate_imported_binding(document: _SourceDocument) -> None:
@@ -1396,6 +1406,52 @@ def _validate_imported_binding(document: _SourceDocument) -> None:
             path=f"$[{document.index}]",
             source=document.logical_source,
         )
+    _validate_imported_resource_schema(document)
+
+
+def _validate_imported_resource_schema(document: _SourceDocument) -> None:
+    violations = resource_schema_errors(document.value)
+    if not violations:
+        return
+    violation = violations[0]
+    kind = document.value.get("kind")
+    code = _resource_schema_composition_code(
+        keyword=violation.keyword,
+        path=violation.path,
+    )
+    raise CompositionError(
+        code,
+        f"imported {kind} does not satisfy its authoritative schema: {violation.message}",
+        path=violation.path,
+        source=document.logical_source,
+    )
+
+
+def _require_valid_preview_graph(
+    graph: dict[str, Any],
+    *,
+    source: str,
+    migration_error: MigrationError,
+) -> None:
+    violations = resource_schema_errors(graph)
+    if not violations:
+        return
+    violation = violations[0]
+    raise CompositionError(
+        _resource_schema_composition_code(
+            keyword=violation.keyword,
+            path=violation.path,
+        ),
+        f"Graph does not satisfy its authoritative preview schema: {violation.message}",
+        path=violation.path,
+        source=source,
+    ) from migration_error
+
+
+def _resource_schema_composition_code(*, keyword: str, path: str) -> str:
+    if keyword == "additionalProperties" and path in {"$", "$.spec"}:
+        return "CompositionUnsupportedKind"
+    return "CompositionInvalidWiring"
 
 
 def _validate_interface(interface: object, source: str, owner: str) -> None:

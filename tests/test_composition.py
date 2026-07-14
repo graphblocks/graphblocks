@@ -521,6 +521,80 @@ def test_composition_rejects_malformed_imported_binding(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("mutation", "expected_code", "expected_path"),
+    [
+        ("extra-root-field", "CompositionUnsupportedKind", "$"),
+        ("empty-resources", "CompositionInvalidWiring", "$.spec.resources"),
+    ],
+)
+def test_composition_validates_imported_bindings_against_authoritative_schema(
+    tmp_path: Path,
+    mutation: str,
+    expected_code: str,
+    expected_path: str,
+) -> None:
+    binding = _binding()
+    if mutation == "extra-root-field":
+        binding["unrelated"] = True
+    else:
+        binding["spec"]["resources"] = {}
+    _write_yaml(tmp_path / "bindings.yaml", binding)
+    graph = _monolithic_graph()
+    graph["spec"]["composition"] = {
+        "apiVersion": COMPOSITION_API_VERSION,
+        "imports": {"bindings": {"path": "bindings.yaml"}},
+        "slots": {},
+    }
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, graph)
+
+    with pytest.raises(CompositionError) as captured:
+        compose_documents(graph_path)
+
+    assert captured.value.code == expected_code
+    assert captured.value.path == expected_path
+
+
+@pytest.mark.parametrize("invalid_field", ["metadata", "node"])
+def test_composition_validates_fragments_against_authoritative_schema(
+    tmp_path: Path,
+    invalid_field: str,
+) -> None:
+    fragment = _fragment()
+    if invalid_field == "metadata":
+        fragment["metadata"]["unrelated"] = True
+        expected_path = "$.metadata"
+    else:
+        fragment["spec"]["nodes"]["render"]["unrelated"] = True
+        expected_path = "$.spec.nodes.render"
+    _write_yaml(tmp_path / "fragment.yaml", fragment)
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, _composed_graph())
+
+    with pytest.raises(CompositionError) as captured:
+        compose_documents(graph_path)
+
+    assert captured.value.code == "CompositionInvalidWiring"
+    assert captured.value.path == expected_path
+
+
+def test_composition_rejects_unrelated_invalid_root_fields_instead_of_retaining_alpha(
+    tmp_path: Path,
+) -> None:
+    _write_yaml(tmp_path / "fragment.yaml", _fragment())
+    graph = _composed_graph()
+    graph["unrelated"] = {"previewOnly": True}
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, graph)
+
+    with pytest.raises(CompositionError) as captured:
+        compose_documents(graph_path)
+
+    assert captured.value.code == "CompositionUnsupportedKind"
+    assert captured.value.path == "$"
+
+
+@pytest.mark.parametrize(
     ("slot_input_schema", "slot_output_schema"),
     [
         ("graphblocks.ai/Query@1", PROMPT_SCHEMA),
