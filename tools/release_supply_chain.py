@@ -2673,6 +2673,17 @@ def assemble_release_bundle(
     if GIT_COMMIT.fullmatch(git_commit) is None:
         raise ReleaseBundleError("git commit must be a full lowercase hexadecimal object id")
     release_version = _release_version_from_ref(release_ref)
+    try:
+        release_ref_commit = _resolve_git_commit(release_ref)
+    except ReleaseBundleError as error:
+        raise ReleaseBundleError(
+            f"release ref {release_ref!r} does not resolve to a commit"
+        ) from error
+    if release_ref_commit != git_commit:
+        raise ReleaseBundleError(
+            f"release ref {release_ref!r} resolves to {release_ref_commit}, "
+            f"not requested Git commit {git_commit}"
+        )
     distribution_versions = _first_party_versions()
     if _first_party_runtime_dependencies() != {
         name: set(dependencies)
@@ -3780,8 +3791,15 @@ def verify_release_bundle(
     )
 
 
+def _resolve_git_commit(ref: str) -> str:
+    commit = _git_output("rev-parse", "--verify", f"{ref}^{{commit}}")
+    if GIT_COMMIT.fullmatch(commit) is None:
+        raise ReleaseBundleError("Git ref resolved to an invalid commit identity")
+    return commit
+
+
 def _current_git_commit() -> str:
-    return _git_output("rev-parse", "HEAD")
+    return _resolve_git_commit("HEAD")
 
 
 def _current_git_tree() -> str:

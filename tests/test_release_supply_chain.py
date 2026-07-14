@@ -61,6 +61,7 @@ def _trust_test_source(
     *,
     stable_version: str = RELEASE_VERSION,
 ) -> None:
+    module._resolve_git_commit = lambda _ref: COMMIT
     module._current_git_commit = lambda: COMMIT
     module._current_git_tree = lambda: TREE
     module._assert_clean_source_checkout = lambda: None
@@ -1711,6 +1712,108 @@ def test_release_bundle_output_is_deterministic(tmp_path: Path) -> None:
     }
 
 
+def test_direct_assembly_resolves_release_ref_to_requested_commit(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    resolved_refs: list[str] = []
+
+    def resolve_release_ref(ref: str) -> str:
+        resolved_refs.append(ref)
+        return COMMIT
+
+    module._resolve_git_commit = resolve_release_ref
+    manifest = module.assemble_release_bundle(
+        platform_inputs_dir=inputs,
+        output_dir=tmp_path / "bundle",
+        git_commit=COMMIT,
+        release_ref=RELEASE_REF,
+        builder_id=BUILDER_ID,
+        invocation_id=INVOCATION_ID,
+    )
+
+    assert resolved_refs == [RELEASE_REF]
+    assert manifest["gitCommit"] == COMMIT
+
+
+def test_direct_assembly_rejects_release_ref_at_a_different_commit(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    output = tmp_path / "bundle"
+    module._resolve_git_commit = lambda _ref: "3" * 40
+
+    with pytest.raises(module.ReleaseBundleError, match="not requested Git commit"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=output,
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("ref_state", ["missing", "non-commit"])
+def test_direct_assembly_rejects_release_ref_without_a_commit_target(
+    tmp_path: Path,
+    ref_state: str,
+) -> None:
+    module = _load_module()
+    real_resolver = module._resolve_git_commit
+    inputs = _inputs(module, tmp_path)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    if ref_state == "non-commit":
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.test"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "GraphBlocks test"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "source.txt").write_text("source\n", encoding="utf-8")
+        subprocess.run(["git", "add", "source.txt"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "source"], cwd=repository, check=True
+        )
+        tree = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-ref", RELEASE_REF, tree],
+            cwd=repository,
+            check=True,
+        )
+
+    module.ROOT = repository
+    module._resolve_git_commit = real_resolver
+    output = tmp_path / "bundle"
+    with pytest.raises(module.ReleaseBundleError, match="does not resolve to a commit"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=output,
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+    assert not output.exists()
+
+
 def test_direct_assembly_rejects_a_declared_commit_that_is_not_checked_out(
     tmp_path: Path,
 ) -> None:
@@ -1759,6 +1862,7 @@ def test_standalone_verification_uses_frozen_expectations_not_live_checkout(
 
     module.release_evidence_expectations = live_checkout_must_not_be_read
     module._first_party_versions = live_checkout_must_not_be_read
+    module._resolve_git_commit = live_checkout_must_not_be_read
     manifest = module.verify_release_bundle(bundle_dir=bundle)
 
     assert manifest["gitCommit"] == COMMIT
