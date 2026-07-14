@@ -1,0 +1,45 @@
+snapshotVersion: 1
+targetRelease: '1.0'
+readiness: candidate
+stdoutContract: parsed-json
+description: >-
+  Exact exit-code and JSON-value contracts proposed for the stable local
+  validate, plan, and run commands. Whitespace and JSON object key order are
+  intentionally not compatibility promises.
+cases:
+  - id: validate-success
+    profile: GB-C0-SCHEMA
+    command: validate
+    argv: [validate, fixtures/cli-success.yaml, --json]
+  - id: validate-unknown-block
+    profile: GB-C0-SCHEMA
+    command: validate
+    argv: [validate, fixtures/cli-unknown-block.yaml, --json]
+  - id: validate-unknown-block-opt-in
+    profile: GB-C0-SCHEMA
+    command: validate
+    argv: [validate, fixtures/cli-unknown-block.yaml, --allow-unknown-blocks, --json]
+  - id: plan-success
+    profile: GB-C0-SCHEMA
+    command: plan
+    argv: [plan, fixtures/cli-success.yaml]
+  - id: plan-expand-success
+    profile: GB-C0-SCHEMA
+    command: plan
+    argv: [plan, fixtures/cli-success.yaml, --expand]
+  - id: plan-unknown-block
+    profile: GB-C0-SCHEMA
+    command: plan
+    argv: [plan, fixtures/cli-unknown-block.yaml]
+  - id: plan-unknown-block-opt-in
+    profile: GB-C0-SCHEMA
+    command: plan
+    argv: [plan, fixtures/cli-unknown-block.yaml, --allow-unknown-blocks]
+  - id: run-success
+    profile: GB-C1-LOCAL-RUNTIME
+    command: run
+    argv: [run, fixtures/cli-success.yaml, --input-json, '{"message":{"text":"hi"}}']
+  - id: run-failed
+    profile: GB-C1-LOCAL-RUNTIME
+    command: run
+    argv: [run, fixtures/cli-runtime-failure.yaml, --input-json, '{"message":{"text":"hi"}}']

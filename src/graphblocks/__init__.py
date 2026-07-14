@@ -1,4 +1,4 @@
-"""GraphBlocks Phase 0 contract toolkit."""
+"""GraphBlocks contract toolkit."""
 
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ from .conversation import (
     TurnConflictError,
     TurnNotFoundError,
 )
-from .diagnostics import Diagnostic, DiagnosticSet
+from .diagnostics import Diagnostic, DiagnosticSet, Severity
 from .deployment import (
     DeploymentCondition,
     DeploymentConditionStatus,
@@ -266,6 +266,7 @@ from .packages import (
 from .plugins import (
     BlockCatalog,
     BlockDescriptor,
+    OutputRequirednessPredicate,
     PluginManifest,
     PluginRegistry,
     PortDescriptor,
@@ -488,14 +489,24 @@ from .rag import (
     validate_answer_grounding,
 )
 from .runtime import (
+    BlockCallable,
     CancellationToken,
     ExecutionJournal,
     InProcessRuntime,
+    JournalKind,
+    JournalRecord,
     JournalStateError,
+    LocalExecutionJournal,
+    LocalJournalKind,
+    LocalJournalRecord,
+    LocalTerminalJournalKind,
+    LocalRunResult,
+    LocalRuntime,
     RunResult,
     RuntimeCheckpoint,
     RuntimeRegistry,
     SQLiteExecutionJournal,
+    core_stdlib_registry,
     stdlib_registry,
 )
 from .review import (
@@ -518,7 +529,20 @@ from .run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
-from .schema import SchemaId, SchemaIdError, SchemaManifest, SchemaManifestEntry, SchemaManifestError, TypedValue
+from .schema import (
+    RESOURCE_SCHEMA_PATHS,
+    ResourceSchemaViolation,
+    ResourceValidationError,
+    SchemaId,
+    SchemaIdError,
+    SchemaManifest,
+    SchemaManifestEntry,
+    SchemaManifestError,
+    TypedValue,
+    load_resource_schema,
+    resource_schema_errors,
+    validate_resource,
+)
 from .server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
@@ -619,7 +643,7 @@ from .workspace import (
     WorkspaceSnapshotConflictError,
 )
 
-__version__ = "0.1.0"
+__version__ = "1.0.0rc1"
 
 __all__ = [
     "TERMINAL_ADMISSION_TICKET_STATES",
@@ -645,6 +669,7 @@ __all__ = [
     "BranchRequest",
     "BlockCapability",
     "BlockCatalog",
+    "BlockCallable",
     "BlockDescriptor",
     "BlockToolImplementation",
     "BlobKey",
@@ -772,6 +797,7 @@ __all__ = [
     "PluginManifest",
     "PluginRegistry",
     "PortRef",
+    "OutputRequirednessPredicate",
     "PortDescriptor",
     "PolicyBundle",
     "PolicyDecision",
@@ -830,7 +856,15 @@ __all__ = [
     "JsonSchemaRef",
     "JsonSchemaType",
     "InProcessRuntime",
+    "JournalKind",
+    "JournalRecord",
     "JournalStateError",
+    "LocalExecutionJournal",
+    "LocalJournalKind",
+    "LocalJournalRecord",
+    "LocalTerminalJournalKind",
+    "LocalRunResult",
+    "LocalRuntime",
     "__version__",
     "InMemoryBudgetLedger",
     "SQLiteBudgetLedger",
@@ -908,7 +942,11 @@ __all__ = [
     "SQLiteUsageLedger",
     "SQLiteExecutionJournal",
     "SchemaId",
+    "Severity",
     "SchemaIdError",
+    "RESOURCE_SCHEMA_PATHS",
+    "ResourceSchemaViolation",
+    "ResourceValidationError",
     "SchemaManifest",
     "SchemaManifestEntry",
     "SchemaManifestError",
@@ -1057,6 +1095,9 @@ __all__ = [
     "Turn",
     "TrialResult",
     "TypedValue",
+    "load_resource_schema",
+    "resource_schema_errors",
+    "validate_resource",
     "TypedValueRef",
     "TurnConflictError",
     "TurnNotFoundError",
@@ -1167,6 +1208,7 @@ __all__ = [
     "compose_documents",
     "compile_graph",
     "compile_graph_native",
+    "core_stdlib_registry",
     "chunk_document_by_lines",
     "create_local_text_revision",
     "default_server_route_manifest",

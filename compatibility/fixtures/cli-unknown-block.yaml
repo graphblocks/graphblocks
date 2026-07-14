@@ -1,0 +1,8 @@
+apiVersion: graphblocks.ai/v1
+kind: Graph
+metadata:
+  name: stable-cli-unknown-block
+spec:
+  nodes:
+    custom:
+      block: vendor.custom@1

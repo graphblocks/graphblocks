@@ -1,0 +1,59 @@
+snapshotVersion: 1
+targetRelease: '1.0'
+readiness: candidate
+description: >-
+  Deliberately small pure-Python C0/C1 surface proposed for the first stable
+  graphblocks distribution. Names not listed here remain preview or internal.
+symbols:
+  # C0 canonical graph, diagnostics, compilation, and closed block catalogs.
+  - {path: graphblocks.canonical_loads, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.canonical_dumps, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.canonical_hash, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.normalize_graph, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.Severity, profile: GB-C0-SCHEMA, kind: type-alias}
+  - {path: graphblocks.Diagnostic, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.Diagnostic.to_dict, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.DiagnosticSet, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.DiagnosticSet.to_list, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.SchemaId, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.SchemaId.parse, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.ResourceSchemaViolation, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.ResourceValidationError, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.resource_schema_errors, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.validate_resource, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.migrate_document, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.validate_plugin_manifest, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.PluginManifest, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.OutputRequirednessPredicate, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.PortDescriptor, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.PortDescriptor.required_for, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.ResourceSlotDescriptor, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.BlockDescriptor, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.BlockCatalog, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.BlockCatalog.from_blocks, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.BlockCatalog.from_manifests, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.BlockCatalog.get, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.Plan, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.Plan.to_dict, profile: GB-C0-SCHEMA}
+  - {path: graphblocks.compile_graph, profile: GB-C0-SCHEMA}
+
+  # C1 deterministic in-process execution and its observable result/journal.
+  - {path: graphblocks.BlockCallable, profile: GB-C1-LOCAL-RUNTIME, kind: type-alias}
+  - {path: graphblocks.LocalJournalKind, profile: GB-C1-LOCAL-RUNTIME, kind: type-alias}
+  - {path: graphblocks.LocalTerminalJournalKind, profile: GB-C1-LOCAL-RUNTIME, kind: type-alias}
+  - {path: graphblocks.CancellationToken, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.CancellationToken.cancel, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalJournalRecord, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalJournalRecord.to_dict, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalExecutionJournal, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalExecutionJournal.append, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalExecutionJournal.append_terminal, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.RuntimeRegistry, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.RuntimeRegistry.register, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.RuntimeRegistry.replace, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.RuntimeRegistry.compilation_catalog, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.RuntimeRegistry.resolve, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalRunResult, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalRuntime, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.LocalRuntime.run, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks.core_stdlib_registry, profile: GB-C1-LOCAL-RUNTIME}

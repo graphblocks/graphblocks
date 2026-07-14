@@ -1,0 +1,12 @@
+[
+  {
+    "name": "stable_schema_id",
+    "schema_id": "schemas/Message@1",
+    "expected": {
+      "valid": true,
+      "canonical": "schemas/Message@1",
+      "name": "schemas/Message",
+      "major_version": 1
+    }
+  }
+]

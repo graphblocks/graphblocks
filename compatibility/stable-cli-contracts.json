@@ -1,0 +1,287 @@
+{
+  "cases": [
+    {
+      "argv": [
+        "validate",
+        "fixtures/cli-success.yaml",
+        "--json"
+      ],
+      "command": "validate",
+      "exitCode": 0,
+      "id": "validate-success",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "validate",
+        "fixtures/cli-unknown-block.yaml",
+        "--json"
+      ],
+      "command": "validate",
+      "exitCode": 1,
+      "id": "validate-unknown-block",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [
+          {
+            "code": "GB1022",
+            "document": "0",
+            "message": "block 'vendor.custom@1' is not declared in the block catalog",
+            "path": "$.spec.nodes.custom.block",
+            "severity": "error"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "validate",
+        "fixtures/cli-unknown-block.yaml",
+        "--allow-unknown-blocks",
+        "--json"
+      ],
+      "command": "validate",
+      "exitCode": 0,
+      "id": "validate-unknown-block-opt-in",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "plan",
+        "fixtures/cli-success.yaml"
+      ],
+      "command": "plan",
+      "exitCode": 0,
+      "id": "plan-success",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [],
+        "hash": "sha256:1a1a04e66fcd2ae003b42fbe82275edf65e8b2e46a276a052e99489a5cff8340",
+        "ok": true,
+        "target": "local-python"
+      }
+    },
+    {
+      "argv": [
+        "plan",
+        "fixtures/cli-success.yaml",
+        "--expand"
+      ],
+      "command": "plan",
+      "exitCode": 0,
+      "id": "plan-expand-success",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [],
+        "graph": {
+          "apiVersion": "graphblocks.ai/v1",
+          "kind": "Graph",
+          "metadata": {
+            "name": "stable-cli-success"
+          },
+          "spec": {
+            "edges": [
+              {
+                "from": "$input.message",
+                "to": "render.message"
+              },
+              {
+                "from": "render.prompt",
+                "to": "$output.prompt"
+              }
+            ],
+            "interface": {
+              "inputs": {
+                "message": "graphblocks.ai/Message@1"
+              },
+              "outputs": {
+                "prompt": "graphblocks.ai/Prompt@1"
+              }
+            },
+            "nodes": {
+              "render": {
+                "block": "prompt.render@1",
+                "config": {
+                  "template": "Echo {message.text}"
+                }
+              }
+            }
+          }
+        },
+        "hash": "sha256:1a1a04e66fcd2ae003b42fbe82275edf65e8b2e46a276a052e99489a5cff8340",
+        "ok": true,
+        "target": "local-python"
+      }
+    },
+    {
+      "argv": [
+        "plan",
+        "fixtures/cli-unknown-block.yaml"
+      ],
+      "command": "plan",
+      "exitCode": 1,
+      "id": "plan-unknown-block",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [
+          {
+            "code": "GB1022",
+            "message": "block 'vendor.custom@1' is not declared in the block catalog",
+            "path": "$.spec.nodes.custom.block",
+            "severity": "error"
+          }
+        ],
+        "hash": "sha256:5185e1278ef432e3851b8d3346cb3036f956b35be3b87187e81bf923ece02f36",
+        "ok": false,
+        "target": "local-python"
+      }
+    },
+    {
+      "argv": [
+        "plan",
+        "fixtures/cli-unknown-block.yaml",
+        "--allow-unknown-blocks"
+      ],
+      "command": "plan",
+      "exitCode": 0,
+      "id": "plan-unknown-block-opt-in",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "diagnostics": [],
+        "hash": "sha256:5185e1278ef432e3851b8d3346cb3036f956b35be3b87187e81bf923ece02f36",
+        "ok": true,
+        "target": "local-python"
+      }
+    },
+    {
+      "argv": [
+        "run",
+        "fixtures/cli-success.yaml",
+        "--input-json",
+        "{\"message\":{\"text\":\"hi\"}}"
+      ],
+      "command": "run",
+      "exitCode": 0,
+      "id": "run-success",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "stderr": "",
+      "stdoutJson": {
+        "journal": [
+          {
+            "kind": "run_started",
+            "payload": {
+              "graphHash": "sha256:1a1a04e66fcd2ae003b42fbe82275edf65e8b2e46a276a052e99489a5cff8340"
+            },
+            "sequence": 1
+          },
+          {
+            "kind": "node_started",
+            "payload": {
+              "attempt": 1,
+              "block": "prompt.render@1",
+              "node": "render"
+            },
+            "sequence": 2
+          },
+          {
+            "kind": "node_succeeded",
+            "payload": {
+              "node": "render",
+              "outputs": [
+                "prompt"
+              ]
+            },
+            "sequence": 3
+          },
+          {
+            "kind": "run_succeeded",
+            "payload": {
+              "outputs": {
+                "prompt": "Echo hi"
+              }
+            },
+            "sequence": 4
+          }
+        ],
+        "outputs": {
+          "prompt": "Echo hi"
+        },
+        "runId": "run-000001",
+        "status": "succeeded"
+      }
+    },
+    {
+      "argv": [
+        "run",
+        "fixtures/cli-runtime-failure.yaml",
+        "--input-json",
+        "{\"message\":{\"text\":\"hi\"}}"
+      ],
+      "command": "run",
+      "exitCode": 1,
+      "id": "run-failed",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "stderr": "",
+      "stdoutJson": {
+        "journal": [
+          {
+            "kind": "run_started",
+            "payload": {
+              "graphHash": "sha256:1ee30d89b02e0058c62f3e560fc2acaf0e2b88d62556e66dc552e87cf285da3b"
+            },
+            "sequence": 1
+          },
+          {
+            "kind": "node_started",
+            "payload": {
+              "attempt": 1,
+              "block": "prompt.render@1",
+              "node": "render"
+            },
+            "sequence": 2
+          },
+          {
+            "kind": "node_failed",
+            "payload": {
+              "attempt": 1,
+              "error": "'missing'",
+              "node": "render"
+            },
+            "sequence": 3
+          },
+          {
+            "kind": "run_failed",
+            "payload": {
+              "error": "'missing'",
+              "node": "render"
+            },
+            "sequence": 4
+          }
+        ],
+        "outputs": {},
+        "runId": "run-000001",
+        "status": "failed"
+      }
+    }
+  ],
+  "readiness": "candidate",
+  "snapshotVersion": 1,
+  "stdoutContract": "parsed-json",
+  "targetRelease": "1.0"
+}

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "graphblocks-testing"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Deterministic local testing runtime helpers for GraphBlocks"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ authors = [
   { name = "GraphBlocks contributors" },
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-dependencies = ["graphblocks>=0.1,<0.2"]
+dependencies = ["graphblocks>=1.0.0rc1,<2"]
 
 [project.optional-dependencies]
 runtime = [
@@ -38,3 +38,9 @@ Issues = "https://github.com/graphblocks/graphblocks/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graphblocks_testing"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/graphblocks_testing",
+  "pyproject.toml",
+]

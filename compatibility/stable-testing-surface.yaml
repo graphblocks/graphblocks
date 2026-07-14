@@ -1,0 +1,21 @@
+snapshotVersion: 1
+targetRelease: '1.0'
+readiness: candidate
+description: >-
+  Public conformance report, manifest, loader, and runner contracts proposed
+  for the first stable graphblocks-testing distribution. TckCase values remain
+  opaque because their fields span preview profiles; acceptance and production
+  release-gate helpers also remain preview.
+symbols:
+  - {path: graphblocks_testing.TckResult, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckResult.result_contract, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckReport, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckReport.report_contract, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckReport.content_digest, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckSuiteManifest, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckSuiteManifest.manifest_contract, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckSuiteManifest.content_digest, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.TckRunner, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks_testing.TckRunner.run_cases, profile: GB-C1-LOCAL-RUNTIME}
+  - {path: graphblocks_testing.load_tck_suite_manifests, profile: GB-C0-SCHEMA}
+  - {path: graphblocks_testing.load_tck_cases_for_suite, profile: GB-C0-SCHEMA}

@@ -30,7 +30,12 @@ from graphblocks.application_event import (
     ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
-from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks.canonical import (
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+    normalize_graph,
+)
 from graphblocks import __version__ as GRAPHBLOCKS_VERSION
 from graphblocks.cli import main as graphblocks_cli_main
 from graphblocks.compiler import compile_graph
@@ -118,7 +123,7 @@ from graphblocks.integrations.pdf import (
     pdf_parser_descriptor,
 )
 from graphblocks.loader import load_documents
-from graphblocks.migration import GRAPH_API_VERSION, migrate_document
+from graphblocks.migration import GRAPH_API_VERSION, MigrationError, migrate_document
 from graphblocks.output_policy import (
     GenerationChunk,
     OutputDeliveryGate,
@@ -187,7 +192,7 @@ from graphblocks.run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
-from graphblocks.schema import SchemaId, SchemaIdError, TypedValue
+from graphblocks.schema import SchemaId, SchemaIdError, TypedValue, resource_schema_errors
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
@@ -196,11 +201,16 @@ from graphblocks.server import (
     StaticBearerAuthHook,
 )
 from graphblocks.runtime import (
+    _mutable_json_like as _runtime_mutable_json_like,
     CancellationToken,
+    core_stdlib_registry,
     ExecutionJournal,
     InProcessRuntime,
     JournalRecord,
     JournalStateError,
+    LocalExecutionJournal,
+    LocalRunResult,
+    LocalRuntime,
     RunResult,
     RuntimeRegistry,
     SQLiteExecutionJournal,
@@ -241,6 +251,19 @@ from graphblocks.workspace import (
 )
 
 
+_STABLE_TCK_SUITE_DIAGNOSTIC_CODES = {
+    "compiler": "GB3001",
+    "schema": "GB3002",
+    "runtime": "GB3003",
+    "application-events": "GB3004",
+    "retry": "GB3005",
+    "sequence": "GB3006",
+    "tool-execution": "GB3007",
+    "tool-lifecycle": "GB3008",
+    "tool-result": "GB3009",
+}
+
+
 def run_native_test_graph(
     graph: dict[str, object],
     inputs: dict[str, object],
@@ -277,6 +300,7 @@ TckCaseKind = Literal[
     "documents",
     "deployment",
     "durable",
+    "migration",
     "orchestration",
     "rag",
     "retry",
@@ -298,6 +322,18 @@ FaultKind = Literal[
     "network_partition",
 ]
 ReleaseCandidateGateStatus = Literal["passed", "failed"]
+
+_BUNDLED_TCK_SUITES = (
+    "application-events",
+    "compiler",
+    "retry",
+    "runtime",
+    "schema",
+    "sequence",
+    "tool-execution",
+    "tool-lifecycle",
+    "tool-result",
+)
 
 
 def _first_mapping_value(mapping: Mapping[str, object], *keys: str, default: object = None) -> object:
@@ -356,6 +392,7 @@ class TckCase:
     expected_status: str = "succeeded"
     expected_terminal_kind: str | None = None
     block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    allow_unknown_blocks: bool = False
     schema_id: str | None = None
     schema_case_type: str = "schema_id"
     schema_value: object | None = None
@@ -365,6 +402,7 @@ class TckCase:
     expected_canonical_value: dict[str, object] | None = None
     expected_canonical_json: str | None = None
     expected_error: str | None = None
+    expected_resource_errors: tuple[dict[str, str], ...] = field(default_factory=tuple)
     policy_delivery: dict[str, object] = field(default_factory=dict)
     policy_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     expected_gate_state: dict[str, object] = field(default_factory=dict)
@@ -383,6 +421,7 @@ class TckCase:
     documents_fixture: dict[str, object] = field(default_factory=dict)
     deployment_fixture: dict[str, object] = field(default_factory=dict)
     durable_fixture: dict[str, object] = field(default_factory=dict)
+    migration_fixture: dict[str, object] = field(default_factory=dict)
     orchestration_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
@@ -411,6 +450,7 @@ class TckCase:
             "documents",
             "deployment",
             "durable",
+            "migration",
             "orchestration",
             "rag",
             "retry",
@@ -427,6 +467,8 @@ class TckCase:
         object.__setattr__(self, "expected_error_codes", tuple(self.expected_error_codes))
         object.__setattr__(self, "expected_warning_codes", tuple(self.expected_warning_codes))
         object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
+        if not isinstance(self.allow_unknown_blocks, bool):
+            raise TypeError("TCK allow_unknown_blocks must be a boolean")
         object.__setattr__(self, "policy_delivery", dict(self.policy_delivery))
         object.__setattr__(self, "policy_operations", tuple(dict(operation) for operation in self.policy_operations))
         object.__setattr__(self, "expected_gate_state", dict(self.expected_gate_state))
@@ -444,6 +486,7 @@ class TckCase:
         object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
         object.__setattr__(self, "deployment_fixture", dict(self.deployment_fixture))
         object.__setattr__(self, "durable_fixture", dict(self.durable_fixture))
+        object.__setattr__(self, "migration_fixture", dict(self.migration_fixture))
         object.__setattr__(self, "orchestration_fixture", dict(self.orchestration_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
@@ -479,6 +522,8 @@ class TckCase:
             raise ValueError("deployment TCK case requires fixture")
         if self.kind == "durable" and not self.durable_fixture:
             raise ValueError("durable TCK case requires fixture")
+        if self.kind == "migration" and not self.migration_fixture:
+            raise ValueError("migration TCK case requires fixture")
         if self.kind == "orchestration" and not self.orchestration_fixture:
             raise ValueError("orchestration TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
@@ -501,11 +546,20 @@ class TckCase:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
             raise ValueError("TCK expected_terminal_kind must not be empty")
+        object.__setattr__(
+            self,
+            "expected_resource_errors",
+            tuple(dict(error) for error in self.expected_resource_errors),
+        )
         if self.kind == "schema":
-            if not isinstance(self.schema_id, str) or not self.schema_id.strip():
+            if self.schema_case_type not in {"schema_id", "typed_value", "resource"}:
+                raise ValueError(
+                    "schema TCK case_type must be schema_id, typed_value, or resource"
+                )
+            if self.schema_case_type != "resource" and (
+                not isinstance(self.schema_id, str) or not self.schema_id.strip()
+            ):
                 raise ValueError("schema TCK case requires schema_id")
-            if self.schema_case_type not in {"schema_id", "typed_value"}:
-                raise ValueError("schema TCK case_type must be schema_id or typed_value")
             if self.schema_case_type == "typed_value" and self.expected_ok:
                 if self.expected_canonical_value is None:
                     raise ValueError("typed value schema TCK case requires expected_canonical_value")
@@ -525,7 +579,10 @@ class TckCase:
         expected_warning_codes: tuple[str, ...] = (),
         expected_ok: bool = True,
         block_catalog: tuple[dict[str, object], ...] = (),
+        allow_unknown_blocks: bool | None = None,
     ) -> TckCase:
+        if allow_unknown_blocks is None:
+            allow_unknown_blocks = not block_catalog
         return cls(
             case_id=case_id,
             kind="compiler",
@@ -535,6 +592,7 @@ class TckCase:
             expected_warning_codes=expected_warning_codes,
             expected_ok=expected_ok,
             block_catalog=block_catalog,
+            allow_unknown_blocks=allow_unknown_blocks,
         )
 
     @classmethod
@@ -565,7 +623,7 @@ class TckCase:
         cls,
         *,
         case_id: str,
-        schema_id: str,
+        schema_id: str | None,
         expected_ok: bool,
         schema_case_type: str = "schema_id",
         schema_value: object | None = None,
@@ -575,6 +633,7 @@ class TckCase:
         expected_canonical_value: dict[str, object] | None = None,
         expected_canonical_json: str | None = None,
         expected_error: str | None = None,
+        expected_resource_errors: tuple[dict[str, str], ...] = (),
     ) -> TckCase:
         return cls(
             case_id=case_id,
@@ -589,6 +648,7 @@ class TckCase:
             expected_canonical_value=expected_canonical_value,
             expected_canonical_json=expected_canonical_json,
             expected_error=expected_error,
+            expected_resource_errors=expected_resource_errors,
         )
 
     @classmethod
@@ -673,6 +733,10 @@ class TckCase:
     @classmethod
     def durable(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="durable", durable_fixture=fixture)
+
+    @classmethod
+    def migration(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="migration", migration_fixture=fixture)
 
     @classmethod
     def orchestration(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1647,6 +1711,7 @@ def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         raw_block_catalog = _first_mapping_value(raw_case, "block_catalog", "blockCatalog", default=[])
         if not isinstance(raw_block_catalog, list) or not all(isinstance(block, dict) for block in raw_block_catalog):
             raise ValueError(f"compiler TCK case {case_id} block_catalog must be a list of mappings")
+        allow_unknown_blocks = "block_catalog" not in raw_case and "blockCatalog" not in raw_case
         cases.append(
             TckCase.compiler(
                 case_id=case_id,
@@ -1656,6 +1721,7 @@ def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
                 expected_warning_codes=tuple(raw_warning_codes),
                 expected_ok=not raw_error_codes,
                 block_catalog=tuple(raw_block_catalog),
+                allow_unknown_blocks=allow_unknown_blocks,
             )
         )
     return tuple(cases)
@@ -1723,6 +1789,33 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
                 expected_terminal_kind=expected_terminal_kind,
             )
         )
+    return tuple(cases)
+
+
+def load_migration_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = _load_tck_cases_json(path, "migration")
+    if not isinstance(raw_cases, list):
+        raise ValueError("migration TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"migration TCK case {index} must be a mapping")
+        case_id = raw_case.get("name")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"migration TCK case {index} requires name")
+        document = raw_case.get("document")
+        expected = raw_case.get("expected")
+        if not isinstance(document, dict):
+            raise ValueError(f"migration TCK case {case_id} requires document")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"migration TCK case {case_id} requires expected result")
+        expected_document = expected.get("document")
+        expected_error = expected.get("error")
+        if not isinstance(expected_document, dict) and not isinstance(expected_error, Mapping):
+            raise ValueError(
+                f"migration TCK case {case_id} requires expected document or error"
+            )
+        cases.append(TckCase.migration(case_id=case_id, fixture=dict(raw_case)))
     return tuple(cases)
 
 
@@ -2389,6 +2482,70 @@ def load_schema_typed_value_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_schema_resource_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = _load_tck_cases_json(path, "resource schema")
+    if not isinstance(raw_cases, list):
+        raise ValueError("resource schema TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"resource schema TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"resource schema TCK case {index} requires name")
+        if "document" not in raw_case:
+            raise ValueError(f"resource schema TCK case {case_id} requires document")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"resource schema TCK case {case_id} requires expected result")
+        expected_ok = expected.get("valid")
+        if not isinstance(expected_ok, bool):
+            raise ValueError(
+                f"resource schema TCK case {case_id} requires boolean expected valid"
+            )
+        raw_errors = expected.get("errors", [])
+        if not isinstance(raw_errors, list):
+            raise ValueError(
+                f"resource schema TCK case {case_id} expected errors must be a list"
+            )
+        expected_errors: list[dict[str, str]] = []
+        for error_index, error in enumerate(raw_errors):
+            if not isinstance(error, Mapping):
+                raise ValueError(
+                    f"resource schema TCK case {case_id} expected error {error_index} "
+                    "must be a mapping"
+                )
+            normalized_error: dict[str, str] = {}
+            for field_name in ("code", "path", "keyword"):
+                value = error.get(field_name)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"resource schema TCK case {case_id} expected error {error_index} "
+                        f"requires string {field_name}"
+                    )
+                normalized_error[field_name] = value
+            expected_errors.append(normalized_error)
+        if expected_ok and expected_errors:
+            raise ValueError(
+                f"resource schema TCK case {case_id} cannot expect errors when valid"
+            )
+        if not expected_ok and not expected_errors:
+            raise ValueError(
+                f"resource schema TCK case {case_id} requires expected errors when invalid"
+            )
+        cases.append(
+            TckCase.schema(
+                case_id=case_id,
+                schema_id=None,
+                schema_case_type="resource",
+                schema_value=deepcopy(raw_case["document"]),
+                expected_ok=expected_ok,
+                expected_resource_errors=tuple(expected_errors),
+            )
+        )
+    return tuple(cases)
+
+
 def _tck_fixture_digest(path: Path) -> str:
     return canonical_hash(
         {
@@ -2426,9 +2583,14 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
             if auxiliary_path.name != "cases.json"
         )
         if suite_id == "schema":
-            typed_values_path = path.parent / "typed-values.json"
-            if typed_values_path.is_file():
-                for case in load_schema_typed_value_tck_cases(typed_values_path):
+            auxiliary_schema_loaders = (
+                (path.parent / "resources.json", load_schema_resource_tck_cases),
+                (path.parent / "typed-values.json", load_schema_typed_value_tck_cases),
+            )
+            for auxiliary_path, loader in auxiliary_schema_loaders:
+                if not auxiliary_path.is_file():
+                    continue
+                for case in loader(auxiliary_path):
                     if case.case_id in seen:
                         raise ValueError(
                             f"TCK suite {suite_id} has duplicate case id {case.case_id!r}"
@@ -2467,6 +2629,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_deployment_tck_cases(path)
     if suite == "durable":
         return load_durable_tck_cases(path)
+    if suite == "migration":
+        return load_migration_tck_cases(path)
     if suite == "documents":
         return load_documents_tck_cases(path)
     if suite == "exhaustion":
@@ -2483,10 +2647,19 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_runtime_tck_cases(path)
     if suite == "schema":
         primary_cases = load_schema_tck_cases(path)
+        resource_cases_path = Path(path).with_name("resources.json")
         typed_values_path = Path(path).with_name("typed-values.json")
-        if typed_values_path.is_file():
-            return primary_cases + load_schema_typed_value_tck_cases(typed_values_path)
-        return primary_cases
+        resource_cases = (
+            load_schema_resource_tck_cases(resource_cases_path)
+            if resource_cases_path.is_file()
+            else ()
+        )
+        typed_value_cases = (
+            load_schema_typed_value_tck_cases(typed_values_path)
+            if typed_values_path.is_file()
+            else ()
+        )
+        return primary_cases + resource_cases + typed_value_cases
     if suite == "sequence":
         return load_sequence_tck_cases(path)
     if suite == "tool-lifecycle":
@@ -2502,14 +2675,66 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
     raise ValueError(f"unsupported TCK suite {suite!r}")
 
 
+def bundled_tck_root() -> Path:
+    """Return the installed C0/C1 fixture root shipped with graphblocks-testing."""
+
+    root = Path(__file__).resolve().parent / "fixtures" / "tck"
+    if not root.is_dir():
+        raise RuntimeError("bundled graphblocks-testing TCK fixtures are missing")
+    return root
+
+
+def load_bundled_tck_suite_manifests() -> tuple[TckSuiteManifest, ...]:
+    """Load the exact C0/C1 suite manifests bundled in the distribution."""
+
+    manifests = load_tck_suite_manifests(bundled_tck_root())
+    suite_ids = tuple(manifest.suite_id for manifest in manifests)
+    if suite_ids != _BUNDLED_TCK_SUITES:
+        raise RuntimeError("bundled graphblocks-testing TCK suite set is incomplete")
+    return manifests
+
+
+def load_bundled_tck_cases_for_suite(suite: str) -> tuple[TckCase, ...]:
+    """Load one bundled C0/C1 suite without an external fixture path."""
+
+    if suite not in _BUNDLED_TCK_SUITES:
+        raise ValueError(f"TCK suite {suite!r} is not bundled with graphblocks-testing")
+    return load_tck_cases_for_suite(suite, bundled_tck_root() / suite / "cases.json")
+
+
+def run_bundled_tck_suite(
+    suite: str,
+    *,
+    profile: str = "local",
+    evidence_dir: str | Path | None = None,
+) -> TckReport:
+    """Run one bundled C0/C1 suite and return its deterministic report."""
+
+    manifest_by_suite = {
+        manifest.suite_id: manifest for manifest in load_bundled_tck_suite_manifests()
+    }
+    manifest = manifest_by_suite.get(suite)
+    if manifest is None:
+        raise ValueError(f"TCK suite {suite!r} is not bundled with graphblocks-testing")
+    if profile == "native" and suite != "runtime":
+        raise ValueError("native TCK profile is supported only for the runtime suite")
+    return TckRunner(
+        core_stdlib_registry(),
+        profile=profile,
+        evidence_dir=Path(evidence_dir) if evidence_dir is not None else None,
+        suite=suite,
+        fixture_digest=manifest.fixture_digest,
+    ).run_cases(load_bundled_tck_cases_for_suite(suite))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="graphblocks-tck")
     subparsers = parser.add_subparsers(dest="command")
     list_parser = subparsers.add_parser("list", help="list shared TCK suite manifests")
-    list_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    list_parser.add_argument("root", nargs="?", type=Path)
     list_parser.add_argument("--json", action="store_true", help="emit JSON")
     check_parser = subparsers.add_parser("check", help="check TCK fixture coverage for conformance profiles")
-    check_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    check_parser.add_argument("root", nargs="?", type=Path)
     check_parser.add_argument("--profiles", required=True, type=Path, help="conformance profile YAML document")
     check_parser.add_argument("--profile", dest="profile_ids", action="append", required=True, help="claimed profile id")
     check_parser.add_argument("--json", action="store_true", help="emit JSON")
@@ -2525,6 +2750,7 @@ def main(argv: list[str] | None = None) -> int:
             "deployment",
             "durable",
             "documents",
+            "migration",
             "runtime",
             "orchestration",
             "schema",
@@ -2542,12 +2768,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
         help="TCK suite kind",
     )
-    run_parser.add_argument("path", type=Path, help="cases.json fixture path")
+    run_parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        help="cases.json fixture path; defaults to the bundled C0/C1 fixture",
+    )
     run_parser.add_argument("--profile", default="local", help="profile label for the generated report")
     run_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
     run_parser.add_argument("--json", action="store_true", help="emit JSON")
     run_all_parser = subparsers.add_parser("run-all", help="run every supported shared TCK fixture under a root")
-    run_all_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    run_all_parser.add_argument("root", nargs="?", type=Path)
     run_all_parser.add_argument("--profile", default="local", help="profile label for the generated reports")
     run_all_parser.add_argument("--evidence-dir", type=Path, help="directory for native runtime SQLite evidence")
     run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
@@ -2587,7 +2818,11 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{application.application_id} failed")
         return 0 if report.ok else 1
     if args.command == "list":
-        manifests = load_tck_suite_manifests(args.root)
+        manifests = (
+            load_bundled_tck_suite_manifests()
+            if args.root is None
+            else load_tck_suite_manifests(args.root)
+        )
         payload = {
             "suiteCount": len(manifests),
             "suites": [manifest.manifest_contract() for manifest in manifests],
@@ -2606,7 +2841,11 @@ def main(argv: list[str] | None = None) -> int:
         coverage = check_tck_suite_coverage(
             ConformanceProfileSet.from_document(documents[0]),
             tuple(args.profile_ids),
-            load_tck_suite_manifests(args.root),
+            (
+                load_bundled_tck_suite_manifests()
+                if args.root is None
+                else load_tck_suite_manifests(args.root)
+            ),
         )
         payload = coverage.coverage_contract()
         payload["contentDigest"] = coverage.content_digest()
@@ -2629,14 +2868,21 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(payload["error"])
             return 1
-        cases = load_tck_cases_for_suite(args.suite, args.path)
-        report = TckRunner(
-            stdlib_registry(),
-            profile=args.profile,
-            evidence_dir=args.evidence_dir,
-            suite=args.suite,
-            fixture_digest=_tck_fixture_digest(args.path),
-        ).run_cases(cases)
+        if args.path is None:
+            report = run_bundled_tck_suite(
+                args.suite,
+                profile=args.profile,
+                evidence_dir=args.evidence_dir,
+            )
+        else:
+            cases = load_tck_cases_for_suite(args.suite, args.path)
+            report = TckRunner(
+                stdlib_registry(),
+                profile=args.profile,
+                evidence_dir=args.evidence_dir,
+                suite=args.suite,
+                fixture_digest=_tck_fixture_digest(args.path),
+            ).run_cases(cases)
         payload = report.report_contract()
         payload["contentDigest"] = report.content_digest()
         if args.json:
@@ -2648,7 +2894,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{result.case_id} {result.status}")
         return 0 if report.ok else 1
     if args.command == "run-all":
-        manifests = load_tck_suite_manifests(args.root)
+        tck_root = bundled_tck_root() if args.root is None else args.root
+        manifests = (
+            load_bundled_tck_suite_manifests()
+            if args.root is None
+            else load_tck_suite_manifests(tck_root)
+        )
         if args.profile == "native" and any(
             manifest.suite_id != "runtime" for manifest in manifests
         ):
@@ -2663,11 +2914,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         reports: dict[str, dict[str, object]] = {}
         ok = True
+        registry = core_stdlib_registry() if args.root is None else stdlib_registry()
         for manifest in manifests:
             evidence_dir = args.evidence_dir / manifest.suite_id if args.evidence_dir is not None else None
-            fixture_path = args.root / manifest.path
+            fixture_path = tck_root / manifest.path
             report = TckRunner(
-                stdlib_registry(),
+                registry,
                 profile=args.profile,
                 evidence_dir=evidence_dir,
                 suite=manifest.suite_id,
@@ -2702,6 +2954,7 @@ class AcceptanceApplication:
     scenario_path: str
     gates: tuple[str, ...] = field(default_factory=tuple)
     description: str = ""
+    allow_unknown_blocks: bool = False
 
     def __post_init__(self) -> None:
         if not self.application_id.strip():
@@ -2716,6 +2969,8 @@ class AcceptanceApplication:
         for gate in self.gates:
             if not gate.strip():
                 raise ValueError("acceptance application gates must not be empty strings")
+        if not isinstance(self.allow_unknown_blocks, bool):
+            raise TypeError("acceptance application allow_unknown_blocks must be a boolean")
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> AcceptanceApplication:
@@ -2736,12 +2991,21 @@ class AcceptanceApplication:
         else:
             gates = tuple(str(gate) for gate in raw_gates or ())
         description = mapping.get("description", "")
+        allow_unknown_blocks = mapping.get(
+            "allowUnknownBlocks",
+            mapping.get("allow_unknown_blocks", False),
+        )
+        if not isinstance(allow_unknown_blocks, bool):
+            raise ValueError(
+                "acceptance application allowUnknownBlocks must be a boolean"
+            )
         return cls(
             application_id=application_id,
             profiles=profiles,
             scenario_path=scenario_path,
             gates=gates,
             description=str(description),
+            allow_unknown_blocks=allow_unknown_blocks,
         )
 
     def application_contract(self) -> dict[str, object]:
@@ -2751,6 +3015,7 @@ class AcceptanceApplication:
             "scenario_path": self.scenario_path,
             "gates": list(self.gates),
             "description": self.description,
+            "allow_unknown_blocks": self.allow_unknown_blocks,
         }
 
 
@@ -6772,6 +7037,9 @@ class AcceptanceGateRunner:
             if gate == "graphblocks validate":
                 command = ("graphblocks", "validate", application.scenario_path)
                 arguments = ["validate", str(scenario_path)]
+                if application.allow_unknown_blocks:
+                    command += ("--allow-unknown-blocks",)
+                    arguments.append("--allow-unknown-blocks")
                 output_buffer = io.StringIO()
                 try:
                     with redirect_stdout(output_buffer):
@@ -6796,6 +7064,9 @@ class AcceptanceGateRunner:
                     "--expand",
                 )
                 arguments = ["plan", str(scenario_path), "--expand"]
+                if application.allow_unknown_blocks:
+                    command += ("--allow-unknown-blocks",)
+                    arguments.append("--allow-unknown-blocks")
                 output_buffer = io.StringIO()
                 try:
                     with redirect_stdout(output_buffer):
@@ -6932,6 +7203,8 @@ class TckRunner:
                 results.append(self._run_deployment_case(case))
             elif case.kind == "durable":
                 results.append(self._run_durable_case(case))
+            elif case.kind == "migration":
+                results.append(self._run_migration_case(case))
             elif case.kind == "documents":
                 results.append(self._run_documents_case(case))
             elif case.kind == "orchestration":
@@ -6960,6 +7233,18 @@ class TckRunner:
             if self.profile == "native" and suite == "runtime"
             else self.implementation
         )
+        results = [
+            replace(
+                result,
+                diagnostics=tuple(
+                    {**diagnostic, "code": _STABLE_TCK_SUITE_DIAGNOSTIC_CODES[result.kind]}
+                    for diagnostic in result.diagnostics
+                ),
+            )
+            if result.kind in _STABLE_TCK_SUITE_DIAGNOSTIC_CODES and result.diagnostics
+            else result
+            for result in results
+        ]
         return TckReport(
             profile=self.profile,
             results=tuple(results),
@@ -6970,10 +7255,12 @@ class TckRunner:
         )
 
     def _run_compiler_case(self, case: TckCase) -> TckResult:
-        if case.block_catalog:
-            plan = compile_graph(case.graph, block_catalog=BlockCatalog.from_blocks(case.block_catalog))
-        else:
-            plan = compile_graph(case.graph)
+        block_catalog = BlockCatalog.from_blocks(case.block_catalog)
+        plan = compile_graph(
+            case.graph,
+            block_catalog=block_catalog,
+            allow_unknown_blocks=case.allow_unknown_blocks,
+        )
         error_codes = tuple(
             diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"
         )
@@ -6985,6 +7272,7 @@ class TckRunner:
             "ok": plan.ok,
             "error_codes": list(error_codes),
             "warning_codes": list(warning_codes),
+            "compiler_mode": "discovery" if case.allow_unknown_blocks else "closed",
         }
         diagnostics: list[dict[str, str]] = []
         if plan.ok != case.expected_ok:
@@ -7027,7 +7315,86 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_migration_case(self, case: TckCase) -> TckResult:
+        fixture = case.migration_fixture
+        document = fixture.get("document")
+        expected = fixture.get("expected")
+        if not isinstance(document, dict) or not isinstance(expected, dict):
+            raise ValueError(f"migration TCK case {case.case_id} is malformed")
+        source = deepcopy(document)
+        diagnostics: list[dict[str, str]] = []
+        observed: dict[str, object]
+        try:
+            migrated = migrate_document(document)
+        except MigrationError as error:
+            observed = {
+                "error": {"code": error.code, "path": error.path},
+                "source_mutated": document != source,
+            }
+            expected_error = expected.get("error")
+            if not isinstance(expected_error, dict) or observed["error"] != {
+                "code": expected_error.get("code"),
+                "path": expected_error.get("path"),
+            }:
+                diagnostics.append(
+                    {
+                        "code": "MigrationErrorMismatch",
+                        "message": "migration error did not match expected result",
+                        "path": "$.expected.error",
+                    }
+                )
+        else:
+            observed = {
+                "document": migrated,
+                "source_mutated": document != source,
+            }
+            expected_document = expected.get("document")
+            if migrated != expected_document:
+                diagnostics.append(
+                    {
+                        "code": "MigrationDocumentMismatch",
+                        "message": "migrated document did not match expected result",
+                        "path": "$.expected.document",
+                    }
+                )
+            if "normalized" in expected:
+                normalized = normalize_graph(document)
+                observed["normalized"] = normalized
+                if normalized != expected.get("normalized"):
+                    diagnostics.append(
+                        {
+                            "code": "MigrationNormalizationMismatch",
+                            "message": "normalized migration did not match expected result",
+                            "path": "$.expected.normalized",
+                        }
+                    )
+            if "error" in expected:
+                diagnostics.append(
+                    {
+                        "code": "MigrationExpectedErrorMissing",
+                        "message": "migration succeeded when an error was expected",
+                        "path": "$.expected.error",
+                    }
+                )
+        if observed["source_mutated"]:
+            diagnostics.append(
+                {
+                    "code": "MigrationMutatedSource",
+                    "message": "migration mutated the source document",
+                    "path": "$.document",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_schema_case(self, case: TckCase) -> TckResult:
+        if case.schema_case_type == "resource":
+            return self._run_schema_resource_case(case)
         if case.schema_case_type == "typed_value":
             return self._run_schema_typed_value_case(case)
         try:
@@ -7086,6 +7453,56 @@ class TckRunner:
                     "code": "SchemaErrorMismatch",
                     "message": "schema id error type did not match expected error",
                     "path": "$.expected_error",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_schema_resource_case(self, case: TckCase) -> TckResult:
+        violations = resource_schema_errors(case.schema_value)
+        observed_errors = [
+            {
+                "code": violation.code,
+                "path": violation.path,
+                "keyword": violation.keyword,
+                "message": violation.message,
+                "schema_path": violation.schema_path,
+            }
+            for violation in violations
+        ]
+        expected_errors = [dict(error) for error in case.expected_resource_errors]
+        observed_error_contracts = [
+            {
+                "code": error["code"],
+                "path": error["path"],
+                "keyword": error["keyword"],
+            }
+            for error in observed_errors
+        ]
+        observed: dict[str, object] = {
+            "valid": not violations,
+            "errors": observed_errors,
+        }
+        diagnostics: list[dict[str, str]] = []
+        if observed["valid"] != case.expected_ok:
+            diagnostics.append(
+                {
+                    "code": "ResourceSchemaValidityMismatch",
+                    "message": "resource schema validity did not match expected result",
+                    "path": "$.expected_ok",
+                }
+            )
+        if observed_error_contracts != expected_errors:
+            diagnostics.append(
+                {
+                    "code": "ResourceSchemaErrorsMismatch",
+                    "message": "resource schema violations did not match expected errors",
+                    "path": "$.expected_resource_errors",
                 }
             )
         return TckResult(
@@ -16271,7 +16688,15 @@ class TckRunner:
         graph = {
             "apiVersion": "graphblocks.ai/v1alpha3",
             "kind": "Graph",
-            "metadata": {"name": f"retry-tck-{case.case_id}"},
+            "metadata": {
+                "name": "retry-tck-"
+                + "".join(
+                    character
+                    if character.isalnum() or character in "._-"
+                    else "-"
+                    for character in case.case_id
+                )
+            },
             "spec": {
                 "nodes": {
                     node_id: {
@@ -18571,10 +18996,10 @@ class TckRunner:
                             or "native extension is not built" in message
                             or "native extension is not available" in message
                         ):
-                            result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                            result = LocalRuntime(self.registry).run(case.graph, case.inputs)
                             observed = {
                                 "status": result.status,
-                                "outputs": result.outputs,
+                                "outputs": _runtime_mutable_json_like(result.outputs),
                                 "terminal_kind": result.journal.terminal_kind,
                                 "runtime": "local",
                                 "native_fallback_reason": "native_runtime_unavailable",
@@ -18621,20 +19046,30 @@ class TckRunner:
                         if journal_store_path is not None:
                             observed["journal_store_path"] = journal_store_path
                 else:
-                    result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                    result = LocalRuntime(self.registry).run(case.graph, case.inputs)
                     observed = {
                         "status": result.status,
-                        "outputs": result.outputs,
+                        "outputs": _runtime_mutable_json_like(result.outputs),
                         "terminal_kind": result.journal.terminal_kind,
                         "runtime": "local",
                         "native_fallback_reason": "missing_native_node_outputs",
                     }
             else:
-                result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
+                result = LocalRuntime(self.registry).run(case.graph, case.inputs)
+                if not isinstance(result, LocalRunResult) or not isinstance(
+                    result.journal, LocalExecutionJournal
+                ):
+                    raise RuntimeError(
+                        "local runtime TCK cases must use the stable C1 facade"
+                    )
                 observed = {
                     "status": result.status,
-                    "outputs": result.outputs,
+                    "outputs": _runtime_mutable_json_like(result.outputs),
                     "terminal_kind": result.journal.terminal_kind,
+                    "runtime": "local",
+                    "runtime_facade": "LocalRuntime",
+                    "result_facade": "LocalRunResult",
+                    "journal_facade": "LocalExecutionJournal",
                 }
         except Exception as error:  # pragma: no cover - exercised by conformance fixtures.
             observed = {"status": "error", "error": type(error).__name__, "message": str(error)}
@@ -18725,6 +19160,7 @@ __all__ = [
     "TckSuiteCoverageIssue",
     "TckSuiteCoverageResult",
     "TckSuiteManifest",
+    "bundled_tck_root",
     "canonical_hash",
     "check_tck_suite_coverage",
     "compile_graph",
@@ -18732,16 +19168,20 @@ __all__ = [
     "load_application_protocol_tck_cases",
     "load_approval_review_tck_cases",
     "load_budget_race_tck_cases",
+    "load_bundled_tck_cases_for_suite",
+    "load_bundled_tck_suite_manifests",
     "load_compiler_tck_cases",
     "load_conversation_tck_cases",
     "load_deployment_tck_cases",
     "load_documents_tck_cases",
     "load_durable_tck_cases",
     "load_exhaustion_tck_cases",
+    "load_migration_tck_cases",
     "load_orchestration_tck_cases",
     "load_policy_tck_cases",
     "load_rag_tck_cases",
     "load_retry_tck_cases",
+    "load_schema_resource_tck_cases",
     "load_schema_typed_value_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
@@ -18755,6 +19195,7 @@ __all__ = [
     "load_voice_tck_cases",
     "main",
     "migrate_document",
+    "run_bundled_tck_suite",
     "run_native_test_graph",
     "stdlib_registry",
 ]

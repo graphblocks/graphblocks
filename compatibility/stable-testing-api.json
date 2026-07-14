@@ -1,0 +1,337 @@
+{
+  "readiness": "candidate",
+  "snapshotVersion": 1,
+  "symbols": [
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "case_id"
+          },
+          {
+            "annotation": "TckCaseKind",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "kind"
+          },
+          {
+            "annotation": "TckResultStatus",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "status"
+          },
+          {
+            "annotation": "tuple[dict[str, str], ...]",
+            "default": {
+              "kind": "factory",
+              "value": "builtins.tuple"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "diagnostics"
+          },
+          {
+            "annotation": "dict[str, object]",
+            "default": {
+              "kind": "factory",
+              "value": "builtins.dict"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "observed"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks_testing.TckResult",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(case_id: 'str', kind: 'TckCaseKind', status: 'TckResultStatus', diagnostics: 'tuple[dict[str, str], ...]' = <factory>, observed: 'dict[str, object]' = <factory>) -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckResult.result_contract",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'dict[str, object]'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "profile"
+          },
+          {
+            "annotation": "tuple[TckResult, ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "results"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "suite"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "implementation"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "implementation_version"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "fixture_digest"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks_testing.TckReport",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(profile: 'str', results: 'tuple[TckResult, ...]', suite: 'str', implementation: 'str', implementation_version: 'str', fixture_digest: 'str') -> None",
+      "typeReferences": [
+        "TckResult"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckReport.report_contract",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'dict[str, object]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckReport.content_digest",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'str'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "suite_id"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "path"
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "case_ids"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "fixture_digest"
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "auxiliary_paths"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks_testing.TckSuiteManifest",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(suite_id: 'str', path: 'str', case_ids: 'tuple[str, ...]', fixture_digest: 'str', auxiliary_paths: 'tuple[str, ...]' = ()) -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckSuiteManifest.manifest_contract",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'dict[str, object]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckSuiteManifest.content_digest",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'str'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "RuntimeRegistry",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "registry"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "value",
+              "value": "local"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "profile"
+          },
+          {
+            "annotation": "Path | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "evidence_dir"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "suite"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "fixture_digest"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "value",
+              "value": "graphblocks-python"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "implementation"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "value",
+              "value": "1.0.0rc1"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "implementation_version"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks_testing.TckRunner",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(registry: 'RuntimeRegistry', profile: 'str' = 'local', evidence_dir: 'Path | None' = None, suite: 'str | None' = None, fixture_digest: 'str | None' = None, implementation: 'str' = 'graphblocks-python', implementation_version: 'str' = '1.0.0rc1') -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.TckRunner.run_cases",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, cases: 'tuple[TckCase, ...]') -> 'TckReport'",
+      "typeReferences": [
+        "TckReport"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.load_tck_suite_manifests",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(root: 'str | Path') -> 'tuple[TckSuiteManifest, ...]'",
+      "typeReferences": [
+        "TckSuiteManifest"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks_testing.load_tck_cases_for_suite",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(suite: 'str', path: 'str | Path') -> 'tuple[TckCase, ...]'",
+      "typeReferences": []
+    }
+  ],
+  "targetRelease": "1.0"
+}

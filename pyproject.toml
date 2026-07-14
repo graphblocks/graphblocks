@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "graphblocks"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Provider-neutral contracts, tooling, and integrations for GraphBlocks"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["ai", "workflow", "rag", "graph", "runtime"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
@@ -23,6 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  "jsonschema>=4.23,<5",
   "packaging>=24.0",
   "PyYAML>=6.0",
 ]

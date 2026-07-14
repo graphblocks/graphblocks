@@ -1,0 +1,182 @@
+[
+  {
+    "name": "prompt_render_output",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-prompt-render"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "message": "graphblocks.ai/Message@1"
+          },
+          "outputs": {
+            "prompt": "graphblocks.ai/Prompt@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "config": {
+              "template": "Test {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "prompt": "$output.prompt"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "message": {
+        "text": "ok"
+      }
+    },
+    "nativeNodeOutputs": {
+      "render": {
+        "prompt": "Test ok"
+      }
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "outputs": {
+        "prompt": "Test ok"
+      }
+    }
+  },
+  {
+    "name": "control_map_renders_each_item",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-control-map"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "items": "graphblocks.ai/Items@1"
+          },
+          "outputs": {
+            "values": "graphblocks.ai/Values@1"
+          }
+        },
+        "nodes": {
+          "map": {
+            "block": "control.map@2",
+            "inputs": {
+              "items": "$input.items"
+            },
+            "outputs": {
+              "values": "$output.values"
+            },
+            "config": {
+              "block": "prompt.render@1",
+              "inputName": "message",
+              "outputName": "prompt",
+              "config": {
+                "template": "Item {message.index}: {message.text}"
+              }
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "items": [
+        {
+          "index": 1,
+          "text": "alpha"
+        },
+        {
+          "index": 2,
+          "text": "beta"
+        }
+      ]
+    },
+    "nativeNodeOutputs": {
+      "map": {
+        "values": [
+          "Item 1: alpha",
+          "Item 2: beta"
+        ]
+      }
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "outputs": {
+        "values": [
+          "Item 1: alpha",
+          "Item 2: beta"
+        ]
+      }
+    }
+  },
+  {
+    "name": "control_select_treats_null_as_present",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-control-select"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "cases": "graphblocks.ai/Cases@1"
+          },
+          "outputs": {
+            "selected": "graphblocks.ai/SelectedKey@1",
+            "value": "graphblocks.ai/SelectedValue@1"
+          }
+        },
+        "nodes": {
+          "select": {
+            "block": "control.select@1",
+            "inputs": {
+              "cases": "$input.cases"
+            },
+            "outputs": {
+              "selected": "$output.selected",
+              "value": "$output.value"
+            },
+            "config": {
+              "order": [
+                "preferred",
+                "fallback"
+              ],
+              "default": "unused"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "cases": {
+        "preferred": null,
+        "fallback": "fallback-value"
+      }
+    },
+    "nativeNodeOutputs": {
+      "select": {
+        "selected": "preferred",
+        "value": null
+      }
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "outputs": {
+        "selected": "preferred",
+        "value": null
+      }
+    }
+  }
+]

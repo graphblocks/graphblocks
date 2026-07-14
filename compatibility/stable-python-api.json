@@ -1,0 +1,1091 @@
+{
+  "readiness": "candidate",
+  "snapshotVersion": 1,
+  "symbols": [
+    {
+      "kind": "function",
+      "path": "graphblocks.canonical_loads",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(value: 'str | bytes | bytearray') -> 'Any'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.canonical_dumps",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(value: 'Any') -> 'str'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.canonical_hash",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(value: 'Any') -> 'str'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.normalize_graph",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'dict[str, Any]') -> 'dict[str, Any]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "type-alias",
+      "path": "graphblocks.Severity",
+      "profile": "GB-C0-SCHEMA",
+      "typeReferences": [],
+      "value": "typing.Literal['error', 'warning', 'info']"
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "code"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "message"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "value",
+              "value": "$"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "path"
+          },
+          {
+            "annotation": "Severity",
+            "default": {
+              "kind": "value",
+              "value": "error"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "severity"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.Diagnostic",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(code: 'str', message: 'str', path: 'str' = '$', severity: 'Severity' = 'error') -> None",
+      "typeReferences": [
+        "Severity"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.Diagnostic.to_dict",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'dict[str, str]'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "tuple[Diagnostic, ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "diagnostics"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.DiagnosticSet",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(diagnostics: 'tuple[Diagnostic, ...]') -> None",
+      "typeReferences": [
+        "Diagnostic"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.DiagnosticSet.to_list",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'list[dict[str, str]]'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "raw"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.SchemaId",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(raw: 'str') -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "bound-method",
+      "path": "graphblocks.SchemaId.parse",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(raw: 'str') -> 'SchemaId'",
+      "typeReferences": [
+        "SchemaId"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "code"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "path"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "keyword"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "message"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "value",
+              "value": "$"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "schema_path"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.ResourceSchemaViolation",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(code: 'str', path: 'str', keyword: 'str', message: 'str', schema_path: 'str' = '$') -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "class",
+      "path": "graphblocks.ResourceValidationError",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(violations: 'tuple[ResourceSchemaViolation, ...]') -> 'None'",
+      "typeReferences": [
+        "ResourceSchemaViolation"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.resource_schema_errors",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'object', *, schema_root: 'str | Path | None' = None) -> 'tuple[ResourceSchemaViolation, ...]'",
+      "typeReferences": [
+        "ResourceSchemaViolation"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.validate_resource",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'object', *, schema_root: 'str | Path | None' = None) -> 'None'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.migrate_document",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'dict[str, Any]') -> 'dict[str, Any]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.validate_plugin_manifest",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'Any') -> 'DiagnosticSet'",
+      "typeReferences": [
+        "DiagnosticSet"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "plugin_id"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "version"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "maturity"
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "capabilities"
+          },
+          {
+            "annotation": "tuple[dict[str, Any], ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "blocks"
+          },
+          {
+            "annotation": "tuple[dict[str, Any], ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "connector_factories"
+          },
+          {
+            "annotation": "tuple[dict[str, Any], ...]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "adapters"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "source"
+          },
+          {
+            "annotation": "dict[str, Any]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "raw"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.PluginManifest",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(plugin_id: 'str', version: 'str', maturity: 'str', capabilities: 'tuple[str, ...]', blocks: 'tuple[dict[str, Any], ...]', connector_factories: 'tuple[dict[str, Any], ...]', adapters: 'tuple[dict[str, Any], ...]', source: 'str', raw: 'dict[str, Any]') -> None",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "operator"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "pointer"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "expected_json"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "phase"
+          },
+          {
+            "annotation": "tuple[OutputRequirednessPredicate, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "operands"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.OutputRequirednessPredicate",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(operator: 'str', pointer: 'str | None' = None, expected_json: 'str | None' = None, phase: 'str | None' = None, operands: 'tuple[OutputRequirednessPredicate, ...]' = ()) -> None",
+      "typeReferences": [
+        "OutputRequirednessPredicate"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "name"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "type_ref"
+          },
+          {
+            "annotation": "bool",
+            "default": {
+              "kind": "value",
+              "value": true
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "required"
+          },
+          {
+            "annotation": "OutputRequirednessPredicate | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "required_when"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.PortDescriptor",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(name: 'str', type_ref: 'str | None' = None, required: 'bool' = True, required_when: 'OutputRequirednessPredicate | None' = None) -> None",
+      "typeReferences": [
+        "OutputRequirednessPredicate"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.PortDescriptor.required_for",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self, config: 'Mapping[str, object]', *, phase: 'str') -> 'bool'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "name"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "type_ref"
+          },
+          {
+            "annotation": "bool",
+            "default": {
+              "kind": "value",
+              "value": false
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "optional"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.ResourceSlotDescriptor",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(name: 'str', type_ref: 'str | None' = None, optional: 'bool' = False) -> None",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "type_id"
+          },
+          {
+            "annotation": "int",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "version"
+          },
+          {
+            "annotation": "tuple[PortDescriptor, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "inputs"
+          },
+          {
+            "annotation": "tuple[PortDescriptor, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "outputs"
+          },
+          {
+            "annotation": "tuple[ResourceSlotDescriptor, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "resource_slots"
+          },
+          {
+            "annotation": "tuple[str, ...]",
+            "default": {
+              "kind": "value-repr",
+              "value": "()"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "capabilities"
+          },
+          {
+            "annotation": "Mapping[str, Any]",
+            "default": {
+              "kind": "factory",
+              "value": "graphblocks.plugins.BlockDescriptor.<lambda>"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "config_schema"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.BlockDescriptor",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(type_id: 'str', version: 'int', inputs: 'tuple[PortDescriptor, ...]' = (), outputs: 'tuple[PortDescriptor, ...]' = (), resource_slots: 'tuple[ResourceSlotDescriptor, ...]' = (), capabilities: 'tuple[str, ...]' = (), config_schema: 'Mapping[str, Any]' = <factory>) -> None",
+      "typeReferences": [
+        "PortDescriptor",
+        "ResourceSlotDescriptor"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "Mapping[str, BlockDescriptor]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "descriptors"
+          },
+          {
+            "annotation": "bool",
+            "default": {
+              "kind": "value",
+              "value": false
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "allow_unknown_blocks"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.BlockCatalog",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(descriptors: 'Mapping[str, BlockDescriptor]', allow_unknown_blocks: 'bool' = False) -> None",
+      "typeReferences": [
+        "BlockDescriptor"
+      ]
+    },
+    {
+      "kind": "bound-method",
+      "path": "graphblocks.BlockCatalog.from_blocks",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(blocks: 'list[dict[str, Any]] | tuple[dict[str, Any], ...]', *, allow_unknown_blocks: 'bool' = False) -> 'BlockCatalog'",
+      "typeReferences": [
+        "BlockCatalog"
+      ]
+    },
+    {
+      "kind": "bound-method",
+      "path": "graphblocks.BlockCatalog.from_manifests",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(manifests: 'tuple[PluginManifest, ...] | list[PluginManifest]', *, allow_unknown_blocks: 'bool' = False) -> 'BlockCatalog'",
+      "typeReferences": [
+        "BlockCatalog",
+        "PluginManifest"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.BlockCatalog.get",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self, block_id: 'str') -> 'BlockDescriptor | None'",
+      "typeReferences": [
+        "BlockDescriptor"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "dict[str, Any]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "normalized"
+          },
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "graph_hash"
+          },
+          {
+            "annotation": "DiagnosticSet",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "diagnostics"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.Plan",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(normalized: 'dict[str, Any]', graph_hash: 'str', diagnostics: 'DiagnosticSet') -> None",
+      "typeReferences": [
+        "DiagnosticSet"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.Plan.to_dict",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(self) -> 'dict[str, Any]'",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.compile_graph",
+      "profile": "GB-C0-SCHEMA",
+      "signature": "(document: 'dict[str, Any]', block_catalog: 'BlockCatalog | None' = None, *, allow_unknown_blocks: 'bool' = False) -> 'Plan'",
+      "typeReferences": [
+        "BlockCatalog",
+        "Plan"
+      ]
+    },
+    {
+      "kind": "type-alias",
+      "path": "graphblocks.BlockCallable",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "typeReferences": [],
+      "value": "typing.Callable[[dict[str, typing.Any], dict[str, typing.Any], dict[str, typing.Any]], dict[str, typing.Any]]"
+    },
+    {
+      "kind": "type-alias",
+      "path": "graphblocks.LocalJournalKind",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "typeReferences": [],
+      "value": "typing.Literal['run_started', 'node_started', 'node_retry', 'node_succeeded', 'node_failed', 'run_succeeded', 'run_failed', 'run_cancelled']"
+    },
+    {
+      "kind": "type-alias",
+      "path": "graphblocks.LocalTerminalJournalKind",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "typeReferences": [],
+      "value": "typing.Literal['run_succeeded', 'run_failed', 'run_cancelled']"
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "bool",
+            "default": {
+              "kind": "value",
+              "value": false
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "cancelled"
+          },
+          {
+            "annotation": "str | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "reason"
+          }
+        ],
+        "frozen": false,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.CancellationToken",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(cancelled: 'bool' = False, reason: 'str | None' = None) -> None",
+      "typeReferences": []
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.CancellationToken.cancel",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, reason: 'str' = 'cancelled') -> 'None'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "int",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "sequence"
+          },
+          {
+            "annotation": "LocalJournalKind",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "kind"
+          },
+          {
+            "annotation": "Mapping[str, Any]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "payload"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.LocalJournalRecord",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(sequence: 'int', kind: 'LocalJournalKind', payload: 'Mapping[str, Any]') -> None",
+      "typeReferences": [
+        "LocalJournalKind"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.LocalJournalRecord.to_dict",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self) -> 'dict[str, Any]'",
+      "typeReferences": []
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "run_id"
+          },
+          {
+            "annotation": "tuple[LocalJournalRecord, ...]",
+            "default": {
+              "kind": "factory",
+              "value": "builtins.tuple"
+            },
+            "init": false,
+            "keywordOnly": false,
+            "name": "records"
+          },
+          {
+            "annotation": "LocalTerminalJournalKind | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": false,
+            "keywordOnly": false,
+            "name": "terminal_kind"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.LocalExecutionJournal",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(run_id: 'str') -> None",
+      "typeReferences": [
+        "LocalJournalRecord",
+        "LocalTerminalJournalKind"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.LocalExecutionJournal.append",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, kind: 'LocalJournalKind', payload: 'dict[str, Any]') -> 'LocalJournalRecord'",
+      "typeReferences": [
+        "LocalJournalKind",
+        "LocalJournalRecord"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.LocalExecutionJournal.append_terminal",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, kind: 'LocalTerminalJournalKind', payload: 'dict[str, Any]') -> 'LocalJournalRecord'",
+      "typeReferences": [
+        "LocalJournalRecord",
+        "LocalTerminalJournalKind"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "dict[str, BlockCallable]",
+            "default": {
+              "kind": "factory",
+              "value": "builtins.dict"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "blocks"
+          },
+          {
+            "annotation": "BlockCatalog",
+            "default": {
+              "kind": "factory",
+              "value": "graphblocks.runtime.RuntimeRegistry.<lambda>"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "block_catalog"
+          },
+          {
+            "annotation": "bool",
+            "default": {
+              "kind": "value",
+              "value": false
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "allow_untyped"
+          }
+        ],
+        "frozen": false,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.RuntimeRegistry",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(blocks: 'dict[str, BlockCallable]' = <factory>, block_catalog: 'BlockCatalog' = <factory>, allow_untyped: 'bool' = False) -> None",
+      "typeReferences": [
+        "BlockCallable",
+        "BlockCatalog"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.RuntimeRegistry.register",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, block_id: 'str', block: 'BlockCallable') -> 'None'",
+      "typeReferences": [
+        "BlockCallable"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.RuntimeRegistry.replace",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, block_id: 'str', block: 'BlockCallable') -> 'None'",
+      "typeReferences": [
+        "BlockCallable"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.RuntimeRegistry.compilation_catalog",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self) -> 'BlockCatalog'",
+      "typeReferences": [
+        "BlockCatalog"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.RuntimeRegistry.resolve",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, block_id: 'str') -> 'BlockCallable'",
+      "typeReferences": [
+        "BlockCallable"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "str",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "run_id"
+          },
+          {
+            "annotation": "Literal['succeeded', 'failed', 'cancelled']",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "status"
+          },
+          {
+            "annotation": "Mapping[str, Any]",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "outputs"
+          },
+          {
+            "annotation": "LocalExecutionJournal",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "journal"
+          }
+        ],
+        "frozen": true,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.LocalRunResult",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(run_id: 'str', status: \"Literal['succeeded', 'failed', 'cancelled']\", outputs: 'Mapping[str, Any]', journal: 'LocalExecutionJournal') -> None",
+      "typeReferences": [
+        "LocalExecutionJournal"
+      ]
+    },
+    {
+      "dataclass": {
+        "fields": [
+          {
+            "annotation": "RuntimeRegistry",
+            "default": {
+              "kind": "required"
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "registry"
+          },
+          {
+            "annotation": "CancellationToken | None",
+            "default": {
+              "kind": "value",
+              "value": null
+            },
+            "init": true,
+            "keywordOnly": false,
+            "name": "cancellation_token"
+          }
+        ],
+        "frozen": false,
+        "slots": true
+      },
+      "kind": "class",
+      "path": "graphblocks.LocalRuntime",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(registry: 'RuntimeRegistry', cancellation_token: 'CancellationToken | None' = None) -> None",
+      "typeReferences": [
+        "CancellationToken",
+        "RuntimeRegistry"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.LocalRuntime.run",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(self, graph: 'dict[str, Any]', inputs: 'dict[str, Any]', run_id: 'str' = 'run-000001') -> 'LocalRunResult'",
+      "typeReferences": [
+        "LocalRunResult"
+      ]
+    },
+    {
+      "kind": "function",
+      "path": "graphblocks.core_stdlib_registry",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "signature": "(*, allow_untyped: 'bool' = False) -> 'RuntimeRegistry'",
+      "typeReferences": [
+        "RuntimeRegistry"
+      ]
+    }
+  ],
+  "targetRelease": "1.0"
+}

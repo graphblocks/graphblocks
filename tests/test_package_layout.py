@@ -4,8 +4,11 @@ import importlib.util
 from pathlib import Path
 import tomllib
 
+from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 
+import graphblocks
 from graphblocks.packages import (
     PackageLock,
     PackageLockEntry,
@@ -228,13 +231,46 @@ def test_graphblocks_testing_is_the_only_additional_pure_python_artifact() -> No
     )
 
     assert pyproject["project"]["name"] == "graphblocks-testing"
-    assert pyproject["project"]["dependencies"] == ["graphblocks>=0.1,<0.2"]
+    dependencies = pyproject["project"]["dependencies"]
+    assert len(dependencies) == 1
+    dependency = Requirement(dependencies[0])
+    assert dependency.name == "graphblocks"
+    assert Version(pyproject["project"]["version"]) in dependency.specifier
     assert pyproject["project"]["scripts"] == {
         "graphblocks-tck": "graphblocks_testing:main"
     }
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "src/graphblocks_testing"
     ]
+
+
+def test_first_stable_distribution_versions_remain_in_lockstep() -> None:
+    core = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    testing = tomllib.loads(
+        (ROOT / "packages" / "graphblocks-testing" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    runtime = tomllib.loads(
+        (ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    stable_version = core["project"]["version"]
+    assert stable_version == testing["project"]["version"] == graphblocks.__version__
+    parsed_version = Version(stable_version)
+    assert parsed_version.release == (1, 0, 0)
+    assert parsed_version.pre is None or (
+        parsed_version.pre[0] == "rc" and parsed_version.pre[1] >= 1
+    )
+    assert not parsed_version.is_devrelease
+    assert not parsed_version.is_postrelease
+    assert parsed_version.local is None
+    assert runtime["project"]["version"] == "0.1.0"
+    dependency = Requirement(testing["project"]["dependencies"][0])
+    assert dependency.name == "graphblocks"
+    assert Version(stable_version) in dependency.specifier
 
 
 def test_load_package_catalog_rejects_invalid_artifact_and_component_shapes(

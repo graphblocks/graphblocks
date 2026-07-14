@@ -1,0 +1,20 @@
+snapshotVersion: 1
+targetRelease: '1.0'
+readiness: candidate
+stdoutContract: parsed-json
+description: >-
+  Exact JSON and exit-code contracts for installed TCK suite discovery and
+  local execution. JSON whitespace and object key order are not promises.
+cases:
+  - id: list-success
+    profile: GB-C0-SCHEMA
+    command: list
+    argv: [list, fixtures/testing-tck, --json]
+  - id: run-all-success
+    profile: GB-C1-LOCAL-RUNTIME
+    command: run-all
+    argv: [run-all, fixtures/testing-tck, --json]
+  - id: run-all-native-unsupported
+    profile: GB-C1-LOCAL-RUNTIME
+    command: run-all
+    argv: [run-all, fixtures/testing-tck, --profile, native, --json]

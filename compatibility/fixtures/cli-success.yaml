@@ -1,0 +1,19 @@
+apiVersion: graphblocks.ai/v1
+kind: Graph
+metadata:
+  name: stable-cli-success
+spec:
+  interface:
+    inputs:
+      message: graphblocks.ai/Message@1
+    outputs:
+      prompt: graphblocks.ai/Prompt@1
+  nodes:
+    render:
+      block: prompt.render@1
+      config:
+        template: Echo {message.text}
+      inputs:
+        message: $input.message
+      outputs:
+        prompt: $output.prompt

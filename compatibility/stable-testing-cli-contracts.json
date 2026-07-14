@@ -1,0 +1,96 @@
+{
+  "cases": [
+    {
+      "argv": [
+        "list",
+        "fixtures/testing-tck",
+        "--json"
+      ],
+      "command": "list",
+      "exitCode": 0,
+      "id": "list-success",
+      "profile": "GB-C0-SCHEMA",
+      "stderr": "",
+      "stdoutJson": {
+        "contentDigest": "sha256:2a1c963274e79dcd665280a443de8c83c9b15b250bb3a83216416d917c05cc26",
+        "suiteCount": 1,
+        "suites": [
+          {
+            "case_count": 1,
+            "case_ids": [
+              "stable_schema_id"
+            ],
+            "fixture_digest": "sha256:b628bd17f8b11d767f19b6c9d8453e4e5dc4d4899c11dd5bc84bc8dd1e59de79",
+            "path": "schema/cases.json",
+            "suite_id": "schema"
+          }
+        ]
+      }
+    },
+    {
+      "argv": [
+        "run-all",
+        "fixtures/testing-tck",
+        "--json"
+      ],
+      "command": "run-all",
+      "exitCode": 0,
+      "id": "run-all-success",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "stderr": "",
+      "stdoutJson": {
+        "contentDigest": "sha256:72ae542f05eb5e053723ff4882039bec1f7d6ea38e8334107b8ef8042ac12e52",
+        "ok": true,
+        "profile": "local",
+        "reports": {
+          "schema": {
+            "evidence": {
+              "fixture_digest": "sha256:b628bd17f8b11d767f19b6c9d8453e4e5dc4d4899c11dd5bc84bc8dd1e59de79",
+              "implementation": "graphblocks-python",
+              "implementation_version": "1.0.0rc1",
+              "suite": "schema"
+            },
+            "ok": true,
+            "profile": "local",
+            "results": [
+              {
+                "case_id": "stable_schema_id",
+                "diagnostics": [],
+                "kind": "schema",
+                "observed": {
+                  "canonical": "schemas/Message@1",
+                  "major_version": 1,
+                  "name": "schemas/Message",
+                  "valid": true
+                },
+                "status": "passed"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "argv": [
+        "run-all",
+        "fixtures/testing-tck",
+        "--profile",
+        "native",
+        "--json"
+      ],
+      "command": "run-all",
+      "exitCode": 1,
+      "id": "run-all-native-unsupported",
+      "profile": "GB-C1-LOCAL-RUNTIME",
+      "stderr": "",
+      "stdoutJson": {
+        "error": "native TCK profile is supported only for the runtime suite",
+        "ok": false
+      }
+    }
+  ],
+  "readiness": "candidate",
+  "snapshotVersion": 1,
+  "stdoutContract": "parsed-json",
+  "targetRelease": "1.0"
+}
