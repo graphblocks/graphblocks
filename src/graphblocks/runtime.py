@@ -1396,6 +1396,14 @@ class InProcessRuntime:
                             raise TimeoutError(timeout_reason)
                         if not isinstance(attempt_result, dict):
                             raise TypeError("block returned non-mapping output")
+                        attempt_result = canonical_loads(
+                            _dumps_strict_json(
+                                f"{block_id} output",
+                                attempt_result,
+                            )
+                        )
+                        if not isinstance(attempt_result, dict):
+                            raise TypeError("block returned non-mapping output")
                         descriptor = self.registry.block_catalog.get(block_id)
                         if descriptor is not None:
                             declared_outputs = {

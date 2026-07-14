@@ -12,6 +12,7 @@ from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
     JournalStateError,
+    LocalRuntime,
     RuntimeRegistry,
     SQLiteExecutionJournal,
     stdlib_registry,
@@ -1397,6 +1398,51 @@ def test_runtime_fails_when_block_is_not_registered() -> None:
 
     with pytest.raises(ValueError, match="GB1022.*not declared in the block catalog"):
         InProcessRuntime(RuntimeRegistry()).run(graph, {})
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        object(),
+        float("nan"),
+        {1: "non-string-key"},
+    ),
+)
+def test_runtime_rejects_non_json_block_outputs(invalid_value: object) -> None:
+    registry = RuntimeRegistry(allow_untyped=True)
+
+    def invalid_block(inputs, config, context):
+        return {"value": invalid_value}
+
+    registry.register("test.invalid-output@1", invalid_block)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-block-output"},
+        "spec": {
+            "nodes": {
+                "invalid": {
+                    "block": "test.invalid-output@1",
+                    "outputs": {"value": "$output.value"},
+                }
+            }
+        },
+    }
+
+    for index, runtime in enumerate(
+        (InProcessRuntime(registry), LocalRuntime(registry)),
+        start=1,
+    ):
+        result = runtime.run(graph, {}, run_id=f"invalid-output-{index}")
+
+        assert result.status == "failed"
+        assert result.outputs == {}
+        failure = next(
+            record for record in result.journal.records if record.kind == "node_failed"
+        )
+        assert failure.payload["error"] == (
+            "test.invalid-output@1 output must be valid strict JSON"
+        )
 
 
 def test_runtime_does_not_coerce_non_numeric_retry_attempts() -> None:
