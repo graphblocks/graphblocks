@@ -833,6 +833,76 @@ def test_plugin_manifest_validation_rejects_malformed_type_expressions(type_ref:
     assert [item.code for item in diagnostics.diagnostics] == ["GB0015"]
 
 
+def test_plugin_manifest_rejects_embedded_name_in_mapping_resource_slot() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "com.example.named_resource_slot"},
+        "spec": {
+            "pluginId": "com.example.named_resource_slot",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "slots.invalid",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                    "resourceSlots": {
+                        "declared": {
+                            "name": "declared",
+                            "type": "resources/Store@1",
+                        }
+                    },
+                }
+            ],
+        },
+    }
+
+    diagnostics = validate_plugin_manifest(document)
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("GB0014", "$.spec.blocks[0].resourceSlots")
+    ]
+    with pytest.raises(ValueError, match="invalid plugin manifest"):
+        plugin_manifest_from_document(document)
+
+
+def test_plugin_manifest_catalog_uses_mapping_resource_slot_name() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "com.example.named_resource_slot"},
+        "spec": {
+            "pluginId": "com.example.named_resource_slot",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "slots.valid",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                    "resourceSlots": {
+                        "declared": {
+                            "type": "resources/Store@1",
+                            "optional": True,
+                        }
+                    },
+                }
+            ],
+        },
+    }
+
+    manifest = plugin_manifest_from_document(document)
+    catalog = BlockCatalog.from_manifests([manifest])
+    descriptor = catalog.get("slots.valid@1")
+
+    assert descriptor is not None
+    assert [
+        (slot.name, slot.type_ref, slot.optional)
+        for slot in descriptor.resource_slots
+    ] == [("declared", "resources/Store@1", True)]
+
+
 def test_plugin_manifest_validation_rejects_invalid_dict_resource_slot_schema_ids() -> None:
     diagnostics = validate_plugin_manifest(
         {

@@ -797,7 +797,12 @@ class BlockCatalog:
                         raise ValueError(
                             f"block catalog entry {block_index} resource slot {name!r} must be a mapping"
                         )
-                    normalized_slots.append({"name": name, **slot})
+                    if "name" in slot:
+                        raise ValueError(
+                            f"block catalog entry {block_index} mapping resource slot "
+                            f"{name!r} must not declare name; its mapping key defines the name"
+                        )
+                    normalized_slots.append({**slot, "name": name})
                 raw_slots = normalized_slots
             elif not isinstance(raw_slots, list):
                 raise ValueError(

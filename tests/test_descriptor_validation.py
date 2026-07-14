@@ -205,6 +205,57 @@ def test_block_catalog_rejects_non_boolean_contract_flags(field_name: str) -> No
         BlockCatalog.from_blocks([block])  # type: ignore[list-item]
 
 
+@pytest.mark.parametrize("embedded_name", ["declared", "smuggled"])
+def test_block_catalog_rejects_embedded_names_in_mapping_resource_slots(
+    embedded_name: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "mapping resource slot 'declared' must not declare name; "
+            "its mapping key defines the name"
+        ),
+    ):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "slots.invalid",
+                    "version": 1,
+                    "resourceSlots": {
+                        "declared": {
+                            "name": embedded_name,
+                            "type": "resources/Store@1",
+                        }
+                    },
+                }
+            ]
+        )
+
+
+def test_block_catalog_uses_mapping_keys_as_resource_slot_names() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "slots.valid",
+                "version": 1,
+                "resourceSlots": {
+                    "declared": {
+                        "type": "resources/Store@1",
+                        "optional": True,
+                    }
+                },
+            }
+        ]
+    )
+
+    descriptor = catalog.get("slots.valid@1")
+    assert descriptor is not None
+    assert [
+        (slot.name, slot.type_ref, slot.optional)
+        for slot in descriptor.resource_slots
+    ] == [("declared", "resources/Store@1", True)]
+
+
 def test_block_catalog_rejects_duplicate_block_contracts() -> None:
     with pytest.raises(ValueError, match="duplicate block catalog descriptor test.echo@1"):
         BlockCatalog.from_blocks(
