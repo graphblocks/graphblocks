@@ -9,6 +9,45 @@ from graphblocks.plugins import builtin_block_catalog, plugin_manifest_from_docu
 from graphblocks.runtime import stdlib_registry
 
 
+@pytest.mark.parametrize(
+    ("suffix", "manifest", "expected_message"),
+    [
+        (
+            ".json",
+            '{"apiVersion":"graphblocks.ai/v1alpha1","kind":"PluginManifest",'
+            '"metadata":{"name":"example.trusted"},'
+            '"metadata":{"name":"example.replaced"},'
+            '"spec":{"pluginId":"example.duplicate","version":"1.0.0","blocks":[]}}',
+            "duplicate JSON object key 'metadata'",
+        ),
+        (
+            ".yaml",
+            "apiVersion: graphblocks.ai/v1alpha1\n"
+            "kind: PluginManifest\n"
+            "metadata: {name: example.trusted}\n"
+            "metadata: {name: example.replaced}\n"
+            "spec:\n"
+            "  pluginId: example.duplicate\n"
+            "  version: 1.0.0\n"
+            "  blocks: []\n",
+            "duplicate YAML mapping key 'metadata'",
+        ),
+    ],
+    ids=["json", "yaml"],
+)
+def test_plugin_manifest_loader_rejects_duplicate_keys(
+    tmp_path,
+    suffix: str,
+    manifest: str,
+    expected_message: str,
+) -> None:
+    path = tmp_path / f"plugin{suffix}"
+    path.write_text(manifest, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=expected_message):
+        load_plugin_manifest(path)
+
+
 def test_builtin_plugin_discovery_does_not_need_installed_scan() -> None:
     registry = discover_plugins(include_installed=False)
 

@@ -16,7 +16,9 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 import yaml
 
+from .canonical import _reject_duplicate_keys
 from .diagnostics import Diagnostic, DiagnosticSet
+from .loader import _DuplicateKeySafeLoader
 from .migration import (
     MigrationError,
     _migrate_document_unchecked,
@@ -829,9 +831,9 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
     source = Path(path)
     with source.open("r", encoding="utf-8") as stream:
         if source.suffix == ".json":
-            document = json.load(stream)
+            document = json.load(stream, object_pairs_hook=_reject_duplicate_keys)
         else:
-            document = yaml.safe_load(stream)
+            document = yaml.load(stream, Loader=_DuplicateKeySafeLoader)
     diagnostics = validate_plugin_manifest(document)
     if not diagnostics.ok:
         messages = "; ".join(f"{item.code} {item.path}: {item.message}" for item in diagnostics.diagnostics)
