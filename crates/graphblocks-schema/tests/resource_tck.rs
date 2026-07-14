@@ -111,6 +111,36 @@ fn envelope_errors_have_stable_field_order() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn graph_endpoint_identifiers_cannot_contain_path_separators() -> Result<(), Box<dyn Error>> {
+    for api_version in ["graphblocks.ai/v1", "graphblocks.ai/v1alpha3"] {
+        for document in [
+            json!({
+                "apiVersion": api_version,
+                "kind": "Graph",
+                "metadata": {"name": "ambiguous-node"},
+                "spec": {"nodes": {"worker.part": {"block": "example.worker@1"}}}
+            }),
+            json!({
+                "apiVersion": api_version,
+                "kind": "Graph",
+                "metadata": {"name": "ambiguous-port"},
+                "spec": {
+                    "interface": {"inputs": {"payload.part": "example.ai/Payload@1"}},
+                    "nodes": {}
+                }
+            }),
+        ] {
+            let errors = resource_schema_errors(&document)?;
+            assert!(
+                errors.iter().any(|error| error.keyword == "propertyNames"),
+                "{api_version} must reject dotted endpoint identifiers: {errors:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn embedded_schema_assets_are_byte_identical_to_workspace_schemas() -> Result<(), Box<dyn Error>> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_schemas = manifest.join("../../schemas");

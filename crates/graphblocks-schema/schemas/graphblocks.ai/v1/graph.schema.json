@@ -17,6 +17,11 @@
       "minLength": 1,
       "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
     },
+    "endpointName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+    },
     "nonEmptyString": {"type": "string", "minLength": 1},
     "schemaId": {
       "type": "string",
@@ -41,7 +46,7 @@
     },
     "ports": {
       "type": "object",
-      "propertyNames": {"$ref": "#/$defs/name"},
+      "propertyNames": {"$ref": "#/$defs/endpointName"},
       "additionalProperties": {"$ref": "#/$defs/schemaId"}
     },
     "interface": {
@@ -378,7 +383,7 @@
         "interface": {"$ref": "#/$defs/interface"},
         "nodes": {
           "type": "object",
-          "propertyNames": {"$ref": "#/$defs/name"},
+          "propertyNames": {"$ref": "#/$defs/endpointName"},
           "additionalProperties": {"$ref": "#/$defs/node"}
         },
         "edges": {

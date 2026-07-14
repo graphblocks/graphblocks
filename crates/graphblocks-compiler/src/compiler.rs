@@ -311,6 +311,12 @@ fn validate_config_schema(schema: &Value) -> Result<(), String> {
         .map_err(|error| format!("configSchema could not be compiled: {error}"))
 }
 
+fn validate_endpoint_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
 fn parse_output_requiredness(
     value: &Value,
     depth: usize,
@@ -469,6 +475,11 @@ impl BlockCatalog {
                             "block catalog entry {index} input {port_index} requires a non-empty name"
                         )
                     })?;
+                if !validate_endpoint_identifier(name) {
+                    return Err(format!(
+                        "block catalog entry {index} input {port_index} requires a canonical endpoint name"
+                    ));
+                }
                 if !input_names.insert(name) {
                     return Err(format!(
                         "block catalog entry {index} has duplicate input {name:?}"
@@ -513,6 +524,11 @@ impl BlockCatalog {
                             "block catalog entry {index} output {port_index} requires a non-empty name"
                         )
                     })?;
+                if !validate_endpoint_identifier(name) {
+                    return Err(format!(
+                        "block catalog entry {index} output {port_index} requires a canonical endpoint name"
+                    ));
+                }
                 if !output_names.insert(name) {
                     return Err(format!(
                         "block catalog entry {index} has duplicate output {name:?}"
@@ -1226,13 +1242,15 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         return true;
     }
     let forbidden_ipv4 = |address: Ipv4Addr| {
+        let octets = address.octets();
         address.is_loopback()
             || address.is_private()
             || address.is_link_local()
             || address.is_multicast()
             || address.is_unspecified()
-            || address.octets()[0] == 0
-            || address.octets()[0] >= 224
+            || octets[0] == 0
+            || octets[0] >= 224
+            || (octets[0] == 100 && (64..=127).contains(&octets[1]))
     };
     let Ok(address) = host.parse::<IpAddr>() else {
         let numeric_ipv4 = if let Some(hex) = host.strip_prefix("0x") {
@@ -1242,7 +1260,34 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
         } else {
             None
         };
-        return numeric_ipv4.map(Ipv4Addr::from).is_some_and(forbidden_ipv4);
+        if numeric_ipv4.map(Ipv4Addr::from).is_some_and(forbidden_ipv4) {
+            return true;
+        }
+        // Browsers, URL clients, and libc resolvers commonly accept inet_aton-style
+        // hexadecimal, octal, and shortened IPv4 forms. Rust's canonical IP parser
+        // intentionally does not, so reject such numeric-looking hosts instead of
+        // allowing the downstream resolver to reinterpret them after validation.
+        let looks_like_legacy_ipv4 = {
+            let components = host.split('.').collect::<Vec<_>>();
+            !components.is_empty()
+                && components.len() <= 4
+                && components.iter().all(|component| {
+                    if component.is_empty() {
+                        return false;
+                    }
+                    let digits = component
+                        .strip_prefix("0x")
+                        .or_else(|| component.strip_prefix("0X"));
+                    digits.map_or_else(
+                        || component.bytes().all(|byte| byte.is_ascii_digit()),
+                        |digits| {
+                            !digits.is_empty()
+                                && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        },
+                    )
+                })
+        };
+        return looks_like_legacy_ipv4;
     };
     match address {
         IpAddr::V4(address) => forbidden_ipv4(address),
@@ -3717,11 +3762,12 @@ fn prepend_schema_diagnostics(
         .filter(|violation| {
             (violation.keyword == "additionalProperties" && violation.path == "$")
                 || !diagnostics.iter().any(|diagnostic| {
-                    diagnostic.path == violation.path
-                        || diagnostic.path.starts_with(&format!("{}.", violation.path))
-                        || diagnostic.path.starts_with(&format!("{}[", violation.path))
-                        || violation.path.starts_with(&format!("{}.", diagnostic.path))
-                        || violation.path.starts_with(&format!("{}[", diagnostic.path))
+                    diagnostic.severity == Severity::Error
+                        && (diagnostic.path == violation.path
+                            || diagnostic.path.starts_with(&format!("{}.", violation.path))
+                            || diagnostic.path.starts_with(&format!("{}[", violation.path))
+                            || violation.path.starts_with(&format!("{}.", diagnostic.path))
+                            || violation.path.starts_with(&format!("{}[", diagnostic.path)))
                 })
         })
         .map(|violation| {

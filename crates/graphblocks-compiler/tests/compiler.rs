@@ -343,6 +343,23 @@ fn block_catalog_rejects_missing_or_empty_descriptor_names() {
 }
 
 #[test]
+fn block_catalog_rejects_ambiguous_endpoint_names() {
+    for (direction, name) in [("inputs", "payload.value"), ("outputs", "value.part")] {
+        let mut descriptor = json!({
+            "typeId": "test.block",
+            "version": 1
+        });
+        descriptor[direction] = json!([{"name": name}]);
+        let blocks = json!([descriptor]);
+        let error = BlockCatalog::from_blocks(&blocks).expect_err("catalog must be rejected");
+        assert!(
+            error.contains("canonical endpoint name"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn block_catalog_requires_boolean_required_and_optional_flags() {
     let cases = [
         (
@@ -638,6 +655,31 @@ fn compile_graph_warns_when_declared_outputs_have_no_writer() {
 }
 
 #[test]
+fn schema_errors_are_not_suppressed_by_overlapping_warnings() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "schema-error-with-warning"},
+        "spec": {
+            "interface": {"outputs": {"value": "graphblocks.ai/Text@1"}},
+            "nodes": {},
+            "callbackSubscriptions": {}
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    assert!(plan.diagnostics.iter().any(|diagnostic| {
+        diagnostic.severity == Severity::Error
+            && diagnostic.code == "GB0014"
+            && diagnostic.path == "$.spec"
+    }));
+    assert!(plan.diagnostics.iter().any(|diagnostic| {
+        diagnostic.severity == Severity::Warning && diagnostic.code == "GB1004"
+    }));
+}
+
+#[test]
 fn compile_graph_rejects_required_input_never_produced() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
@@ -885,6 +927,49 @@ fn compile_graph_rejects_alternate_numeric_callback_webhook_loopback_host() {
             .collect::<Vec<_>>(),
         vec!["GB6011"]
     );
+}
+
+#[test]
+fn compile_graph_rejects_legacy_and_shared_numeric_callback_hosts() {
+    for url in [
+        "https://0177.0.0.1/events",
+        "https://0x7f.0.0.1/events",
+        "https://127.1/events",
+        "https://100.64.0.1/events",
+        "https://100.127.255.255/events",
+    ] {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "legacy-numeric-loopback-callback"},
+            "spec": {
+                "nodes": {"agent": {"block": "agent.run@1"}},
+                "callbackSubscriptions": [{
+                    "subscriptionId": "sub-loopback",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": url,
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay"
+                        }
+                    }
+                }]
+            }
+        });
+
+        let plan = compile_graph_for_discovery(&graph);
+        assert!(
+            plan.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == Severity::Error
+                    && diagnostic.code == "GB6011"),
+            "{url} should be rejected as an unsafe callback endpoint: {:?}",
+            plan.diagnostics
+        );
+    }
 }
 
 #[test]
