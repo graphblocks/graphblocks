@@ -100,6 +100,78 @@ def test_compile_rejects_duplicate_edge_identity() -> None:
     ]
 
 
+@pytest.mark.parametrize("pseudo_source", ["$state", "$context", "$execution"])
+def test_compile_rejects_local_runtime_unsupported_pseudo_sources(
+    pseudo_source: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "unsupported-pseudo-source"},
+        "spec": {
+            "interface": {"outputs": {"value": "schemas/Value@1"}},
+            "nodes": {},
+            "edges": [
+                {"from": f"{pseudo_source}.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1020",
+            f"{pseudo_source} is not supported as an edge source by the local runtime",
+            "$.spec.edges[0].from",
+        )
+    ]
+
+
+@pytest.mark.parametrize("pseudo_target", ["$state", "$context", "$execution"])
+def test_compile_rejects_local_runtime_unsupported_pseudo_targets(
+    pseudo_target: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "unsupported-pseudo-target"},
+        "spec": {
+            "interface": {"inputs": {"value": "schemas/Value@1"}},
+            "nodes": {},
+            "edges": [
+                {"from": "$input.value", "to": f"{pseudo_target}.value"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1020",
+            f"{pseudo_target} is not supported as an edge target by the local runtime",
+            "$.spec.edges[0].to",
+        )
+    ]
+
+
+def test_compile_preserves_supported_input_to_output_pseudo_edge() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "supported-pseudo-edge"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "schemas/Value@1"},
+                "outputs": {"value": "schemas/Value@1"},
+            },
+            "nodes": {},
+            "edges": [
+                {"from": "$input.value", "to": "$output.value"},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == []
+
+
 def test_compile_discovery_mode_still_validates_known_builtin_blocks() -> None:
     graph = _unknown_block_graph()
     spec = graph["spec"]
@@ -469,9 +541,13 @@ def test_compile_rejects_when_dependencies_inside_voice_feedback_cycle() -> None
     [
         ("$input", "node when reference must include a port path"),
         ("$output.enabled", "$output cannot be used as a when source"),
+        (
+            "$context.enabled",
+            "$context is not supported as a when source by the local runtime",
+        ),
         (False, "node when reference must be a string"),
     ],
-    ids=["missing-port", "output-source", "non-string"],
+    ids=["missing-port", "output-source", "unsupported-pseudo", "non-string"],
 )
 def test_compile_rejects_malformed_or_direction_invalid_when_references(
     when: object,

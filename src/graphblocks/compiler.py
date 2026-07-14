@@ -1864,6 +1864,20 @@ def compile_graph(
                         )
                     )
                     continue
+                if owner in {
+                    "$context",
+                    "$execution",
+                    "$state",
+                }:
+                    endpoint_direction = "source" if key == "from" else "target"
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1020",
+                            f"{owner} is not supported as an edge {endpoint_direction} by the local runtime",
+                            f"$.spec.edges[{index}].{key}",
+                        )
+                    )
+                    continue
                 if key == "to" and owner == "$input":
                     diagnostics.append(
                         Diagnostic(
@@ -2155,6 +2169,14 @@ def compile_graph(
                             f"$.spec.nodes.{node_name}.when",
                         )
                     )
+            elif owner in {"$context", "$execution", "$state"}:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB1020",
+                        f"{owner} is not supported as a when source by the local runtime",
+                        f"$.spec.nodes.{node_name}.when",
+                    )
+                )
             elif owner not in PSEUDO_NODES and owner not in normalized_nodes:
                 diagnostics.append(
                     Diagnostic("GB1002", f"when references unknown node {owner!r}", f"$.spec.nodes.{node_name}.when")
