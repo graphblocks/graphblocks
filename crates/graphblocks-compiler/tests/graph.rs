@@ -76,7 +76,7 @@ fn normalize_graph_sorts_nodes_and_edges_for_stable_hashes() {
     assert_eq!(normalized_hash, canonical_hash(&normalize_graph(&right)));
     assert_eq!(
         normalized_hash,
-        "sha256:4d121992be800bb056512aa26e834a45ee9efcba28e2ce8130d730f194ad97a2"
+        "sha256:fce14a3da5ee7f2b579494d34f3320758f5ff3204713d803c73fdcbccb162027"
     );
 }
 
@@ -113,4 +113,31 @@ fn normalize_graph_leaves_non_graph_documents_unchanged() {
     });
 
     assert_eq!(normalize_graph(&document), document);
+}
+
+#[test]
+fn normalize_graph_migrates_only_explicit_alpha_versions() {
+    let legacy = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {
+            "name": "legacy",
+            "annotations": {"graphblocks.ai/migratedFrom": "untrusted"}
+        },
+        "spec": {"nodes": {}}
+    });
+    let future = json!({
+        "apiVersion": "graphblocks.ai/v2",
+        "kind": "Graph",
+        "metadata": {"name": "future"},
+        "spec": {"nodes": {}}
+    });
+
+    let migrated = normalize_graph(&legacy);
+    assert_eq!(migrated["apiVersion"], GRAPH_API_VERSION);
+    assert_eq!(
+        migrated["metadata"]["annotations"]["graphblocks.ai/migratedFrom"],
+        "graphblocks.ai/v1alpha3",
+    );
+    assert_eq!(normalize_graph(&future)["apiVersion"], "graphblocks.ai/v2");
 }

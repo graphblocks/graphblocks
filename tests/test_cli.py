@@ -9,8 +9,14 @@ from types import SimpleNamespace
 import yaml
 
 import graphblocks.cli as cli_module
+import graphblocks.plugins as plugins_module
 from graphblocks.cli import _loads_strict_json, main
-from graphblocks.canonical import canonical_dumps, canonical_hash, canonical_loads
+from graphblocks.canonical import (
+    canonical_dumps,
+    canonical_hash,
+    canonical_loads,
+    normalize_graph,
+)
 from graphblocks.compiler import compile_graph
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
@@ -86,9 +92,9 @@ def test_validate_cli_accepts_valid_graph(tmp_path, capsys) -> None:
         "kind": "Graph",
         "metadata": {"name": "cli-valid"},
         "spec": {
-            "interface": {"outputs": {"result": "graphblocks.ai/Text@1"}},
-            "nodes": {"value": {"block": "text.literal@1"}},
-            "edges": [{"from": "value.value", "to": "$output.result"}],
+            "interface": {"outputs": {"result": "graphblocks.ai/ModelResponse@1"}},
+            "nodes": {"value": {"block": "model.generate@1"}},
+            "edges": [{"from": "value.response", "to": "$output.result"}],
         },
     }
     path = tmp_path / "graph.yaml"
@@ -103,13 +109,182 @@ def test_plan_cli_prints_hash(tmp_path, capsys) -> None:
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
         "metadata": {"name": "cli-plan"},
-        "spec": {"nodes": {"value": {"block": "text.literal@1"}}},
+        "spec": {"nodes": {"value": {"block": "model.generate@1"}}},
     }
     path = tmp_path / "graph.yaml"
     path.write_text(yaml.safe_dump(graph), encoding="utf-8")
 
     assert main(["plan", str(path)]) == 0
     assert '"hash": "sha256:' in capsys.readouterr().out
+
+
+def test_validate_cli_rejects_unknown_blocks_without_explicit_discovery_mode(
+    tmp_path, capsys
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-closed-world"},
+        "spec": {"nodes": {"custom": {"block": "vendor.custom@1"}}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["validate", str(path), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert any(diagnostic["code"] == "GB1022" for diagnostic in payload["diagnostics"])
+
+
+def test_validate_cli_allows_unknown_blocks_only_in_explicit_discovery_mode(
+    tmp_path, capsys
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-open-discovery"},
+        "spec": {"nodes": {"custom": {"block": "vendor.custom@1"}}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["validate", str(path), "--allow-unknown-blocks"]) == 0
+    assert capsys.readouterr().out.strip() == "OK"
+
+
+def test_validate_cli_applies_versioned_resource_schemas_to_non_graph_documents(
+    tmp_path, capsys
+) -> None:
+    application = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "Application",
+        "metadata": {"name": "invalid-application"},
+        "spec": {},
+    }
+    path = tmp_path / "application.yaml"
+    path.write_text(yaml.safe_dump(application), encoding="utf-8")
+
+    assert main(["validate", str(path), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert any(
+        diagnostic["code"] == "GB0014"
+        for diagnostic in payload["diagnostics"]
+    )
+
+
+def test_validate_cli_rejects_unknown_versions_of_schema_backed_resource_kinds(
+    tmp_path, capsys
+) -> None:
+    application = {
+        "apiVersion": "graphblocks.ai/v9",
+        "kind": "Application",
+        "metadata": {"name": "unknown-version"},
+        "spec": {"surface": {"kind": "http", "protocol": "graphblocks.app.v1"}},
+    }
+    path = tmp_path / "application.yaml"
+    path.write_text(yaml.safe_dump(application), encoding="utf-8")
+
+    assert main(["validate", str(path), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert [diagnostic["code"] for diagnostic in payload["diagnostics"]] == [
+        "GB0013"
+    ]
+
+
+def test_plan_cli_requires_explicit_discovery_mode_for_unknown_blocks(
+    tmp_path, capsys
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-plan-closed-world"},
+        "spec": {"nodes": {"custom": {"block": "vendor.custom@1"}}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["plan", str(path)]) == 1
+    closed_payload = json.loads(capsys.readouterr().out)
+    assert any(diagnostic["code"] == "GB1022" for diagnostic in closed_payload["diagnostics"])
+
+    assert main(["plan", str(path), "--allow-unknown-blocks"]) == 0
+    open_payload = json.loads(capsys.readouterr().out)
+    assert open_payload["ok"] is True
+    assert open_payload["diagnostics"] == []
+
+
+def test_validate_and_plan_ignore_installed_plugins_without_explicit_opt_in(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    manifest = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "com.example.ambient", "version": "1.0.0"},
+        "spec": {
+            "pluginId": "com.example.ambient",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "ambient.custom",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                }
+            ],
+        },
+    }
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "ambient-plugin-closure"},
+        "spec": {"nodes": {"custom": {"block": "ambient.custom@1"}}},
+    }
+    manifest_path = tmp_path / "graphblocks-plugin.yaml"
+    graph_path = tmp_path / "graph.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    distribution = SimpleNamespace(
+        files=(Path("graphblocks-plugin.yaml"),),
+        locate_file=lambda _file: manifest_path,
+    )
+    monkeypatch.setattr(
+        plugins_module.importlib.metadata,
+        "distributions",
+        lambda: (distribution,),
+    )
+    monkeypatch.setattr(
+        plugins_module.importlib.metadata,
+        "entry_points",
+        lambda: SimpleNamespace(select=lambda **_kwargs: ()),
+    )
+
+    for command in ("validate", "plan"):
+        default_argv = [command, str(graph_path)]
+        if command == "validate":
+            default_argv.append("--json")
+        assert main(default_argv) == 1
+        default_payload = json.loads(capsys.readouterr().out)
+        assert default_payload["ok"] is False
+        assert [
+            diagnostic["code"] for diagnostic in default_payload["diagnostics"]
+        ] == ["GB1022"]
+
+        assert main([*default_argv, "--discover-installed-plugins"]) == 0
+        discovered_payload = json.loads(capsys.readouterr().out)
+        assert discovered_payload["ok"] is True
+        assert discovered_payload["diagnostics"] == []
+
+    assert main(["plugins", "list", "--json"]) == 0
+    plugins_payload = json.loads(capsys.readouterr().out)
+    assert "com.example.ambient" in {
+        plugin["pluginId"] for plugin in plugins_payload["plugins"]
+    }
 
 
 def test_packages_cli_lists_catalog(capsys) -> None:
@@ -172,9 +347,11 @@ def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifestVersion"] == 1
-    assert payload["contentDigest"] == "sha256:1c682340367c7be40fd3e924ac002a57e11828efd98f6e46496cb8e8f4217c9b"
+    assert payload["contentDigest"] == "sha256:7257f8fa05fa01895baf9be41aa894b81cd7b4a27581a49e93fe28a7955b1a8a"
     assert [entry["schemaId"] for entry in payload["schemas"]] == [
         "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
+        "graphblocks.ai/v1/graph.schema.json",
+        "graphblocks.ai/v1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha1/application.schema.json",
         "graphblocks.ai/v1alpha1/binding.schema.json",
         "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
@@ -218,7 +395,7 @@ def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys)
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
         "metadata": {"name": "cli-lock"},
-        "spec": {"nodes": {"value": {"block": "text.literal@1"}}},
+        "spec": {"nodes": {"value": {"block": "model.generate@1"}}},
     }
     path = tmp_path / "graph.yaml"
     path.write_text(yaml.safe_dump(graph), encoding="utf-8")
@@ -229,7 +406,7 @@ def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys)
     assert payload["lockVersion"] == 1
     assert payload["graph"]["id"] == "cli-lock"
     assert payload["graph"]["graphHash"].startswith("sha256:")
-    assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1alpha3"
+    assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1"
     assert payload["packageLockHash"].startswith("sha256:")
     assert payload["packageCatalogVersion"] == 5
     assert payload["artifacts"] == ["graphblocks"]
@@ -241,7 +418,7 @@ def test_lock_cli_writes_output_file(tmp_path, capsys) -> None:
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
         "metadata": {"name": "cli-lock-file"},
-        "spec": {"nodes": {"value": {"block": "text.literal@1"}}},
+        "spec": {"nodes": {"value": {"block": "model.generate@1"}}},
     }
     path = tmp_path / "graph.yaml"
     output = tmp_path / "graphblocks.lock.json"
@@ -675,7 +852,7 @@ def test_run_cli_can_delegate_to_native_runtime_bridge(tmp_path, capsys, monkeyp
     payload = json.loads(capsys.readouterr().out)
     assert payload["runId"] == "native-run-1"
     assert payload["outputs"] == {"prompt": "Native ok"}
-    assert calls == [(graph, {"message": {"text": "ok"}})]
+    assert calls == [(normalize_graph(graph), {"message": {"text": "ok"}})]
 
 
 def test_run_cli_preserves_arbitrary_precision_input_for_native_runtime(
@@ -810,7 +987,7 @@ def test_run_cli_passes_requested_run_id_to_native_runtime_bridge(tmp_path, caps
     assert payload["outputs"] == {"prompt": "Native requested"}
     assert calls == [
         (
-            graph,
+            normalize_graph(graph),
             {"message": {"text": "ok"}},
             {
                 "deploymentProvenance": {

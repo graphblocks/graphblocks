@@ -56,7 +56,14 @@ def _binding(name: str = "local-model") -> dict[str, object]:
         "apiVersion": "graphblocks.ai/v1alpha1",
         "kind": "Binding",
         "metadata": {"name": name},
-        "spec": {"resources": {}},
+        "spec": {
+            "resources": {
+                "model": {
+                    "kind": "ChatModel",
+                    "implementation": "test.model",
+                }
+            }
+        },
     }
 
 
@@ -152,6 +159,7 @@ def test_composition_expands_fragment_to_same_graph_hash_as_monolith(tmp_path: P
 
     result, expanded = _expanded_graph(graph_path)
 
+    assert expanded["apiVersion"] == "graphblocks.ai/v1"
     assert "composition" not in expanded["spec"]
     assert expanded["spec"]["nodes"] == _monolithic_graph()["spec"]["nodes"]
     assert canonical_hash(normalize_graph(expanded)) == canonical_hash(
@@ -162,14 +170,53 @@ def test_composition_expands_fragment_to_same_graph_hash_as_monolith(tmp_path: P
     assert len(result.report.instances) == 1
 
 
+@pytest.mark.parametrize("preview_field", ["projection", "execution", "policies"])
+def test_composition_preserves_preview_fragment_nodes_on_alpha_wire(
+    tmp_path: Path,
+    preview_field: str,
+) -> None:
+    fragment = _fragment()
+    fragment["spec"]["nodes"]["render"][preview_field] = {"mode": "preview"}
+    _write_yaml(tmp_path / "fragment.yaml", fragment)
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, _composed_graph())
+
+    _, expanded = _expanded_graph(graph_path)
+
+    assert expanded["apiVersion"] == "graphblocks.ai/v1alpha3"
+    assert expanded["spec"]["nodes"]["answer__render"][preview_field] == {
+        "mode": "preview"
+    }
+    assert "composition" not in expanded["spec"]
+
+
+def test_composition_rejects_non_alpha3_root_with_composition_error(
+    tmp_path: Path,
+) -> None:
+    _write_yaml(tmp_path / "fragment.yaml", _fragment())
+    graph = _composed_graph()
+    graph["apiVersion"] = "graphblocks.ai/v1"
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, graph)
+
+    with pytest.raises(CompositionError) as captured:
+        compose_documents(graph_path)
+
+    assert captured.value.code == "CompositionUnsupportedVersion"
+    assert captured.value.path == "$.apiVersion"
+
+
 def test_compiler_rejects_unexpanded_composition_and_slot() -> None:
-    plan = compile_graph(_composed_graph())
+    plan = compile_graph(
+        _composed_graph(),
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
 
     assert [
         diagnostic.code
         for diagnostic in plan.diagnostics.diagnostics
         if diagnostic.severity == "error"
-    ] == ["UnexpandedComposition", "UnexpandedComposition"]
+    ] == ["GB1052", "GB1052"]
 
 
 def test_composition_rewrites_placeholder_shorthand_at_fragment_boundary(tmp_path: Path) -> None:

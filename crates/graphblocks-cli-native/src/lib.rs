@@ -51,20 +51,30 @@ pub fn load_graph_document(
     input: &str,
     graph_name: Option<&str>,
 ) -> Result<Value, NativeDocumentError> {
-    if input.trim().is_empty() {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
         return Err(NativeDocumentError::EmptyInput);
     }
 
-    let mut documents = Vec::new();
-    for document in serde_yaml::Deserializer::from_str(input) {
-        let value =
-            Value::deserialize(document).map_err(|error| NativeDocumentError::ParseFailed {
-                message: error.to_string(),
-            })?;
-        if !value.is_null() {
-            documents.push(value);
+    let mut documents = if matches!(trimmed.as_bytes().first(), Some(b'{' | b'[')) {
+        vec![serde_json::from_str::<Value>(trimmed).map_err(|error| {
+            NativeDocumentError::ParseFailed {
+                message: format!("invalid JSON: {error}"),
+            }
+        })?]
+    } else {
+        let mut documents = Vec::new();
+        for document in serde_yaml::Deserializer::from_str(input) {
+            let value =
+                Value::deserialize(document).map_err(|error| NativeDocumentError::ParseFailed {
+                    message: error.to_string(),
+                })?;
+            if !value.is_null() {
+                documents.push(value);
+            }
         }
-    }
+        documents
+    };
 
     if let Some(graph_name) = graph_name {
         let mut selected = documents

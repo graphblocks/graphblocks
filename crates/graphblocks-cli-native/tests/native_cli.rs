@@ -18,7 +18,7 @@ fn native_validate_reports_ok_and_plan_hash_without_expanded_plan() {
     assert!(report.ok);
     assert_eq!(
         report.graph_hash.as_deref(),
-        Some("sha256:fe857328a0c944648cbfc1afa1d190fc3bc1aa8df55ac9ad2b63ac7f4ae47b2a")
+        Some("sha256:eeb398e0d56800354c0741291c973f76caced54fd6b02bb2de00730fbdce8fa9")
     );
     assert_eq!(report.normalized, None);
     assert!(report.diagnostics.is_empty());
@@ -77,6 +77,39 @@ spec:
             .and_then(serde_json::Value::as_str),
         Some("yaml-native")
     );
+}
+
+#[test]
+fn native_loader_preserves_strict_json_numbers_without_yaml_coercion() {
+    let document = load_single_graph_document(
+        r#"{
+            "apiVersion":"graphblocks.ai/v1",
+            "kind":"Graph",
+            "metadata":{"name":"exact-json-numbers"},
+            "spec":{"nodes":{"test":{"block":"test.node@1","config":{
+                "huge":1e400,
+                "precise":1.2345678901234567890123456789
+            }}}}
+        }"#,
+    )
+    .expect("strict JSON graph should load");
+
+    assert_eq!(
+        document
+            .pointer("/spec/nodes/test/config/huge")
+            .map(Value::to_string),
+        Some("1e+400".to_owned())
+    );
+    assert_eq!(
+        document
+            .pointer("/spec/nodes/test/config/precise")
+            .map(Value::to_string),
+        Some("1.2345678901234567890123456789".to_owned())
+    );
+
+    let error = load_single_graph_document(r#"{"kind":"Graph",}"#)
+        .expect_err("malformed JSON must not be reinterpreted as YAML");
+    assert!(matches!(error, NativeDocumentError::ParseFailed { .. }));
 }
 
 #[test]

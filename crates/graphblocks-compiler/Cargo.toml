@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 graphblocks-schema = { version = "0.1.0", path = "../graphblocks-schema" }
+jsonschema = { version = "0.47", default-features = false, features = ["arbitrary-precision"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 sha2 = "0.10"
 

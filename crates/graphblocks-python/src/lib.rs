@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{BlockCatalog, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
@@ -59,6 +59,7 @@ use graphblocks_runtime_core::run_store::{RunDeploymentProvenance, RunStatus, Sq
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
+use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
 use graphblocks_runtime_core::task_group::{
     ChildTaskState, SiblingCancellationPolicy, TaskGroupDecision, TaskGroupFailure,
     TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
@@ -196,23 +197,29 @@ fn finalize_tool_call_json(
 }
 
 #[pyfunction]
-#[pyo3(signature = (document_json, block_catalog_json=None))]
-fn compile_graph_json(document_json: &str, block_catalog_json: Option<&str>) -> PyResult<String> {
+#[pyo3(signature = (document_json, block_catalog_json=None, *, allow_unknown_blocks=false))]
+fn compile_graph_json(
+    document_json: &str,
+    block_catalog_json: Option<&str>,
+    allow_unknown_blocks: bool,
+) -> PyResult<String> {
     let document = serde_json::from_str::<Value>(document_json)
         .map_err(|error| PyValueError::new_err(format!("invalid graph document JSON: {error}")))?;
-    let block_catalog = block_catalog_json
-        .map(|catalog_json| {
+    let mut block_catalog = match block_catalog_json {
+        Some(catalog_json) => {
             let catalog = serde_json::from_str::<Value>(catalog_json).map_err(|error| {
                 PyValueError::new_err(format!("invalid block catalog JSON: {error}"))
             })?;
             BlockCatalog::from_blocks(&catalog).map_err(PyValueError::new_err)
-        })
-        .transpose()?;
-    let plan = if let Some(block_catalog) = &block_catalog {
-        compile_graph_with_catalog(&document, block_catalog)
-    } else {
-        compile_graph(&document)
+        }
+        None => stdlib_block_catalog().map_err(|error| {
+            PyValueError::new_err(format!("invalid stdlib block catalog: {error}"))
+        }),
+    }?;
+    if allow_unknown_blocks {
+        block_catalog = block_catalog.with_unknown_blocks_allowed();
     };
+    let plan = compile_graph_with_catalog(&document, &block_catalog);
     let diagnostics = plan
         .diagnostics
         .iter()
@@ -6164,7 +6171,9 @@ fn parse_exhaustion_policy(value: &Value) -> PyResult<ExhaustionPolicy> {
 }
 
 fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
-    let plan = compile_graph(graph);
+    let block_catalog = stdlib_block_catalog()
+        .map_err(|error| PyValueError::new_err(format!("invalid stdlib block catalog: {error}")))?;
+    let plan = compile_graph_with_catalog(graph, &block_catalog);
     if !plan.ok() {
         let error_codes = plan
             .diagnostics
@@ -11016,7 +11025,55 @@ mod tests {
     }
 
     #[test]
-    fn compile_graph_json_matches_shared_tck_cases() -> Result<(), String> {
+    fn compile_graph_json_requires_explicit_unknown_block_discovery() -> Result<(), String> {
+        let document = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-closed-world"},
+            "spec": {
+                "nodes": {
+                    "extension": {"block": "example.extension@1"}
+                }
+            }
+        });
+        let document_json = serde_json::to_string(&document).map_err(|error| error.to_string())?;
+
+        let closed_json =
+            compile_graph_json(&document_json, None, false).map_err(|error| error.to_string())?;
+        let closed =
+            serde_json::from_str::<Value>(&closed_json).map_err(|error| error.to_string())?;
+        assert_eq!(closed.get("ok"), Some(&json!(false)));
+        assert!(closed["diagnostics"].as_array().is_some_and(|diagnostics| {
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.get("code").and_then(Value::as_str) == Some("GB1022"))
+        }));
+
+        let discovery_json =
+            compile_graph_json(&document_json, None, true).map_err(|error| error.to_string())?;
+        let discovery =
+            serde_json::from_str::<Value>(&discovery_json).map_err(|error| error.to_string())?;
+        assert_eq!(discovery.get("ok"), Some(&json!(true)));
+        assert!(
+            discovery["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics.iter().all(|diagnostic| {
+                    diagnostic.get("code").and_then(Value::as_str) != Some("GB1022")
+                }))
+        );
+
+        let catalog_closed_json = compile_graph_json(&document_json, Some("[]"), false)
+            .map_err(|error| error.to_string())?;
+        let catalog_closed = serde_json::from_str::<Value>(&catalog_closed_json)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(catalog_closed.get("ok"), Some(&json!(false)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn compile_graph_json_matches_shared_tck_cases_in_explicit_discovery_mode() -> Result<(), String>
+    {
         let cases = serde_json::from_str::<Value>(include_str!("fixtures/compiler-cases.json"))
             .map_err(|error| error.to_string())?;
         let cases = cases
@@ -11054,13 +11111,19 @@ mod tests {
 
             let document_json =
                 serde_json::to_string(document).map_err(|error| error.to_string())?;
-            let block_catalog_json = case
-                .get("block_catalog")
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|error| error.to_string())?;
-            let compiled_json = compile_graph_json(&document_json, block_catalog_json.as_deref())
-                .map_err(|error| error.to_string())?;
+            let (block_catalog_json, allow_unknown_blocks) = match case.get("block_catalog") {
+                Some(block_catalog) => (
+                    Some(serde_json::to_string(block_catalog).map_err(|error| error.to_string())?),
+                    false,
+                ),
+                None => (Some("[]".to_owned()), true),
+            };
+            let compiled_json = compile_graph_json(
+                &document_json,
+                block_catalog_json.as_deref(),
+                allow_unknown_blocks,
+            )
+            .map_err(|error| error.to_string())?;
             let compiled =
                 serde_json::from_str::<Value>(&compiled_json).map_err(|error| error.to_string())?;
             let diagnostics = compiled

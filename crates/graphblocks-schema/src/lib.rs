@@ -395,3 +395,451 @@ pub fn canonical_json(value: &Value) -> String {
         }
     }
 }
+
+#[cfg(feature = "resource-validation")]
+mod resource_validation {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// One supported GraphBlocks resource wire schema.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct ResourceSchemaDescriptor {
+        pub api_version: &'static str,
+        pub kind: &'static str,
+        pub path: &'static str,
+    }
+
+    /// Exact resource types supported by this crate, in stable selection order.
+    pub const RESOURCE_SCHEMA_PATHS: [ResourceSchemaDescriptor; 7] = [
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1",
+            kind: "Graph",
+            path: "graphblocks.ai/v1/graph.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1",
+            kind: "PluginManifest",
+            path: "graphblocks.ai/v1/plugin-manifest.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1alpha3",
+            kind: "Graph",
+            path: "graphblocks.ai/v1alpha3/graph.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1alpha1",
+            kind: "Application",
+            path: "graphblocks.ai/v1alpha1/application.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1alpha1",
+            kind: "Binding",
+            path: "graphblocks.ai/v1alpha1/binding.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/v1alpha1",
+            kind: "PluginManifest",
+            path: "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
+        },
+        ResourceSchemaDescriptor {
+            api_version: "graphblocks.ai/composition/v1alpha1",
+            kind: "GraphFragment",
+            path: "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
+        },
+    ];
+
+    /// Returns the authoritative schema path for an exact resource type.
+    #[must_use]
+    pub fn resource_schema_path(api_version: &str, kind: &str) -> Option<&'static str> {
+        schema_definition(api_version, kind).map(|schema| schema.descriptor.path)
+    }
+
+    /// A deterministic resource-schema validation failure.
+    #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+    pub struct ResourceSchemaViolation {
+        pub code: String,
+        pub path: String,
+        pub keyword: String,
+        pub message: String,
+        pub schema_path: String,
+    }
+
+    /// A checked-in resource schema could not be parsed or compiled.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ResourceSchemaError {
+        path: &'static str,
+        message: String,
+    }
+
+    impl ResourceSchemaError {
+        #[must_use]
+        pub fn path(&self) -> &'static str {
+            self.path
+        }
+
+        #[must_use]
+        pub fn message(&self) -> &str {
+            &self.message
+        }
+    }
+
+    impl Display for ResourceSchemaError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "resource schema {} is not valid Draft 2020-12: {}",
+                self.path, self.message
+            )
+        }
+    }
+
+    impl Error for ResourceSchemaError {}
+
+    /// A resource failed validation or its authoritative schema was unavailable.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum ResourceValidationError {
+        Schema(ResourceSchemaError),
+        Violations(Vec<ResourceSchemaViolation>),
+    }
+
+    impl ResourceValidationError {
+        #[must_use]
+        pub fn violations(&self) -> &[ResourceSchemaViolation] {
+            match self {
+                Self::Schema(_) => &[],
+                Self::Violations(violations) => violations,
+            }
+        }
+    }
+
+    impl Display for ResourceValidationError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Schema(error) => Display::fmt(error, formatter),
+                Self::Violations(violations) => {
+                    for (index, violation) in violations.iter().enumerate() {
+                        if index > 0 {
+                            formatter.write_str("; ")?;
+                        }
+                        write!(
+                            formatter,
+                            "{} {}: {}",
+                            violation.code, violation.path, violation.message
+                        )?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    impl Error for ResourceValidationError {}
+
+    /// Returns ordered violations for a versioned GraphBlocks resource.
+    ///
+    /// Selection is an exact match on `apiVersion` and `kind`. Schemas are embedded
+    /// in the crate so validation has no filesystem or network dependency.
+    pub fn resource_schema_errors(
+        document: &Value,
+    ) -> Result<Vec<ResourceSchemaViolation>, ResourceSchemaError> {
+        let Value::Object(object) = document else {
+            return Ok(vec![resource_violation(
+                "GB0012",
+                "$",
+                "type",
+                "resource must be an object",
+                "$",
+            )]);
+        };
+
+        let api_version = object.get("apiVersion").and_then(Value::as_str);
+        let kind = object.get("kind").and_then(Value::as_str);
+        let mut envelope_errors = Vec::new();
+        if api_version.is_none() {
+            envelope_errors.push(resource_violation(
+                "GB0012",
+                "$.apiVersion",
+                "type",
+                "apiVersion must be a string",
+                "$",
+            ));
+        }
+        if kind.is_none() {
+            envelope_errors.push(resource_violation(
+                "GB0012",
+                "$.kind",
+                "type",
+                "kind must be a string",
+                "$",
+            ));
+        }
+        if !envelope_errors.is_empty() {
+            return Ok(envelope_errors);
+        }
+
+        let (Some(api_version), Some(kind)) = (api_version, kind) else {
+            return Ok(envelope_errors);
+        };
+        let Some(schema) = schema_definition(api_version, kind) else {
+            return Ok(vec![resource_violation(
+                "GB0013",
+                "$",
+                "resourceType",
+                &format!("unsupported resource type {api_version:?}/{kind:?}"),
+                "$",
+            )]);
+        };
+
+        let compiled = schema.compiled()?;
+        let mut violations = compiled
+            .validator
+            .iter_errors(document)
+            .map(|error| schema_violation(&error, document, &compiled.document))
+            .collect::<Vec<_>>();
+        violations.sort_by(|left, right| {
+            (&left.path, &left.schema_path, &left.keyword, &left.message).cmp(&(
+                &right.path,
+                &right.schema_path,
+                &right.keyword,
+                &right.message,
+            ))
+        });
+        Ok(violations)
+    }
+
+    /// Validates a resource against its exact `apiVersion` and `kind` schema.
+    pub fn validate_resource(document: &Value) -> Result<(), ResourceValidationError> {
+        let violations =
+            resource_schema_errors(document).map_err(ResourceValidationError::Schema)?;
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(ResourceValidationError::Violations(violations))
+        }
+    }
+
+    struct ResourceSchemaDefinition {
+        descriptor: ResourceSchemaDescriptor,
+        source: &'static str,
+        compiled: OnceLock<Result<CompiledResourceSchema, ResourceSchemaError>>,
+    }
+
+    impl ResourceSchemaDefinition {
+        const fn new(descriptor: ResourceSchemaDescriptor, source: &'static str) -> Self {
+            Self {
+                descriptor,
+                source,
+                compiled: OnceLock::new(),
+            }
+        }
+
+        fn compiled(&self) -> Result<&CompiledResourceSchema, ResourceSchemaError> {
+            let result = self.compiled.get_or_init(|| {
+                let document = serde_json::from_str::<Value>(self.source).map_err(|error| {
+                    ResourceSchemaError {
+                        path: self.descriptor.path,
+                        message: error.to_string(),
+                    }
+                })?;
+                jsonschema::draft202012::meta::validate(&document).map_err(|error| {
+                    ResourceSchemaError {
+                        path: self.descriptor.path,
+                        message: error.to_string(),
+                    }
+                })?;
+                let validator = jsonschema::draft202012::new(&document).map_err(|error| {
+                    ResourceSchemaError {
+                        path: self.descriptor.path,
+                        message: error.to_string(),
+                    }
+                })?;
+                Ok(CompiledResourceSchema {
+                    document,
+                    validator,
+                })
+            });
+            match result {
+                Ok(compiled) => Ok(compiled),
+                Err(error) => Err(error.clone()),
+            }
+        }
+    }
+
+    struct CompiledResourceSchema {
+        document: Value,
+        validator: jsonschema::Validator,
+    }
+
+    static STABLE_GRAPH_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[0],
+        include_str!("../schemas/graphblocks.ai/v1/graph.schema.json"),
+    );
+    static STABLE_PLUGIN_MANIFEST_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[1],
+        include_str!("../schemas/graphblocks.ai/v1/plugin-manifest.schema.json"),
+    );
+    static ALPHA3_GRAPH_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[2],
+        include_str!("../schemas/graphblocks.ai/v1alpha3/graph.schema.json"),
+    );
+    static APPLICATION_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[3],
+        include_str!("../schemas/graphblocks.ai/v1alpha1/application.schema.json"),
+    );
+    static BINDING_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[4],
+        include_str!("../schemas/graphblocks.ai/v1alpha1/binding.schema.json"),
+    );
+    static ALPHA1_PLUGIN_MANIFEST_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[5],
+        include_str!("../schemas/graphblocks.ai/v1alpha1/plugin-manifest.schema.json"),
+    );
+    static GRAPH_FRAGMENT_SCHEMA: ResourceSchemaDefinition = ResourceSchemaDefinition::new(
+        RESOURCE_SCHEMA_PATHS[6],
+        include_str!("../schemas/graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json"),
+    );
+
+    fn schema_definition(
+        api_version: &str,
+        kind: &str,
+    ) -> Option<&'static ResourceSchemaDefinition> {
+        match (api_version, kind) {
+            ("graphblocks.ai/v1", "Graph") => Some(&STABLE_GRAPH_SCHEMA),
+            ("graphblocks.ai/v1", "PluginManifest") => Some(&STABLE_PLUGIN_MANIFEST_SCHEMA),
+            ("graphblocks.ai/v1alpha3", "Graph") => Some(&ALPHA3_GRAPH_SCHEMA),
+            ("graphblocks.ai/v1alpha1", "Application") => Some(&APPLICATION_SCHEMA),
+            ("graphblocks.ai/v1alpha1", "Binding") => Some(&BINDING_SCHEMA),
+            ("graphblocks.ai/v1alpha1", "PluginManifest") => Some(&ALPHA1_PLUGIN_MANIFEST_SCHEMA),
+            ("graphblocks.ai/composition/v1alpha1", "GraphFragment") => {
+                Some(&GRAPH_FRAGMENT_SCHEMA)
+            }
+            _ => None,
+        }
+    }
+
+    fn schema_violation(
+        error: &jsonschema::ValidationError<'_>,
+        document: &Value,
+        schema: &Value,
+    ) -> ResourceSchemaViolation {
+        let keyword = error.kind().keyword();
+        let message = validation_message(error, schema);
+        ResourceSchemaViolation {
+            code: "GB0014".to_owned(),
+            path: json_pointer_to_path(error.instance_path().as_str(), document),
+            keyword: keyword.to_owned(),
+            message,
+            schema_path: json_pointer_to_path(error.schema_path().as_str(), schema),
+        }
+    }
+
+    fn validation_message(error: &jsonschema::ValidationError<'_>, schema: &Value) -> String {
+        use jsonschema::error::ValidationErrorKind;
+
+        match error.kind() {
+            ValidationErrorKind::AnyOf { .. } => {
+                "value must match at least one allowed schema".into()
+            }
+            ValidationErrorKind::OneOfMultipleValid { .. }
+            | ValidationErrorKind::OneOfNotValid { .. } => {
+                "value must match exactly one allowed schema".into()
+            }
+            ValidationErrorKind::Not { .. } => "value matches a forbidden schema".into(),
+            ValidationErrorKind::Constant { expected_value } => {
+                format!("value must equal {}", canonical_json(expected_value))
+            }
+            ValidationErrorKind::Enum { options } => {
+                format!("value must be one of {}", canonical_json(options))
+            }
+            ValidationErrorKind::Type { .. } => {
+                let expected = schema
+                    .pointer(error.schema_path().as_str())
+                    .unwrap_or(&Value::Null);
+                format!("value must have JSON type {}", canonical_json(expected))
+            }
+            ValidationErrorKind::UniqueItems => "array items must be unique".into(),
+            ValidationErrorKind::AdditionalProperties { unexpected } => {
+                let mut unexpected = unexpected.clone();
+                unexpected.sort();
+                format!(
+                    "unexpected properties are not allowed: {}",
+                    canonical_json(&Value::Array(
+                        unexpected.into_iter().map(Value::String).collect()
+                    ))
+                )
+            }
+            _ => error.to_string(),
+        }
+    }
+
+    fn resource_violation(
+        code: &str,
+        path: &str,
+        keyword: &str,
+        message: &str,
+        schema_path: &str,
+    ) -> ResourceSchemaViolation {
+        ResourceSchemaViolation {
+            code: code.to_owned(),
+            path: path.to_owned(),
+            keyword: keyword.to_owned(),
+            message: message.to_owned(),
+            schema_path: schema_path.to_owned(),
+        }
+    }
+
+    fn json_pointer_to_path(pointer: &str, root: &Value) -> String {
+        let mut output = "$".to_owned();
+        let mut current = Some(root);
+        for encoded in pointer.strip_prefix('/').unwrap_or(pointer).split('/') {
+            if encoded.is_empty() {
+                continue;
+            }
+            let segment = encoded.replace("~1", "/").replace("~0", "~");
+            match current {
+                Some(Value::Array(values)) => {
+                    if let Ok(index) = segment.parse::<usize>() {
+                        output.push('[');
+                        output.push_str(&index.to_string());
+                        output.push(']');
+                        current = values.get(index);
+                    } else {
+                        append_property_path(&mut output, &segment);
+                        current = None;
+                    }
+                }
+                Some(Value::Object(values)) => {
+                    append_property_path(&mut output, &segment);
+                    current = values.get(&segment);
+                }
+                _ => {
+                    append_property_path(&mut output, &segment);
+                    current = None;
+                }
+            }
+        }
+        output
+    }
+
+    fn append_property_path(output: &mut String, property: &str) {
+        let mut bytes = property.bytes();
+        let identifier = bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        if identifier {
+            output.push('.');
+            output.push_str(property);
+        } else {
+            output.push('[');
+            output.push_str(&canonical_json(&Value::String(property.to_owned())));
+            output.push(']');
+        }
+    }
+}
+
+#[cfg(feature = "resource-validation")]
+pub use resource_validation::{
+    RESOURCE_SCHEMA_PATHS, ResourceSchemaDescriptor, ResourceSchemaError, ResourceSchemaViolation,
+    ResourceValidationError, resource_schema_errors, resource_schema_path, validate_resource,
+};

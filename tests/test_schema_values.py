@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from graphblocks import SchemaId, SchemaIdError, SchemaManifest, SchemaManifestError, TypedValue
+from graphblocks import (
+    SchemaId,
+    SchemaIdError,
+    SchemaManifest,
+    SchemaManifestError,
+    TypedValue,
+    compile_graph,
+    resource_schema_errors,
+)
 from graphblocks.canonical import canonical_hash, canonical_loads
 
 
@@ -69,6 +77,38 @@ def test_typed_value_rejects_python_only_json_like_values() -> None:
 
     with pytest.raises(ValueError, match="canonical JSON"):
         TypedValue.new("schemas/Message@1", {1: "not a json object key"})
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "expected_path", "expected_keyword"),
+    [
+        ({1: "not a JSON object key"}, "$.spec.extensions", "jsonObjectKey"),
+        (math.nan, "$.spec.extensions", "finiteNumber"),
+        (math.inf, "$.spec.extensions", "finiteNumber"),
+        (-math.inf, "$.spec.extensions", "finiteNumber"),
+    ],
+)
+def test_resource_validation_rejects_values_outside_the_json_domain(
+    invalid_value: object,
+    expected_path: str,
+    expected_keyword: str,
+) -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-json-domain"},
+        "spec": {"nodes": {}, "extensions": invalid_value},
+    }
+    errors = resource_schema_errors(document)
+    plan = compile_graph(document)
+
+    assert [(error.path, error.keyword) for error in errors] == [
+        (expected_path, expected_keyword)
+    ]
+    assert not plan.ok
+    assert [diagnostic.code for diagnostic in plan.diagnostics.diagnostics] == [
+        "GB0014"
+    ]
 
 
 def test_typed_value_copies_payload_and_canonical_value() -> None:
@@ -197,9 +237,11 @@ def test_checked_in_schema_manifest_digest_is_golden() -> None:
 
     assert [entry.schema_id for entry in manifest.entries] == [
         "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
+        "graphblocks.ai/v1/graph.schema.json",
+        "graphblocks.ai/v1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha1/application.schema.json",
         "graphblocks.ai/v1alpha1/binding.schema.json",
         "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha3/graph.schema.json",
     ]
-    assert manifest.content_digest() == "sha256:1c682340367c7be40fd3e924ac002a57e11828efd98f6e46496cb8e8f4217c9b"
+    assert manifest.content_digest() == "sha256:7257f8fa05fa01895baf9be41aa894b81cd7b4a27581a49e93fe28a7955b1a8a"

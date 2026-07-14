@@ -75,20 +75,21 @@ def _build_rag_graph() -> dict[str, object]:
 def test_typed_stdlib_blocks_materialize_portable_graph() -> None:
     document = _build_rag_graph()
 
-    assert document["apiVersion"] == "graphblocks.ai/v1alpha3"
+    assert document["apiVersion"] == "graphblocks.ai/v1"
     spec = document["spec"]
     assert isinstance(spec, dict)
     nodes = spec["nodes"]
     assert isinstance(nodes, dict)
     assert nodes["retrieve"] == {
         "block": "retrieve.execute_plan@1",
-        "inputs": {"query": "$input.query", "sources": "$input.sources"},
         "config": {"minimumSuccessfulSources": 2, "topK": 5},
     }
-    assert nodes["fuse"]["inputs"] == {"sources": "retrieve.sources"}
-    assert nodes["validate"]["outputs"] == {
-        "candidate": "$output.candidate",
-        "validation": "$output.validation",
+    assert {tuple(edge.values()) for edge in spec["edges"]} >= {
+        ("$input.query", "retrieve.query"),
+        ("$input.sources", "retrieve.sources"),
+        ("retrieve.sources", "fuse.sources"),
+        ("validate.candidate", "$output.candidate"),
+        ("validate.validation", "$output.validation"),
     }
 
     registry = discover_plugins(include_installed=False)

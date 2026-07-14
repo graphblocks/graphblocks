@@ -13,7 +13,13 @@ from typing import Any
 
 import yaml
 
-from .canonical import canonical_hash, normalize_graph
+from .canonical import _normalize_graph_unchecked, canonical_hash
+from .migration import (
+    GRAPH_API_VERSION,
+    LEGACY_GRAPH_API_VERSIONS,
+    MigrationError,
+    migrate_document,
+)
 from .schema import SchemaId, SchemaIdError
 
 
@@ -784,6 +790,35 @@ class _Composer:
             for name, node in source_nodes.items()
             if isinstance(node, dict) and "slot" in node
         ]
+        api_version = document.value.get("apiVersion")
+        if api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}:
+            raise CompositionError(
+                "CompositionUnsupportedVersion",
+                f"Graph apiVersion {api_version!r} is unsupported",
+                path="$.apiVersion",
+                source=document.logical_source,
+            )
+        if composition is not None and api_version != "graphblocks.ai/v1alpha3":
+            raise CompositionError(
+                "CompositionUnsupportedVersion",
+                "composed root Graph documents must use 'graphblocks.ai/v1alpha3'",
+                path="$.apiVersion",
+                source=document.logical_source,
+            )
+        source_graph = deepcopy(document.value)
+        try:
+            source_graph = migrate_document(source_graph)
+        except MigrationError as error:
+            # Composition and slot placeholders are authoring-only alpha
+            # fields. Migration is retried after expansion removes them.
+            if api_version not in LEGACY_GRAPH_API_VERSIONS:
+                raise CompositionError(
+                    "CompositionUnsupportedVersion",
+                    error.message,
+                    path=error.path,
+                    source=document.logical_source,
+                ) from error
+        source_graph = _normalize_graph_unchecked(source_graph)
         if composition is None:
             if source_slot_nodes:
                 raise CompositionError(
@@ -792,17 +827,9 @@ class _Composer:
                     path=f"$.spec.nodes.{source_slot_nodes[0]}.slot",
                     source=document.logical_source,
                 )
-            return deepcopy(document.value)
+            return source_graph
 
-        if document.value.get("apiVersion") != "graphblocks.ai/v1alpha3":
-            raise CompositionError(
-                "CompositionUnsupportedVersion",
-                "composed root Graph documents must use graphblocks.ai/v1alpha3",
-                path="$.apiVersion",
-                source=document.logical_source,
-            )
-
-        graph = normalize_graph(deepcopy(document.value))
+        graph = source_graph
         spec = graph.get("spec")
         if not isinstance(spec, dict):
             return graph
@@ -868,14 +895,20 @@ class _Composer:
             ]
             _alias, fragment_name = fragment_ref.split("/", 1)
 
-            fragment_graph = normalize_graph(
-                {
-                    "apiVersion": "graphblocks.ai/v1alpha3",
-                    "kind": "Graph",
-                    "metadata": {"name": fragment_name},
-                    "spec": deepcopy(fragment_spec),
-                }
-            )
+            fragment_graph = {
+                "apiVersion": "graphblocks.ai/v1alpha3",
+                "kind": "Graph",
+                "metadata": {"name": fragment_name},
+                "spec": deepcopy(fragment_spec),
+            }
+            try:
+                fragment_graph = migrate_document(fragment_graph)
+            except MigrationError:
+                # GraphFragment v1 intentionally admits preview node fields.
+                # Keep those fragments on the alpha wire instead of forcing a
+                # stable envelope that cannot represent them.
+                pass
+            fragment_graph = _normalize_graph_unchecked(fragment_graph)
             fragment_graph_spec = fragment_graph["spec"]
             fragment_nodes = fragment_graph_spec.get("nodes", {})
             fragment_edges = fragment_graph_spec.get("edges", [])
@@ -913,7 +946,13 @@ class _Composer:
                 path="$.spec.edges",
                 source=document.logical_source,
             )
-        return normalize_graph(graph)
+        try:
+            graph = migrate_document(graph)
+        except MigrationError:
+            # A composed graph containing preview-only fragment fields remains
+            # an alpha graph; stable-representable results migrate to v1.
+            pass
+        return _normalize_graph_unchecked(graph)
 
     def _resolve_slot(
         self,

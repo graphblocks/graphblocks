@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal
 
-from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+from referencing.exceptions import Unresolvable
+
+from .canonical import PSEUDO_NODES, _normalize_graph_unchecked, canonical_dumps, canonical_hash
 from .diagnostics import Diagnostic, DiagnosticSet
 from .duration import parse_duration_seconds
-from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_document
+from .migration import (
+    GRAPH_API_VERSION,
+    LEGACY_GRAPH_API_VERSIONS,
+    MigrationError,
+    migrate_document,
+)
 from .output_policy import (
     VALID_DELIVERY_MODES as VALID_OUTPUT_DELIVERY_MODES,
     VALID_DRAFT_DISPOSITIONS,
@@ -18,9 +27,9 @@ from .output_policy import (
     VALID_PROVIDER_CANCELLATIONS,
     VALID_VIOLATION_ACTIONS,
 )
-from .plugins import BlockCatalog
+from .plugins import BlockCatalog, builtin_block_catalog
 from .policy import VALID_ENFORCEMENT_POINTS as VALID_POLICY_ENFORCEMENT_POINTS
-from .schema import SchemaId, SchemaIdError
+from .schema import SchemaId, SchemaIdError, resource_schema_errors
 from .tools import (
     VALID_TOOL_APPROVALS,
     VALID_TOOL_CANCELLATIONS,
@@ -56,6 +65,50 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
 })
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
+
+
+def _config_error_path(base: str, error: ValidationError) -> str:
+    path = base
+    for part in error.absolute_path:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif isinstance(part, str) and part.isidentifier():
+            path += f".{part}"
+        else:
+            path += f"[{canonical_dumps(part)}]"
+    return path
+
+
+def _config_error_message(error: ValidationError) -> str:
+    if error.validator == "type":
+        return f"value must have JSON type {canonical_dumps(error.validator_value)}"
+    if error.validator == "required" and isinstance(error.instance, Mapping):
+        required = error.validator_value
+        if isinstance(required, list):
+            missing = sorted(
+                item
+                for item in required
+                if isinstance(item, str) and item not in error.instance
+            )
+            return f"required properties are missing: {canonical_dumps(missing)}"
+    if error.validator == "additionalProperties" and isinstance(error.instance, Mapping):
+        declared = error.schema.get("properties", {})
+        if isinstance(declared, Mapping):
+            unexpected = sorted(str(key) for key in error.instance if key not in declared)
+            return f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
+    if error.validator == "const":
+        return f"value must equal {canonical_dumps(error.validator_value)}"
+    if error.validator == "enum":
+        return f"value must be one of {canonical_dumps(error.validator_value)}"
+    if error.validator == "uniqueItems":
+        return "array items must be unique"
+    if error.validator == "oneOf":
+        return "value must match exactly one allowed schema"
+    if error.validator == "anyOf":
+        return "value must match at least one allowed schema"
+    if error.validator == "not":
+        return "value matches a forbidden schema"
+    return error.message
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,7 +332,7 @@ def _diagnose_async_operation_config(
     if _has_async_callback_completion_ref(config) and _has_async_polling_completion_ref(config):
         diagnostics.append(
             Diagnostic(
-                "InvalidAsyncOperation",
+                "GB1026",
                 "async operation must not define both callback and polling completion refs",
                 path,
             )
@@ -288,7 +341,7 @@ def _diagnose_async_operation_config(
     if resume_token_hash is not None and not _is_canonical_sha256_digest(resume_token_hash):
         diagnostics.append(
             Diagnostic(
-                "InvalidAsyncOperation",
+                "GB1026",
                 "async operation resumeTokenHash must be a canonical sha256 digest",
                 f"{path}.resumeTokenHash",
             )
@@ -300,7 +353,7 @@ def _diagnose_async_operation_config(
     if has_relative_timeout and has_absolute_deadline:
         diagnostics.append(
             Diagnostic(
-                "InvalidAsyncOperation",
+                "GB1026",
                 "async operation wait must not define both expiresAtUnixMs and timeout",
                 path,
             )
@@ -308,7 +361,7 @@ def _diagnose_async_operation_config(
     if has_bounded_timeout and has_infinite_wait:
         diagnostics.append(
             Diagnostic(
-                "InvalidAsyncOperation",
+                "GB1026",
                 "async operation wait must not define both timeout and infinite-wait policy",
                 path,
             )
@@ -333,7 +386,7 @@ def _diagnose_async_operation_config(
     if isinstance(on_timeout, str) and on_timeout not in {"fail", "cancel", "expire"}:
         diagnostics.append(
             Diagnostic(
-                "InvalidAsyncOperation",
+                "GB1026",
                 "async await onTimeout must be one of fail, cancel, or expire",
                 f"{path}.onTimeout",
             )
@@ -345,7 +398,7 @@ def _diagnose_async_operation_config(
         if _invalid_optional_duration_field(config, *names) is not None:
             diagnostics.append(
                 Diagnostic(
-                    "InvalidAsyncOperation",
+                    "GB1026",
                     f"async operation {field} must be a positive duration",
                     f"{path}.{field}",
                 )
@@ -375,7 +428,7 @@ def _diagnose_async_operation_config(
                 if field_name in payload_config and not _is_positive_integer(payload_config.get(field_name)):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidAsyncOperation",
+                            "GB1026",
                             f"async callback {payload_field} must be a positive integer",
                             f"{payload_path}.{field_name}",
                         )
@@ -585,7 +638,7 @@ def _diagnose_callback_subscription_config(
     if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
         diagnostics.append(
             Diagnostic(
-                "InvalidCallbackSubscription",
+                "GB1027",
                 "callback subscription scope must be one of run, conversation, project, tenant, or deployment",
                 f"{path}.scope",
             )
@@ -594,7 +647,7 @@ def _diagnose_callback_subscription_config(
     if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
         diagnostics.append(
             Diagnostic(
-                "InvalidCallbackSubscription",
+                "GB1027",
                 "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback",
                 f"{path}.delivery.kind",
             )
@@ -604,7 +657,7 @@ def _diagnose_callback_subscription_config(
         if method != "POST":
             diagnostics.append(
                 Diagnostic(
-                    "InvalidCallbackSubscription",
+                    "GB1027",
                     "webhook callback delivery method must be POST",
                     f"{path}.delivery.method",
                 )
@@ -688,19 +741,72 @@ def _diagnose_callback_subscription_config(
         )
 
 
-def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None = None) -> Plan:
+def compile_graph(
+    document: dict[str, Any],
+    block_catalog: BlockCatalog | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> Plan:
+    if not isinstance(allow_unknown_blocks, bool):
+        raise TypeError("allow_unknown_blocks must be a boolean")
+    api_version = document.get("apiVersion")
+    if block_catalog is None:
+        profile = "stable" if api_version == GRAPH_API_VERSION else "preview"
+        block_catalog = builtin_block_catalog(profile=profile)
+    if allow_unknown_blocks and not block_catalog.allow_unknown_blocks:
+        block_catalog = BlockCatalog(
+            block_catalog.descriptors,
+            allow_unknown_blocks=True,
+        )
+
     diagnostics: list[Diagnostic] = []
-    migrated = migrate_document(document)
+    domain_violations = tuple(
+        violation
+        for violation in resource_schema_errors(document)
+        if violation.keyword in {"finiteNumber", "jsonObjectKey", "recursive"}
+    )
+    if domain_violations:
+        invalid_resource_identity = {
+            "invalidResource": [
+                {
+                    "code": violation.code,
+                    "keyword": violation.keyword,
+                    "message": violation.message,
+                    "path": violation.path,
+                }
+                for violation in domain_violations
+            ]
+        }
+        return Plan(
+            document,
+            canonical_hash(invalid_resource_identity),
+            DiagnosticSet(
+                tuple(
+                    Diagnostic(
+                        violation.code,
+                        violation.message,
+                        violation.path,
+                    )
+                    for violation in domain_violations
+                )
+            ),
+        )
+    try:
+        migrated = migrate_document(document)
+    except MigrationError:
+        migrated = document
     if migrated.get("kind") != "Graph":
         diagnostics.append(Diagnostic("GB0001", "document kind must be Graph", "$.kind"))
-        normalized = normalize_graph(migrated)
+        normalized = _normalize_graph_unchecked(migrated)
         return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
 
-    api_version = document.get("apiVersion")
+    schema_violations = ()
     if api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}:
         diagnostics.append(
             Diagnostic("GB0002", f"unsupported Graph apiVersion {api_version!r}", "$.apiVersion")
         )
+    else:
+        schema_violations = resource_schema_errors(migrated)
 
     metadata = migrated.get("metadata")
     if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str) or not metadata["name"]:
@@ -709,8 +815,19 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     spec = migrated.get("spec")
     if not isinstance(spec, dict):
         diagnostics.append(Diagnostic("GB0004", "spec must be a mapping", "$.spec"))
-        normalized = normalize_graph(migrated)
-        return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+        normalized = _normalize_graph_unchecked(migrated)
+        diagnostic_paths = {diagnostic.path for diagnostic in diagnostics}
+        schema_diagnostics = [
+            Diagnostic(violation.code, violation.message, violation.path)
+            for violation in schema_violations
+            if violation.keyword == "additionalProperties"
+            or violation.path not in diagnostic_paths
+        ]
+        return Plan(
+            normalized,
+            canonical_hash(normalized),
+            DiagnosticSet(tuple([*schema_diagnostics, *diagnostics])),
+        )
 
     nodes = spec.get("nodes", {})
     if nodes is None:
@@ -722,7 +839,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     if "composition" in spec:
         diagnostics.append(
             Diagnostic(
-                "UnexpandedComposition",
+                "GB1052",
                 "graph composition must be materialized before compilation",
                 "$.spec.composition",
             )
@@ -738,7 +855,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     if not isinstance(schema_id, str):
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"graph interface {direction[:-1]} schema id must be a string",
                                 path,
                             )
@@ -749,7 +866,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"graph interface {direction[:-1]} schema id is invalid: {error}",
                                 path,
                             )
@@ -767,7 +884,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if "slot" in node:
             diagnostics.append(
                 Diagnostic(
-                    "UnexpandedComposition",
+                    "GB1052",
                     "slot placeholders must be materialized before compilation",
                     f"$.spec.nodes.{node_name}.slot",
                 )
@@ -791,7 +908,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             else:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidAsyncOperation",
+                        "GB1026",
                         "async operation node config must be a mapping",
                         f"$.spec.nodes.{node_name}.config",
                     )
@@ -861,7 +978,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(operation_config, dict):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidAsyncOperation",
+                            "GB1026",
                             "async operation config must be a mapping",
                             operation_path,
                         )
@@ -874,7 +991,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(operation_config, dict):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidAsyncOperation",
+                            "GB1026",
                             "async operation config must be a mapping",
                             operation_path,
                         )
@@ -884,7 +1001,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         else:
             diagnostics.append(
                 Diagnostic(
-                    "InvalidAsyncOperation",
+                    "GB1026",
                     "asyncOperations must be a mapping or list",
                     f"$.spec.{async_operations_key}",
                 )
@@ -899,7 +1016,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(subscription_config, dict):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidCallbackSubscription",
+                            "GB1027",
                             "callback subscription config must be a mapping",
                             subscription_path,
                         )
@@ -912,7 +1029,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(subscription_config, dict):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidCallbackSubscription",
+                            "GB1027",
                             "callback subscription config must be a mapping",
                             subscription_path,
                         )
@@ -922,7 +1039,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         else:
             diagnostics.append(
                 Diagnostic(
-                    "InvalidCallbackSubscription",
+                    "GB1027",
                     "callbackSubscriptions must be a mapping or list",
                     f"$.spec.{callback_subscriptions_key}",
                 )
@@ -933,7 +1050,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     if output_policy is not None and not isinstance(output_policy, dict):
         diagnostics.append(
             Diagnostic(
-                "InvalidOutputPolicy",
+                "GB1034",
                 "outputPolicy must be a mapping",
                 f"$.spec.{output_policy_key}",
             )
@@ -944,7 +1061,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if delivery is not None and not isinstance(delivery, dict):
             diagnostics.append(
                 Diagnostic(
-                    "InvalidOutputPolicy",
+                    "GB1034",
                     "outputPolicy delivery must be a mapping",
                     f"$.spec.{output_policy_key}.delivery",
                 )
@@ -955,7 +1072,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if mode is not None and (not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidOutputDeliveryMode",
+                        "GB1030",
                         f"invalid output delivery mode {mode}",
                         "$.spec.outputPolicy.delivery.mode",
                     )
@@ -966,7 +1083,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidViolationAction",
+                        "GB1044",
                         f"invalid violation action {delivery_on_violation}",
                         "$.spec.outputPolicy.delivery.onViolation",
                     )
@@ -983,7 +1100,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidDraftDisposition",
+                        "GB1028",
                         f"invalid draft disposition {delivered_draft_disposition}",
                         delivered_draft_path,
                     )
@@ -1000,7 +1117,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         if not isinstance(boundary, str) or boundary not in VALID_FLUSH_BOUNDARIES:
                             diagnostics.append(
                                 Diagnostic(
-                                    "InvalidFlushBoundary",
+                                    "GB1029",
                                     f"invalid flush boundary {boundary}",
                                     f"{flush_boundaries_path}[{boundary_index}]",
                                 )
@@ -1008,7 +1125,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 else:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidFlushBoundary",
+                            "GB1029",
                             "flush boundaries must be a list of strings",
                             flush_boundaries_path,
                         )
@@ -1037,7 +1154,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not has_token_bound and not has_byte_bound and not has_duration_bound:
                     diagnostics.append(
                         Diagnostic(
-                            "UnboundedPolicyHoldback",
+                            "GB1051",
                             "bounded_holdback output delivery requires a token, byte, or duration bound",
                             "$.spec.outputPolicy.delivery",
                         )
@@ -1051,7 +1168,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if delivered_draft_disposition == "keep":
                     diagnostics.append(
                         Diagnostic(
-                            "ImmediateDraftWithoutRetractionSupport",
+                            "GB1025",
                             "immediate_draft output delivery requires incomplete or retracted draft semantics",
                             "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
                         )
@@ -1065,7 +1182,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if evaluation is not None and not isinstance(evaluation, dict):
             diagnostics.append(
                 Diagnostic(
-                    "InvalidOutputPolicy",
+                    "GB1034",
                     "outputPolicy evaluation must be a mapping",
                     f"$.spec.{output_policy_key}.evaluation",
                 )
@@ -1082,7 +1199,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(enforcement_point, str) or enforcement_point not in VALID_POLICY_ENFORCEMENT_POINTS:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidOutputEnforcementPoint",
+                            "GB1033",
                             f"invalid output policy enforcement point {enforcement_point}",
                             f"$.spec.outputPolicy.evaluation.enforcementPoints[{index}]",
                         )
@@ -1096,7 +1213,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if before_client_delivery_index is None:
                 diagnostics.append(
                     Diagnostic(
-                        "OutputPolicyBypass",
+                        "GB1046",
                         "output policy enforcement must include the before_client_delivery gate",
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
@@ -1104,7 +1221,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             elif on_generation_chunk_index is None:
                 diagnostics.append(
                     Diagnostic(
-                        "OutputPolicyBypass",
+                        "GB1046",
                         "output policy enforcement must include the on_generation_chunk gate",
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
@@ -1112,7 +1229,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             elif before_output_commit_index is None:
                 diagnostics.append(
                     Diagnostic(
-                        "OutputPolicyBypass",
+                        "GB1046",
                         "output policy enforcement must include the before_output_commit gate",
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
@@ -1124,7 +1241,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "PolicyGateAfterDelivery",
+                        "GB1048",
                         "on_generation_chunk policy evaluation must precede before_client_delivery",
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
@@ -1132,14 +1249,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         elif enforcement_points is not None:
             diagnostics.append(
                 Diagnostic(
-                    "InvalidOutputEnforcementPoint",
+                    "GB1033",
                     "output policy enforcementPoints must be a list of strings",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 )
             )
             diagnostics.append(
                 Diagnostic(
-                    "OutputPolicyBypass",
+                    "GB1046",
                     "output policy enforcement must include the before_client_delivery gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 )
@@ -1147,7 +1264,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         else:
             diagnostics.append(
                 Diagnostic(
-                    "OutputPolicyBypass",
+                    "GB1046",
                     "output policy enforcement must include the before_client_delivery gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 )
@@ -1157,7 +1274,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if on_violation is not None and not isinstance(on_violation, dict):
             diagnostics.append(
                 Diagnostic(
-                    "InvalidOutputPolicy",
+                    "GB1034",
                     "outputPolicy onViolation must be a mapping",
                     f"$.spec.{output_policy_key}.onViolation",
                 )
@@ -1169,7 +1286,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if not valid_disposition:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidOutputDisposition",
+                        "GB1031",
                         f"invalid output disposition {disposition}",
                         "$.spec.outputPolicy.onViolation.disposition",
                     )
@@ -1188,7 +1305,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidProviderCancellation",
+                        "GB1036",
                         f"invalid provider cancellation {provider_cancellation_mode}",
                         provider_cancellation_path,
                     )
@@ -1204,7 +1321,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if not valid_pending_tool_calls_disposition:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidPendingToolCallsDisposition",
+                        "GB1035",
                         f"invalid pending tool calls disposition {pending_tool_calls_disposition}",
                         "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
                     )
@@ -1219,7 +1336,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidDraftDisposition",
+                        "GB1028",
                         f"invalid draft disposition {delivered_draft_disposition}",
                         "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
                     )
@@ -1235,7 +1352,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if not valid_durable_result_disposition:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidOutputDurableResult",
+                        "GB1032",
                         f"invalid output durable result {durable_result_disposition}",
                         "$.spec.outputPolicy.onViolation.durableResult.disposition",
                     )
@@ -1245,7 +1362,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if valid_pending_tool_calls_disposition and pending_tool_calls_disposition == "keep":
                     diagnostics.append(
                         Diagnostic(
-                            "PendingToolCallAfterAbort",
+                            "GB1047",
                             "policy-aborted responses must deny or cancel pending tool calls",
                             "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
                         )
@@ -1254,7 +1371,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if valid_durable_result_disposition and durable_result_disposition != "none":
                     diagnostics.append(
                         Diagnostic(
-                            "CommitAfterPolicyStop",
+                            "GB1024",
                             "policy-stopped responses must not commit a durable result",
                             "$.spec.outputPolicy.onViolation.durableResult.disposition",
                         )
@@ -1270,7 +1387,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if tool_execution is not None and not isinstance(tool_execution, dict):
             diagnostics.append(
                 Diagnostic(
-                    "InvalidToolExecution",
+                    "GB1041",
                     "toolExecution must be a mapping",
                     f"$.spec.{tool_execution_key}",
                 )
@@ -1292,7 +1409,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if maximum_parallelism < 1:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolExecution",
+                            "GB1041",
                             "toolExecution maximumParallelism must be a positive integer",
                             f"$.spec.{tool_execution_key}.{maximum_parallelism_key}",
                         )
@@ -1300,7 +1417,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             elif maximum_parallelism_key in tool_execution:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution maximumParallelism must be a positive integer",
                         f"$.spec.{tool_execution_key}.{maximum_parallelism_key}",
                     )
@@ -1317,7 +1434,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             elif parallel_tool_calls_key in tool_execution:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution parallelToolCalls must be a boolean",
                         f"$.spec.{tool_execution_key}.{parallel_tool_calls_key}",
                     )
@@ -1333,7 +1450,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if key_template_key in effect_serialization and not has_effect_serialization_key:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolExecution",
+                            "GB1041",
                             "toolExecution effectSerialization keyTemplate must be a non-empty string",
                             f"$.spec.{tool_execution_key}.{effect_serialization_key}.{key_template_key}",
                         )
@@ -1341,7 +1458,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             elif effect_serialization_key in tool_execution:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution effectSerialization must be a mapping",
                         f"$.spec.{tool_execution_key}.{effect_serialization_key}",
                     )
@@ -1360,7 +1477,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 effects = []
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolEffect",
+                        "GB1040",
                         "tool effects must be a string or list of strings",
                         f"$.spec.bindings.tools.{tool_key}.effects",
                     )
@@ -1375,7 +1492,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     )
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolEffect",
+                            "GB1040",
                             f"invalid tool effect {effect}",
                             effect_path,
                         )
@@ -1385,7 +1502,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if "none" in valid_effects and len(valid_effects) > 1:
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolEffect",
+                        "GB1040",
                         "tool effect none cannot be combined with other effects",
                         f"$.spec.bindings.tools.{tool_key}.effects",
                     )
@@ -1400,7 +1517,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not valid_approval:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolApproval",
+                            "GB1037",
                             f"invalid tool approval {mode}",
                             f"$.spec.bindings.tools.{tool_key}.approval.mode",
                         )
@@ -1421,7 +1538,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if valid_approval and mode in {"policy", "always"} and not binds_arguments_digest:
                     diagnostics.append(
                         Diagnostic(
-                            "ApprovalWithoutArgumentDigest",
+                            "GB1023",
                             "explicit tool approval must be bound to immutable argument digest",
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
@@ -1430,7 +1547,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(approval, str) or approval not in VALID_TOOL_APPROVALS:
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolApproval",
+                            "GB1037",
                             f"invalid tool approval {approval}",
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
@@ -1438,7 +1555,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 elif approval == "always":
                     diagnostics.append(
                         Diagnostic(
-                            "ApprovalWithoutArgumentDigest",
+                            "GB1023",
                             "explicit tool approval must be bound to immutable argument digest",
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
@@ -1450,7 +1567,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolIdempotency",
+                        "GB1042",
                         f"invalid tool idempotency {idempotency}",
                         f"$.spec.bindings.tools.{tool_key}.idempotency",
                     )
@@ -1462,7 +1579,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolCancellation",
+                        "GB1038",
                         f"invalid tool cancellation {cancellation}",
                         f"$.spec.bindings.tools.{tool_key}.cancellation",
                     )
@@ -1475,7 +1592,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             ):
                 diagnostics.append(
                     Diagnostic(
-                        "InvalidToolResultMode",
+                        "GB1043",
                         f"invalid tool result mode {result_mode}",
                         f"$.spec.bindings.tools.{tool_key}.{result_mode_key}",
                     )
@@ -1486,7 +1603,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if state_changing_tool and has_retry_policy_ref and tool.get("idempotency") != "required":
                 diagnostics.append(
                     Diagnostic(
-                        "NonIdempotentRetry",
+                        "GB1045",
                         "retrying state-changing tool effects requires required idempotency",
                         f"$.spec.bindings.tools.{tool_key}.idempotency",
                     )
@@ -1499,7 +1616,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     if not isinstance(definition_value, str) or not definition_value.strip():
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidToolDefinition",
+                                "GB1039",
                                 f"tool definition {definition_field} must be a non-empty string",
                                 f"$.spec.bindings.tools.{tool_key}.definition.{definition_field}",
                             )
@@ -1508,7 +1625,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if version is not None and (not isinstance(version, str) or not version.strip()):
                     diagnostics.append(
                         Diagnostic(
-                            "InvalidToolDefinition",
+                            "GB1039",
                             "tool definition version must be a non-empty string",
                             f"$.spec.bindings.tools.{tool_key}.definition.version",
                         )
@@ -1520,7 +1637,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                             if not isinstance(tag, str) or not tag.strip():
                                 diagnostics.append(
                                     Diagnostic(
-                                        "InvalidToolDefinition",
+                                        "GB1039",
                                         "tool definition tags must be non-empty strings",
                                         f"$.spec.bindings.tools.{tool_key}.definition.tags[{tag_index}]",
                                     )
@@ -1528,7 +1645,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     else:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidToolDefinition",
+                                "GB1039",
                                 "tool definition tags must be a list of non-empty strings",
                                 f"$.spec.bindings.tools.{tool_key}.definition.tags",
                             )
@@ -1537,7 +1654,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     if forbidden_field in definition:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidToolDefinition",
+                                "GB1039",
                                 f"tool definition must not contain execution detail {forbidden_field}",
                                 f"$.spec.bindings.tools.{tool_key}.definition.{forbidden_field}",
                             )
@@ -1546,7 +1663,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if not isinstance(input_schema, str) or not input_schema.strip():
                     diagnostics.append(
                         Diagnostic(
-                            "ToolSchemaMissing",
+                            "GB1050",
                             "model-visible tool definitions require an input schema",
                             f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                         )
@@ -1557,7 +1674,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"tool input schema id is invalid: {error}",
                                 f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                             )
@@ -1569,7 +1686,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     except SchemaIdError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"tool output schema id is invalid: {error}",
                                 f"$.spec.bindings.tools.{tool_key}.definition.outputSchema",
                             )
@@ -1577,7 +1694,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             else:
                 diagnostics.append(
                     Diagnostic(
-                        "ToolSchemaMissing",
+                        "GB1050",
                         "model-visible tool definitions require an input schema",
                         f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                     )
@@ -1586,7 +1703,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if not isinstance(implementation, dict):
                 diagnostics.append(
                     Diagnostic(
-                        "ToolBindingMissing",
+                        "GB1049",
                         "model-visible tools require an executable binding implementation",
                         f"$.spec.bindings.tools.{tool_key}.implementation",
                     )
@@ -1626,7 +1743,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 else:
                     diagnostics.append(
                         Diagnostic(
-                            "ToolBindingMissing",
+                            "GB1049",
                             "tool implementation kind must be one of block, graph, remote, mcp, or openapi",
                             f"$.spec.bindings.tools.{tool_key}.implementation.kind",
                         )
@@ -1635,7 +1752,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 if missing_implementation_field is not None:
                     diagnostics.append(
                         Diagnostic(
-                            "ToolBindingMissing",
+                            "GB1049",
                             f"{implementation_kind} tool implementation requires {missing_implementation_field}",
                             f"$.spec.bindings.tools.{tool_key}.implementation.{missing_implementation_field}",
                         )
@@ -1644,13 +1761,13 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if (maximum_parallelism > 1 or parallel_tool_calls) and has_state_changing_tool and not has_effect_serialization_key:
             diagnostics.append(
                 Diagnostic(
-                    "UnsafeParallelEffects",
+                    "GB1053",
                     "parallel state-changing tool execution requires an effect serialization key",
                     "$.spec.toolExecution.effectSerialization",
                 )
             )
 
-    normalized = normalize_graph(migrated)
+    normalized = _normalize_graph_unchecked(migrated)
     normalized_spec = normalized.get("spec", {})
     normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
     edges = normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
@@ -1813,7 +1930,13 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                 source_port = output_ports[port_name]
                                 if not separator:
                                     source_type = source_port.type_ref
-                                    source_required = source_port.required
+                                    source_config = source_node.get("config", {})
+                                    if not isinstance(source_config, dict):
+                                        source_config = {}
+                                    source_required = source_port.required_for(
+                                        source_config,
+                                        phase="initial",
+                                    )
                 if target_owner == "$output":
                     port_name, separator, _nested_path = target_path.partition(".")
                     if interface_outputs is not None and port_name in interface_outputs and not separator:
@@ -1882,6 +2005,44 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         )
                     )
                 continue
+            config = node.get("config", {})
+            config_path = f"$.spec.nodes.{node_name}.config"
+            try:
+                config_errors = list(
+                    Draft202012Validator(descriptor.config_schema).iter_errors(config)
+                )
+            except (RecursionError, Unresolvable):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2019",
+                        (
+                            f"node config cannot be validated against "
+                            f"{descriptor.block_id} because its configSchema "
+                            "contains an unresolved or nonterminating local reference"
+                        ),
+                        config_path,
+                    )
+                )
+                config_errors = []
+            for error in sorted(
+                config_errors,
+                key=lambda item: (
+                    _config_error_path(config_path, item),
+                    canonical_dumps(list(item.absolute_schema_path)),
+                    str(item.validator or "schema"),
+                    _config_error_message(item),
+                ),
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2019",
+                        (
+                            f"node config does not satisfy {descriptor.block_id} "
+                            f"configSchema: {_config_error_message(error)}"
+                        ),
+                        _config_error_path(config_path, error),
+                    )
+                )
             if descriptor.resource_slots:
                 bindings = node.get("bindings", {})
                 if bindings is None:
@@ -2112,7 +2273,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     if has_declared_output and not output_edges:
         diagnostics.append(
             Diagnostic(
-                "GB1003",
+                "GB1004",
                 "graph declares outputs but no edge writes to $output",
                 "$.spec.interface.outputs",
                 "warning",
@@ -2138,10 +2299,30 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if node_name not in reachable and node_name not in produced_nodes and node_name not in consumed_nodes:
                 diagnostics.append(Diagnostic("GB1001", f"node {node_name!r} is not connected", f"$.spec.nodes.{node_name}", "warning"))
 
-    return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+    diagnostic_paths = {diagnostic.path for diagnostic in diagnostics}
+    schema_diagnostics = [
+        Diagnostic(violation.code, violation.message, violation.path)
+        for violation in schema_violations
+        if violation.keyword == "additionalProperties"
+        or violation.path not in diagnostic_paths
+    ]
+    return Plan(
+        normalized,
+        canonical_hash(normalized),
+        DiagnosticSet(tuple([*schema_diagnostics, *diagnostics])),
+    )
 
 
-def compile_graph_native(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
+def compile_graph_native(
+    document: dict[str, object],
+    block_catalog: object | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> dict[str, object]:
     from graphblocks_runtime import compile_graph as native_compile_graph
 
-    return native_compile_graph(document, block_catalog=block_catalog)
+    return native_compile_graph(
+        document,
+        block_catalog=block_catalog,
+        allow_unknown_blocks=allow_unknown_blocks,
+    )

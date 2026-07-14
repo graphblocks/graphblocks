@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graphblocks.ai/v1/graph.schema.json",
+  "title": "GraphBlocks Stable C0/C1 Graph",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "graphblocks.ai/v1"},
+    "kind": {"const": "Graph"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "spec": {"$ref": "#/$defs/spec"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+    },
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "schemaId": {
+      "type": "string",
+      "pattern": "^\\S+@[1-9][0-9]*$"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "namespace": {"$ref": "#/$defs/name"},
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "ports": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/schemaId"}
+    },
+    "interface": {
+      "type": "object",
+      "properties": {
+        "inputs": {"$ref": "#/$defs/ports"},
+        "outputs": {"$ref": "#/$defs/ports"}
+      },
+      "additionalProperties": false
+    },
+    "endpointTree": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonEmptyString"},
+        {
+          "type": "array",
+          "items": {"$ref": "#/$defs/endpointTree"}
+        },
+        {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/endpointTree"}
+        }
+      ]
+    },
+    "endpointMap": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/endpointTree"}
+    },
+    "jsonValue": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "number"},
+        {"type": "string"},
+        {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}},
+        {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/jsonValue"}
+        }
+      ]
+    },
+    "resourceBindings": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "retry": {
+      "oneOf": [
+        {"type": "integer", "minimum": 1},
+        {
+          "type": "object",
+          "properties": {
+            "maxAttempts": {"type": "integer", "minimum": 1},
+            "idempotencyKey": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "flow": {
+      "type": "object",
+      "properties": {
+        "timeout": {"$ref": "#/$defs/nonEmptyString"},
+        "retry": {"$ref": "#/$defs/retry"}
+      },
+      "additionalProperties": false
+    },
+    "effects": {
+      "oneOf": [
+        {"$ref": "#/$defs/toolEffect"},
+        {
+          "type": "array",
+          "items": {"$ref": "#/$defs/toolEffect"},
+          "uniqueItems": true
+        }
+      ]
+    },
+    "toolEffect": {
+      "enum": [
+        "none",
+        "external_read",
+        "external_write",
+        "filesystem_read",
+        "filesystem_write",
+        "process",
+        "network",
+        "destructive"
+      ]
+    },
+    "node": {
+      "type": "object",
+      "required": ["block"],
+      "properties": {
+        "block": {"$ref": "#/$defs/schemaId"},
+        "inputs": {"$ref": "#/$defs/endpointMap"},
+        "outputs": {"$ref": "#/$defs/endpointMap"},
+        "config": {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
+        "bindings": {"$ref": "#/$defs/resourceBindings"},
+        "connection": {"$ref": "#/$defs/nonEmptyString"},
+        "when": {"$ref": "#/$defs/nonEmptyString"},
+        "flow": {"$ref": "#/$defs/flow"},
+        "effects": {"$ref": "#/$defs/effects"}
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"$ref": "#/$defs/nonEmptyString"},
+        "to": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "toolDefinition": {
+      "type": "object",
+      "required": ["name", "description", "inputSchema"],
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "description": {"$ref": "#/$defs/nonEmptyString"},
+        "version": {"$ref": "#/$defs/nonEmptyString"},
+        "tags": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "inputSchema": {"$ref": "#/$defs/schemaId"},
+        "outputSchema": {"$ref": "#/$defs/schemaId"}
+      },
+      "additionalProperties": false
+    },
+    "toolImplementation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "block"],
+          "properties": {
+            "kind": {"const": "block"},
+            "block": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "graph"],
+          "properties": {
+            "kind": {"const": "graph"},
+            "graph": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "connection", "operation"],
+          "properties": {
+            "kind": {"const": "remote"},
+            "connection": {"$ref": "#/$defs/nonEmptyString"},
+            "operation": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "server", "remoteName"],
+          "properties": {
+            "kind": {"const": "mcp"},
+            "server": {"$ref": "#/$defs/nonEmptyString"},
+            "remoteName": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "connection", "operationId"],
+          "properties": {
+            "kind": {"const": "openapi"},
+            "connection": {"$ref": "#/$defs/nonEmptyString"},
+            "operationId": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "toolApproval": {
+      "oneOf": [
+        {"enum": ["never", "policy", "always"]},
+        {
+          "type": "object",
+          "properties": {
+            "mode": {"enum": ["never", "policy", "always"]},
+            "bindArgumentsDigest": {"type": "boolean"},
+            "argumentsDigest": {"$ref": "#/$defs/nonEmptyString"},
+            "argumentsDigestRef": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "toolBinding": {
+      "type": "object",
+      "required": ["definition", "implementation"],
+      "properties": {
+        "definition": {"$ref": "#/$defs/toolDefinition"},
+        "implementation": {"$ref": "#/$defs/toolImplementation"},
+        "effects": {"$ref": "#/$defs/effects"},
+        "approval": {"$ref": "#/$defs/toolApproval"},
+        "idempotency": {"enum": ["not_applicable", "optional", "required"]},
+        "cancellation": {"enum": ["unsupported", "cooperative", "force_terminable"]},
+        "resultMode": {"enum": ["value", "incremental", "bounded_sequence", "artifact_reference"]},
+        "retryPolicyRef": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/name"},
+          "additionalProperties": {"$ref": "#/$defs/toolBinding"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolExecution": {
+      "type": "object",
+      "properties": {
+        "maximumParallelism": {"type": "integer", "minimum": 1},
+        "parallelToolCalls": {"type": "boolean"},
+        "effectSerialization": {
+          "type": "object",
+          "required": ["keyTemplate"],
+          "properties": {
+            "keyTemplate": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputDelivery": {
+      "type": "object",
+      "properties": {
+        "mode": {"enum": ["buffer_until_commit", "bounded_holdback", "immediate_draft"]},
+        "onViolation": {"enum": ["abort_response", "abort_turn", "redact", "replace"]},
+        "deliveredDraftDisposition": {"enum": ["keep", "mark_incomplete", "retract"]},
+        "flushBoundaries": {
+          "type": "array",
+          "items": {"enum": ["token", "sentence", "paragraph", "content_part", "tool_call", "response"]},
+          "uniqueItems": true
+        },
+        "holdbackMaxTokens": {"type": "integer", "minimum": 1},
+        "holdbackMaxBytes": {"type": "integer", "minimum": 1},
+        "holdbackMaxDuration": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"$ref": "#/$defs/nonEmptyString"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputEvaluation": {
+      "type": "object",
+      "properties": {
+        "enforcementPoints": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "compile",
+              "release",
+              "admission",
+              "before_node",
+              "before_provider_call",
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit",
+              "on_usage_delta",
+              "before_tool_or_effect",
+              "before_commit",
+              "before_publish",
+              "on_resume"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputViolation": {
+      "type": "object",
+      "properties": {
+        "disposition": {"enum": ["allow", "hold", "redact", "replace", "abort_response", "abort_turn", "deny_commit"]},
+        "providerCancellation": {
+          "oneOf": [
+            {"enum": ["none", "request", "required_if_supported"]},
+            {
+              "type": "object",
+              "properties": {"mode": {"enum": ["none", "request", "required_if_supported"]}},
+              "additionalProperties": false
+            }
+          ]
+        },
+        "pendingToolCalls": {
+          "type": "object",
+          "properties": {"disposition": {"enum": ["keep", "deny", "cancel_admitted"]}},
+          "additionalProperties": false
+        },
+        "deliveredDraft": {
+          "type": "object",
+          "properties": {"disposition": {"enum": ["keep", "mark_incomplete", "retract"]}},
+          "additionalProperties": false
+        },
+        "durableResult": {
+          "type": "object",
+          "properties": {"disposition": {"enum": ["none", "incomplete", "partial"]}},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputPolicy": {
+      "type": "object",
+      "properties": {
+        "delivery": {"$ref": "#/$defs/outputDelivery"},
+        "evaluation": {"$ref": "#/$defs/outputEvaluation"},
+        "onViolation": {"$ref": "#/$defs/outputViolation"}
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["nodes"],
+      "properties": {
+        "interface": {"$ref": "#/$defs/interface"},
+        "nodes": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/name"},
+          "additionalProperties": {"$ref": "#/$defs/node"}
+        },
+        "edges": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/edge"}
+        },
+        "bindings": {"$ref": "#/$defs/bindings"},
+        "toolExecution": {"$ref": "#/$defs/toolExecution"},
+        "outputPolicy": {"$ref": "#/$defs/outputPolicy"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

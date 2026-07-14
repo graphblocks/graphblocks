@@ -13,7 +13,7 @@ import tarfile
 import yaml
 
 from . import __version__
-from .canonical import canonical_dumps, canonical_hash, canonical_loads
+from .canonical import canonical_dumps, canonical_hash, canonical_loads, normalize_graph
 from .compiler import compile_graph
 from .composition import CompositionError, compose_documents
 from .deployment import (
@@ -34,7 +34,7 @@ from .deployment import (
 )
 from .diagnostics import Diagnostic
 from .loader import load_composed_documents, load_documents
-from .migration import migrate_document
+from .migration import LEGACY_GRAPH_API_VERSIONS, MigrationError, migrate_document
 from .packages import (
     PackageManifestAuditPolicy,
     audit_package_manifests,
@@ -59,7 +59,12 @@ from .policy import (
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, SQLiteExecutionJournal, stdlib_registry
 from .run_store import RunDeploymentProvenance, SQLiteRunStore
-from .schema import SchemaManifest, SchemaManifestError
+from .schema import (
+    RESOURCE_SCHEMA_PATHS,
+    SchemaManifest,
+    SchemaManifestError,
+    resource_schema_errors,
+)
 
 STRUCTURAL_KINDS = {
     "Application",
@@ -79,6 +84,7 @@ PHASE_FIVE_IMAGE_ROLES = (
     "ocr-gpu",
     "sandbox",
 )
+SCHEMA_RESOURCE_KINDS = frozenset(kind for _, kind in RESOURCE_SCHEMA_PATHS)
 
 
 def _loads_strict_json(owner: str, value: str) -> object:
@@ -132,11 +138,31 @@ def _main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("--composition-root", type=Path)
     validate_parser.add_argument("--json", action="store_true", help="emit machine-readable diagnostics")
     validate_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
+    validate_parser.add_argument(
+        "--discover-installed-plugins",
+        action="store_true",
+        help="opt in to plugin manifest discovery from installed distributions",
+    )
+    validate_parser.add_argument(
+        "--allow-unknown-blocks",
+        action="store_true",
+        help="discovery mode: allow blocks that are absent from the resolved catalog",
+    )
 
     plan_parser = subparsers.add_parser("plan", help="compile a GraphSpec into normalized plan JSON")
     plan_parser.add_argument("path", type=Path)
     plan_parser.add_argument("--composition-root", type=Path)
     plan_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
+    plan_parser.add_argument(
+        "--discover-installed-plugins",
+        action="store_true",
+        help="opt in to plugin manifest discovery from installed distributions",
+    )
+    plan_parser.add_argument(
+        "--allow-unknown-blocks",
+        action="store_true",
+        help="discovery mode: allow blocks that are absent from the resolved catalog",
+    )
     plan_parser.add_argument("--expand", action="store_true", help="include normalized graph")
     plan_parser.add_argument(
         "--show-bindings",
@@ -354,13 +380,16 @@ def _main(argv: list[str] | None = None) -> int:
         documents = load_composed_documents(args.path, root=args.composition_root)
         diagnostics: list[dict[str, str]] = []
         ok = True
-        registry = discover_plugins(args.plugin_path, include_installed=True)
+        registry = discover_plugins(
+            args.plugin_path,
+            include_installed=args.discover_installed_plugins,
+        )
         ok = ok and registry.ok
         diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
         try:
             block_catalog = BlockCatalog.from_manifests(
                 registry.manifests,
-                allow_unknown_blocks=True,
+                allow_unknown_blocks=args.allow_unknown_blocks,
             )
         except ValueError as error:
             ok = False
@@ -370,7 +399,25 @@ def _main(argv: list[str] | None = None) -> int:
                 | {"document": "plugins"}
             )
         for index, document in enumerate(documents):
-            if document.get("kind") == "Graph":
+            kind = document.get("kind")
+            api_version = document.get("apiVersion")
+            legacy_graph = kind == "Graph" and api_version in LEGACY_GRAPH_API_VERSIONS
+            if kind in SCHEMA_RESOURCE_KINDS and not legacy_graph:
+                violations = resource_schema_errors(document)
+                if violations:
+                    ok = False
+                    diagnostics.extend(
+                        {
+                            "code": violation.code,
+                            "message": violation.message,
+                            "path": violation.path,
+                            "severity": "error",
+                            "document": str(index),
+                        }
+                        for violation in violations
+                    )
+                    continue
+            if kind == "Graph":
                 plan = compile_graph(document, block_catalog=block_catalog)
                 ok = ok and plan.ok
                 diagnostics.extend(
@@ -380,7 +427,7 @@ def _main(argv: list[str] | None = None) -> int:
                     }
                     for item in plan.diagnostics.diagnostics
                 )
-            elif document.get("kind") in STRUCTURAL_KINDS:
+            elif kind in STRUCTURAL_KINDS:
                 for field in ("apiVersion", "kind", "metadata", "spec"):
                     if field not in document:
                         ok = False
@@ -391,7 +438,7 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 ok = False
                 diagnostics.append(
-                    Diagnostic("GB0001", f"unsupported document kind {document.get('kind')!r}", f"$[{index}].kind").to_dict()
+                    Diagnostic("GB0001", f"unsupported document kind {kind!r}", f"$[{index}].kind").to_dict()
                     | {"document": str(index)}
                 )
         if args.json:
@@ -409,12 +456,15 @@ def _main(argv: list[str] | None = None) -> int:
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
             return 1
-        registry = discover_plugins(args.plugin_path, include_installed=True)
+        registry = discover_plugins(
+            args.plugin_path,
+            include_installed=args.discover_installed_plugins,
+        )
         plugin_diagnostics = registry.diagnostics.to_list()
         try:
             block_catalog = BlockCatalog.from_manifests(
                 registry.manifests,
-                allow_unknown_blocks=True,
+                allow_unknown_blocks=args.allow_unknown_blocks,
             )
         except ValueError as error:
             block_catalog = BlockCatalog({})
@@ -704,7 +754,15 @@ def _main(argv: list[str] | None = None) -> int:
             run_store.close()
         return 0 if result.status == "succeeded" else 1
     if args.command == "migrate":
-        documents = [migrate_document(document) for document in load_documents(args.path)]
+        try:
+            documents = [migrate_document(document) for document in load_documents(args.path)]
+        except MigrationError as error:
+            print(str(error))
+            return 1
+        documents = [
+            normalize_graph(document) if document.get("kind") == "Graph" else document
+            for document in documents
+        ]
         print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
         return 0
     if args.command == "lock":
@@ -784,7 +842,15 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"plugin not found: {args.plugin_id}")
             return 1
         if args.plugins_command == "validate":
-            manifest = load_plugin_manifest(args.path)
+            try:
+                manifest = load_plugin_manifest(args.path)
+            except ValueError as error:
+                payload = {"ok": False, "diagnostics": [{"severity": "error", "code": "GB2012", "path": str(args.path), "message": str(error)}]}
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print(str(error))
+                return 1
             diagnostics = validate_plugin_manifest(manifest.raw)
             payload = {"ok": diagnostics.ok, "diagnostics": diagnostics.to_list(), "plugin": manifest.summary()}
             if args.json:

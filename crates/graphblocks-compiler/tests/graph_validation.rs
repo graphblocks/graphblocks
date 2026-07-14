@@ -1,7 +1,28 @@
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, compile_graph_for_discovery, compile_graph_with_catalog,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use serde_json::json;
+
+#[test]
+fn compile_graph_applies_closed_schema_to_already_stable_v1() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "closed-stable-schema"},
+        "spec": {"nodes": {}},
+        "bogus": true
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    assert!(plan.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "GB0014"
+            && diagnostic.path == "$"
+            && diagnostic.message.contains("bogus")
+    }));
+}
 
 fn voice_feedback_graph() -> serde_json::Value {
     json!({
@@ -67,7 +88,7 @@ fn compile_graph_rejects_missing_endpoint_ports_and_invalid_pseudo_node_directio
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
         let errors = plan
             .diagnostics
             .iter()
@@ -113,7 +134,7 @@ fn compile_graph_rejects_edge_and_guard_dependency_cycles() {
     ];
 
     for graph in graphs {
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
         let errors = plan
             .diagnostics
             .iter()
@@ -132,7 +153,7 @@ fn compile_graph_rejects_edge_and_guard_dependency_cycles() {
 
 #[test]
 fn compile_graph_allows_exact_checkpointed_duplex_voice_feedback_cycle() {
-    let plan = compile_graph(&voice_feedback_graph());
+    let plan = compile_graph_for_discovery(&voice_feedback_graph());
 
     assert!(
         plan.diagnostics
@@ -160,7 +181,7 @@ fn compile_graph_rejects_voice_feedback_without_the_exact_runtime_profile() {
     }
 
     for graph in invalid_profiles {
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
         assert!(
             plan.diagnostics
                 .iter()
@@ -186,7 +207,7 @@ fn compile_graph_rejects_other_or_guard_cycles_in_a_duplex_voice_graph() {
     guard_cycle["spec"]["nodes"]["session"]["when"] = json!("tools.enabled");
 
     for graph in [unrelated_cycle, guard_cycle] {
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
         assert!(
             plan.diagnostics
                 .iter()
@@ -221,7 +242,7 @@ fn compile_graph_rejects_malformed_and_output_when_references() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
         let errors = plan
             .diagnostics
             .iter()
@@ -254,7 +275,7 @@ fn compile_graph_rejects_unknown_interface_input_used_by_when() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
     let errors = plan
         .diagnostics
         .iter()

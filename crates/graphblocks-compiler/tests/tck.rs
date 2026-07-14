@@ -1,4 +1,6 @@
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, compile_graph_for_discovery, compile_graph_with_catalog,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::Value;
 
@@ -55,7 +57,7 @@ fn rust_compiler_matches_shared_tck_cases() -> Result<(), String> {
             let block_catalog = BlockCatalog::from_blocks(block_catalog)?;
             compile_graph_with_catalog(document, &block_catalog)
         } else {
-            compile_graph(document)
+            compile_graph_for_discovery(document)
         };
         let actual_error_codes = plan
             .diagnostics

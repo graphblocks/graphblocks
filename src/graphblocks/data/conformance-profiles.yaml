@@ -20,13 +20,13 @@ spec:
     extends:
     - GB-C0-SCHEMA
     requires:
-    - rust-scheduler
+    - deterministic-local-scheduler
     - typed-ports
     - outcome
     - cancellation
     - journal
     - local-flow
-    - python-binding
+    - local-runtime-api
     tck:
     - application-events
     - retry

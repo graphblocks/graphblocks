@@ -1,4 +1,6 @@
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, compile_graph_for_discovery, compile_graph_with_catalog,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::Value;
 
@@ -21,7 +23,7 @@ fn rust_compiler_matches_shared_tck_cases() -> Result<(), String> {
             })?;
             compile_graph_with_catalog(document, &catalog)
         } else {
-            compile_graph(document)
+            compile_graph_for_discovery(document)
         };
         let expected = case
             .get("expected")

@@ -8,7 +8,7 @@ import math
 from copy import deepcopy
 from typing import Any
 
-from .migration import GRAPH_API_VERSION, migrate_document
+from .migration import migrate_document
 
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 
@@ -130,12 +130,23 @@ def canonical_hash(value: Any) -> str:
 
 
 def normalize_graph(document: dict[str, Any]) -> dict[str, Any]:
-    graph = migrate_document(document)
-    if graph.get("kind") != "Graph":
-        return deepcopy(graph)
+    return _normalize_graph_unchecked(migrate_document(document))
 
-    normalized = deepcopy(graph)
-    normalized["apiVersion"] = GRAPH_API_VERSION
+
+def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a graph already admitted by its caller.
+
+    Stable public callers go through :func:`normalize_graph`. The compiler uses
+    this helper to retain an alpha version when preview-only fields cannot be
+    represented by the stable v1 schema, and to return structured diagnostics
+    for unsupported versions instead of raising during plan construction.
+    """
+
+    graph = deepcopy(document)
+    if graph.get("kind") != "Graph":
+        return graph
+
+    normalized = graph
     spec = normalized.setdefault("spec", {})
     if not isinstance(spec, dict):
         return normalized

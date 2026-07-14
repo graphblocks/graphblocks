@@ -9,17 +9,17 @@ from graphblocks.plugins import BlockCatalog
 
 
 AMENDMENT_COMPILER_DIAGNOSTICS = {
-    "ToolBindingMissing",
-    "ToolSchemaMissing",
-    "ApprovalWithoutArgumentDigest",
-    "UnsafeParallelEffects",
-    "NonIdempotentRetry",
-    "OutputPolicyBypass",
-    "ImmediateDraftWithoutRetractionSupport",
-    "PolicyGateAfterDelivery",
-    "PendingToolCallAfterAbort",
-    "CommitAfterPolicyStop",
-    "UnboundedPolicyHoldback",
+    "GB1049",
+    "GB1050",
+    "GB1023",
+    "GB1053",
+    "GB1045",
+    "GB1046",
+    "GB1025",
+    "GB1048",
+    "GB1047",
+    "GB1024",
+    "GB1051",
     "GB6001",
     "GB6002",
     "GB6003",
@@ -48,7 +48,12 @@ def test_python_compiler_matches_shared_tck_cases() -> None:
         block_catalog = None
         if "block_catalog" in case:
             block_catalog = BlockCatalog.from_blocks(case["block_catalog"])
-        plan = compile_graph(case["document"], block_catalog=block_catalog)
+        else:
+            block_catalog = BlockCatalog({}, allow_unknown_blocks=True)
+        plan = compile_graph(
+            case["document"],
+            block_catalog=block_catalog,
+        )
         error_codes = [
             diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"
         ]
@@ -115,7 +120,7 @@ def test_compiler_accepts_async_start_absolute_expiration_as_wait_bound() -> Non
     error_codes = [diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"]
 
     assert "GB6001" not in error_codes
-    assert "InvalidAsyncOperation" not in error_codes
+    assert "GB1026" not in error_codes
 
 
 def test_compiler_rejects_async_start_noncanonical_resume_token_hash() -> None:
@@ -158,7 +163,7 @@ def test_compiler_rejects_async_start_noncanonical_resume_token_hash() -> None:
 
     errors = [diagnostic for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"]
 
-    assert [diagnostic.code for diagnostic in errors] == ["InvalidAsyncOperation"]
+    assert [diagnostic.code for diagnostic in errors] == ["GB1026"]
     assert errors[0].message == "async operation resumeTokenHash must be a canonical sha256 digest"
 
 
@@ -203,5 +208,5 @@ def test_compiler_rejects_async_start_absolute_and_relative_wait_bounds() -> Non
 
     errors = [diagnostic for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"]
 
-    assert [diagnostic.code for diagnostic in errors] == ["InvalidAsyncOperation"]
+    assert [diagnostic.code for diagnostic in errors] == ["GB1026"]
     assert "must not define both expiresAtUnixMs and timeout" in errors[0].message

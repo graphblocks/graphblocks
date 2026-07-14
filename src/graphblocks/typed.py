@@ -13,7 +13,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 import re
 from typing import Any, Generic, TypeVar
 
-from .canonical import canonical_dumps
+from .canonical import canonical_dumps, normalize_graph
+from .migration import GRAPH_API_VERSION
 from .plugins import BlockCatalog, builtin_block_catalog
 from .schema import SchemaId
 
@@ -165,7 +166,7 @@ class GraphBuilder:
     """Build a portable Graph mapping while preserving typed port references."""
 
     name: str
-    api_version: str = "graphblocks.ai/v1alpha3"
+    api_version: str = GRAPH_API_VERSION
     block_catalog: BlockCatalog = field(default_factory=builtin_block_catalog, repr=False)
     _owner: object = field(default_factory=object, init=False, repr=False)
     _inputs: dict[str, PortType[Any]] = field(default_factory=dict, init=False, repr=False)
@@ -328,7 +329,7 @@ class GraphBuilder:
             },
         }
         canonical_dumps(graph)
-        return graph
+        return normalize_graph(graph)
 
 
 def _validate_name(value: object, label: str) -> None:

@@ -2,21 +2,28 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 import yaml
 
 from .diagnostics import Diagnostic, DiagnosticSet
-from .schema import SchemaId, SchemaIdError
+from .migration import (
+    MigrationError,
+    _migrate_document_unchecked,
+    migrate_document,
+)
+from .schema import SchemaId, SchemaIdError, resource_schema_errors
 
-PLUGIN_API_VERSION = "graphblocks.ai/v1alpha1"
 STATIC_MANIFEST_NAMES = {
     "graphblocks-plugin.yaml",
     "graphblocks-plugin.yml",
@@ -30,6 +37,101 @@ STATIC_MANIFEST_NAMES = {
 }
 _PRIMITIVE_TYPE_REFS = frozenset({"Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String"})
 _TYPE_CONSTRUCTOR_ARITY = {"List": 1, "Map": 2, "Optional": 1}
+_OUTPUT_REQUIREDNESS_PHASES = frozenset({"initial", "resumed"})
+_OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
+    {"configEquals", "phase", "all", "any", "not"}
+)
+_MAX_OUTPUT_REQUIREDNESS_DEPTH = 16
+_MAX_OUTPUT_REQUIREDNESS_OPERANDS = 16
+_MISSING = object()
+_STABLE_CORE_BLOCK_IDS = frozenset(
+    {
+        "control.map@2",
+        "control.select@1",
+        "model.generate@1",
+        "prompt.render@1",
+    }
+)
+_STABLE_CONTROL_MAP_CONFIG_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "block": {
+            "type": "string",
+            "pattern": r"^\S+@[1-9][0-9]*$",
+        },
+        "inputName": {"type": "string", "minLength": 1},
+        "outputName": {"type": "string", "minLength": 1},
+        "config": {"type": "object"},
+        "onError": {"enum": ["fail_fast", "collect"]},
+    },
+    "required": ["block"],
+    "additionalProperties": False,
+}
+
+
+def _block_capabilities(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("capabilities must be a list")
+    capabilities: list[str] = []
+    for capability in value:
+        if (
+            not isinstance(capability, str)
+            or not capability
+            or any(character.isspace() for character in capability)
+        ):
+            raise ValueError(
+                "capabilities must contain non-empty strings without whitespace"
+            )
+        capabilities.append(capability)
+    if len(capabilities) != len(set(capabilities)):
+        raise ValueError("capabilities must be unique")
+    return tuple(sorted(capabilities))
+
+
+def _normalized_config_schema(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("configSchema must be a mapping")
+    try:
+        encoded = json.dumps(
+            dict(value),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        normalized = json.loads(encoded)
+    except (TypeError, ValueError) as error:
+        raise ValueError("configSchema must contain only finite JSON values") from error
+    try:
+        Draft202012Validator.check_schema(normalized)
+    except SchemaError as error:
+        raise ValueError(
+            f"configSchema is not valid JSON Schema Draft 2020-12: {error.message}"
+        ) from error
+    pending: list[object] = [normalized]
+    while pending:
+        candidate = pending.pop()
+        if isinstance(candidate, dict):
+            for keyword in ("$ref", "$dynamicRef"):
+                reference = candidate.get(keyword)
+                if isinstance(reference, str) and not reference.startswith("#"):
+                    raise ValueError(
+                        f"configSchema {keyword} references must be local fragments"
+                    )
+            pending.extend(candidate.values())
+        elif isinstance(candidate, list):
+            pending.extend(candidate)
+    return normalized
+
+
+def _freeze_json(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 def _validate_type_ref(type_ref: object) -> str:
@@ -123,6 +225,243 @@ def _parse_block_version(value: Any) -> int:
     raise ValueError("block descriptor version must be a positive integer")
 
 
+def _validate_json_pointer(pointer: object) -> str:
+    if not isinstance(pointer, str):
+        raise ValueError("configEquals.pointer must be a string")
+    if pointer and not pointer.startswith("/"):
+        raise ValueError("configEquals.pointer must be empty or start with '/'")
+    if len(pointer) > 512:
+        raise ValueError("configEquals.pointer must contain at most 512 characters")
+    for token in pointer.split("/")[1:]:
+        index = 0
+        while index < len(token):
+            if token[index] != "~":
+                index += 1
+                continue
+            if index + 1 >= len(token) or token[index + 1] not in {"0", "1"}:
+                raise ValueError("configEquals.pointer contains an invalid JSON Pointer escape")
+            index += 2
+    return pointer
+
+
+def _canonical_json(value: object) -> str:
+    def validate_json_value(item: object) -> None:
+        if item is None or isinstance(item, (str, bool, int)):
+            return
+        if isinstance(item, float):
+            if math.isfinite(item):
+                return
+            raise ValueError("configEquals.value must be a finite JSON value")
+        if isinstance(item, list):
+            for child in item:
+                validate_json_value(child)
+            return
+        if isinstance(item, dict) and all(isinstance(key, str) for key in item):
+            for child in item.values():
+                validate_json_value(child)
+            return
+        raise ValueError("configEquals.value must be a finite JSON value")
+
+    validate_json_value(value)
+    try:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError("configEquals.value must be a finite JSON value") from error
+
+
+@dataclass(frozen=True, slots=True)
+class OutputRequirednessPredicate:
+    """Validated descriptor predicate for promoting an optional output to required."""
+
+    operator: str
+    pointer: str | None = None
+    expected_json: str | None = None
+    phase: str | None = None
+    operands: tuple[OutputRequirednessPredicate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.operator not in _OUTPUT_REQUIREDNESS_OPERATORS:
+            raise ValueError(f"requiredWhen uses unsupported operator {self.operator!r}")
+        if self.operator == "configEquals":
+            if self.pointer is None or self.expected_json is None:
+                raise ValueError("configEquals requires pointer and expected_json")
+            _validate_json_pointer(self.pointer)
+            try:
+                expected = json.loads(self.expected_json)
+            except (TypeError, json.JSONDecodeError) as error:
+                raise ValueError("configEquals expected_json must be canonical JSON") from error
+            if _canonical_json(expected) != self.expected_json:
+                raise ValueError("configEquals expected_json must be canonical JSON")
+            if self.phase is not None or self.operands:
+                raise ValueError("configEquals must not declare phase or operands")
+        elif self.operator == "phase":
+            if self.phase not in _OUTPUT_REQUIREDNESS_PHASES:
+                raise ValueError("phase must be initial or resumed")
+            if self.pointer is not None or self.expected_json is not None or self.operands:
+                raise ValueError("phase must not declare pointer, expected_json, or operands")
+        else:
+            if self.pointer is not None or self.expected_json is not None or self.phase is not None:
+                raise ValueError(
+                    f"{self.operator} must not declare pointer, expected_json, or phase"
+                )
+            if self.operator in {"all", "any"} and not self.operands:
+                raise ValueError(f"{self.operator} must contain at least one predicate")
+            if self.operator == "not" and len(self.operands) != 1:
+                raise ValueError("not must contain exactly one predicate")
+            if len(self.operands) > _MAX_OUTPUT_REQUIREDNESS_OPERANDS:
+                raise ValueError(
+                    f"{self.operator} must contain at most "
+                    f"{_MAX_OUTPUT_REQUIREDNESS_OPERANDS} predicates"
+                )
+            if not all(
+                isinstance(operand, OutputRequirednessPredicate)
+                for operand in self.operands
+            ):
+                raise TypeError("requiredWhen operands must be predicates")
+
+        pending = [(self, 0)]
+        while pending:
+            predicate, depth = pending.pop()
+            if depth >= _MAX_OUTPUT_REQUIREDNESS_DEPTH:
+                raise ValueError(
+                    f"requiredWhen nesting must not exceed "
+                    f"{_MAX_OUTPUT_REQUIREDNESS_DEPTH} levels"
+                )
+            pending.extend((operand, depth + 1) for operand in predicate.operands)
+
+
+def parse_output_requiredness_predicate(
+    value: object,
+) -> OutputRequirednessPredicate:
+    """Parse the closed, deterministic ``requiredWhen`` predicate language."""
+
+    return _parse_output_requiredness_predicate(value, depth=0)
+
+
+def _parse_output_requiredness_predicate(
+    value: object,
+    *,
+    depth: int,
+) -> OutputRequirednessPredicate:
+    if depth >= _MAX_OUTPUT_REQUIREDNESS_DEPTH:
+        raise ValueError(
+            f"requiredWhen nesting must not exceed {_MAX_OUTPUT_REQUIREDNESS_DEPTH} levels"
+        )
+    if not isinstance(value, dict):
+        raise ValueError("requiredWhen must be a mapping")
+    if len(value) != 1:
+        raise ValueError("requiredWhen must contain exactly one predicate operator")
+    operator = next(iter(value), None)
+    if operator not in _OUTPUT_REQUIREDNESS_OPERATORS:
+        raise ValueError(f"requiredWhen uses unsupported operator {operator!r}")
+    operand = value[operator]
+
+    if operator == "configEquals":
+        if not isinstance(operand, dict) or set(operand) != {"pointer", "value"}:
+            raise ValueError("configEquals must contain exactly pointer and value")
+        pointer = _validate_json_pointer(operand["pointer"])
+        expected_json = _canonical_json(operand["value"])
+        return OutputRequirednessPredicate(
+            operator="configEquals",
+            pointer=pointer,
+            expected_json=expected_json,
+        )
+
+    if operator == "phase":
+        if operand not in _OUTPUT_REQUIREDNESS_PHASES:
+            raise ValueError("phase must be initial or resumed")
+        return OutputRequirednessPredicate(operator="phase", phase=str(operand))
+
+    if operator in {"all", "any"}:
+        if not isinstance(operand, list) or not operand:
+            raise ValueError(f"{operator} must be a non-empty list")
+        if len(operand) > _MAX_OUTPUT_REQUIREDNESS_OPERANDS:
+            raise ValueError(
+                f"{operator} must contain at most {_MAX_OUTPUT_REQUIREDNESS_OPERANDS} predicates"
+            )
+        return OutputRequirednessPredicate(
+            operator=operator,
+            operands=tuple(
+                _parse_output_requiredness_predicate(item, depth=depth + 1)
+                for item in operand
+            ),
+        )
+
+    return OutputRequirednessPredicate(
+        operator="not",
+        operands=(_parse_output_requiredness_predicate(operand, depth=depth + 1),),
+    )
+
+
+def _resolve_json_pointer(document: object, pointer: str) -> tuple[bool, object]:
+    current = document
+    if not pointer:
+        return True, current
+    for encoded_token in pointer.split("/")[1:]:
+        token = encoded_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, Mapping):
+            if token not in current:
+                return False, None
+            current = current[token]
+            continue
+        if isinstance(current, list):
+            if (
+                not token.isascii()
+                or not token.isdecimal()
+                or (len(token) > 1 and token.startswith("0"))
+            ):
+                return False, None
+            index = int(token)
+            if index >= len(current):
+                return False, None
+            current = current[index]
+            continue
+        return False, None
+    return True, current
+
+
+def evaluate_output_requiredness(
+    predicate: OutputRequirednessPredicate,
+    config: Mapping[str, object],
+    *,
+    phase: str,
+) -> bool:
+    """Evaluate a validated output predicate against immutable node inputs."""
+
+    if not isinstance(predicate, OutputRequirednessPredicate):
+        raise TypeError("predicate must be an OutputRequirednessPredicate")
+    if not isinstance(config, Mapping):
+        raise TypeError("config must be a mapping")
+    if phase not in _OUTPUT_REQUIREDNESS_PHASES:
+        raise ValueError("phase must be initial or resumed")
+    if predicate.operator == "configEquals":
+        if predicate.pointer is None:
+            raise ValueError("configEquals predicate is missing its pointer")
+        found, actual = _resolve_json_pointer(config, predicate.pointer)
+        return found and _canonical_json(actual) == predicate.expected_json
+    if predicate.operator == "phase":
+        return predicate.phase == phase
+    if predicate.operator == "all":
+        return all(
+            evaluate_output_requiredness(operand, config, phase=phase)
+            for operand in predicate.operands
+        )
+    if predicate.operator == "any":
+        return any(
+            evaluate_output_requiredness(operand, config, phase=phase)
+            for operand in predicate.operands
+        )
+    if predicate.operator != "not" or len(predicate.operands) != 1:
+        raise ValueError("requiredWhen predicate is invalid")
+    return not evaluate_output_requiredness(predicate.operands[0], config, phase=phase)
+
+
 @dataclass(frozen=True, slots=True)
 class PluginManifest:
     plugin_id: str
@@ -153,6 +492,13 @@ class PortDescriptor:
     name: str
     type_ref: str | None = None
     required: bool = True
+    required_when: OutputRequirednessPredicate | None = None
+
+    def required_for(self, config: Mapping[str, object], *, phase: str) -> bool:
+        return self.required or (
+            self.required_when is not None
+            and evaluate_output_requiredness(self.required_when, config, phase=phase)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +515,20 @@ class BlockDescriptor:
     inputs: tuple[PortDescriptor, ...] = ()
     outputs: tuple[PortDescriptor, ...] = ()
     resource_slots: tuple[ResourceSlotDescriptor, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    config_schema: Mapping[str, Any] = field(
+        default_factory=lambda: {"type": "object"},
+        compare=False,
+        hash=False,
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capabilities", _block_capabilities(self.capabilities))
+        object.__setattr__(
+            self,
+            "config_schema",
+            _freeze_json(_normalized_config_schema(self.config_schema)),
+        )
 
     @property
     def block_id(self) -> str:
@@ -181,7 +541,18 @@ class BlockCatalog:
     allow_unknown_blocks: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "descriptors", MappingProxyType(dict(self.descriptors)))
+        descriptors = dict(self.descriptors)
+        for block_id, descriptor in descriptors.items():
+            if not isinstance(descriptor, BlockDescriptor):
+                raise TypeError(
+                    f"block catalog descriptor {block_id!r} must be a BlockDescriptor"
+                )
+            if block_id != descriptor.block_id:
+                raise ValueError(
+                    f"block catalog key {block_id!r} does not match descriptor "
+                    f"{descriptor.block_id!r}"
+                )
+        object.__setattr__(self, "descriptors", MappingProxyType(descriptors))
         if not isinstance(self.allow_unknown_blocks, bool):
             raise TypeError("allow_unknown_blocks must be a boolean")
 
@@ -204,6 +575,20 @@ class BlockCatalog:
                 parsed_version = _parse_block_version(version)
             except ValueError as error:
                 raise ValueError(f"block catalog entry {block_index} version is invalid: {error}") from error
+            try:
+                capabilities = _block_capabilities(block.get("capabilities", []))
+            except ValueError as error:
+                raise ValueError(
+                    f"block catalog entry {block_index} capabilities are invalid: {error}"
+                ) from error
+            try:
+                config_schema = _normalized_config_schema(
+                    block.get("configSchema", {"type": "object"})
+                )
+            except ValueError as error:
+                raise ValueError(
+                    f"block catalog entry {block_index} configSchema is invalid: {error}"
+                ) from error
             inputs: list[PortDescriptor] = []
             input_names: set[str] = set()
             raw_inputs = block.get("inputs", [])
@@ -219,6 +604,11 @@ class BlockCatalog:
                         f"block catalog entry {block_index} has duplicate input {port['name']!r}"
                     )
                 input_names.add(port["name"])
+                if "requiredWhen" in port:
+                    raise ValueError(
+                        f"block catalog entry {block_index} input {port['name']} "
+                        "must not declare requiredWhen"
+                    )
                 type_ref = port.get("type")
                 if type_ref is not None:
                     try:
@@ -259,11 +649,23 @@ class BlockCatalog:
                             f"block catalog entry {block_index} output {port['name']} "
                             f"has invalid type {type_ref}: {error}"
                         ) from error
+                required_when = None
+                if "requiredWhen" in port:
+                    try:
+                        required_when = parse_output_requiredness_predicate(
+                            port["requiredWhen"]
+                        )
+                    except ValueError as error:
+                        raise ValueError(
+                            f"block catalog entry {block_index} output {port['name']} "
+                            f"has invalid requiredWhen: {error}"
+                        ) from error
                 outputs.append(
                     PortDescriptor(
                         name=port["name"],
                         type_ref=type_ref,
                         required=_descriptor_bool(port, "required", default=True),
+                        required_when=required_when,
                     )
                 )
             resource_slots: list[ResourceSlotDescriptor] = []
@@ -309,11 +711,13 @@ class BlockCatalog:
                     )
                 )
             descriptor = BlockDescriptor(
-                str(block_type),
-                parsed_version,
-                tuple(inputs),
-                tuple(outputs),
-                tuple(resource_slots),
+                type_id=str(block_type),
+                version=parsed_version,
+                inputs=tuple(inputs),
+                outputs=tuple(outputs),
+                resource_slots=tuple(resource_slots),
+                capabilities=capabilities,
+                config_schema=config_schema,
             )
             if descriptor.block_id in descriptors:
                 raise ValueError(f"duplicate block catalog descriptor {descriptor.block_id}")
@@ -364,6 +768,14 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
 
 
 def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memory>") -> PluginManifest:
+    diagnostics = validate_plugin_manifest(document)
+    if not diagnostics.ok:
+        messages = "; ".join(
+            f"{item.code} {item.path}: {item.message}"
+            for item in diagnostics.diagnostics
+        )
+        raise ValueError(f"{source}: invalid plugin manifest: {messages}")
+    document = migrate_document(document)
     spec = document.get("spec", {})
     metadata = document.get("metadata", {})
     return PluginManifest(
@@ -381,10 +793,21 @@ def plugin_manifest_from_document(document: dict[str, Any], source: str = "<memo
 
 def validate_plugin_manifest(document: Any) -> DiagnosticSet:
     diagnostics: list[Diagnostic] = []
+    schema_violations = ()
     if not isinstance(document, dict):
         return DiagnosticSet((Diagnostic("GB2001", "plugin manifest must be a mapping"),))
-    if document.get("apiVersion") != PLUGIN_API_VERSION:
-        diagnostics.append(Diagnostic("GB2002", "plugin manifest apiVersion must be graphblocks.ai/v1alpha1", "$.apiVersion"))
+    try:
+        document = _migrate_document_unchecked(document)
+    except MigrationError as error:
+        diagnostics.append(
+            Diagnostic(
+                error.code,
+                error.message,
+                error.path,
+            )
+        )
+    else:
+        schema_violations = resource_schema_errors(document)
     if document.get("kind") != "PluginManifest":
         diagnostics.append(Diagnostic("GB2003", "plugin manifest kind must be PluginManifest", "$.kind"))
     metadata = document.get("metadata")
@@ -429,6 +852,48 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         version_path,
                     )
                 )
+        raw_capabilities = block.get("capabilities", _MISSING)
+        capabilities_path = f"$.spec.blocks[{index}].capabilities"
+        if raw_capabilities is _MISSING:
+            diagnostics.append(
+                Diagnostic(
+                    "GB2018",
+                    "block descriptor capabilities are required",
+                    capabilities_path,
+                )
+            )
+        else:
+            try:
+                _block_capabilities(raw_capabilities)
+            except ValueError as error:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2018",
+                        f"block descriptor capabilities are invalid: {error}",
+                        capabilities_path,
+                    )
+                )
+        raw_config_schema = block.get("configSchema", _MISSING)
+        config_schema_path = f"$.spec.blocks[{index}].configSchema"
+        if raw_config_schema is _MISSING:
+            diagnostics.append(
+                Diagnostic(
+                    "GB2018",
+                    "block descriptor configSchema is required",
+                    config_schema_path,
+                )
+            )
+        else:
+            try:
+                _normalized_config_schema(raw_config_schema)
+            except ValueError as error:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2018",
+                        f"block descriptor configSchema is invalid: {error}",
+                        config_schema_path,
+                    )
+                )
         for direction in ("inputs", "outputs"):
             ports = block.get(direction, [])
             if not isinstance(ports, list):
@@ -464,6 +929,28 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                             f"$.spec.blocks[{index}].{direction}[{port_index}].required",
                         )
                     )
+                required_when_path = (
+                    f"$.spec.blocks[{index}].{direction}[{port_index}].requiredWhen"
+                )
+                if direction == "inputs" and "requiredWhen" in port:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            "requiredWhen is valid only on output ports",
+                            required_when_path,
+                        )
+                    )
+                elif direction == "outputs" and "requiredWhen" in port:
+                    try:
+                        parse_output_requiredness_predicate(port["requiredWhen"])
+                    except ValueError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "GB2015",
+                                f"block output requiredWhen is invalid: {error}",
+                                required_when_path,
+                            )
+                        )
                 type_ref = port.get("type")
                 if type_ref is not None:
                     try:
@@ -471,7 +958,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                     except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"block {direction[:-1]} type schema id is invalid: {error}",
                                 f"$.spec.blocks[{index}].{direction}[{port_index}].type",
                             )
@@ -506,7 +993,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                     except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"resource slot type schema id is invalid: {error}",
                                 f"$.spec.blocks[{index}].resourceSlots[{slot_index}].type",
                             )
@@ -540,7 +1027,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                     except ValueError as error:
                         diagnostics.append(
                             Diagnostic(
-                                "InvalidSchemaId",
+                                "GB0015",
                                 f"resource slot type schema id is invalid: {error}",
                                 f"$.spec.blocks[{index}].resourceSlots.{slot_name}.type",
                             )
@@ -562,6 +1049,31 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                 Diagnostic("GB2011", "duplicate block descriptor in plugin manifest", f"$.spec.blocks[{index}]")
             )
         seen_blocks.add(key)
+    if not diagnostics:
+        diagnostics.extend(
+            Diagnostic(violation.code, violation.message, violation.path)
+            for violation in schema_violations
+        )
+    else:
+        semantic_paths = {diagnostic.path for diagnostic in diagnostics}
+        for violation in schema_violations:
+            if violation.keyword != "additionalProperties":
+                continue
+            prefix = "unexpected properties are not allowed: "
+            try:
+                unexpected = json.loads(violation.message.removeprefix(prefix))
+            except json.JSONDecodeError:
+                unexpected = []
+            covered_paths = {
+                f"{violation.path}.{key}"
+                for key in unexpected
+                if isinstance(key, str) and key.isidentifier()
+            }
+            if covered_paths and covered_paths.issubset(semantic_paths):
+                continue
+            diagnostics.append(
+                Diagnostic(violation.code, violation.message, violation.path)
+            )
     return DiagnosticSet(tuple(diagnostics))
 
 
@@ -645,9 +1157,15 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
     return PluginRegistry(tuple(unique), DiagnosticSet(tuple(diagnostics)))
 
 
-@lru_cache(maxsize=1)
-def builtin_block_catalog() -> BlockCatalog:
-    """Return the immutable catalog shipped with the core package."""
+@lru_cache(maxsize=2)
+def builtin_block_catalog(
+    *,
+    profile: Literal["preview", "stable"] = "preview",
+) -> BlockCatalog:
+    """Return an immutable built-in preview or stable block catalog."""
+
+    if profile not in {"preview", "stable"}:
+        raise ValueError("profile must be 'preview' or 'stable'")
 
     registry = discover_plugins(include_installed=False)
     if not registry.ok:
@@ -656,4 +1174,15 @@ def builtin_block_catalog() -> BlockCatalog:
             for item in registry.diagnostics.diagnostics
         )
         raise RuntimeError(f"built-in plugin catalog is invalid: {messages}")
-    return BlockCatalog.from_manifests(registry.manifests)
+    catalog = BlockCatalog.from_manifests(registry.manifests)
+    if profile == "preview":
+        return catalog
+    descriptors = {
+        block_id: catalog.descriptors[block_id]
+        for block_id in sorted(_STABLE_CORE_BLOCK_IDS)
+    }
+    descriptors["control.map@2"] = replace(
+        descriptors["control.map@2"],
+        config_schema=_STABLE_CONTROL_MAP_CONFIG_SCHEMA,
+    )
+    return BlockCatalog(descriptors)

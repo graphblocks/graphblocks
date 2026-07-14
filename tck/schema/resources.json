@@ -1,0 +1,398 @@
+[
+  {
+    "name": "valid_graph_v1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "stable-graph"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "valid": true
+    }
+  },
+  {
+    "name": "stable_graph_rejects_unknown_edge_fields",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "Graph",
+      "metadata": {
+        "name": "closed-edge"
+      },
+      "spec": {
+        "nodes": {},
+        "edges": [
+          {
+            "from": "$input.value",
+            "to": "$output.value",
+            "mystery": true
+          }
+        ]
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.edges[0]",
+          "keyword": "additionalProperties"
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid_plugin_manifest_v1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "PluginManifest",
+      "metadata": {
+        "name": "example.stable"
+      },
+      "spec": {
+        "pluginId": "example.stable",
+        "version": "1.0.0",
+        "blocks": []
+      }
+    },
+    "expected": {
+      "valid": true
+    }
+  },
+  {
+    "name": "stable_plugin_manifest_rejects_unknown_fields",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1",
+      "kind": "PluginManifest",
+      "metadata": {
+        "name": "example.closed"
+      },
+      "spec": {
+        "pluginId": "example.closed",
+        "version": "1.0.0",
+        "mystery": true
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec",
+          "keyword": "additionalProperties"
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid_graph_v1alpha3",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": { "name": "echo-graph" },
+      "spec": {
+        "interface": {
+          "inputs": { "message": "example.ai/Message@1" },
+          "outputs": { "result": "example.ai/Message@1" }
+        },
+        "nodes": {
+          "echo": {
+            "block": "example.echo@1",
+            "inputs": { "message": "$input.message" },
+            "outputs": { "result": "$output.result" }
+          }
+        }
+      }
+    },
+    "expected": { "valid": true }
+  },
+  {
+    "name": "graph_requires_metadata_name",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {},
+      "spec": { "nodes": {} }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        { "code": "GB0014", "path": "$.metadata", "keyword": "required" }
+      ]
+    }
+  },
+  {
+    "name": "graph_rejects_noncanonical_block_version",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": { "name": "bad-block-version" },
+      "spec": {
+        "nodes": {
+          "echo": { "block": "example.echo@01" }
+        }
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.nodes.echo.block",
+          "keyword": "pattern"
+        }
+      ]
+    }
+  },
+  {
+    "name": "graph_rejects_unknown_spec_fields",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": { "name": "unknown-field" },
+      "spec": { "nodes": {}, "mystery": true }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec",
+          "keyword": "additionalProperties"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unsupported_graph_version",
+    "document": {
+      "apiVersion": "graphblocks.ai/v9",
+      "kind": "Graph",
+      "metadata": { "name": "future" },
+      "spec": { "nodes": {} }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        { "code": "GB0013", "path": "$", "keyword": "resourceType" }
+      ]
+    }
+  },
+  {
+    "name": "valid_application_v1alpha1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Application",
+      "metadata": { "name": "assistant" },
+      "spec": {
+        "surface": { "kind": "http", "protocol": "graphblocks.app.v1" },
+        "graphs": { "default": "assistant-graph" },
+        "routes": [
+          {
+            "id": "invoke",
+            "method": "POST",
+            "path": "/v1/invoke",
+            "command": "InvokeGraph",
+            "graph": "assistant-graph",
+            "responseMode": "accepted"
+          }
+        ]
+      }
+    },
+    "expected": { "valid": true }
+  },
+  {
+    "name": "application_route_requires_behavior",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Application",
+      "metadata": { "name": "assistant" },
+      "spec": {
+        "routes": [
+          { "id": "broken", "method": "GET", "path": "/v1/broken" }
+        ]
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        { "code": "GB0014", "path": "$.spec.routes[0]", "keyword": "anyOf" }
+      ]
+    }
+  },
+  {
+    "name": "valid_binding_v1alpha1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Binding",
+      "metadata": { "name": "production" },
+      "spec": {
+        "resources": {
+          "model": {
+            "kind": "ChatModel",
+            "implementation": "provider.responses",
+            "config": { "model": "stable-model" },
+            "credentials": { "secretRef": "secret://providers/api-key" }
+          }
+        }
+      }
+    },
+    "expected": { "valid": true }
+  },
+  {
+    "name": "binding_resource_requires_implementation",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Binding",
+      "metadata": { "name": "incomplete" },
+      "spec": {
+        "resources": { "model": { "kind": "ChatModel" } }
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.resources.model",
+          "keyword": "required"
+        }
+      ]
+    }
+  },
+  {
+    "name": "binding_credentials_use_secret_references",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Binding",
+      "metadata": { "name": "unsafe" },
+      "spec": {
+        "resources": {
+          "model": {
+            "kind": "ChatModel",
+            "implementation": "provider.responses",
+            "credentials": { "secretRef": "plain-text-key" }
+          }
+        }
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.resources.model.credentials.secretRef",
+          "keyword": "pattern"
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid_plugin_manifest_v1alpha1",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "PluginManifest",
+      "metadata": { "name": "example.echo", "version": "1.2.0" },
+      "spec": {
+        "pluginId": "example.echo",
+        "version": "1.2.0",
+        "blocks": [
+          {
+            "typeId": "example.echo",
+            "version": 1,
+            "implementation": "example.echo.run",
+            "inputs": [{ "name": "message", "type": "example.ai/Message@1" }],
+            "outputs": [{ "name": "result", "type": "example.ai/Message@1" }]
+          }
+        ]
+      }
+    },
+    "expected": { "valid": true }
+  },
+  {
+    "name": "plugin_rejects_noncanonical_block_version",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "PluginManifest",
+      "metadata": { "name": "example.bad", "version": "1.0.0" },
+      "spec": {
+        "pluginId": "example.bad",
+        "version": "1.0.0",
+        "blocks": [{ "typeId": "example.bad", "version": "01" }]
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.blocks[0].version",
+          "keyword": "oneOf"
+        }
+      ]
+    }
+  },
+  {
+    "name": "valid_graph_fragment_v1alpha1",
+    "document": {
+      "apiVersion": "graphblocks.ai/composition/v1alpha1",
+      "kind": "GraphFragment",
+      "metadata": { "name": "echo" },
+      "spec": {
+        "interface": {
+          "inputs": { "message": "example.ai/Message@1" },
+          "outputs": { "result": "example.ai/Message@1" }
+        },
+        "nodes": {
+          "echo": { "block": "example.echo@1" }
+        },
+        "edges": [
+          { "from": "$input.message", "to": "echo.message" },
+          { "from": "echo.result", "to": "$output.result" }
+        ]
+      }
+    },
+    "expected": { "valid": true }
+  },
+  {
+    "name": "fragment_rejects_slot_placeholder",
+    "document": {
+      "apiVersion": "graphblocks.ai/composition/v1alpha1",
+      "kind": "GraphFragment",
+      "metadata": { "name": "nested" },
+      "spec": {
+        "interface": { "inputs": {}, "outputs": {} },
+        "nodes": { "nested": { "slot": "another-fragment" } }
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.nodes.nested",
+          "keyword": "additionalProperties"
+        },
+        {
+          "code": "GB0014",
+          "path": "$.spec.nodes.nested",
+          "keyword": "required"
+        }
+      ]
+    }
+  },
+  {
+    "name": "non_object_resource_envelope",
+    "document": ["not", "a", "resource"],
+    "expected": {
+      "valid": false,
+      "errors": [
+        { "code": "GB0012", "path": "$", "keyword": "type" }
+      ]
+    }
+  }
+]

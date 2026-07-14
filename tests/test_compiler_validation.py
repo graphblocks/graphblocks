@@ -11,12 +11,208 @@ def _error_diagnostics(
     *,
     block_catalog: BlockCatalog | None = None,
 ) -> list[tuple[str, str, str]]:
-    plan = compile_graph(graph, block_catalog=block_catalog)
+    plan = compile_graph(
+        graph,
+        block_catalog=block_catalog,
+        allow_unknown_blocks=block_catalog is None,
+    )
     return [
         (diagnostic.code, diagnostic.message, diagnostic.path)
         for diagnostic in plan.diagnostics.diagnostics
         if diagnostic.severity == "error"
     ]
+
+
+def _unknown_block_graph() -> dict[str, object]:
+    return {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unknown-block"},
+        "spec": {
+            "nodes": {
+                "unknown": {"block": "test.unknown@1"},
+            },
+        },
+    }
+
+
+def test_compile_uses_closed_builtin_catalog_by_default() -> None:
+    plan = compile_graph(_unknown_block_graph())
+
+    assert [
+        diagnostic.code
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ] == ["GB1022"]
+
+
+def test_compile_allows_unknown_blocks_only_with_explicit_discovery_opt_in() -> None:
+    assert compile_graph(_unknown_block_graph(), allow_unknown_blocks=True).ok
+
+
+def test_compile_discovery_mode_still_validates_known_builtin_blocks() -> None:
+    graph = _unknown_block_graph()
+    spec = graph["spec"]
+    assert isinstance(spec, dict)
+    nodes = spec["nodes"]
+    assert isinstance(nodes, dict)
+    nodes["known"] = {"block": "prompt.render@1"}
+
+    plan = compile_graph(graph, allow_unknown_blocks=True)
+
+    assert [
+        diagnostic.code
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ] == ["GB1003"]
+
+
+def test_compile_supports_local_config_schema_references() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.local_ref",
+                "version": 1,
+                "configSchema": {
+                    "$defs": {"count": {"type": "integer", "minimum": 1}},
+                    "type": "object",
+                    "properties": {"count": {"$ref": "#/$defs/count"}},
+                    "required": ["count"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "local-config-ref"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.local_ref@1",
+                    "config": {"count": 0},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config does not satisfy test.local_ref@1 configSchema: 0 is less than the minimum of 1",
+            "$.spec.nodes.configured.config.count",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "config_schema",
+    [
+        {
+            "type": "object",
+            "properties": {"count": {"$ref": "#/$defs/missing"}},
+        },
+        {"$ref": "#"},
+    ],
+    ids=["unresolved", "nonterminating"],
+)
+def test_compile_reports_invalid_local_config_schema_reference(
+    config_schema: dict[str, object],
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "test.missing_ref",
+                "version": 1,
+                "configSchema": config_schema,
+            }
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "missing-config-ref"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.missing_ref@1",
+                    "config": {"count": 1},
+                }
+            }
+        },
+    }
+
+    assert _error_diagnostics(graph, block_catalog=catalog) == [
+        (
+            "GB2019",
+            "node config cannot be validated against test.missing_ref@1 because its configSchema contains an unresolved or nonterminating local reference",
+            "$.spec.nodes.configured.config",
+        )
+    ]
+
+
+def test_compile_rejects_unsupported_control_map_modes() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "unsupported-control-map-mode"},
+        "spec": {
+            "nodes": {
+                "map": {
+                    "block": "control.map@2",
+                    "config": {"graph": "nested-graph"},
+                }
+            }
+        },
+    }
+
+    diagnostics = [
+        diagnostic
+        for diagnostic in _error_diagnostics(graph)
+        if diagnostic[0] == "GB2019"
+    ]
+
+    assert [code for code, _message, _path in diagnostics] == ["GB2019", "GB2019"]
+    assert {path for _code, _message, path in diagnostics} == {
+        "$.spec.nodes.map.config"
+    }
+
+
+@pytest.mark.parametrize(
+    ("edges", "expected_warnings"),
+    [
+        ([], ["GB1004"]),
+        ([{"from": "$input.value", "to": "$output.value"}], []),
+    ],
+    ids=["missing-writer", "written"],
+)
+def test_compile_warns_when_declared_graph_outputs_have_no_writer(
+    edges: list[dict[str, str]],
+    expected_warnings: list[str],
+) -> None:
+    graph: dict[str, object] = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "declared-output"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"},
+            },
+            "nodes": {},
+            "edges": edges,
+        },
+    }
+
+    plan = compile_graph(graph, allow_unknown_blocks=True)
+
+    assert plan.ok
+    assert [
+        diagnostic.code
+        for diagnostic in plan.diagnostics.diagnostics
+        if diagnostic.severity == "warning"
+    ] == expected_warnings
 
 
 def _voice_feedback_graph() -> dict[str, object]:

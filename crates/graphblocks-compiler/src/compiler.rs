@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use graphblocks_schema::SchemaId;
+use graphblocks_schema::{ResourceSchemaViolation, SchemaId, resource_schema_errors};
 use serde_json::{Map, Value};
 
 use crate::canonical::canonical_hash;
 use crate::diagnostics::{Diagnostic, Severity};
-use crate::graph::{GRAPH_API_VERSION, PSEUDO_NODES, normalize_graph};
+use crate::graph::{GRAPH_API_VERSION, PSEUDO_NODES, migrate_graph, normalize_graph};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
@@ -34,6 +34,7 @@ pub struct BlockCatalog {
 pub struct BlockDescriptor {
     pub type_id: String,
     pub version: u64,
+    pub config_schema: Value,
     pub inputs: Vec<PortDescriptor>,
     pub outputs: Vec<PortDescriptor>,
     pub resource_slots: Vec<ResourceSlotDescriptor>,
@@ -50,6 +51,50 @@ pub struct PortDescriptor {
     pub name: String,
     pub type_ref: Option<String>,
     pub required: bool,
+    required_when: Option<OutputRequirednessPredicate>,
+}
+
+impl PortDescriptor {
+    pub fn required_for(&self, config: &Value, phase: ExecutionPhase) -> bool {
+        self.required
+            || self
+                .required_when
+                .as_ref()
+                .is_some_and(|predicate| predicate.evaluate(config, phase))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionPhase {
+    Initial,
+    Resumed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OutputRequirednessPredicate {
+    ConfigEquals { pointer: String, expected: Value },
+    Phase(ExecutionPhase),
+    All(Vec<Self>),
+    Any(Vec<Self>),
+    Not(Box<Self>),
+}
+
+impl OutputRequirednessPredicate {
+    fn evaluate(&self, config: &Value, phase: ExecutionPhase) -> bool {
+        match self {
+            Self::ConfigEquals { pointer, expected } => {
+                resolve_json_pointer(config, pointer) == Some(expected)
+            }
+            Self::Phase(expected) => *expected == phase,
+            Self::All(predicates) => predicates
+                .iter()
+                .all(|predicate| predicate.evaluate(config, phase)),
+            Self::Any(predicates) => predicates
+                .iter()
+                .any(|predicate| predicate.evaluate(config, phase)),
+            Self::Not(predicate) => !predicate.evaluate(config, phase),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -203,6 +248,164 @@ fn descriptor_type_ref(
     }
 }
 
+const MAX_OUTPUT_REQUIREDNESS_DEPTH: usize = 16;
+const MAX_OUTPUT_REQUIREDNESS_OPERANDS: usize = 16;
+
+fn validate_json_pointer(pointer: &str) -> Result<(), String> {
+    if pointer.chars().count() > 512 {
+        return Err("configEquals.pointer must contain at most 512 characters".to_owned());
+    }
+    if !pointer.is_empty() && !pointer.starts_with('/') {
+        return Err("configEquals.pointer must be empty or start with '/'".to_owned());
+    }
+    for token in pointer.split('/').skip(1) {
+        let bytes = token.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] != b'~' {
+                index += 1;
+                continue;
+            }
+            if index + 1 >= bytes.len() || !matches!(bytes[index + 1], b'0' | b'1') {
+                return Err(
+                    "configEquals.pointer contains an invalid JSON Pointer escape".to_owned(),
+                );
+            }
+            index += 2;
+        }
+    }
+    Ok(())
+}
+
+fn validate_config_schema(schema: &Value) -> Result<(), String> {
+    if !schema.is_object() {
+        return Err("configSchema must be an object".to_owned());
+    }
+    jsonschema::draft202012::meta::validate(schema)
+        .map_err(|error| format!("configSchema is not valid JSON Schema Draft 2020-12: {error}"))?;
+
+    let mut pending = vec![schema];
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Object(object) => {
+                for (key, child) in object {
+                    if matches!(key.as_str(), "$ref" | "$dynamicRef")
+                        && child
+                            .as_str()
+                            .is_some_and(|reference| !reference.starts_with('#'))
+                    {
+                        return Err(format!(
+                            "configSchema external reference {child} is not allowed"
+                        ));
+                    }
+                    pending.push(child);
+                }
+            }
+            Value::Array(array) => pending.extend(array),
+            _ => {}
+        }
+    }
+
+    jsonschema::draft202012::new(schema)
+        .map(|_| ())
+        .map_err(|error| format!("configSchema could not be compiled: {error}"))
+}
+
+fn parse_output_requiredness(
+    value: &Value,
+    depth: usize,
+) -> Result<OutputRequirednessPredicate, String> {
+    if depth >= MAX_OUTPUT_REQUIREDNESS_DEPTH {
+        return Err(format!(
+            "requiredWhen nesting must not exceed {MAX_OUTPUT_REQUIREDNESS_DEPTH} levels"
+        ));
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| "requiredWhen must be an object".to_owned())?;
+    if object.len() != 1 {
+        return Err("requiredWhen must contain exactly one predicate operator".to_owned());
+    }
+    let (operator, operand) = object.iter().next().expect("one predicate operator");
+    match operator.as_str() {
+        "configEquals" => {
+            let operand = operand
+                .as_object()
+                .ok_or_else(|| "configEquals must be an object".to_owned())?;
+            if operand.len() != 2
+                || !operand.contains_key("pointer")
+                || !operand.contains_key("value")
+            {
+                return Err("configEquals must contain exactly pointer and value".to_owned());
+            }
+            let pointer = operand
+                .get("pointer")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "configEquals.pointer must be a string".to_owned())?;
+            validate_json_pointer(pointer)?;
+            Ok(OutputRequirednessPredicate::ConfigEquals {
+                pointer: pointer.to_owned(),
+                expected: operand["value"].clone(),
+            })
+        }
+        "phase" => match operand.as_str() {
+            Some("initial") => Ok(OutputRequirednessPredicate::Phase(ExecutionPhase::Initial)),
+            Some("resumed") => Ok(OutputRequirednessPredicate::Phase(ExecutionPhase::Resumed)),
+            _ => Err("phase must be initial or resumed".to_owned()),
+        },
+        "all" | "any" => {
+            let operands = operand
+                .as_array()
+                .filter(|operands| !operands.is_empty())
+                .ok_or_else(|| format!("{operator} must be a non-empty array"))?;
+            if operands.len() > MAX_OUTPUT_REQUIREDNESS_OPERANDS {
+                return Err(format!(
+                    "{operator} must contain at most {MAX_OUTPUT_REQUIREDNESS_OPERANDS} predicates"
+                ));
+            }
+            let parsed = operands
+                .iter()
+                .map(|operand| parse_output_requiredness(operand, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            if operator == "all" {
+                Ok(OutputRequirednessPredicate::All(parsed))
+            } else {
+                Ok(OutputRequirednessPredicate::Any(parsed))
+            }
+        }
+        "not" => Ok(OutputRequirednessPredicate::Not(Box::new(
+            parse_output_requiredness(operand, depth + 1)?,
+        ))),
+        _ => Err(format!(
+            "requiredWhen uses unsupported operator {operator:?}"
+        )),
+    }
+}
+
+fn resolve_json_pointer<'a>(document: &'a Value, pointer: &str) -> Option<&'a Value> {
+    if pointer.is_empty() {
+        return Some(document);
+    }
+    let mut current = document;
+    for encoded_token in pointer.split('/').skip(1) {
+        let token = encoded_token.replace("~1", "/").replace("~0", "~");
+        current = match current {
+            Value::Object(object) => object.get(&token)?,
+            Value::Array(array) => {
+                if token.is_empty()
+                    || !token.bytes().all(|byte| byte.is_ascii_digit())
+                    || (token.len() > 1 && token.starts_with('0'))
+                {
+                    return None;
+                }
+                array.get(token.parse::<usize>().ok()?)?
+            }
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
 impl BlockCatalog {
     pub fn with_unknown_blocks_allowed(mut self) -> Self {
         self.allow_unknown_blocks = true;
@@ -271,12 +474,18 @@ impl BlockCatalog {
                         "block catalog entry {index} has duplicate input {name:?}"
                     ));
                 }
+                if port.contains_key("requiredWhen") {
+                    return Err(format!(
+                        "block catalog entry {index} input {name} must not declare requiredWhen"
+                    ));
+                }
                 let context = format!("block catalog entry {index} input {name}");
                 inputs.push(PortDescriptor {
                     name: name.to_owned(),
                     type_ref: descriptor_type_ref(port, &context, validate_port_type_ref)?,
                     required: descriptor_bool(port, "required", true)
                         .map_err(|error| format!("{context} {error}"))?,
+                    required_when: None,
                 });
             }
 
@@ -310,11 +519,17 @@ impl BlockCatalog {
                     ));
                 }
                 let context = format!("block catalog entry {index} output {name}");
+                let required_when = port
+                    .get("requiredWhen")
+                    .map(|value| parse_output_requiredness(value, 0))
+                    .transpose()
+                    .map_err(|error| format!("{context} has invalid requiredWhen: {error}"))?;
                 outputs.push(PortDescriptor {
                     name: name.to_owned(),
                     type_ref: descriptor_type_ref(port, &context, validate_port_type_ref)?,
                     required: descriptor_bool(port, "required", true)
                         .map_err(|error| format!("{context} {error}"))?,
+                    required_when,
                 });
             }
 
@@ -391,9 +606,16 @@ impl BlockCatalog {
                     ));
                 }
             };
+            let config_schema = block
+                .get("configSchema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+            validate_config_schema(&config_schema)
+                .map_err(|error| format!("block catalog entry {index} {error}"))?;
             let descriptor = BlockDescriptor {
                 type_id,
                 version,
+                config_schema,
                 inputs,
                 outputs,
                 resource_slots,
@@ -684,7 +906,7 @@ fn diagnose_async_operation_config(
 ) {
     if has_async_callback_completion_ref(config) && has_async_polling_completion_ref(config) {
         diagnostics.push(Diagnostic::error(
-            "InvalidAsyncOperation",
+            "GB1026",
             "async operation must not define both callback and polling completion refs",
             path,
         ));
@@ -695,14 +917,14 @@ fn diagnose_async_operation_config(
     let has_infinite_wait = has_async_explicit_infinite_wait(config);
     if has_relative_timeout && has_absolute_deadline {
         diagnostics.push(Diagnostic::error(
-            "InvalidAsyncOperation",
+            "GB1026",
             "async operation wait must not define both expiresAtUnixMs and timeout",
             path,
         ));
     }
     if has_bounded_timeout && has_infinite_wait {
         diagnostics.push(Diagnostic::error(
-            "InvalidAsyncOperation",
+            "GB1026",
             "async operation wait must not define both timeout and infinite-wait policy",
             path,
         ));
@@ -721,7 +943,7 @@ fn diagnose_async_operation_config(
         .is_some_and(|on_timeout| !matches!(on_timeout, "fail" | "cancel" | "expire"))
     {
         diagnostics.push(Diagnostic::error(
-            "InvalidAsyncOperation",
+            "GB1026",
             "async await onTimeout must be one of fail, cancel, or expire",
             format!("{path}.onTimeout"),
         ));
@@ -744,7 +966,7 @@ fn diagnose_async_operation_config(
     ] {
         if invalid_optional_duration_field(config, names).is_some() {
             diagnostics.push(Diagnostic::error(
-                "InvalidAsyncOperation",
+                "GB1026",
                 format!("async operation {field} must be a positive duration"),
                 format!("{path}.{field}"),
             ));
@@ -1180,6 +1402,10 @@ fn diagnose_callback_subscription_config(
 }
 
 pub fn compile_graph(document: &Value) -> Plan {
+    compile_graph_with_catalog(document, &BlockCatalog::default())
+}
+
+pub fn compile_graph_for_discovery(document: &Value) -> Plan {
     compile_graph_with_catalog(
         document,
         &BlockCatalog::default().with_unknown_blocks_allowed(),
@@ -1188,35 +1414,7 @@ pub fn compile_graph(document: &Value) -> Plan {
 
 pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
     let mut diagnostics = Vec::new();
-    let mut migrated = document.clone();
-    if migrated.get("kind").and_then(Value::as_str) == Some("Graph")
-        && let Some(api_version @ ("graphblocks.ai/v1alpha1" | "graphblocks.ai/v1alpha2")) =
-            migrated.get("apiVersion").and_then(Value::as_str)
-    {
-        let previous = api_version.to_owned();
-        if let Some(root) = migrated.as_object_mut() {
-            root.insert(
-                "apiVersion".to_owned(),
-                Value::String(GRAPH_API_VERSION.to_owned()),
-            );
-            if !root.contains_key("metadata") {
-                root.insert("metadata".to_owned(), Value::Object(Map::new()));
-            }
-            if let Some(metadata) = root.get_mut("metadata").and_then(Value::as_object_mut) {
-                if !metadata.contains_key("annotations") {
-                    metadata.insert("annotations".to_owned(), Value::Object(Map::new()));
-                }
-                if let Some(annotations) = metadata
-                    .get_mut("annotations")
-                    .and_then(Value::as_object_mut)
-                {
-                    annotations
-                        .entry("graphblocks.ai/migratedFrom")
-                        .or_insert(Value::String(previous));
-                }
-            }
-        }
-    }
+    let migrated = migrate_graph(document);
     let document = &migrated;
 
     if document.get("kind").and_then(Value::as_str) != Some("Graph") {
@@ -1233,7 +1431,39 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         };
     }
 
-    if document.get("apiVersion").and_then(Value::as_str) != Some(GRAPH_API_VERSION) {
+    let schema_violations = if matches!(
+        document.get("apiVersion").and_then(Value::as_str),
+        Some(
+            GRAPH_API_VERSION
+                | "graphblocks.ai/v1alpha1"
+                | "graphblocks.ai/v1alpha2"
+                | "graphblocks.ai/v1alpha3"
+        )
+    ) {
+        match resource_schema_errors(document) {
+            Ok(violations) => violations,
+            Err(error) => {
+                diagnostics.push(Diagnostic::error(
+                    "GB9001",
+                    format!("failed to validate graph resource schema: {error}"),
+                    "$",
+                ));
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    if !matches!(
+        document.get("apiVersion").and_then(Value::as_str),
+        Some(
+            GRAPH_API_VERSION
+                | "graphblocks.ai/v1alpha1"
+                | "graphblocks.ai/v1alpha2"
+                | "graphblocks.ai/v1alpha3"
+        )
+    ) {
         diagnostics.push(Diagnostic::error(
             "GB0002",
             format!(
@@ -1265,6 +1495,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             "spec must be a mapping",
             "$.spec",
         ));
+        prepend_schema_diagnostics(&mut diagnostics, &schema_violations);
         return Plan {
             graph_hash: canonical_hash(&normalized),
             normalized,
@@ -1288,7 +1519,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
 
     if spec.and_then(|spec| spec.get("composition")).is_some() {
         diagnostics.push(Diagnostic::error(
-            "UnexpandedComposition",
+            "GB1052",
             "graph composition must be materialized before compilation",
             "$.spec.composition",
         ));
@@ -1304,7 +1535,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     let path = format!("$.spec.interface.{direction}.{port_name}");
                     let Some(schema_id) = schema_id.as_str() else {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidSchemaId",
+                            "GB0015",
                             format!(
                                 "graph interface {} schema id must be a string",
                                 direction.trim_end_matches('s')
@@ -1315,7 +1546,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     };
                     if let Err(error) = SchemaId::parse(schema_id) {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidSchemaId",
+                            "GB0015",
                             format!(
                                 "graph interface {} schema id is invalid: {error}",
                                 direction.trim_end_matches('s')
@@ -1355,7 +1586,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             };
             if node.contains_key("slot") {
                 diagnostics.push(Diagnostic::error(
-                    "UnexpandedComposition",
+                    "GB1052",
                     "slot placeholders must be materialized before compilation",
                     format!("$.spec.nodes.{node_name}.slot"),
                 ));
@@ -1393,7 +1624,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         );
                     }
                     Some(_) => diagnostics.push(Diagnostic::error(
-                        "InvalidAsyncOperation",
+                        "GB1026",
                         "async operation node config must be a mapping",
                         format!("$.spec.nodes.{node_name}.config"),
                     )),
@@ -1518,7 +1749,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 let operation_path = format!("$.spec.{async_operations_key}.{operation_key}");
                 let Some(operation_config) = operation_config.as_object() else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidAsyncOperation",
+                        "GB1026",
                         "async operation config must be a mapping",
                         operation_path,
                     ));
@@ -1537,7 +1768,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 let operation_path = format!("$.spec.{async_operations_key}[{operation_index}]");
                 let Some(operation_config) = operation_config.as_object() else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidAsyncOperation",
+                        "GB1026",
                         "async operation config must be a mapping",
                         operation_path,
                     ));
@@ -1552,7 +1783,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             }
         }
         Some((async_operations_key, _)) => diagnostics.push(Diagnostic::error(
-            "InvalidAsyncOperation",
+            "GB1026",
             "asyncOperations must be a mapping or list",
             format!("$.spec.{async_operations_key}"),
         )),
@@ -1574,7 +1805,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("$.spec.{callback_subscriptions_key}.{subscription_key}");
                 let Some(subscription_config) = subscription_config.as_object() else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidCallbackSubscription",
+                        "GB1027",
                         "callback subscription config must be a mapping",
                         subscription_path,
                     ));
@@ -1595,7 +1826,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("$.spec.{callback_subscriptions_key}[{subscription_index}]");
                 let Some(subscription_config) = subscription_config.as_object() else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidCallbackSubscription",
+                        "GB1027",
                         "callback subscription config must be a mapping",
                         subscription_path,
                     ));
@@ -1609,7 +1840,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             }
         }
         Some((callback_subscriptions_key, _)) => diagnostics.push(Diagnostic::error(
-            "InvalidCallbackSubscription",
+            "GB1027",
             "callbackSubscriptions must be a mapping or list",
             format!("$.spec.{callback_subscriptions_key}"),
         )),
@@ -1630,7 +1861,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
         Some((output_policy_key, _)) => {
             diagnostics.push(Diagnostic::error(
-                "InvalidOutputPolicy",
+                "GB1034",
                 "outputPolicy must be a mapping",
                 format!("$.spec.{output_policy_key}"),
             ));
@@ -1645,7 +1876,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         Some(Value::Object(delivery)) => Some(delivery),
         Some(_) => {
             diagnostics.push(Diagnostic::error(
-                "InvalidOutputPolicy",
+                "GB1034",
                 "outputPolicy delivery must be a mapping",
                 format!("$.spec.{output_policy_key}.delivery"),
             ));
@@ -1665,7 +1896,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             })
         {
             diagnostics.push(Diagnostic::error(
-                "InvalidOutputDeliveryMode",
+                "GB1030",
                 format!("invalid output delivery mode {mode}"),
                 "$.spec.outputPolicy.delivery.mode",
             ));
@@ -1682,7 +1913,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             })
         {
             diagnostics.push(Diagnostic::error(
-                "InvalidViolationAction",
+                "GB1044",
                 format!("invalid violation action {on_violation}"),
                 "$.spec.outputPolicy.delivery.onViolation",
             ));
@@ -1704,7 +1935,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 })
         {
             diagnostics.push(Diagnostic::error(
-                "InvalidDraftDisposition",
+                "GB1028",
                 format!("invalid draft disposition {delivered_draft_disposition}"),
                 format!("$.spec.outputPolicy.delivery.{path_key}"),
             ));
@@ -1733,7 +1964,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         )
                     }) {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidFlushBoundary",
+                            "GB1029",
                             format!("invalid flush boundary {boundary}"),
                             format!("$.spec.outputPolicy.delivery.{path_key}[{boundary_index}]"),
                         ));
@@ -1741,7 +1972,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
             } else {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidFlushBoundary",
+                    "GB1029",
                     "flush boundaries must be a list of strings",
                     format!("$.spec.outputPolicy.delivery.{path_key}"),
                 ));
@@ -1787,7 +2018,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         if mode == Some("bounded_holdback") {
             if !has_token_bound && !has_byte_bound && !has_duration_bound {
                 diagnostics.push(Diagnostic::error(
-                    "UnboundedPolicyHoldback",
+                    "GB1051",
                     "bounded_holdback output delivery requires a token, byte, or duration bound",
                     "$.spec.outputPolicy.delivery",
                 ));
@@ -1796,7 +2027,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             && (has_token_bound || has_byte_bound || has_duration_bound)
         {
             diagnostics.push(Diagnostic::error(
-                "HoldbackLimitWithoutHoldback",
+                "GB1054",
                 "holdback limits require bounded_holdback output delivery mode",
                 "$.spec.outputPolicy.delivery",
             ));
@@ -1810,7 +2041,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 .unwrap_or("retract");
             if delivered_draft_disposition == "keep" {
                 diagnostics.push(Diagnostic::error(
-                    "ImmediateDraftWithoutRetractionSupport",
+                    "GB1025",
                     "immediate_draft output delivery requires incomplete or retracted draft semantics",
                     "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
                 ));
@@ -1827,7 +2058,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             Some(Value::Object(evaluation)) => Some(evaluation),
             Some(_) => {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidOutputPolicy",
+                    "GB1034",
                     "outputPolicy evaluation must be a mapping",
                     format!("$.spec.{output_policy_key}.evaluation"),
                 ));
@@ -1872,7 +2103,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     )
                 }) {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidOutputEnforcementPoint",
+                        "GB1033",
                         format!("invalid output policy enforcement point {enforcement_point}"),
                         format!("$.spec.outputPolicy.evaluation.enforcementPoints[{index}]"),
                     ));
@@ -1881,19 +2112,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
 
             if before_client_delivery_index.is_none() {
                 diagnostics.push(Diagnostic::error(
-                    "OutputPolicyBypass",
+                    "GB1046",
                     "output policy enforcement must include the before_client_delivery gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             } else if on_generation_chunk_index.is_none() {
                 diagnostics.push(Diagnostic::error(
-                    "OutputPolicyBypass",
+                    "GB1046",
                     "output policy enforcement must include the on_generation_chunk gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             } else if before_output_commit_index.is_none() {
                 diagnostics.push(Diagnostic::error(
-                    "OutputPolicyBypass",
+                    "GB1046",
                     "output policy enforcement must include the before_output_commit gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
@@ -1904,25 +2135,25 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 && before_client_delivery_index < on_generation_chunk_index
             {
                 diagnostics.push(Diagnostic::error(
-                    "PolicyGateAfterDelivery",
+                    "GB1048",
                     "on_generation_chunk policy evaluation must precede before_client_delivery",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             }
         } else if enforcement_points_value.is_some() {
             diagnostics.push(Diagnostic::error(
-                "InvalidOutputEnforcementPoint",
+                "GB1033",
                 "output policy enforcementPoints must be a list of strings",
                 "$.spec.outputPolicy.evaluation.enforcementPoints",
             ));
             diagnostics.push(Diagnostic::error(
-                "OutputPolicyBypass",
+                "GB1046",
                 "output policy enforcement must include the before_client_delivery gate",
                 "$.spec.outputPolicy.evaluation.enforcementPoints",
             ));
         } else {
             diagnostics.push(Diagnostic::error(
-                "OutputPolicyBypass",
+                "GB1046",
                 "output policy enforcement must include the before_client_delivery gate",
                 "$.spec.outputPolicy.evaluation.enforcementPoints",
             ));
@@ -1935,7 +2166,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             Some(Value::Object(on_violation)) => Some(on_violation),
             Some(_) => {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidOutputPolicy",
+                    "GB1034",
                     "outputPolicy onViolation must be a mapping",
                     format!("$.spec.{output_policy_key}.onViolation"),
                 ));
@@ -1968,7 +2199,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .map(Value::to_string)
                     .unwrap_or_default();
                 diagnostics.push(Diagnostic::error(
-                    "InvalidOutputDisposition",
+                    "GB1031",
                     format!("invalid output disposition {invalid_disposition}"),
                     "$.spec.outputPolicy.onViolation.disposition",
                 ));
@@ -1985,7 +2216,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         })
                     {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidProviderCancellation",
+                            "GB1036",
                             format!("invalid provider cancellation {mode}"),
                             "$.spec.outputPolicy.onViolation.providerCancellation.mode",
                         ));
@@ -2000,7 +2231,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     })
                 {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidProviderCancellation",
+                        "GB1036",
                         format!("invalid provider cancellation {provider_cancellation}"),
                         "$.spec.outputPolicy.onViolation.providerCancellation",
                     ));
@@ -2023,7 +2254,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .map(Value::to_string)
                     .unwrap_or_default();
                 diagnostics.push(Diagnostic::error(
-                    "InvalidPendingToolCallsDisposition",
+                    "GB1035",
                     format!("invalid pending tool calls disposition {invalid_disposition}"),
                     "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
                 ));
@@ -2042,7 +2273,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     })
             {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidDraftDisposition",
+                    "GB1028",
                     format!("invalid draft disposition {delivered_draft_disposition}"),
                     "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
                 ));
@@ -2064,7 +2295,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .map(Value::to_string)
                     .unwrap_or_default();
                 diagnostics.push(Diagnostic::error(
-                    "InvalidOutputDurableResult",
+                    "GB1032",
                     format!("invalid output durable result {invalid_disposition}"),
                     "$.spec.outputPolicy.onViolation.durableResult.disposition",
                 ));
@@ -2081,7 +2312,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 if valid_pending_tool_calls_disposition && pending_tool_calls_disposition == "keep"
                 {
                     diagnostics.push(Diagnostic::error(
-                        "PendingToolCallAfterAbort",
+                        "GB1047",
                         "policy-aborted responses must deny or cancel pending tool calls",
                         "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
                     ));
@@ -2096,7 +2327,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .unwrap_or("none");
                 if valid_durable_result_disposition && durable_result_disposition != "none" {
                     diagnostics.push(Diagnostic::error(
-                        "CommitAfterPolicyStop",
+                        "GB1024",
                         "policy-stopped responses must not commit a durable result",
                         "$.spec.outputPolicy.onViolation.durableResult.disposition",
                     ));
@@ -2124,7 +2355,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             }
             Some((tool_execution_key, _)) => {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidToolExecution",
+                    "GB1041",
                     "toolExecution must be a mapping",
                     format!("$.spec.{tool_execution_key}"),
                 ));
@@ -2153,7 +2384,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     maximum_parallelism = configured_parallelism;
                 } else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution maximumParallelism must be a positive integer",
                         format!("$.spec.{tool_execution_key}.{maximum_parallelism_key}"),
                     ));
@@ -2177,7 +2408,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     parallel_tool_calls = configured_parallel_tool_calls;
                 } else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution parallelToolCalls must be a boolean",
                         format!("$.spec.{tool_execution_key}.{parallel_tool_calls_key}"),
                     ));
@@ -2210,7 +2441,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         }
                         if !has_effect_serialization_key {
                             diagnostics.push(Diagnostic::error(
-                                "InvalidToolExecution",
+                                "GB1041",
                                 "toolExecution effectSerialization keyTemplate must be a non-empty string",
                                 format!(
                                     "$.spec.{tool_execution_key}.{effect_serialization_key}.{key_template_key}"
@@ -2220,7 +2451,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     }
                 } else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolExecution",
+                        "GB1041",
                         "toolExecution effectSerialization must be a mapping",
                         format!("$.spec.{tool_execution_key}.{effect_serialization_key}"),
                     ));
@@ -2250,7 +2481,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         valid_effects.insert(effect.as_str());
                     } else {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolEffect",
+                            "GB1040",
                             format!("invalid tool effect {effect}"),
                             format!("$.spec.bindings.tools.{tool_key}.effects"),
                         ));
@@ -2275,7 +2506,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             continue;
                         }
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolEffect",
+                            "GB1040",
                             format!("invalid tool effect {effect}"),
                             format!("$.spec.bindings.tools.{tool_key}.effects[{effect_index}]"),
                         ));
@@ -2283,7 +2514,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
                 Some(_) => {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolEffect",
+                        "GB1040",
                         "tool effects must be a string or list of strings",
                         format!("$.spec.bindings.tools.{tool_key}.effects"),
                     ));
@@ -2292,7 +2523,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             };
             if valid_effects.contains("none") && valid_effects.len() > 1 {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidToolEffect",
+                    "GB1040",
                     "tool effect none cannot be combined with other effects",
                     format!("$.spec.bindings.tools.{tool_key}.effects"),
                 ));
@@ -2320,7 +2551,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                                 mode_value.map(Value::to_string).unwrap_or_default()
                             });
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolApproval",
+                            "GB1037",
                             format!("invalid tool approval {invalid_mode}"),
                             format!("$.spec.bindings.tools.{tool_key}.approval.mode"),
                         ));
@@ -2340,7 +2571,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     if valid_mode && matches!(mode, "policy" | "always") && !binds_arguments_digest
                     {
                         diagnostics.push(Diagnostic::error(
-                            "ApprovalWithoutArgumentDigest",
+                            "GB1023",
                             "explicit tool approval must be bound to immutable argument digest",
                             format!("$.spec.bindings.tools.{tool_key}.approval"),
                         ));
@@ -2348,20 +2579,20 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 } else if let Some(approval) = approval.as_str() {
                     if !matches!(approval, "never" | "policy" | "always") {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolApproval",
+                            "GB1037",
                             format!("invalid tool approval {approval}"),
                             format!("$.spec.bindings.tools.{tool_key}.approval"),
                         ));
                     } else if approval == "always" {
                         diagnostics.push(Diagnostic::error(
-                            "ApprovalWithoutArgumentDigest",
+                            "GB1023",
                             "explicit tool approval must be bound to immutable argument digest",
                             format!("$.spec.bindings.tools.{tool_key}.approval"),
                         ));
                     }
                 } else {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolApproval",
+                        "GB1037",
                         format!("invalid tool approval {approval}"),
                         format!("$.spec.bindings.tools.{tool_key}.approval"),
                     ));
@@ -2373,7 +2604,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 })
             {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidToolIdempotency",
+                    "GB1042",
                     format!("invalid tool idempotency {idempotency}"),
                     format!("$.spec.bindings.tools.{tool_key}.idempotency"),
                 ));
@@ -2387,7 +2618,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 })
             {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidToolCancellation",
+                    "GB1038",
                     format!("invalid tool cancellation {cancellation}"),
                     format!("$.spec.bindings.tools.{tool_key}.cancellation"),
                 ));
@@ -2408,7 +2639,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 })
             {
                 diagnostics.push(Diagnostic::error(
-                    "InvalidToolResultMode",
+                    "GB1043",
                     format!("invalid tool result mode {result_mode}"),
                     format!("$.spec.bindings.tools.{tool_key}.{result_mode_key}"),
                 ));
@@ -2421,7 +2652,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             let idempotency = tool.get("idempotency").and_then(Value::as_str);
             if state_changing_tool && has_retry_policy_ref && idempotency != Some("required") {
                 diagnostics.push(Diagnostic::error(
-                    "NonIdempotentRetry",
+                    "GB1045",
                     "retrying state-changing tool effects requires required idempotency",
                     format!("$.spec.bindings.tools.{tool_key}.idempotency"),
                 ));
@@ -2434,7 +2665,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         .is_none_or(|value| value.trim().is_empty())
                     {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolDefinition",
+                            "GB1039",
                             format!(
                                 "tool definition {definition_field} must be a non-empty string"
                             ),
@@ -2448,7 +2679,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     && version.as_str().is_none_or(|value| value.trim().is_empty())
                 {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidToolDefinition",
+                        "GB1039",
                         "tool definition version must be a non-empty string",
                         format!("$.spec.bindings.tools.{tool_key}.definition.version"),
                     ));
@@ -2458,7 +2689,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         for (tag_index, tag) in tags.iter().enumerate() {
                             if tag.as_str().is_none_or(|value| value.trim().is_empty()) {
                                 diagnostics.push(Diagnostic::error(
-                                    "InvalidToolDefinition",
+                                    "GB1039",
                                     "tool definition tags must be non-empty strings",
                                     format!(
                                         "$.spec.bindings.tools.{tool_key}.definition.tags[{tag_index}]"
@@ -2468,7 +2699,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         }
                     } else {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolDefinition",
+                            "GB1039",
                             "tool definition tags must be a list of non-empty strings",
                             format!("$.spec.bindings.tools.{tool_key}.definition.tags"),
                         ));
@@ -2477,7 +2708,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 for forbidden_field in FORBIDDEN_TOOL_DEFINITION_FIELDS {
                     if definition.contains_key(forbidden_field) {
                         diagnostics.push(Diagnostic::error(
-                            "InvalidToolDefinition",
+                            "GB1039",
                             format!(
                                 "tool definition must not contain execution detail {forbidden_field}"
                             ),
@@ -2493,7 +2724,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .and_then(Value::as_str);
                 if input_schema.is_none_or(|schema| schema.trim().is_empty()) {
                     diagnostics.push(Diagnostic::error(
-                        "ToolSchemaMissing",
+                        "GB1050",
                         "model-visible tool definitions require an input schema",
                         format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
                     ));
@@ -2501,7 +2732,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     && let Err(error) = SchemaId::parse(input_schema)
                 {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidSchemaId",
+                        "GB0015",
                         format!("tool input schema id is invalid: {error}"),
                         format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
                     ));
@@ -2515,14 +2746,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     && let Err(error) = SchemaId::parse(output_schema)
                 {
                     diagnostics.push(Diagnostic::error(
-                        "InvalidSchemaId",
+                        "GB0015",
                         format!("tool output schema id is invalid: {error}"),
                         format!("$.spec.bindings.tools.{tool_key}.definition.outputSchema"),
                     ));
                 }
             } else {
                 diagnostics.push(Diagnostic::error(
-                    "ToolSchemaMissing",
+                    "GB1050",
                     "model-visible tool definitions require an input schema",
                     format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
                 ));
@@ -2595,7 +2826,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     }
                     _ => {
                         diagnostics.push(Diagnostic::error(
-                            "ToolBindingMissing",
+                            "GB1049",
                             "tool implementation kind must be one of block, graph, remote, mcp, or openapi",
                             format!("$.spec.bindings.tools.{tool_key}.implementation.kind"),
                         ));
@@ -2604,7 +2835,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 };
                 if let Some(missing_implementation_field) = missing_implementation_field {
                     diagnostics.push(Diagnostic::error(
-                        "ToolBindingMissing",
+                        "GB1049",
                         format!(
                             "{} tool implementation requires {missing_implementation_field}",
                             implementation_kind.unwrap_or("unknown")
@@ -2616,7 +2847,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
             } else {
                 diagnostics.push(Diagnostic::error(
-                    "ToolBindingMissing",
+                    "GB1049",
                     "model-visible tools require an executable binding implementation",
                     format!("$.spec.bindings.tools.{tool_key}.implementation"),
                 ));
@@ -2628,7 +2859,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             && !has_effect_serialization_key
         {
             diagnostics.push(Diagnostic::error(
-                "UnsafeParallelEffects",
+                "GB1053",
                 "parallel state-changing tool execution requires an effect serialization key",
                 "$.spec.toolExecution.effectSerialization",
             ));
@@ -2667,7 +2898,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     && encoded.len() > max_inline_bytes
                 {
                     diagnostics.push(Diagnostic::error(
-                        "RemoteInlinePayloadTooLarge",
+                        "GB1055",
                         format!(
                             "remote inline payload is {} bytes, exceeding maxInlineBytes {}",
                             encoded.len(),
@@ -2854,6 +3085,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
     }
 
     if let Some(normalized_nodes) = normalized_nodes {
+        let empty_config = Value::Object(Map::new());
         let mut inbound_by_node = normalized_nodes
             .keys()
             .map(|node_name| (node_name.as_str(), BTreeSet::<String>::new()))
@@ -2908,7 +3140,12 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         {
                             if !nested {
                                 source_type = port.type_ref.as_deref();
-                                source_required = Some(port.required);
+                                let source_config = source_node
+                                    .get("config")
+                                    .filter(|config| config.is_object())
+                                    .unwrap_or(&empty_config);
+                                source_required =
+                                    Some(port.required_for(source_config, ExecutionPhase::Initial));
                             }
                         } else {
                             diagnostics.push(Diagnostic::error(
@@ -3010,6 +3247,30 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
                 continue;
             };
+            let config = node.get("config").unwrap_or(&empty_config);
+            let validator = jsonschema::draft202012::new(&descriptor.config_schema)
+                .expect("block catalog configSchema was validated when constructed");
+            let mut config_errors = validator
+                .iter_errors(config)
+                .map(|error| {
+                    (
+                        error.instance_path().as_str().to_owned(),
+                        error.schema_path().as_str().to_owned(),
+                        error.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            config_errors.sort();
+            for (instance_path, _, message) in config_errors {
+                diagnostics.push(Diagnostic::error(
+                    "GB2019",
+                    format!(
+                        "node config does not satisfy {} configSchema: {message}",
+                        descriptor.block_id()
+                    ),
+                    config_diagnostic_path(node_name, &instance_path),
+                ));
+            }
             if !descriptor.resource_slots.is_empty() {
                 let bindings = node.get("bindings");
                 let mut bindings_object = bindings.and_then(Value::as_object);
@@ -3376,7 +3637,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             .unwrap_or_default();
         if has_declared_output && output_edges.is_empty() {
             diagnostics.push(Diagnostic::warning(
-                "GB1003",
+                "GB1004",
                 "graph declares outputs but no edge writes to $output",
                 "$.spec.interface.outputs",
             ));
@@ -3439,9 +3700,68 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
     }
 
+    prepend_schema_diagnostics(&mut diagnostics, &schema_violations);
     Plan {
         graph_hash: canonical_hash(&normalized),
         normalized,
         diagnostics,
     }
+}
+
+fn prepend_schema_diagnostics(
+    diagnostics: &mut Vec<Diagnostic>,
+    schema_violations: &[ResourceSchemaViolation],
+) {
+    let mut schema_diagnostics = schema_violations
+        .iter()
+        .filter(|violation| {
+            (violation.keyword == "additionalProperties" && violation.path == "$")
+                || !diagnostics.iter().any(|diagnostic| {
+                    diagnostic.path == violation.path
+                        || diagnostic.path.starts_with(&format!("{}.", violation.path))
+                        || diagnostic.path.starts_with(&format!("{}[", violation.path))
+                        || violation.path.starts_with(&format!("{}.", diagnostic.path))
+                        || violation.path.starts_with(&format!("{}[", diagnostic.path))
+                })
+        })
+        .map(|violation| {
+            Diagnostic::error(
+                violation.code.clone(),
+                violation.message.clone(),
+                violation.path.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    schema_diagnostics.append(diagnostics);
+    *diagnostics = schema_diagnostics;
+}
+
+fn config_diagnostic_path(node_name: &str, pointer: &str) -> String {
+    let mut path = format!("$.spec.nodes.{node_name}.config");
+    for encoded in pointer.strip_prefix('/').unwrap_or(pointer).split('/') {
+        if encoded.is_empty() {
+            continue;
+        }
+        let segment = encoded.replace("~1", "/").replace("~0", "~");
+        if segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            && segment
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        {
+            path.push('.');
+            path.push_str(&segment);
+        } else if segment.bytes().all(|byte| byte.is_ascii_digit()) {
+            path.push('[');
+            path.push_str(&segment);
+            path.push(']');
+        } else {
+            path.push('[');
+            path.push_str(&serde_json::to_string(&segment).expect("string JSON serialization"));
+            path.push(']');
+        }
+    }
+    path
 }

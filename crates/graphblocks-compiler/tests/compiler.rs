@@ -1,4 +1,7 @@
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, ExecutionPhase, compile_graph, compile_graph_for_discovery,
+    compile_graph_with_catalog,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use serde_json::json;
@@ -21,13 +24,89 @@ fn compile_graph_returns_normalized_plan_hash() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(plan.ok());
     assert_eq!(
         plan.graph_hash,
-        "sha256:0b2636678ee1af1446500624da2f5db0dab238aceb858058a6f3b60f9e06f3a8"
+        "sha256:41e285b218c0dccac9a67b701dfc08a4fb74c064a96247088e599a76e5dcb516"
     );
+}
+
+#[test]
+fn compile_graph_rejects_undeclared_blocks_by_default() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-block"},
+        "spec": {
+            "nodes": {
+                "unknown": {"block": "test.unknown@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1022"]
+    );
+}
+
+#[test]
+fn compile_graph_for_discovery_explicitly_allows_undeclared_blocks() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-block"},
+        "spec": {
+            "nodes": {
+                "unknown": {"block": "test.unknown@1"}
+            }
+        }
+    });
+
+    assert!(compile_graph_for_discovery(&graph).ok());
+}
+
+#[test]
+fn explicitly_open_catalog_still_validates_declared_blocks() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [{"name": "text", "type": "graphblocks.ai/Text@1"}]
+        }
+    ]))?
+    .with_unknown_blocks_allowed();
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "open-catalog"},
+        "spec": {
+            "nodes": {
+                "known": {"block": "text.sink@1"},
+                "unknown": {"block": "test.unknown@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1003"]
+    );
+    Ok(())
 }
 
 #[test]
@@ -38,7 +117,7 @@ fn compile_graph_reports_non_graph_documents() {
         "metadata": {"name": "app"}
     });
 
-    let plan = compile_graph(&document);
+    let plan = compile_graph_for_discovery(&document);
 
     assert!(!plan.ok());
     assert_eq!(plan.diagnostics[0].code, "GB0001");
@@ -53,7 +132,7 @@ fn compile_graph_requires_metadata_name() {
         "spec": {"nodes": {}}
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(!plan.ok());
     assert_eq!(plan.diagnostics[0].code, "GB0003");
@@ -75,7 +154,7 @@ fn compile_graph_rejects_unexpanded_composition_and_slot() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
     let error_codes = plan
         .diagnostics
         .iter()
@@ -83,10 +162,7 @@ fn compile_graph_rejects_unexpanded_composition_and_slot() {
         .map(|diagnostic| diagnostic.code.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        error_codes,
-        vec!["UnexpandedComposition", "UnexpandedComposition"]
-    );
+    assert_eq!(error_codes, vec!["GB1052", "GB1052"]);
 }
 
 #[test]
@@ -104,6 +180,80 @@ fn block_catalog_rejects_invalid_descriptor_schema_ids() {
                 .to_owned()
         ),
     );
+}
+
+#[test]
+fn block_catalog_retains_and_enforces_config_schema() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.configured",
+        "version": 1,
+        "configSchema": {
+            "type": "object",
+            "properties": {"allowed": {"type": "string"}},
+            "additionalProperties": false
+        }
+    }]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "config-schema"},
+        "spec": {
+            "nodes": {
+                "configured": {
+                    "block": "test.configured@1",
+                    "config": {"typo": "ignored"}
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(plan.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "GB2019"
+            && diagnostic.path == "$.spec.nodes.configured.config"
+            && diagnostic
+                .message
+                .contains("test.configured@1 configSchema")
+    }));
+    Ok(())
+}
+
+#[test]
+fn block_catalog_rejects_invalid_or_external_config_schemas() {
+    for schema in [
+        json!({"type": "not-a-json-type"}),
+        json!({"$ref": ""}),
+        json!({"$ref": "file:///tmp/graphblocks-config.schema.json"}),
+        json!({"$dynamicRef": "https://example.invalid/config.schema.json"}),
+    ] {
+        let error = BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.configured",
+            "version": 1,
+            "configSchema": schema
+        }]))
+        .expect_err("invalid config schema must be rejected");
+        assert!(error.contains("configSchema"), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn required_when_pointer_limit_counts_unicode_characters() -> Result<(), String> {
+    let pointer = format!("/{}", "😀".repeat(128));
+    let catalog = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.unicode-pointer",
+        "version": 1,
+        "outputs": [{
+            "name": "value",
+            "required": false,
+            "requiredWhen": {
+                "configEquals": {"pointer": pointer, "value": true}
+            }
+        }]
+    }]))?;
+
+    assert!(catalog.get("test.unicode-pointer@1").is_some());
+    Ok(())
 }
 
 #[test]
@@ -327,18 +477,82 @@ fn compile_graph_migrates_legacy_graph_api_versions() {
         "spec": {"nodes": {}}
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(plan.ok());
     assert_eq!(
         plan.graph_hash,
-        "sha256:938ea0b58b94b431fef6780b98eb8434575a699a74a417688072dbefff3ae324"
+        "sha256:d904303e2f3c52b6eaa405336f8f78670b9e8c1d6ab8fafc42ea1b537d409041"
     );
     assert_eq!(
         plan.normalized
             .pointer("/metadata/annotations/graphblocks.ai~1migratedFrom")
             .and_then(serde_json::Value::as_str),
         Some("graphblocks.ai/v1alpha2")
+    );
+}
+
+#[test]
+fn compile_graph_migrates_every_alpha_and_overwrites_untrusted_provenance() {
+    for api_version in [
+        "graphblocks.ai/v1alpha1",
+        "graphblocks.ai/v1alpha2",
+        "graphblocks.ai/v1alpha3",
+    ] {
+        let graph = json!({
+            "apiVersion": api_version,
+            "kind": "Graph",
+            "metadata": {
+                "name": "legacy",
+                "annotations": {
+                    "graphblocks.ai/migratedFrom": "graphblocks.ai/v0"
+                }
+            },
+            "spec": {"nodes": {}}
+        });
+
+        let plan = compile_graph_for_discovery(&graph);
+
+        assert!(plan.ok(), "{api_version}: {:?}", plan.diagnostics);
+        assert_eq!(
+            plan.normalized
+                .get("apiVersion")
+                .and_then(serde_json::Value::as_str),
+            Some(GRAPH_API_VERSION),
+        );
+        assert_eq!(
+            plan.normalized
+                .pointer("/metadata/annotations/graphblocks.ai~1migratedFrom")
+                .and_then(serde_json::Value::as_str),
+            Some(api_version),
+        );
+    }
+}
+
+#[test]
+fn compile_graph_does_not_relabel_unknown_stable_versions() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v2",
+        "kind": "Graph",
+        "metadata": {"name": "future"},
+        "spec": {"nodes": {}}
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    assert_eq!(
+        plan.normalized
+            .get("apiVersion")
+            .and_then(serde_json::Value::as_str),
+        Some("graphblocks.ai/v2"),
+    );
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB0002"],
     );
 }
 
@@ -354,7 +568,7 @@ fn compile_graph_reports_unknown_edge_endpoint() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(!plan.ok());
     assert_eq!(
@@ -381,7 +595,7 @@ fn compile_graph_warns_for_dead_nodes_when_outputs_are_declared() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(plan.ok());
     assert_eq!(
@@ -391,6 +605,35 @@ fn compile_graph_warns_for_dead_nodes_when_outputs_are_declared() {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
         vec!["GB1001"]
+    );
+}
+
+#[test]
+fn compile_graph_warns_when_declared_outputs_have_no_writer() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "declared-output"},
+        "spec": {
+            "interface": {
+                "inputs": {"value": "graphblocks.ai/Text@1"},
+                "outputs": {"value": "graphblocks.ai/Text@1"}
+            },
+            "nodes": {},
+            "edges": []
+        }
+    });
+
+    let plan = compile_graph_for_discovery(&graph);
+
+    assert!(plan.ok());
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Warning)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1004"]
     );
 }
 
@@ -590,7 +833,7 @@ fn compile_graph_reports_async_callback_amendment_diagnostics() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -632,7 +875,7 @@ fn compile_graph_rejects_alternate_numeric_callback_webhook_loopback_host() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -676,7 +919,7 @@ fn compile_graph_rejects_invalid_callback_webhook_host_syntax() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -722,7 +965,7 @@ fn compile_graph_rejects_mapped_compatible_and_reserved_callback_hosts() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -764,7 +1007,7 @@ fn compile_graph_allows_mandatory_callback_fallback_policy() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
     let error_codes = plan
         .diagnostics
         .iter()
@@ -803,7 +1046,7 @@ fn compile_graph_reports_async_poll_operation_without_timeout() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -842,7 +1085,7 @@ fn compile_graph_reports_async_poll_operation_with_zero_timeout() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -882,7 +1125,7 @@ fn compile_graph_reports_async_poll_operation_with_invalid_string_timeout() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -925,7 +1168,7 @@ fn compile_graph_reports_async_poll_operation_with_invalid_interval_durations() 
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -933,7 +1176,7 @@ fn compile_graph_reports_async_poll_operation_with_invalid_interval_durations() 
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["InvalidAsyncOperation"],
+            vec!["GB1026"],
             "{field}={value:?} should be rejected before runtime execution"
         );
     }
@@ -971,7 +1214,7 @@ fn compile_graph_rejects_async_operation_with_callback_and_polling_refs() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -979,7 +1222,7 @@ fn compile_graph_rejects_async_operation_with_callback_and_polling_refs() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidAsyncOperation"]
+        vec!["GB1026"]
     );
 }
 
@@ -1011,7 +1254,7 @@ fn compile_graph_reports_async_await_callback_with_unknown_on_timeout_policy() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -1019,7 +1262,7 @@ fn compile_graph_reports_async_await_callback_with_unknown_on_timeout_policy() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidAsyncOperation"]
+        vec!["GB1026"]
     );
 }
 
@@ -1220,7 +1463,7 @@ fn compile_graph_rejects_unknown_nested_graph_interface_ports() -> Result<(), St
     });
 
     for plan in [
-        compile_graph(&graph),
+        compile_graph_for_discovery(&graph),
         compile_graph_with_catalog(&graph, &catalog),
     ] {
         let errors = plan
@@ -1334,7 +1577,7 @@ fn compile_graph_rejects_graph_interface_pseudo_nodes_in_wrong_direction() -> Re
     });
 
     for plan in [
-        compile_graph(&graph),
+        compile_graph_for_discovery(&graph),
         compile_graph_with_catalog(&graph, &catalog),
     ] {
         let errors = plan
@@ -1543,6 +1786,94 @@ fn compile_graph_rejects_optional_output_to_required_input() -> Result<(), Strin
 }
 
 #[test]
+fn output_requiredness_predicates_evaluate_config_and_phase() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "branch.conditional",
+            "version": 1,
+            "outputs": [
+                {
+                    "name": "value",
+                    "required": false,
+                    "requiredWhen": {
+                        "all": [
+                            {
+                                "configEquals": {
+                                    "pointer": "/policy/on~1error",
+                                    "value": "collect"
+                                }
+                            },
+                            {"not": {"phase": "initial"}}
+                        ]
+                    }
+                }
+            ]
+        }
+    ]))?;
+    let descriptor = catalog
+        .get("branch.conditional@1")
+        .ok_or_else(|| "missing conditional descriptor".to_owned())?;
+    let output = descriptor
+        .outputs
+        .first()
+        .ok_or_else(|| "missing conditional output".to_owned())?;
+    let config = json!({"policy": {"on/error": "collect"}});
+
+    assert!(!output.required_for(&config, ExecutionPhase::Initial));
+    assert!(output.required_for(&config, ExecutionPhase::Resumed));
+    Ok(())
+}
+
+#[test]
+fn block_catalog_rejects_invalid_output_requiredness_predicates() {
+    let mut too_deep = json!({"phase": "initial"});
+    for _ in 0..16 {
+        too_deep = json!({"not": too_deep});
+    }
+    for required_when in [
+        json!({}),
+        json!({"phase": "finished"}),
+        json!({"configEquals": {"pointer": "onError", "value": "collect"}}),
+        json!({"configEquals": {"pointer": "/bad~2escape", "value": "collect"}}),
+        json!({"all": []}),
+        json!({"all": vec![json!({"phase": "initial"}); 17]}),
+        json!({"phase": "initial", "not": {"phase": "resumed"}}),
+        too_deep,
+    ] {
+        let error = BlockCatalog::from_blocks(&json!([
+            {
+                "typeId": "branch.invalid",
+                "version": 1,
+                "outputs": [
+                    {"name": "value", "required": false, "requiredWhen": required_when}
+                ]
+            }
+        ]))
+        .expect_err("invalid requiredWhen must fail catalog construction");
+        assert!(error.contains("invalid requiredWhen"), "{error}");
+    }
+}
+
+#[test]
+fn block_catalog_rejects_required_when_on_input() {
+    let error = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "branch.invalid-input",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "requiredWhen": {"phase": "resumed"}}
+            ]
+        }
+    ]))
+    .expect_err("input requiredWhen must fail catalog construction");
+
+    assert!(
+        error.contains("input value must not declare requiredWhen"),
+        "{error}"
+    );
+}
+
+#[test]
 fn compile_graph_rejects_optional_block_output_to_graph_output() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
@@ -1732,7 +2063,7 @@ fn compile_graph_rejects_effect_retry_without_idempotency_key() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -1771,7 +2102,7 @@ fn compile_graph_rejects_invalid_node_timeout() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -1801,7 +2132,7 @@ fn compile_graph_accepts_positive_finite_node_timeout() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert!(
             !plan
@@ -1841,7 +2172,7 @@ fn compile_graph_rejects_effect_retry_with_invalid_idempotency_key() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert!(plan.diagnostics.iter().any(|diagnostic| {
             diagnostic.severity == Severity::Error && diagnostic.code == "GB1011"
@@ -1867,7 +2198,7 @@ fn compile_graph_does_not_coerce_non_numeric_effect_retry_attempts() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert!(!plan.diagnostics.iter().any(|diagnostic| {
             diagnostic.severity == Severity::Error && diagnostic.code == "GB1011"
@@ -1892,7 +2223,7 @@ fn compile_graph_allows_effect_retry_with_idempotency_key() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(
         !plan
@@ -1932,21 +2263,18 @@ fn compile_graph_reports_malformed_output_policy_structure() {
         }
     });
     let cases = [
-        (
-            json!({"spec": {"outputPolicy": "strict"}}),
-            vec!["InvalidOutputPolicy"],
-        ),
+        (json!({"spec": {"outputPolicy": "strict"}}), vec!["GB1034"]),
         (
             json!({"spec": {"outputPolicy": {"delivery": "bounded"}}}),
-            vec!["InvalidOutputPolicy", "OutputPolicyBypass"],
+            vec!["GB1034", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {"evaluation": "mandatory"}}}),
-            vec!["InvalidOutputPolicy", "OutputPolicyBypass"],
+            vec!["GB1034", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {"evaluation": {"enforcementPoints": "before_client_delivery"}}}}),
-            vec!["InvalidOutputEnforcementPoint", "OutputPolicyBypass"],
+            vec!["GB1033", "GB1046"],
         ),
         (
             json!({"spec": {"outputPolicy": {
@@ -1957,7 +2285,7 @@ fn compile_graph_reports_malformed_output_policy_structure() {
                 ]},
                 "onViolation": "abort_response"
             }}}),
-            vec!["InvalidOutputPolicy"],
+            vec!["GB1034"],
         ),
     ];
 
@@ -1971,7 +2299,7 @@ fn compile_graph_reports_malformed_output_policy_structure() {
             graph_object.insert(key.clone(), value.clone());
         }
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -2003,7 +2331,7 @@ fn compile_graph_rejects_unbounded_output_holdback() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2011,7 +2339,7 @@ fn compile_graph_rejects_unbounded_output_holdback() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+        vec!["GB1051", "GB1046"]
     );
 }
 
@@ -2035,7 +2363,7 @@ fn compile_graph_rejects_boolean_output_holdback_bound() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2043,7 +2371,7 @@ fn compile_graph_rejects_boolean_output_holdback_bound() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+        vec!["GB1051", "GB1046"]
     );
 }
 
@@ -2067,7 +2395,7 @@ fn compile_graph_rejects_invalid_output_holdback_duration() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2075,7 +2403,7 @@ fn compile_graph_rejects_invalid_output_holdback_duration() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+        vec!["GB1051", "GB1046"]
     );
 }
 
@@ -2099,7 +2427,7 @@ fn compile_graph_rejects_holdback_limits_without_holdback_mode() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2107,7 +2435,7 @@ fn compile_graph_rejects_holdback_limits_without_holdback_mode() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["HoldbackLimitWithoutHoldback", "OutputPolicyBypass"]
+        vec!["GB1054", "GB1046"]
     );
 }
 
@@ -2131,7 +2459,7 @@ fn compile_graph_rejects_immediate_draft_without_retraction_support() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2139,10 +2467,7 @@ fn compile_graph_rejects_immediate_draft_without_retraction_support() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "ImmediateDraftWithoutRetractionSupport",
-            "OutputPolicyBypass"
-        ]
+        vec!["GB1025", "GB1046"]
     );
 }
 
@@ -2166,12 +2491,14 @@ fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
-    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
-        diagnostic.code.as_str(),
-        "UnboundedPolicyHoldback" | "ImmediateDraftWithoutRetractionSupport"
-    )));
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code.as_str(), "GB1051" | "GB1025"))
+    );
 }
 
 #[test]
@@ -2200,7 +2527,7 @@ fn compile_graph_rejects_output_policy_without_client_delivery_gate() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2208,7 +2535,7 @@ fn compile_graph_rejects_output_policy_without_client_delivery_gate() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["OutputPolicyBypass"]
+        vec!["GB1046"]
     );
 }
 
@@ -2238,7 +2565,7 @@ fn compile_graph_rejects_output_policy_without_commit_gate() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2246,7 +2573,7 @@ fn compile_graph_rejects_output_policy_without_commit_gate() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["OutputPolicyBypass"]
+        vec!["GB1046"]
     );
 }
 
@@ -2277,7 +2604,7 @@ fn compile_graph_rejects_output_policy_gate_after_delivery() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2285,7 +2612,7 @@ fn compile_graph_rejects_output_policy_gate_after_delivery() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["PolicyGateAfterDelivery"]
+        vec!["GB1048"]
     );
 }
 
@@ -2316,12 +2643,14 @@ fn compile_graph_allows_output_policy_gate_before_delivery() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
-    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
-        diagnostic.code.as_str(),
-        "OutputPolicyBypass" | "PolicyGateAfterDelivery"
-    )));
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code.as_str(), "GB1046" | "GB1048"))
+    );
 }
 
 #[test]
@@ -2360,7 +2689,7 @@ fn compile_graph_rejects_pending_tool_calls_after_policy_abort() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2368,7 +2697,7 @@ fn compile_graph_rejects_pending_tool_calls_after_policy_abort() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["PendingToolCallAfterAbort"]
+        vec!["GB1047"]
     );
 }
 
@@ -2408,7 +2737,7 @@ fn compile_graph_rejects_durable_commit_after_policy_stop() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2416,7 +2745,7 @@ fn compile_graph_rejects_durable_commit_after_policy_stop() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["CommitAfterPolicyStop"]
+        vec!["GB1024"]
     );
 }
 
@@ -2464,7 +2793,7 @@ fn compile_graph_reports_invalid_output_policy_literals() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2473,15 +2802,8 @@ fn compile_graph_reports_invalid_output_policy_literals() {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "InvalidOutputDeliveryMode",
-            "InvalidViolationAction",
-            "InvalidFlushBoundary",
-            "InvalidOutputEnforcementPoint",
-            "InvalidOutputDisposition",
-            "InvalidProviderCancellation",
-            "InvalidPendingToolCallsDisposition",
-            "InvalidDraftDisposition",
-            "InvalidOutputDurableResult"
+            "GB1030", "GB1044", "GB1029", "GB1033", "GB1031", "GB1036", "GB1035", "GB1028",
+            "GB1032"
         ]
     );
 }
@@ -2522,12 +2844,14 @@ fn compile_graph_allows_safe_policy_abort_cleanup_settings() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
-    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
-        diagnostic.code.as_str(),
-        "PendingToolCallAfterAbort" | "CommitAfterPolicyStop"
-    )));
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code.as_str(), "GB1047" | "GB1024"))
+    );
 }
 
 #[test]
@@ -2554,7 +2878,7 @@ fn compile_graph_reports_model_visible_tool_without_binding() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2562,7 +2886,7 @@ fn compile_graph_reports_model_visible_tool_without_binding() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["ToolBindingMissing"]
+        vec!["GB1049"]
     );
 }
 
@@ -2593,7 +2917,7 @@ fn compile_graph_reports_tool_definition_without_input_schema() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2601,7 +2925,7 @@ fn compile_graph_reports_tool_definition_without_input_schema() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["ToolSchemaMissing"]
+        vec!["GB1050"]
     );
 }
 
@@ -2687,7 +3011,7 @@ fn compile_graph_reports_malformed_tool_implementation_bindings() {
         unknown_kind,
         missing_openapi_operation,
     ] {
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -2695,7 +3019,7 @@ fn compile_graph_reports_malformed_tool_implementation_bindings() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["ToolBindingMissing"]
+            vec!["GB1049"]
         );
     }
 }
@@ -2811,7 +3135,7 @@ fn compile_graph_reports_malformed_tool_definition_identity_fields() {
         blank_version,
         non_string_tag,
     ] {
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -2819,7 +3143,7 @@ fn compile_graph_reports_malformed_tool_definition_identity_fields() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["InvalidToolDefinition"]
+            vec!["GB1039"]
         );
     }
 }
@@ -2854,7 +3178,7 @@ fn compile_graph_rejects_forbidden_tool_definition_execution_details() {
             }
         }
     });
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2862,11 +3186,7 @@ fn compile_graph_rejects_forbidden_tool_definition_execution_details() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "InvalidToolDefinition",
-            "InvalidToolDefinition",
-            "InvalidToolDefinition"
-        ]
+        vec!["GB1039", "GB1039", "GB1039"]
     );
 }
 
@@ -2898,7 +3218,7 @@ fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2906,7 +3226,7 @@ fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidSchemaId"]
+        vec!["GB0015"]
     );
 }
 
@@ -2925,7 +3245,7 @@ fn compile_graph_reports_invalid_interface_schema_ids() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -2933,7 +3253,7 @@ fn compile_graph_reports_invalid_interface_schema_ids() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidSchemaId", "InvalidSchemaId"]
+        vec!["GB0015", "GB0015"]
     );
 }
 
@@ -2965,12 +3285,14 @@ fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
-    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
-        diagnostic.code.as_str(),
-        "ToolBindingMissing" | "ToolSchemaMissing"
-    )));
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code.as_str(), "GB1049" | "GB1050"))
+    );
 }
 
 #[test]
@@ -3003,7 +3325,7 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3011,7 +3333,7 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidToolEffect"]
+        vec!["GB1040"]
     );
 
     let conflicting_none = json!({
@@ -3042,7 +3364,7 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
         }
     });
 
-    let conflicting_plan = compile_graph(&conflicting_none);
+    let conflicting_plan = compile_graph_for_discovery(&conflicting_none);
 
     assert_eq!(
         conflicting_plan
@@ -3051,7 +3373,7 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["InvalidToolEffect"]
+        vec!["GB1040"]
     );
 }
 
@@ -3089,7 +3411,7 @@ fn compile_graph_reports_invalid_tool_binding_literals() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3097,12 +3419,7 @@ fn compile_graph_reports_invalid_tool_binding_literals() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "InvalidToolApproval",
-            "InvalidToolIdempotency",
-            "InvalidToolCancellation",
-            "InvalidToolResultMode"
-        ]
+        vec!["GB1037", "GB1042", "GB1038", "GB1043"]
     );
 }
 
@@ -3146,7 +3463,7 @@ fn compile_graph_reports_invalid_tool_execution_settings() {
             }
         });
 
-        let plan = compile_graph(&graph);
+        let plan = compile_graph_for_discovery(&graph);
 
         assert_eq!(
             plan.diagnostics
@@ -3154,7 +3471,7 @@ fn compile_graph_reports_invalid_tool_execution_settings() {
                 .filter(|diagnostic| diagnostic.severity == Severity::Error)
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["InvalidToolExecution"]
+            vec!["GB1041"]
         );
     }
 }
@@ -3193,7 +3510,7 @@ fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serializat
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3201,7 +3518,7 @@ fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serializat
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["UnsafeParallelEffects"]
+        vec!["GB1053"]
     );
 }
 
@@ -3242,13 +3559,13 @@ fn compile_graph_allows_parallel_state_changing_tools_with_effect_serialization(
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(
         !plan
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "UnsafeParallelEffects")
+            .any(|diagnostic| diagnostic.code == "GB1053")
     );
 }
 
@@ -3283,7 +3600,7 @@ fn compile_graph_rejects_retried_write_tool_without_required_idempotency() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3291,7 +3608,7 @@ fn compile_graph_rejects_retried_write_tool_without_required_idempotency() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["NonIdempotentRetry"]
+        vec!["GB1045"]
     );
 }
 
@@ -3327,13 +3644,13 @@ fn compile_graph_allows_retried_write_tool_with_required_idempotency() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(
         !plan
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "NonIdempotentRetry")
+            .any(|diagnostic| diagnostic.code == "GB1045")
     );
 }
 
@@ -3371,7 +3688,7 @@ fn compile_graph_rejects_explicit_tool_approval_without_argument_digest_binding(
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3379,7 +3696,7 @@ fn compile_graph_rejects_explicit_tool_approval_without_argument_digest_binding(
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["ApprovalWithoutArgumentDigest"]
+        vec!["GB1023"]
     );
 }
 
@@ -3414,7 +3731,7 @@ fn compile_graph_rejects_string_tool_approval_without_argument_digest_binding() 
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3422,7 +3739,7 @@ fn compile_graph_rejects_string_tool_approval_without_argument_digest_binding() 
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["ApprovalWithoutArgumentDigest"]
+        vec!["GB1023"]
     );
 }
 
@@ -3461,13 +3778,13 @@ fn compile_graph_allows_explicit_tool_approval_bound_to_argument_digest() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(
         !plan
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "ApprovalWithoutArgumentDigest")
+            .any(|diagnostic| diagnostic.code == "GB1023")
     );
 }
 
@@ -3494,7 +3811,7 @@ fn compile_graph_rejects_oversized_remote_inline_payload() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert_eq!(
         plan.diagnostics
@@ -3502,7 +3819,7 @@ fn compile_graph_rejects_oversized_remote_inline_payload() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["RemoteInlinePayloadTooLarge"]
+        vec!["GB1055"]
     );
 }
 
@@ -3532,12 +3849,12 @@ fn compile_graph_allows_large_remote_payload_by_artifact_reference() {
         }
     });
 
-    let plan = compile_graph(&graph);
+    let plan = compile_graph_for_discovery(&graph);
 
     assert!(
         !plan
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "RemoteInlinePayloadTooLarge")
+            .any(|diagnostic| diagnostic.code == "GB1055")
     );
 }

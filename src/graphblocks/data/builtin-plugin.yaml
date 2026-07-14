@@ -1,4 +1,4 @@
-apiVersion: graphblocks.ai/v1alpha1
+apiVersion: graphblocks.ai/v1
 kind: PluginManifest
 metadata:
   name: io.graphblocks.stdlib
@@ -15,6 +15,12 @@ spec:
       version: 1
       role: transform
       implementation: graphblocks.stdlib.prompt.render
+      capabilities: []
+      configSchema:
+        type: object
+        properties:
+          template: {type: string}
+        additionalProperties: false
       inputs:
         - {name: message, type: graphblocks.ai/Message@1}
       outputs:
@@ -23,6 +29,14 @@ spec:
       version: 1
       role: model
       implementation: graphblocks.stdlib.scripted_model.generate
+      capabilities: []
+      configSchema:
+        type: object
+        properties:
+          script:
+            type: object
+          response: {}
+        additionalProperties: false
       inputs:
         - {name: prompt, type: graphblocks.ai/Prompt@1, required: false}
         - {name: context, type: graphblocks.ai/ContextPack@1, required: false}
@@ -34,6 +48,8 @@ spec:
       version: 1
       role: model
       implementation: graphblocks.stdlib.model.structured_generate
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: response, type: Any, required: false}
         - {name: diagnosis, type: Any, required: false}
@@ -57,6 +73,8 @@ spec:
       version: 1
       role: builder
       implementation: graphblocks.stdlib.tools.resolve
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: principal, type: graphblocks.ai/Principal@1, required: false}
         - {name: conversation, type: graphblocks.ai/ConversationSnapshot@1, required: false}
@@ -67,6 +85,8 @@ spec:
       version: 1
       role: agent
       implementation: graphblocks.stdlib.agent.run
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: messages, type: graphblocks.ai/Messages@1, required: false}
         - {name: tools, type: graphblocks.ai/ResolvedTools@1, required: false}
@@ -84,6 +104,8 @@ spec:
       version: 1
       role: transform
       implementation: graphblocks.stdlib.conversation.begin_turn
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: conversationId, type: graphblocks.ai/ConversationId@1, required: false}
         - {name: conversation, type: graphblocks.conversation/ConversationRef@1, required: false}
@@ -97,6 +119,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.conversation.commit_turn
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: transaction, type: graphblocks.ai/ConversationTransaction@1, required: false}
         - {name: candidate, type: Any, required: false}
@@ -109,6 +133,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.conversation.policy_stop_turn
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
       outputs:
@@ -118,6 +144,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.async.start_operation
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: subject, type: Any, required: false}
         - {name: changeset, type: Any, required: false}
@@ -127,16 +155,26 @@ spec:
       version: 1
       role: control
       implementation: graphblocks.stdlib.async.await_callback
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: operation, type: graphblocks.ai/AsyncOperation@1}
       outputs:
         - {name: wait, type: graphblocks.ai/AsyncWait@1}
-        - {name: callback, type: Any, required: false}
-        - {name: operation, type: graphblocks.ai/AsyncOperation@1, required: false}
+        - name: callback
+          type: Any
+          required: false
+          requiredWhen: {phase: resumed}
+        - name: operation
+          type: graphblocks.ai/AsyncOperation@1
+          required: false
+          requiredWhen: {phase: resumed}
     - typeId: async.poll_operation
       version: 1
       role: control
       implementation: graphblocks.stdlib.async.poll_operation
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: operation, type: graphblocks.ai/AsyncOperation@1}
       outputs:
@@ -145,6 +183,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.async.complete_operation
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: operation, type: graphblocks.ai/AsyncOperation@1}
         - {name: output, type: Any, required: false}
@@ -154,6 +194,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.async.cancel_operation
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: operation, type: graphblocks.ai/AsyncOperation@1}
       outputs:
@@ -162,6 +204,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.async.expire_operation
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: operation, type: graphblocks.ai/AsyncOperation@1}
       outputs:
@@ -170,15 +214,56 @@ spec:
       version: 2
       role: control
       implementation: graphblocks.stdlib.control.map
+      capabilities: []
+      configSchema:
+        type: object
+        properties:
+          block:
+            type: string
+            pattern: "^\\S+@[1-9][0-9]*$"
+          graph: {type: string, minLength: 1}
+          inputName: {type: string, minLength: 1}
+          outputName: {type: string, minLength: 1}
+          config: {type: object}
+          itemKey: {type: string, minLength: 1}
+          concurrency: {type: integer, minimum: 1}
+          stateIsolation: {enum: [item, shared]}
+          checkpoint: {type: string, minLength: 1}
+          onError: {enum: [fail_fast, collect]}
+          batch:
+            type: object
+            properties:
+              maxItems: {type: integer, minimum: 1}
+              maxBytes: {type: integer, minimum: 1}
+              maxWait: {type: string, minLength: 1}
+            additionalProperties: false
+        anyOf:
+          - required: [block]
+          - required: [graph]
+        additionalProperties: false
       inputs:
         - {name: items, type: graphblocks.ai/Items@1}
       outputs:
         - {name: values, type: graphblocks.ai/Values@1}
-        - {name: outcomes, type: graphblocks.ai/Outcomes@1, required: false}
+        - name: outcomes
+          type: graphblocks.ai/Outcomes@1
+          required: false
+          requiredWhen:
+            configEquals: {pointer: /onError, value: collect}
     - typeId: control.select
       version: 1
       role: control
       implementation: graphblocks.stdlib.control.select
+      capabilities: []
+      configSchema:
+        type: object
+        properties:
+          order:
+            type: array
+            items: {type: string}
+            uniqueItems: true
+          default: {}
+        additionalProperties: false
       inputs:
         - {name: cases, type: graphblocks.ai/Cases@1}
       outputs:
@@ -188,6 +273,8 @@ spec:
       version: 1
       role: builder
       implementation: graphblocks.stdlib.retrieve.fuse
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: sources, type: graphblocks.ai/RetrievalSources@1}
       outputs:
@@ -197,6 +284,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.retrieve.execute_plan
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: query, type: graphblocks.ai/SearchRequest@1, required: false}
         - {name: request, type: graphblocks.ai/SearchRequest@1, required: false}
@@ -212,6 +301,8 @@ spec:
       version: 1
       role: model
       implementation: graphblocks.stdlib.rank.documents
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: query, type: graphblocks.ai/SearchRequest@1}
         - {name: hits, type: graphblocks.ai/SearchHits@1}
@@ -224,6 +315,8 @@ spec:
       version: 1
       role: builder
       implementation: graphblocks.stdlib.context.build
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: history, type: graphblocks.ai/Messages@1, required: false}
         - {name: evidence, type: graphblocks.ai/SearchHits@1, required: false}
@@ -235,6 +328,8 @@ spec:
       version: 1
       role: transform
       implementation: graphblocks.stdlib.answer.validate_grounding
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: response, type: Any, required: false}
         - {name: answer, type: graphblocks.ai/Answer@1, required: false}
@@ -248,6 +343,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.check.run_suite
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: subject, type: Any, required: false}
         - {name: evidence, type: Any, required: false}
@@ -265,6 +362,8 @@ spec:
       version: 1
       role: transform
       implementation: graphblocks.stdlib.gate.evaluate
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: checks, type: Any}
         - {name: metrics, type: Any, required: false}
@@ -278,6 +377,8 @@ spec:
       version: 1
       role: effect
       implementation: graphblocks.stdlib.review.request
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: subject, type: Any}
         - {name: gate, type: Any, required: false}
@@ -288,6 +389,7 @@ spec:
         - {name: request, type: Any}
         - {name: requestDigest, type: graphblocks.ai/String@1, required: false}
         - {name: record, type: Any, required: false}
+        - {name: pending, type: graphblocks.ai/Boolean@1}
         - {name: accepted, type: graphblocks.ai/Boolean@1}
         - {name: approved, type: graphblocks.ai/Boolean@1}
         - {name: status, type: graphblocks.ai/String@1}
@@ -298,6 +400,8 @@ spec:
       version: 1
       role: builder
       implementation: graphblocks.stdlib.result.bundle
+      capabilities: []
+      configSchema: {type: object}
       inputs:
         - {name: inputs, type: Any, required: false}
         - {name: outputs, type: Any}

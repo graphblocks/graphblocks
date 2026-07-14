@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
+from importlib import resources
+from importlib.resources.abc import Traversable
+import math
 from pathlib import Path
+import re
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
 
 
 SCHEMA_MANIFEST_VERSION = 1
+MAX_RESOURCE_DOCUMENT_DEPTH = 64
 
 
 class SchemaIdError(ValueError):
@@ -17,6 +25,45 @@ class SchemaIdError(ValueError):
 
 class SchemaManifestError(ValueError):
     """Raised when a JSON Schema manifest cannot be built deterministically."""
+
+
+class ResourceValidationError(ValueError):
+    """Raised when a resource does not satisfy its versioned wire schema."""
+
+    def __init__(self, violations: tuple[ResourceSchemaViolation, ...]) -> None:
+        if not violations:
+            raise ValueError("resource validation errors require at least one violation")
+        self.violations = violations
+        summary = "; ".join(
+            f"{violation.code} {violation.path}: {violation.message}"
+            for violation in violations
+        )
+        super().__init__(summary)
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class ResourceSchemaViolation:
+    """One deterministic resource-schema validation failure."""
+
+    code: str
+    path: str
+    keyword: str
+    message: str
+    schema_path: str = "$"
+
+
+RESOURCE_SCHEMA_PATHS: Mapping[tuple[str, str], str] = {
+    ("graphblocks.ai/v1", "Graph"): "graphblocks.ai/v1/graph.schema.json",
+    ("graphblocks.ai/v1", "PluginManifest"): "graphblocks.ai/v1/plugin-manifest.schema.json",
+    ("graphblocks.ai/v1alpha3", "Graph"): "graphblocks.ai/v1alpha3/graph.schema.json",
+    ("graphblocks.ai/v1alpha1", "Application"): "graphblocks.ai/v1alpha1/application.schema.json",
+    ("graphblocks.ai/v1alpha1", "Binding"): "graphblocks.ai/v1alpha1/binding.schema.json",
+    ("graphblocks.ai/v1alpha1", "PluginManifest"): "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
+    (
+        "graphblocks.ai/composition/v1alpha1",
+        "GraphFragment",
+    ): "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
+}
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -210,3 +257,266 @@ class SchemaManifest:
 
     def to_json(self) -> str:
         return canonical_dumps(self.manifest_payload())
+
+
+def _default_resource_schema_root() -> Traversable | Path:
+    packaged = resources.files("graphblocks").joinpath("schemas")
+    if packaged.is_dir():
+        return packaged
+
+    # Editable source installs do not receive hatch's wheel force-include.
+    checkout = Path(__file__).resolve().parents[2] / "schemas"
+    if checkout.is_dir():
+        return checkout
+    return packaged
+
+
+def load_resource_schema(
+    api_version: str,
+    kind: str,
+    *,
+    schema_root: str | Path | None = None,
+) -> Mapping[str, object]:
+    """Load and check the authoritative schema for one resource type.
+
+    The default lookup starts at the schemas embedded in the installed wheel.
+    A checkout fallback supports editable installs, and ``schema_root`` gives
+    build and conformance tooling an explicit, testable source boundary.
+    """
+
+    relative_path = RESOURCE_SCHEMA_PATHS.get((api_version, kind))
+    if relative_path is None:
+        raise KeyError(f"unsupported resource type {api_version!r}/{kind!r}")
+
+    root = Path(schema_root) if schema_root is not None else _default_resource_schema_root()
+    candidate = root.joinpath(*relative_path.split("/"))
+    try:
+        document = canonical_loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as error:
+        raise SchemaManifestError(
+            f"cannot load resource schema {relative_path}: {error}"
+        ) from error
+    if not isinstance(document, Mapping):
+        raise SchemaManifestError(f"resource schema {relative_path} must be a JSON object")
+    try:
+        Draft202012Validator.check_schema(document)
+    except SchemaError as error:
+        raise SchemaManifestError(
+            f"resource schema {relative_path} is not valid draft 2020-12: {error.message}"
+        ) from error
+    return document
+
+
+def _json_path(parts: Iterable[object]) -> str:
+    path = "$"
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif isinstance(part, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part):
+            path += f".{part}"
+        else:
+            path += f"[{canonical_dumps(part)}]"
+    return path
+
+
+def _validation_message(error: ValidationError) -> str:
+    keyword = error.validator
+    if keyword == "anyOf":
+        return "value must match at least one allowed schema"
+    if keyword == "oneOf":
+        return "value must match exactly one allowed schema"
+    if keyword == "not":
+        return "value matches a forbidden schema"
+    if keyword == "const":
+        return f"value must equal {canonical_dumps(error.validator_value)}"
+    if keyword == "enum":
+        return f"value must be one of {canonical_dumps(error.validator_value)}"
+    if keyword == "type":
+        return f"value must have JSON type {canonical_dumps(error.validator_value)}"
+    if keyword == "uniqueItems":
+        return "array items must be unique"
+    if keyword == "additionalProperties" and isinstance(error.instance, Mapping):
+        declared = error.schema.get("properties", {})
+        if isinstance(declared, Mapping):
+            unexpected = sorted(str(key) for key in error.instance if key not in declared)
+            return f"unexpected properties are not allowed: {canonical_dumps(unexpected)}"
+    return error.message
+
+
+def _schema_violation(error: ValidationError) -> ResourceSchemaViolation:
+    keyword = str(error.validator or "schema")
+    return ResourceSchemaViolation(
+        code="GB0014",
+        path=_json_path(error.absolute_path),
+        keyword=keyword,
+        message=_validation_message(error),
+        schema_path=_json_path(error.absolute_schema_path),
+    )
+
+
+def resource_schema_errors(
+    document: object,
+    *,
+    schema_root: str | Path | None = None,
+) -> tuple[ResourceSchemaViolation, ...]:
+    """Return deterministic violations for a versioned GraphBlocks resource."""
+
+    if not isinstance(document, Mapping):
+        return (
+            ResourceSchemaViolation(
+                code="GB0012",
+                path="$",
+                keyword="type",
+                message="resource must be an object",
+            ),
+        )
+
+    pending: list[tuple[object, tuple[object, ...], int, bool]] = [
+        (document, (), 0, False)
+    ]
+    active_containers: set[int] = set()
+    json_domain_violations: list[ResourceSchemaViolation] = []
+    while pending:
+        value, path, depth, leaving = pending.pop()
+        if leaving:
+            active_containers.remove(id(value))
+            continue
+        if depth > MAX_RESOURCE_DOCUMENT_DEPTH:
+            return (
+                ResourceSchemaViolation(
+                    code="GB0014",
+                    path=_json_path(path),
+                    keyword="maxDepth",
+                    message=(
+                        "resource nesting must not exceed "
+                        f"{MAX_RESOURCE_DOCUMENT_DEPTH} levels"
+                    ),
+                ),
+            )
+        if isinstance(value, Mapping):
+            if id(value) in active_containers:
+                return (
+                    ResourceSchemaViolation(
+                        code="GB0014",
+                        path=_json_path(path),
+                        keyword="recursive",
+                        message="resource values must not be recursive",
+                    ),
+                )
+            if any(not isinstance(key, str) for key in value):
+                json_domain_violations.append(
+                    ResourceSchemaViolation(
+                        code="GB0014",
+                        path=_json_path(path),
+                        keyword="jsonObjectKey",
+                        message="resource object keys must be strings",
+                    )
+                )
+            active_containers.add(id(value))
+            pending.append((value, path, depth, True))
+            pending.extend(
+                (child, (*path, key), depth + 1, False)
+                for key, child in value.items()
+                if isinstance(key, str)
+            )
+        elif isinstance(value, list):
+            if id(value) in active_containers:
+                return (
+                    ResourceSchemaViolation(
+                        code="GB0014",
+                        path=_json_path(path),
+                        keyword="recursive",
+                        message="resource values must not be recursive",
+                    ),
+                )
+            active_containers.add(id(value))
+            pending.append((value, path, depth, True))
+            pending.extend(
+                (child, (*path, index), depth + 1, False)
+                for index, child in enumerate(value)
+            )
+        elif (
+            (isinstance(value, float) and not math.isfinite(value))
+            or (isinstance(value, Decimal) and not value.is_finite())
+        ):
+            json_domain_violations.append(
+                ResourceSchemaViolation(
+                    code="GB0014",
+                    path=_json_path(path),
+                    keyword="finiteNumber",
+                    message="resource numbers must be finite",
+                )
+            )
+
+    if json_domain_violations:
+        return tuple(
+            sorted(
+                json_domain_violations,
+                key=lambda violation: (
+                    violation.path,
+                    violation.keyword,
+                    violation.message,
+                ),
+            )
+        )
+
+    envelope_errors: list[ResourceSchemaViolation] = []
+    api_version = document.get("apiVersion")
+    kind = document.get("kind")
+    if not isinstance(api_version, str):
+        envelope_errors.append(
+            ResourceSchemaViolation(
+                code="GB0012",
+                path="$.apiVersion",
+                keyword="type",
+                message="apiVersion must be a string",
+            )
+        )
+    if not isinstance(kind, str):
+        envelope_errors.append(
+            ResourceSchemaViolation(
+                code="GB0012",
+                path="$.kind",
+                keyword="type",
+                message="kind must be a string",
+            )
+        )
+    if envelope_errors:
+        return tuple(envelope_errors)
+
+    if (api_version, kind) not in RESOURCE_SCHEMA_PATHS:
+        return (
+            ResourceSchemaViolation(
+                code="GB0013",
+                path="$",
+                keyword="resourceType",
+                message=f"unsupported resource type {api_version!r}/{kind!r}",
+            ),
+        )
+
+    schema = load_resource_schema(api_version, kind, schema_root=schema_root)
+    validator = Draft202012Validator(schema)
+    violations = [_schema_violation(error) for error in validator.iter_errors(document)]
+    return tuple(
+        sorted(
+            violations,
+            key=lambda violation: (
+                violation.path,
+                violation.schema_path,
+                violation.keyword,
+                violation.message,
+            ),
+        )
+    )
+
+
+def validate_resource(
+    document: object,
+    *,
+    schema_root: str | Path | None = None,
+) -> None:
+    """Validate a resource against its exact ``apiVersion``/``kind`` schema."""
+
+    violations = resource_schema_errors(document, schema_root=schema_root)
+    if violations:
+        raise ResourceValidationError(violations)

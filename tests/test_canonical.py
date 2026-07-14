@@ -26,6 +26,7 @@ from graphblocks.output_policy import (
     VALID_VIOLATION_ACTIONS,
 )
 from graphblocks.policy import VALID_ENFORCEMENT_POINTS
+from graphblocks.plugins import BlockCatalog
 from graphblocks.tools import (
     VALID_TOOL_APPROVALS,
     VALID_TOOL_CANCELLATIONS,
@@ -35,8 +36,18 @@ from graphblocks.tools import (
 )
 
 
+DISCOVERY_CATALOG = BlockCatalog({}, allow_unknown_blocks=True)
+
+
 def _error_codes(graph: dict) -> list[str]:
-    return [item.code for item in compile_graph(graph).diagnostics.diagnostics if item.severity == "error"]
+    return [
+        item.code
+        for item in compile_graph(
+            graph,
+            block_catalog=DISCOVERY_CATALOG,
+        ).diagnostics.diagnostics
+        if item.severity == "error"
+    ]
 
 
 def test_python_compiler_uses_canonical_literal_sets() -> None:
@@ -168,6 +179,18 @@ def test_node_inputs_are_normalized_to_edges() -> None:
     assert {"from": "lookup.value", "to": "render.context.current"} in normalized["spec"]["edges"]
 
 
+def test_normalize_graph_rejects_unknown_graph_versions() -> None:
+    with pytest.raises(ValueError, match="GB0002"):
+        normalize_graph(
+            {
+                "apiVersion": "graphblocks.ai/v2",
+                "kind": "Graph",
+                "metadata": {"name": "future-graph"},
+                "spec": {"nodes": {}},
+            }
+        )
+
+
 def test_compile_reports_invalid_interface_schema_ids() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -182,7 +205,7 @@ def test_compile_reports_invalid_interface_schema_ids() -> None:
         },
     }
 
-    assert _error_codes(graph) == ["InvalidSchemaId", "InvalidSchemaId"]
+    assert _error_codes(graph) == ["GB0015", "GB0015"]
 
 
 def test_compile_reports_unknown_edge_endpoint() -> None:
@@ -196,7 +219,7 @@ def test_compile_reports_unknown_edge_endpoint() -> None:
         },
     }
 
-    plan = compile_graph(graph)
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
     assert not plan.ok
     assert [item.code for item in plan.diagnostics.diagnostics] == ["GB1002"]
@@ -219,7 +242,7 @@ def test_compile_rejects_effect_retry_without_idempotency_key() -> None:
             },
         }
 
-        plan = compile_graph(graph)
+        plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
         assert not plan.ok
         assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
@@ -242,7 +265,7 @@ def test_compile_does_not_coerce_non_numeric_effect_retry_attempts() -> None:
             },
         }
 
-        plan = compile_graph(graph)
+        plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
         assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"]
 
@@ -263,7 +286,7 @@ def test_compile_allows_effect_retry_with_idempotency_key() -> None:
         },
     }
 
-    plan = compile_graph(graph)
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
     assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics]
 
@@ -285,17 +308,28 @@ def test_compile_rejects_effect_retry_with_invalid_idempotency_key(idempotency_k
         },
     }
 
-    plan = compile_graph(graph)
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
     assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
 
 
 def test_native_compile_helper_delegates_to_runtime(monkeypatch) -> None:
-    calls: list[tuple[dict[str, object], object | None]] = []
+    calls: list[tuple[dict[str, object], object | None, bool]] = []
 
-    def native_compile_graph(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
-        calls.append((document, block_catalog))
-        return {"ok": True, "graph": document, "blockCatalog": block_catalog, "diagnostics": []}
+    def native_compile_graph(
+        document: dict[str, object],
+        block_catalog: object | None = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> dict[str, object]:
+        calls.append((document, block_catalog, allow_unknown_blocks))
+        return {
+            "ok": True,
+            "graph": document,
+            "blockCatalog": block_catalog,
+            "allowUnknownBlocks": allow_unknown_blocks,
+            "diagnostics": [],
+        }
 
     monkeypatch.setitem(
         sys.modules,
@@ -306,18 +340,21 @@ def test_native_compile_helper_delegates_to_runtime(monkeypatch) -> None:
     result = compile_graph_native(
         {"kind": "Graph", "metadata": {"name": "native"}},
         block_catalog=[{"typeId": "prompt.render@1"}],
+        allow_unknown_blocks=True,
     )
 
     assert result == {
         "ok": True,
         "graph": {"kind": "Graph", "metadata": {"name": "native"}},
         "blockCatalog": [{"typeId": "prompt.render@1"}],
+        "allowUnknownBlocks": True,
         "diagnostics": [],
     }
     assert calls == [
         (
             {"kind": "Graph", "metadata": {"name": "native"}},
             [{"typeId": "prompt.render@1"}],
+            True,
         )
     ]
     assert "compile_graph_native" in graphblocks.__all__
@@ -380,12 +417,12 @@ def test_compile_rejects_unbounded_output_holdback_and_unsafe_immediate_draft() 
         },
     }
 
-    assert _error_codes(unbounded) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
-    assert _error_codes(boolean_bound) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
-    assert _error_codes(invalid_duration_bound) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+    assert _error_codes(unbounded) == ["GB1051", "GB1046"]
+    assert _error_codes(boolean_bound) == ["GB1051", "GB1046"]
+    assert _error_codes(invalid_duration_bound) == ["GB1051", "GB1046"]
     assert _error_codes(immediate_draft) == [
-        "ImmediateDraftWithoutRetractionSupport",
-        "OutputPolicyBypass",
+        "GB1025",
+        "GB1046",
     ]
 
 
@@ -456,11 +493,11 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
         },
     }
 
-    assert _error_codes(base) == ["OutputPolicyBypass"]
-    assert _error_codes(missing_enforcement_points) == ["OutputPolicyBypass"]
-    assert _error_codes(missing_generation_gate) == ["OutputPolicyBypass"]
-    assert _error_codes(missing_commit_gate) == ["OutputPolicyBypass"]
-    assert _error_codes(late_gate) == ["PolicyGateAfterDelivery"]
+    assert _error_codes(base) == ["GB1046"]
+    assert _error_codes(missing_enforcement_points) == ["GB1046"]
+    assert _error_codes(missing_generation_gate) == ["GB1046"]
+    assert _error_codes(missing_commit_gate) == ["GB1046"]
+    assert _error_codes(late_gate) == ["GB1048"]
 
 
 def test_compile_reports_malformed_output_policy_shapes() -> None:
@@ -540,11 +577,11 @@ def test_compile_reports_malformed_output_policy_shapes() -> None:
     }
 
     assert _error_codes(base) == []
-    assert _error_codes(non_mapping_policy) == ["InvalidOutputPolicy"]
-    assert _error_codes(non_mapping_delivery) == ["InvalidOutputPolicy"]
-    assert _error_codes(non_mapping_evaluation) == ["InvalidOutputPolicy", "OutputPolicyBypass"]
-    assert _error_codes(non_list_enforcement_points) == ["InvalidOutputEnforcementPoint", "OutputPolicyBypass"]
-    assert _error_codes(non_mapping_on_violation) == ["InvalidOutputPolicy"]
+    assert _error_codes(non_mapping_policy) == ["GB1034"]
+    assert _error_codes(non_mapping_delivery) == ["GB1034"]
+    assert _error_codes(non_mapping_evaluation) == ["GB1034", "GB1046"]
+    assert _error_codes(non_list_enforcement_points) == ["GB1033", "GB1046"]
+    assert _error_codes(non_mapping_on_violation) == ["GB1034"]
 
 
 def test_compile_rejects_policy_abort_that_keeps_tools_or_commits_result() -> None:
@@ -590,8 +627,8 @@ def test_compile_rejects_policy_abort_that_keeps_tools_or_commits_result() -> No
         },
     }
 
-    assert _error_codes(base) == ["PendingToolCallAfterAbort"]
-    assert _error_codes(commits_result) == ["CommitAfterPolicyStop"]
+    assert _error_codes(base) == ["GB1047"]
+    assert _error_codes(commits_result) == ["GB1024"]
 
 
 def test_compile_reports_invalid_output_policy_literals() -> None:
@@ -628,15 +665,15 @@ def test_compile_reports_invalid_output_policy_literals() -> None:
     }
 
     assert _error_codes(graph) == [
-        "InvalidOutputDeliveryMode",
-        "InvalidViolationAction",
-        "InvalidFlushBoundary",
-        "InvalidOutputEnforcementPoint",
-        "InvalidOutputDisposition",
-        "InvalidProviderCancellation",
-        "InvalidPendingToolCallsDisposition",
-        "InvalidDraftDisposition",
-        "InvalidOutputDurableResult",
+        "GB1030",
+        "GB1044",
+        "GB1029",
+        "GB1033",
+        "GB1031",
+        "GB1036",
+        "GB1035",
+        "GB1028",
+        "GB1032",
     ]
 
 
@@ -670,21 +707,21 @@ def test_compile_allows_safe_output_policy_settings() -> None:
     }
 
     assert not {
-        "UnboundedPolicyHoldback",
-        "ImmediateDraftWithoutRetractionSupport",
-        "OutputPolicyBypass",
-        "PolicyGateAfterDelivery",
-        "PendingToolCallAfterAbort",
-        "CommitAfterPolicyStop",
-        "InvalidOutputDeliveryMode",
-        "InvalidViolationAction",
-        "InvalidFlushBoundary",
-        "InvalidOutputEnforcementPoint",
-        "InvalidOutputDisposition",
-        "InvalidProviderCancellation",
-        "InvalidPendingToolCallsDisposition",
-        "InvalidDraftDisposition",
-        "InvalidOutputDurableResult",
+        "GB1051",
+        "GB1025",
+        "GB1046",
+        "GB1048",
+        "GB1047",
+        "GB1024",
+        "GB1030",
+        "GB1044",
+        "GB1029",
+        "GB1033",
+        "GB1031",
+        "GB1036",
+        "GB1035",
+        "GB1028",
+        "GB1032",
     } & set(_error_codes(graph))
 
 
@@ -763,10 +800,10 @@ def test_compile_reports_tool_definition_without_binding_or_input_schema() -> No
         },
     }
 
-    assert _error_codes(missing_binding) == ["ToolBindingMissing"]
-    assert _error_codes(missing_schema) == ["ToolSchemaMissing"]
-    assert _error_codes(missing_definition) == ["ToolSchemaMissing"]
-    assert _error_codes(invalid_schema) == ["InvalidSchemaId"]
+    assert _error_codes(missing_binding) == ["GB1049"]
+    assert _error_codes(missing_schema) == ["GB1050"]
+    assert _error_codes(missing_definition) == ["GB1050"]
+    assert _error_codes(invalid_schema) == ["GB0015"]
 
 
 def test_compile_reports_malformed_tool_implementation_bindings() -> None:
@@ -819,9 +856,9 @@ def test_compile_reports_malformed_tool_implementation_bindings() -> None:
         },
     }
 
-    assert _error_codes(base) == ["ToolBindingMissing"]
-    assert _error_codes(unknown_kind) == ["ToolBindingMissing"]
-    assert _error_codes(missing_openapi_operation) == ["ToolBindingMissing"]
+    assert _error_codes(base) == ["GB1049"]
+    assert _error_codes(unknown_kind) == ["GB1049"]
+    assert _error_codes(missing_openapi_operation) == ["GB1049"]
 
 
 def test_compile_reports_malformed_tool_definition_identity_fields() -> None:
@@ -908,10 +945,10 @@ def test_compile_reports_malformed_tool_definition_identity_fields() -> None:
         },
     }
 
-    assert _error_codes(blank_name) == ["InvalidToolDefinition"]
-    assert _error_codes(non_string_description) == ["InvalidToolDefinition"]
-    assert _error_codes(blank_version) == ["InvalidToolDefinition"]
-    assert _error_codes(non_string_tag) == ["InvalidToolDefinition"]
+    assert _error_codes(blank_name) == ["GB1039"]
+    assert _error_codes(non_string_description) == ["GB1039"]
+    assert _error_codes(blank_version) == ["GB1039"]
+    assert _error_codes(non_string_tag) == ["GB1039"]
 
 
 def test_compile_rejects_forbidden_tool_definition_execution_details() -> None:
@@ -940,9 +977,9 @@ def test_compile_rejects_forbidden_tool_definition_execution_details() -> None:
     }
 
     assert _error_codes(graph) == [
-        "InvalidToolDefinition",
-        "InvalidToolDefinition",
-        "InvalidToolDefinition",
+        "GB1039",
+        "GB1039",
+        "GB1039",
     ]
 
 
@@ -973,7 +1010,7 @@ def test_compile_reports_invalid_tool_effect_literals() -> None:
         },
     }
 
-    assert _error_codes(graph) == ["InvalidToolEffect"]
+    assert _error_codes(graph) == ["GB1040"]
 
     conflicting_none = {
         **graph,
@@ -991,7 +1028,7 @@ def test_compile_reports_invalid_tool_effect_literals() -> None:
         },
     }
 
-    assert _error_codes(conflicting_none) == ["InvalidToolEffect"]
+    assert _error_codes(conflicting_none) == ["GB1040"]
 
 
 def test_compile_reports_invalid_tool_binding_literals() -> None:
@@ -1026,10 +1063,10 @@ def test_compile_reports_invalid_tool_binding_literals() -> None:
     }
 
     assert _error_codes(graph) == [
-        "InvalidToolApproval",
-        "InvalidToolIdempotency",
-        "InvalidToolCancellation",
-        "InvalidToolResultMode",
+        "GB1037",
+        "GB1042",
+        "GB1038",
+        "GB1043",
     ]
 
 
@@ -1061,7 +1098,7 @@ def test_compile_rejects_parallel_state_changing_tools_without_effect_serializat
         },
     }
 
-    assert _error_codes(graph) == ["UnsafeParallelEffects"]
+    assert _error_codes(graph) == ["GB1053"]
 
 
 def test_compile_rejects_malformed_tool_execution_settings() -> None:
@@ -1114,12 +1151,12 @@ def test_compile_rejects_malformed_tool_execution_settings() -> None:
     }
 
     assert _error_codes(graph) == [
-        "InvalidToolExecution",
-        "InvalidToolExecution",
-        "InvalidToolExecution",
+        "GB1041",
+        "GB1041",
+        "GB1041",
     ]
-    assert _error_codes(non_mapping) == ["InvalidToolExecution"]
-    assert _error_codes(non_mapping_effect_serialization) == ["InvalidToolExecution"]
+    assert _error_codes(non_mapping) == ["GB1041"]
+    assert _error_codes(non_mapping_effect_serialization) == ["GB1041"]
 
 
 def test_compile_rejects_retried_write_tool_without_required_idempotency() -> None:
@@ -1150,7 +1187,7 @@ def test_compile_rejects_retried_write_tool_without_required_idempotency() -> No
         },
     }
 
-    assert _error_codes(graph) == ["NonIdempotentRetry"]
+    assert _error_codes(graph) == ["GB1045"]
 
 
 def test_compile_rejects_tool_approval_without_argument_digest_binding() -> None:
@@ -1197,8 +1234,8 @@ def test_compile_rejects_tool_approval_without_argument_digest_binding() -> None
         },
     }
 
-    assert _error_codes(graph) == ["ApprovalWithoutArgumentDigest"]
-    assert _error_codes(string_approval) == ["ApprovalWithoutArgumentDigest"]
+    assert _error_codes(graph) == ["GB1023"]
+    assert _error_codes(string_approval) == ["GB1023"]
 
 
 def test_compile_allows_safe_tool_execution_settings() -> None:
@@ -1236,11 +1273,11 @@ def test_compile_allows_safe_tool_execution_settings() -> None:
     }
 
     assert not {
-        "ToolBindingMissing",
-        "ToolSchemaMissing",
-        "UnsafeParallelEffects",
-        "NonIdempotentRetry",
-        "ApprovalWithoutArgumentDigest",
+        "GB1049",
+        "GB1050",
+        "GB1053",
+        "GB1045",
+        "GB1023",
     } & set(_error_codes(graph))
 
 
@@ -1416,7 +1453,7 @@ def test_compile_reports_async_poll_operation_node_invalid_interval_durations() 
             },
         }
 
-        assert _error_codes(graph) == ["InvalidAsyncOperation"]
+        assert _error_codes(graph) == ["GB1026"]
 
 
 def test_compile_reports_async_await_callback_node_invalid_on_timeout_policy() -> None:
@@ -1446,7 +1483,7 @@ def test_compile_reports_async_await_callback_node_invalid_on_timeout_policy() -
         },
     }
 
-    assert _error_codes(graph) == ["InvalidAsyncOperation"]
+    assert _error_codes(graph) == ["GB1026"]
 
 
 def test_compile_reports_async_operation_missing_resume_and_fencing_contracts() -> None:
@@ -1504,7 +1541,7 @@ def test_compile_rejects_async_operation_with_callback_and_polling_refs() -> Non
         },
     }
 
-    assert _error_codes(graph) == ["InvalidAsyncOperation"]
+    assert _error_codes(graph) == ["GB1026"]
 
 
 def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() -> None:
@@ -1636,10 +1673,15 @@ def test_compile_reports_invalid_callback_subscription_scope() -> None:
         }
 
         errors = [
-            diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"
+            diagnostic
+            for diagnostic in compile_graph(
+                graph,
+                block_catalog=DISCOVERY_CATALOG,
+            ).diagnostics.diagnostics
+            if diagnostic.severity == "error"
         ]
 
-        assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+        assert [diagnostic.code for diagnostic in errors] == ["GB1027"]
         assert (
             errors[0].message
             == "callback subscription scope must be one of run, conversation, project, tenant, or deployment"
@@ -1729,10 +1771,15 @@ def test_compile_reports_invalid_callback_delivery_kind() -> None:
         }
 
         errors = [
-            diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"
+            diagnostic
+            for diagnostic in compile_graph(
+                graph,
+                block_catalog=DISCOVERY_CATALOG,
+            ).diagnostics.diagnostics
+            if diagnostic.severity == "error"
         ]
 
-        assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+        assert [diagnostic.code for diagnostic in errors] == ["GB1027"]
         assert (
             errors[0].message
             == "callback delivery kind must be one of webhook, websocket, sse, push_notification, email, or local_callback"
@@ -1765,9 +1812,16 @@ def test_compile_reports_non_post_callback_webhook_method() -> None:
         },
     }
 
-    errors = [diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"]
+    errors = [
+        diagnostic
+        for diagnostic in compile_graph(
+            graph,
+            block_catalog=DISCOVERY_CATALOG,
+        ).diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ]
 
-    assert [diagnostic.code for diagnostic in errors] == ["InvalidCallbackSubscription"]
+    assert [diagnostic.code for diagnostic in errors] == ["GB1027"]
     assert errors[0].message == "webhook callback delivery method must be POST"
 
 
@@ -2004,9 +2058,16 @@ def test_compile_reports_non_positive_async_callback_payload_limit() -> None:
         },
     }
 
-    errors = [diagnostic for diagnostic in compile_graph(graph).diagnostics.diagnostics if diagnostic.severity == "error"]
+    errors = [
+        diagnostic
+        for diagnostic in compile_graph(
+            graph,
+            block_catalog=DISCOVERY_CATALOG,
+        ).diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ]
 
-    assert [diagnostic.code for diagnostic in errors] == ["InvalidAsyncOperation"]
+    assert [diagnostic.code for diagnostic in errors] == ["GB1026"]
     assert errors[0].message == "async callback maxPayloadBytes must be a positive integer"
 
 

@@ -3,7 +3,20 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.compiler import compile_graph
-from graphblocks.plugins import BlockCatalog
+from graphblocks.plugins import (
+    BlockCatalog,
+    BlockDescriptor,
+    OutputRequirednessPredicate,
+    evaluate_output_requiredness,
+    parse_output_requiredness_predicate,
+)
+
+
+def test_direct_block_catalog_rejects_descriptor_identity_mismatch() -> None:
+    descriptor = BlockDescriptor("actual.block", 1)
+
+    with pytest.raises(ValueError, match="does not match descriptor 'actual.block@1'"):
+        BlockCatalog({"claimed.block@1": descriptor})
 
 
 def test_block_catalog_rejects_invalid_port_schema_ids() -> None:
@@ -295,6 +308,214 @@ def test_compile_rejects_optional_output_to_required_input() -> None:
     assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1015"]
 
 
+def test_output_requiredness_predicate_evaluates_config_and_phase_deterministically() -> None:
+    predicate = parse_output_requiredness_predicate(
+        {
+            "all": [
+                {"configEquals": {"pointer": "/policy/on~1error", "value": "collect"}},
+                {"not": {"phase": "initial"}},
+            ]
+        }
+    )
+    config = {"policy": {"on/error": "collect"}}
+
+    assert not evaluate_output_requiredness(predicate, config, phase="initial")
+    assert evaluate_output_requiredness(predicate, config, phase="resumed")
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        {"operator": "bogus"},
+        {"operator": "not"},
+        {"operator": "phase", "phase": "finished"},
+        {"operator": "configEquals", "pointer": "/value", "expected_json": "{"},
+    ],
+)
+def test_direct_output_requiredness_predicate_construction_fails_closed(
+    predicate: dict[str, object],
+) -> None:
+    with pytest.raises((TypeError, ValueError), match="requiredWhen|not|phase|canonical JSON"):
+        OutputRequirednessPredicate(**predicate)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "required_when",
+    [
+        {},
+        {"phase": "finished"},
+        {"configEquals": {"pointer": "onError", "value": "collect"}},
+        {"configEquals": {"pointer": "/bad~2escape", "value": "collect"}},
+        {"configEquals": {"pointer": "/onError", "value": ("collect",)}},
+        {"all": []},
+        {"all": [{"phase": "initial"}] * 17},
+        {"phase": "initial", "not": {"phase": "resumed"}},
+    ],
+)
+def test_block_catalog_rejects_invalid_output_requiredness_predicate(
+    required_when: object,
+) -> None:
+    with pytest.raises(ValueError, match="invalid requiredWhen"):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "branch.conditional",
+                    "version": 1,
+                    "outputs": [
+                        {
+                            "name": "value",
+                            "required": False,
+                            "requiredWhen": required_when,
+                        }
+                    ],
+                }
+            ]
+        )
+
+
+def test_block_catalog_rejects_excessive_output_requiredness_nesting() -> None:
+    required_when: object = {"phase": "initial"}
+    for _ in range(16):
+        required_when = {"not": required_when}
+
+    with pytest.raises(ValueError, match="nesting must not exceed 16 levels"):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "branch.too_deep",
+                    "version": 1,
+                    "outputs": [
+                        {
+                            "name": "value",
+                            "required": False,
+                            "requiredWhen": required_when,
+                        }
+                    ],
+                }
+            ]
+        )
+
+
+def test_block_catalog_rejects_required_when_on_input() -> None:
+    with pytest.raises(ValueError, match="input value must not declare requiredWhen"):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "branch.invalid_input",
+                    "version": 1,
+                    "inputs": [
+                        {
+                            "name": "value",
+                            "requiredWhen": {"phase": "resumed"},
+                        }
+                    ],
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("on_error", "expected_ok"),
+    [("collect", True), ("fail_fast", False)],
+)
+def test_compile_refines_config_guaranteed_output_requiredness(
+    on_error: str,
+    expected_ok: bool,
+) -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "branch.map",
+                "version": 1,
+                "outputs": [
+                    {
+                        "name": "outcomes",
+                        "type": "graphblocks.ai/Outcomes@1",
+                        "required": False,
+                        "requiredWhen": {
+                            "configEquals": {"pointer": "/onError", "value": "collect"}
+                        },
+                    }
+                ],
+            },
+            {
+                "typeId": "outcomes.sink",
+                "version": 1,
+                "inputs": [
+                    {
+                        "name": "outcomes",
+                        "type": "graphblocks.ai/Outcomes@1",
+                    }
+                ],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": f"conditional-output-{on_error}"},
+        "spec": {
+            "nodes": {
+                "map": {
+                    "block": "branch.map@1",
+                    "config": {"onError": on_error},
+                },
+                "sink": {"block": "outcomes.sink@1"},
+            },
+            "edges": [{"from": "map.outcomes", "to": "sink.outcomes"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert plan.ok is expected_ok
+    error_codes = [
+        item.code for item in plan.diagnostics.diagnostics if item.severity == "error"
+    ]
+    assert error_codes == ([] if expected_ok else ["GB1015"])
+
+
+def test_compile_keeps_resumed_phase_output_optional_during_initial_compilation() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "async.wait",
+                "version": 1,
+                "outputs": [
+                    {
+                        "name": "callback",
+                        "required": False,
+                        "requiredWhen": {"phase": "resumed"},
+                    }
+                ],
+            },
+            {
+                "typeId": "callback.sink",
+                "version": 1,
+                "inputs": [{"name": "callback"}],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "resumed-output-is-phase-delayed"},
+        "spec": {
+            "nodes": {
+                "wait": {"block": "async.wait@1"},
+                "sink": {"block": "callback.sink@1"},
+            },
+            "edges": [{"from": "wait.callback", "to": "sink.callback"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert [
+        item.code for item in plan.diagnostics.diagnostics if item.severity == "error"
+    ] == ["GB1015"]
+
+
 def test_compile_rejects_optional_block_output_to_graph_output() -> None:
     catalog = BlockCatalog.from_blocks(
         [
@@ -566,7 +787,11 @@ def test_compile_rejects_unknown_nested_graph_interface_port(
         },
     }
 
-    plan = compile_graph(graph, block_catalog=catalog)
+    plan = compile_graph(
+        graph,
+        block_catalog=catalog,
+        allow_unknown_blocks=not use_catalog,
+    )
 
     errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
     assert [(item.code, item.message, item.path) for item in errors] == [
@@ -691,7 +916,11 @@ def test_compile_rejects_graph_interface_pseudo_node_in_wrong_direction(
         },
     }
 
-    plan = compile_graph(graph, block_catalog=catalog)
+    plan = compile_graph(
+        graph,
+        block_catalog=catalog,
+        allow_unknown_blocks=not use_catalog,
+    )
 
     errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
     assert [(item.code, item.message, item.path) for item in errors] == [
