@@ -81,6 +81,71 @@ def test_direct_block_descriptors_enforce_catalog_invariants(
         descriptor()  # type: ignore[operator]
 
 
+def test_direct_block_descriptors_reject_excessively_nested_config_schemas() -> None:
+    config_schema: object = True
+    for _ in range(1_100):
+        config_schema = {"allOf": [config_schema]}
+
+    with pytest.raises(
+        ValueError,
+        match="configSchema nesting must not exceed 64 levels",
+    ):
+        BlockDescriptor(
+            "deep.config",
+            1,
+            config_schema=config_schema,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ValueError,
+        match="configSchema nesting must not exceed 64 levels",
+    ):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "deep.config",
+                    "version": 1,
+                    "configSchema": config_schema,
+                }
+            ]
+        )
+
+
+def test_direct_block_descriptors_accept_config_schema_at_depth_limit() -> None:
+    config_schema: object = True
+    for _ in range(32):
+        config_schema = {"allOf": [config_schema]}
+
+    descriptor = BlockDescriptor(
+        "boundary.config",
+        1,
+        config_schema=config_schema,  # type: ignore[arg-type]
+    )
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "boundary.config",
+                "version": 1,
+                "configSchema": config_schema,
+            }
+        ]
+    )
+
+    assert descriptor.block_id == "boundary.config@1"
+    assert catalog.get("boundary.config@1") is not None
+
+
+def test_direct_block_descriptors_reject_oversized_config_schemas() -> None:
+    config_schema = {
+        "properties": {f"field_{index}": True for index in range(10_000)}
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="configSchema must not contain more than 10000 JSON nodes",
+    ):
+        BlockDescriptor("wide.config", 1, config_schema=config_schema)
+
+
 def test_block_catalog_rejects_invalid_port_schema_ids() -> None:
     with pytest.raises(
         ValueError,
