@@ -15,7 +15,6 @@ import json
 import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
 from typing import Literal, get_args
 
 from graphblocks.application_event import (
@@ -380,20 +379,58 @@ def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
     return type(error).__name__
 
 
+_MAX_TCK_EVIDENCE_DEPTH = 64
+
+
+class _FrozenEvidenceDict(dict[str, object]):
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("TCK evidence is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+    def __ior__(self, _other: object) -> _FrozenEvidenceDict:
+        self._immutable()
+        return self
+
+    def __copy__(self) -> _FrozenEvidenceDict:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> _FrozenEvidenceDict:
+        return self
+
+    def __reduce__(self) -> tuple[object, tuple[dict[str, object]]]:
+        return (_FrozenEvidenceDict, (dict(self),))
+
+
 class _FrozenEvidenceList(tuple[object, ...]):
     def __eq__(self, other: object) -> bool:
         if isinstance(other, (list, tuple)):
             return tuple(self) == tuple(other)
         return False
 
-    __hash__ = tuple.__hash__
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    __hash__ = None  # type: ignore[assignment]
 
 
 def _freeze_tck_evidence(
     value: object,
     *,
     _active_containers: set[int] | None = None,
+    _depth: int = 0,
 ) -> object:
+    if _depth > _MAX_TCK_EVIDENCE_DEPTH:
+        raise ValueError(
+            "TCK evidence nesting must not exceed "
+            f"{_MAX_TCK_EVIDENCE_DEPTH} levels"
+        )
     active_containers = set() if _active_containers is None else _active_containers
     if isinstance(value, Mapping):
         identity = id(value)
@@ -406,9 +443,11 @@ def _freeze_tck_evidence(
                 if not isinstance(key, str):
                     raise ValueError("TCK evidence mappings require string keys")
                 frozen[key] = _freeze_tck_evidence(
-                    item, _active_containers=active_containers
+                    item,
+                    _active_containers=active_containers,
+                    _depth=_depth + 1,
                 )
-            return MappingProxyType(frozen)
+            return _FrozenEvidenceDict(frozen)
         finally:
             active_containers.remove(identity)
     if isinstance(value, (list, tuple)):
@@ -418,7 +457,11 @@ def _freeze_tck_evidence(
         active_containers.add(identity)
         try:
             return _FrozenEvidenceList(
-                _freeze_tck_evidence(item, _active_containers=active_containers)
+                _freeze_tck_evidence(
+                    item,
+                    _active_containers=active_containers,
+                    _depth=_depth + 1,
+                )
                 for item in value
             )
         finally:
@@ -851,9 +894,9 @@ class TckResult:
     def __post_init__(self) -> None:
         if not isinstance(self.case_id, str) or not self.case_id.strip():
             raise ValueError("TCK result case_id must not be empty")
-        if self.kind not in _TCK_CASE_KINDS:
+        if not isinstance(self.kind, str) or self.kind not in _TCK_CASE_KINDS:
             raise ValueError(f"unsupported TCK result kind {self.kind!r}")
-        if self.status not in _TCK_RESULT_STATUSES:
+        if not isinstance(self.status, str) or self.status not in _TCK_RESULT_STATUSES:
             raise ValueError(f"unsupported TCK result status {self.status!r}")
         diagnostics: list[Mapping[str, object]] = []
         for index, diagnostic in enumerate(self.diagnostics):
@@ -890,15 +933,13 @@ class TckReport:
     fixture_digest: str
 
     def __post_init__(self) -> None:
-        for name, value in (
-            ("profile", self.profile),
-            ("suite", self.suite),
-            ("implementation", self.implementation),
-            ("implementation_version", self.implementation_version),
-        ):
+        for name, value in (("profile", self.profile), ("suite", self.suite)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"TCK report {name} must not be empty")
-        results = tuple(self.results)
+        try:
+            results = tuple(self.results)
+        except TypeError as error:
+            raise ValueError("TCK report results must be an iterable") from error
         if any(not isinstance(result, TckResult) for result in results):
             raise ValueError("TCK report results must contain only TckResult values")
         case_ids = tuple(result.case_id for result in results)
@@ -910,9 +951,21 @@ class TckReport:
 
     @property
     def evidence_valid(self) -> bool:
+        if not all(
+            isinstance(value, str)
+            for value in (
+                self.profile,
+                self.suite,
+                self.implementation,
+                self.implementation_version,
+                self.fixture_digest,
+            )
+        ):
+            return False
         digest = self.fixture_digest.removeprefix("sha256:")
         return (
-            bool(self.suite.strip())
+            bool(self.profile.strip())
+            and bool(self.suite.strip())
             and bool(self.implementation.strip())
             and bool(self.implementation_version.strip())
             and self.fixture_digest.startswith("sha256:")
@@ -994,10 +1047,12 @@ class TckSuiteManifest:
     auxiliary_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.suite_id.strip():
+        if not isinstance(self.suite_id, str) or not self.suite_id.strip():
             raise ValueError("TCK suite_id must not be empty")
-        if not self.path.strip():
+        if not isinstance(self.path, str) or not self.path.strip():
             raise ValueError("TCK suite path must not be empty")
+        if not isinstance(self.fixture_digest, str):
+            raise ValueError("TCK suite fixture_digest must be a canonical sha256 digest")
         fixture_digest = self.fixture_digest.removeprefix("sha256:")
         if (
             not self.fixture_digest.startswith("sha256:")
@@ -1010,6 +1065,8 @@ class TckSuiteManifest:
             raise ValueError("TCK suite must contain at least one case")
         if any(not case_id.strip() for case_id in case_ids):
             raise ValueError("TCK suite case ids must not be empty")
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("TCK suite case ids must be unique")
         auxiliary_paths = tuple(str(path) for path in self.auxiliary_paths)
         if any(not path.strip() for path in auxiliary_paths):
             raise ValueError("TCK suite auxiliary paths must not be empty")

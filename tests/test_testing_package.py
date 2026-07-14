@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import hashlib
 import json
 from decimal import Decimal
 import os
 from pathlib import Path
+import pickle
 import subprocess
 import sys
 import tarfile
@@ -94,11 +96,53 @@ def test_tck_result_evidence_is_deeply_immutable(monkeypatch) -> None:
     diagnostic["message"] = "mutated"
 
     assert result.result_contract() == initial_contract
+    assert isinstance(result.observed, dict)
+    assert isinstance(result.diagnostics[0], dict)
+    assert json.loads(json.dumps(result.observed)) == initial_contract["observed"]
+    assert dataclasses.asdict(result)["observed"] == initial_contract["observed"]
+    assert pickle.loads(pickle.dumps(result)) == result
     with pytest.raises(TypeError):
         result.observed["nested"]["changed"] = True
+    with pytest.raises(TypeError):
+        result.observed.update({"changed": True})
     returned = result.result_contract()
     returned["observed"]["nested"]["items"][1]["value"] = "returned-mutation"
     assert result.result_contract() == initial_contract
+
+
+def test_tck_result_frozen_lists_have_consistent_equality(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    result = graphblocks_testing.TckResult(
+        "compiler/list-equality",
+        "compiler",
+        "passed",
+        observed={"items": [1, 2]},
+    )
+    frozen = result.observed["items"]
+
+    assert frozen == [1, 2]
+    assert [1, 2] == frozen
+    assert not frozen != [1, 2]
+    assert not [1, 2] != frozen
+    with pytest.raises(TypeError):
+        hash(frozen)
+
+
+def test_tck_result_rejects_excessive_evidence_nesting(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    evidence: object = "leaf"
+    for _index in range(70):
+        evidence = {"nested": evidence}
+
+    with pytest.raises(ValueError, match="nesting must not exceed 64 levels"):
+        graphblocks_testing.TckResult(
+            "compiler/deep-evidence",
+            "compiler",
+            "passed",
+            observed={"value": evidence},
+        )
 
 
 @pytest.mark.parametrize(
@@ -154,6 +198,21 @@ def test_tck_result_rejects_invalid_identity_contracts(
         graphblocks_testing.TckResult(*arguments)
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("compiler/case", [], "passed"),
+        ("compiler/case", "compiler", []),
+    ),
+)
+def test_tck_result_rejects_unhashable_identity_values(monkeypatch, arguments) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    with pytest.raises(ValueError, match="unsupported TCK result"):
+        graphblocks_testing.TckResult(*arguments)
+
+
 def test_tck_report_rejects_duplicate_and_mismatched_results(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -177,6 +236,55 @@ def test_tck_report_rejects_duplicate_and_mismatched_results(monkeypatch) -> Non
         )
     with pytest.raises(ValueError, match="match the report suite"):
         graphblocks_testing.TckReport(results=(runtime_result,), **arguments)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("implementation", None),
+        ("implementation_version", 1),
+        ("fixture_digest", None),
+    ),
+)
+def test_tck_report_invalid_evidence_values_fail_closed(
+    monkeypatch,
+    field,
+    value,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    arguments = {
+        "profile": "local",
+        "suite": "compiler",
+        "implementation": "graphblocks-python",
+        "implementation_version": "1.0.0",
+        "fixture_digest": "sha256:" + "1" * 64,
+        field: value,
+    }
+    report = graphblocks_testing.TckReport(
+        results=(
+            graphblocks_testing.TckResult(
+                "compiler/invalid-evidence", "compiler", "passed"
+            ),
+        ),
+        **arguments,
+    )
+
+    assert not report.evidence_valid
+    assert not report.ok
+
+
+def test_tck_suite_manifest_rejects_duplicate_normalized_case_ids(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    with pytest.raises(ValueError, match="case ids must be unique"):
+        graphblocks_testing.TckSuiteManifest(
+            suite_id="compiler",
+            path="compiler.json",
+            case_ids=(1, "1"),
+            fixture_digest="sha256:" + "1" * 64,
+        )
 
 
 def test_testing_package_exposes_deterministic_in_process_runtime(monkeypatch) -> None:
