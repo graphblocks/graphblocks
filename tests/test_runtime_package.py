@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from decimal import Decimal
 import json
 import sys
 from pathlib import Path
@@ -67,7 +68,13 @@ def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
         def binding_version(self) -> str:
             return self.__version__
 
-        def compile_graph_json(self, document_json: str, block_catalog_json: str | None = None) -> str:
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
             return '{"ok": NaN}'
 
     runtime = load_runtime_wrapper(FakeNative())
@@ -76,11 +83,96 @@ def test_runtime_wrapper_rejects_non_standard_native_json_results() -> None:
         runtime.compile_graph({"kind": "Graph"})
 
 
+def test_runtime_wrapper_preserves_exact_numbers_and_rejects_nonfinite_inputs() -> None:
+    calls: list[str] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
+            calls.append(document_json)
+            return '{"ok":true,"huge":1e400,"precise":1.234567890123456789}'
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    result = runtime.compile_graph(
+        {"kind": "Graph", "value": Decimal("1.234567890123456789")}
+    )
+    assert "1.234567890123456789" in calls[0]
+    assert result["huge"] == Decimal("1e400")
+    assert result["precise"] == Decimal("1.234567890123456789")
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        runtime.compile_graph({"kind": "Graph", "value": float("nan")})
+    with pytest.raises(ValueError, match="finite numbers"):
+        runtime.compile_graph({"kind": "Graph", "value": Decimal("Infinity")})
+
+
+def test_runtime_wrapper_requires_explicit_unknown_block_discovery() -> None:
+    calls: list[tuple[str | None, bool]] = []
+
+    class FakeNative:
+        __version__ = "0.1.0"
+
+        def __getattr__(self, name: str):
+            if name.endswith("_json"):
+                return lambda *args, **kwargs: '{"ok":true}'
+            raise AttributeError(name)
+
+        def binding_version(self) -> str:
+            return self.__version__
+
+        def compile_graph_json(
+            self,
+            document_json: str,
+            block_catalog_json: str | None = None,
+            *,
+            allow_unknown_blocks: bool = False,
+        ) -> str:
+            calls.append((block_catalog_json, allow_unknown_blocks))
+            return json.dumps({"ok": allow_unknown_blocks})
+
+    runtime = load_runtime_wrapper(FakeNative())
+
+    assert runtime.compile_graph({"kind": "Graph"}) == {"ok": False}
+    assert runtime.compile_graph(
+        {"kind": "Graph"},
+        allow_unknown_blocks=True,
+    ) == {"ok": True}
+    assert calls == [(None, False), (None, True)]
+    with pytest.raises(TypeError, match="allow_unknown_blocks must be a boolean"):
+        runtime.compile_graph({"kind": "Graph"}, allow_unknown_blocks=1)
+
+
 def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     calls: list[tuple[str, tuple[object, ...]]] = []
 
-    def compile_graph_json(document_json: str, block_catalog_json: str | None = None) -> str:
-        calls.append(("compile", (document_json, block_catalog_json or "")))
+    def compile_graph_json(
+        document_json: str,
+        block_catalog_json: str | None = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> str:
+        calls.append(
+            (
+                "compile",
+                (document_json, block_catalog_json or "", allow_unknown_blocks),
+            )
+        )
         return json.dumps({"ok": True, "graph": json.loads(document_json), "diagnostics": []})
 
     def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
@@ -598,6 +690,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         run_id="run-requested-native-1",
         run_store_path="/tmp/graphblocks-runs.sqlite3",
         journal_store_path="/tmp/graphblocks-journal.sqlite3",
+        checkpoint_store_path="/tmp/graphblocks-checkpoints.sqlite3",
+        async_operation_store_path="/tmp/graphblocks-operations.sqlite3",
+        callback_receipt={"operation_id": "operation-1"},
         deployment_provenance={
             "release_digest": "sha256:release",
             "deployment_revision_id": "revision-1",
@@ -1215,6 +1310,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             (
                 '{"kind":"Graph"}',
                 '[{"typeId":"prompt.render"}]',
+                False,
             ),
         ),
         ("run_stdlib", ('{"kind":"Graph"}', '{"message":{"text":"hi"}}')),
@@ -1223,7 +1319,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             (
                 '{"kind":"Graph"}',
                 '{"message":{"text":"hi"}}',
-                '{"deploymentProvenance":{"deployment_revision_id":"revision-1",'
+                '{"asyncOperationStorePath":"/tmp/graphblocks-operations.sqlite3",'
+                '"callbackReceipt":{"operation_id":"operation-1"},'
+                '"checkpointStorePath":"/tmp/graphblocks-checkpoints.sqlite3",'
+                '"deploymentProvenance":{"deployment_revision_id":"revision-1",'
                 '"physical_plan_hash":"sha256:physical-plan","release_digest":"sha256:release",'
                 '"release_signature_digest":"sha256:signature"},'
                 '"journalStorePath":"/tmp/graphblocks-journal.sqlite3",'

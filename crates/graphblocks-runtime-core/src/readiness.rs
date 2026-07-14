@@ -29,6 +29,7 @@ pub enum InputMode {
 pub struct InputDependency {
     pub input: String,
     pub source: PortRef,
+    pub source_path: Vec<String>,
     pub mode: InputMode,
 }
 
@@ -37,6 +38,7 @@ impl InputDependency {
         Self {
             input: input.into(),
             source,
+            source_path: Vec::new(),
             mode: InputMode::Value,
         }
     }
@@ -45,8 +47,18 @@ impl InputDependency {
         Self {
             input: input.into(),
             source,
+            source_path: Vec::new(),
             mode: InputMode::Outcome,
         }
+    }
+
+    pub fn with_source_path<I, S>(mut self, path: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.source_path = path.into_iter().map(Into::into).collect();
+        self
     }
 }
 
@@ -100,9 +112,44 @@ impl ReadinessTracker {
 
             match (dependency.mode, outcome) {
                 (InputMode::Value, Outcome::Value(value)) => {
+                    let mut resolved_value = value;
+                    for segment in &dependency.source_path {
+                        let nested = match resolved_value {
+                            Value::Object(object) => object.get(segment),
+                            Value::Array(array)
+                                if !segment.is_empty()
+                                    && segment.bytes().all(|byte| byte.is_ascii_digit())
+                                    && (segment.len() == 1 || !segment.starts_with('0')) =>
+                            {
+                                segment
+                                    .parse::<usize>()
+                                    .ok()
+                                    .and_then(|index| array.get(index))
+                            }
+                            _ => None,
+                        };
+                        let Some(nested) = nested else {
+                            return Readiness::Blocked {
+                                input: dependency.input.clone(),
+                                source: dependency.source.clone(),
+                                outcome: Outcome::Failed(crate::outcome::BlockError::new(
+                                    "runtime.missing_source_path",
+                                    crate::outcome::ErrorCategory::Configuration,
+                                    format!(
+                                        "source {}.{} is missing nested path {}",
+                                        dependency.source.node,
+                                        dependency.source.port,
+                                        dependency.source_path.join(".")
+                                    ),
+                                    false,
+                                )),
+                            };
+                        };
+                        resolved_value = nested;
+                    }
                     resolved.insert(
                         dependency.input.clone(),
-                        ResolvedInput::Value(value.clone()),
+                        ResolvedInput::Value(resolved_value.clone()),
                     );
                 }
                 (InputMode::Value, outcome) => {

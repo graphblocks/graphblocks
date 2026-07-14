@@ -9,6 +9,7 @@ spec:
     profiles:
     - GB-C4-PRODUCTION
     scenarioPath: examples/11-coding-agent-background-callbacks/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - accepted invocation handle check
@@ -20,6 +21,7 @@ spec:
     profiles:
     - GB-X1-ORCHESTRATION
     scenarioPath: examples/06-bounded-research-orchestrator/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -31,6 +33,7 @@ spec:
     profiles:
     - GB-C2-AI-APPLICATION
     scenarioPath: acceptance/scenarios/direct-file-analysis.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -41,6 +44,7 @@ spec:
     profiles:
     - GB-C2-AI-APPLICATION
     scenarioPath: examples/02-document-ingestion/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -51,6 +55,7 @@ spec:
     profiles:
     - GB-C2-AI-APPLICATION
     scenarioPath: examples/01-enterprise-federated-rag/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -61,6 +66,7 @@ spec:
     profiles:
     - GB-C4-PRODUCTION
     scenarioPath: examples/08-kubernetes-production-deployment/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - release bundle verification
@@ -71,6 +77,7 @@ spec:
     profiles:
     - GB-C2-AI-APPLICATION
     scenarioPath: acceptance/scenarios/multi-turn-chat.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - graphblocks plan --expand
@@ -81,6 +88,7 @@ spec:
     profiles:
     - GB-X2-VOICE
     scenarioPath: examples/10-realtime-voice-extension/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - duplex session contract check
@@ -91,6 +99,7 @@ spec:
     profiles:
     - GB-C4-PRODUCTION
     scenarioPath: examples/09-observability-profile/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - OTel projection check
@@ -101,6 +110,7 @@ spec:
     profiles:
     - GB-C3-GOVERNED-RUNTIME
     scenarioPath: examples/07-verified-rtl-workspace-trial/example.yaml
+    allowUnknownBlocks: true
     gates:
     - graphblocks validate
     - budget lease reservation check

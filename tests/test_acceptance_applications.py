@@ -106,6 +106,10 @@ def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch
         "telemetry-outage-correctness",
         "verified-rtl-workspace-trial",
     )
+    assert all(
+        application.allow_unknown_blocks
+        for application in manifest.applications
+    )
 
 
 def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) -> None:
@@ -151,11 +155,16 @@ def test_local_acceptance_scenarios_pass_declared_builtin_gates(monkeypatch) -> 
             scenario_path=application.scenario_path,
             gates=builtin_gates,
             description=application.description,
+            allow_unknown_blocks=application.allow_unknown_blocks,
         )
 
         report = runner.run_application(builtin_application, root=ROOT)
 
         assert report.ok, report.report_contract()
+        assert all(
+            result.command[-1:] == ("--allow-unknown-blocks",)
+            for result in report.results
+        )
 
 
 def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
@@ -176,6 +185,7 @@ def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
             "abstention check",
         ],
         "description": "Federated enterprise RAG with dense and keyword retrieval, fusion, rerank, budgeted context, abstention, and citation checks.",
+        "allow_unknown_blocks": True,
     }
     assert manifest.content_digest().startswith("sha256:")
 
@@ -1227,9 +1237,10 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "conversation",
         "deployment",
         "documents",
-        "durable",
-        "exhaustion",
-        "orchestration",
+            "durable",
+            "exhaustion",
+            "migration",
+            "orchestration",
         "policy",
         "rag",
         "retry",

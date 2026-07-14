@@ -4,8 +4,11 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_compiler::canonical::canonical_hash;
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
+};
 use graphblocks_compiler::diagnostics::Severity;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use crate::application_event::{
@@ -13,13 +16,14 @@ use crate::application_event::{
     SqliteApplicationProtocolLog,
 };
 use crate::async_operation::{
-    AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
-    AsyncOperationState, CallbackArtifactRef, ExternalEffectRecord,
+    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation, AsyncOperationEvent,
+    AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus, AsyncOperationState,
+    CallbackArtifactRef, ExternalEffectRecord, SqliteAsyncOperationStore,
 };
-use crate::journal::{JournalMetadata, SqliteExecutionJournal};
+use crate::journal::{JournalMetadata, JournalRecord, SqliteExecutionJournal};
 use crate::outcome::{BlockError, ErrorCategory, Outcome, SkipReason};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
-use crate::run_store::{RunDeploymentProvenance, RunStatus, SqliteRunStore};
+use crate::run_store::{RunDeploymentProvenance, RunStatus, RunStoreError, SqliteRunStore};
 use crate::scheduler::{ScheduledCondition, ScheduledNode, StartedNode};
 use crate::stdlib_blocks::stdlib_block_catalog;
 use crate::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunResult, TestRunStatus};
@@ -30,6 +34,7 @@ use crate::tool::{
     ToolResolutionScope, ToolResultMode,
 };
 use crate::tool_result::ToolEffectOutcome;
+use crate::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use crate::typed_graph::GraphDocument;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,6 +81,7 @@ pub enum StdlibRunStatus {
     Succeeded,
     Failed,
     Cancelled,
+    WaitingCallback,
 }
 
 impl StdlibRunStatus {
@@ -84,6 +90,7 @@ impl StdlibRunStatus {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::WaitingCallback => "waiting_callback",
         }
     }
 }
@@ -94,6 +101,9 @@ pub struct StdlibRunOptions {
     pub run_store_path: Option<String>,
     pub journal_store_path: Option<String>,
     pub application_event_store_path: Option<String>,
+    pub checkpoint_store_path: Option<String>,
+    pub async_operation_store_path: Option<String>,
+    pub callback_receipt: Option<Value>,
     pub deployment_provenance: Option<RunDeploymentProvenance>,
 }
 
@@ -115,6 +125,21 @@ impl StdlibRunOptions {
 
     pub fn with_application_event_store_path(mut self, path: impl Into<String>) -> Self {
         self.application_event_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_checkpoint_store_path(mut self, path: impl Into<String>) -> Self {
+        self.checkpoint_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_async_operation_store_path(mut self, path: impl Into<String>) -> Self {
+        self.async_operation_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_callback_receipt(mut self, receipt: Value) -> Self {
+        self.callback_receipt = Some(receipt);
         self
     }
 
@@ -140,6 +165,21 @@ impl StdlibRunOptions {
                 Value::String(path.clone()),
             );
         }
+        if let Some(path) = &self.checkpoint_store_path {
+            value.insert(
+                "checkpointStorePath".to_owned(),
+                Value::String(path.clone()),
+            );
+        }
+        if let Some(path) = &self.async_operation_store_path {
+            value.insert(
+                "asyncOperationStorePath".to_owned(),
+                Value::String(path.clone()),
+            );
+        }
+        if let Some(receipt) = &self.callback_receipt {
+            value.insert("callbackReceipt".to_owned(), receipt.clone());
+        }
         if let Some(provenance) = &self.deployment_provenance {
             value.insert(
                 "deploymentProvenance".to_owned(),
@@ -157,6 +197,7 @@ pub struct StdlibRunResult {
     pub status: StdlibRunStatus,
     pub outputs: Value,
     pub journal: Vec<Value>,
+    pub checkpoint: Option<Value>,
     pub deployment_provenance: Option<RunDeploymentProvenance>,
 }
 
@@ -168,6 +209,7 @@ impl StdlibRunResult {
             "status": self.status.as_str(),
             "outputs": self.outputs,
             "journal": self.journal,
+            "checkpoint": self.checkpoint,
         });
         if let (Some(provenance), Some(payload)) =
             (&self.deployment_provenance, payload.as_object_mut())
@@ -184,6 +226,7 @@ impl StdlibRunResult {
 struct RuntimeBridgePlan {
     graph_hash: String,
     nodes: BTreeMap<String, Value>,
+    descriptors_by_node: BTreeMap<String, BlockDescriptor>,
     scheduled_nodes: Vec<ScheduledNode>,
     input_output_projections: Vec<OutputProjection>,
     output_projections_by_node: BTreeMap<String, Vec<OutputProjection>>,
@@ -203,9 +246,39 @@ struct OutputProjection {
 
 struct StdlibExecutor {
     nodes: BTreeMap<String, Value>,
+    descriptors_by_node: BTreeMap<String, BlockDescriptor>,
     output_projections_by_node: BTreeMap<String, Vec<OutputProjection>>,
     output_ports_by_node: BTreeMap<String, Vec<String>>,
     output_values: Value,
+    replay_node_outputs: BTreeMap<String, Value>,
+    resume_wait: Option<NativeResumeWait>,
+    executed_node_outputs: BTreeMap<String, Value>,
+    suspension: Option<NativeCallbackSuspension>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeResumeWait {
+    node_id: String,
+    operation: Value,
+    callback: Value,
+}
+
+#[derive(Clone, Debug)]
+struct NativeCallbackSuspension {
+    wait_node: String,
+    operation: Value,
+}
+
+struct NativeCheckpointBuildRequest<'a> {
+    run_id: &'a str,
+    graph_hash: &'a str,
+    inputs: &'a Value,
+    node_names: &'a [String],
+    suspension: &'a NativeCallbackSuspension,
+    node_outputs: &'a BTreeMap<String, Value>,
+    output_values: &'a Value,
+    journal_prefix: &'a [Value],
+    deployment_provenance: Option<&'a RunDeploymentProvenance>,
 }
 
 struct RuntimeEvidencePersistence<'a> {
@@ -230,6 +303,21 @@ impl NodeExecutor for StdlibExecutor {
                 false,
             ));
         };
+        if self.suspension.is_some() {
+            let reason = SkipReason::new("run_waiting_callback");
+            return Ok(self
+                .output_ports_by_node
+                .get(&node.node_id)
+                .into_iter()
+                .flatten()
+                .map(|port| {
+                    (
+                        PortRef::new(node.node_id.clone(), port),
+                        Outcome::Skipped(reason.clone()),
+                    )
+                })
+                .collect());
+        }
         if let Some(when) = node_spec.get("when") {
             let when = when
                 .as_str()
@@ -305,7 +393,34 @@ impl NodeExecutor for StdlibExecutor {
             .get("config")
             .cloned()
             .unwrap_or_else(|| json!({}));
-        let outputs = execute_stdlib_block(block_id, &inputs, &config)?;
+        let (outputs, phase) = if let Some(outputs) = self.replay_node_outputs.get(&node.node_id) {
+            (outputs.clone(), ExecutionPhase::Initial)
+        } else if self
+            .resume_wait
+            .as_ref()
+            .is_some_and(|resume| resume.node_id == node.node_id)
+        {
+            let resume = self.resume_wait.as_ref().expect("resume wait exists");
+            let mut operation = resume.operation.clone();
+            operation["state"] = json!("resuming");
+            (
+                json!({
+                    "wait": {
+                        "state": "resumed",
+                        "operation": operation,
+                        "checkpoint": false,
+                    },
+                    "callback": resume.callback,
+                    "operation": operation,
+                }),
+                ExecutionPhase::Resumed,
+            )
+        } else {
+            (
+                execute_stdlib_block(block_id, &inputs, &config)?,
+                ExecutionPhase::Initial,
+            )
+        };
         let Some(outputs_object) = outputs.as_object() else {
             return Err(BlockError::new(
                 format!("{block_id}.invalid_outputs"),
@@ -314,6 +429,38 @@ impl NodeExecutor for StdlibExecutor {
                 false,
             ));
         };
+        let descriptor = self.descriptors_by_node.get(&node.node_id).ok_or_else(|| {
+            BlockError::new(
+                format!("{block_id}.missing_descriptor"),
+                ErrorCategory::Internal,
+                format!("stdlib node {:?} has no block descriptor", node.node_id),
+                false,
+            )
+        })?;
+        validate_stdlib_output_contract(block_id, descriptor, outputs_object, &config, phase)?;
+        if block_id == "async.await_callback@1"
+            && self.resume_wait.is_none()
+            && outputs
+                .pointer("/wait/checkpoint")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            let operation = outputs.pointer("/wait/operation").cloned().ok_or_else(|| {
+                BlockError::new(
+                    "async.await_callback.invalid_checkpoint",
+                    ErrorCategory::Internal,
+                    "async callback checkpoint is missing operation state",
+                    false,
+                )
+            })?;
+            self.suspension = Some(NativeCallbackSuspension {
+                wait_node: node.node_id.clone(),
+                operation,
+            });
+        } else if self.resume_wait.is_none() {
+            self.executed_node_outputs
+                .insert(node.node_id.clone(), outputs.clone());
+        }
         let projections = self
             .output_projections_by_node
             .get(&node.node_id)
@@ -342,6 +489,58 @@ impl NodeExecutor for StdlibExecutor {
             .collect();
         Ok(port_outputs)
     }
+}
+
+fn validate_stdlib_output_contract(
+    block_id: &str,
+    descriptor: &BlockDescriptor,
+    outputs: &serde_json::Map<String, Value>,
+    config: &Value,
+    phase: ExecutionPhase,
+) -> Result<(), BlockError> {
+    let declared_outputs = descriptor
+        .outputs
+        .iter()
+        .map(|port| port.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let unexpected = outputs
+        .keys()
+        .filter(|name| !declared_outputs.contains(name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        return Err(BlockError::new(
+            format!("{block_id}.invalid_outputs"),
+            ErrorCategory::Internal,
+            format!(
+                "{block_id} returned undeclared output(s): {}",
+                unexpected.join(", ")
+            ),
+            false,
+        ));
+    }
+    let missing = descriptor
+        .outputs
+        .iter()
+        .filter(|port| port.required_for(config, phase) && !outputs.contains_key(&port.name))
+        .map(|port| port.name.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(BlockError::new(
+            format!("{block_id}.invalid_outputs"),
+            ErrorCategory::Internal,
+            format!(
+                "{block_id} omitted required output(s) in {} phase: {}",
+                match phase {
+                    ExecutionPhase::Initial => "initial",
+                    ExecutionPhase::Resumed => "resumed",
+                },
+                missing.join(", ")
+            ),
+            false,
+        ));
+    }
+    Ok(())
 }
 
 fn project_output_value(
@@ -465,6 +664,17 @@ fn run_stdlib_graph_values(
         "applicationEventStorePath",
         "application_event_store_path",
     )?;
+    let checkpoint_store_path =
+        optional_options_string(options, "checkpointStorePath", "checkpoint_store_path")?;
+    let async_operation_store_path = optional_options_string(
+        options,
+        "asyncOperationStorePath",
+        "async_operation_store_path",
+    )?;
+    let callback_receipt = options
+        .get("callbackReceipt")
+        .or_else(|| options.get("callback_receipt"))
+        .filter(|value| !value.is_null());
     let deployment_provenance = options
         .get("deploymentProvenance")
         .or_else(|| options.get("deployment_provenance"))
@@ -478,12 +688,31 @@ fn run_stdlib_graph_values(
         project_output_value(&mut initial_output_values, inputs, projection)
             .map_err(StdlibRuntimeError::invalid)?;
     }
+    if let Some(checkpoint_store_path) = checkpoint_store_path {
+        return run_native_callback_graph_values(NativeCallbackRunRequest {
+            bridge_plan,
+            inputs,
+            run_id,
+            checkpoint_store_path,
+            async_operation_store_path: async_operation_store_path.unwrap_or(checkpoint_store_path),
+            run_store_path,
+            journal_store_path,
+            callback_receipt,
+            initial_output_values,
+            deployment_provenance: deployment_provenance.as_ref(),
+        });
+    }
     let mut runtime = runtime_with_inputs(bridge_plan.scheduled_nodes, inputs, run_id)?;
     let mut executor = StdlibExecutor {
         nodes: bridge_plan.nodes,
+        descriptors_by_node: bridge_plan.descriptors_by_node,
         output_projections_by_node: bridge_plan.output_projections_by_node,
         output_ports_by_node: bridge_plan.output_ports_by_node,
         output_values: initial_output_values,
+        replay_node_outputs: BTreeMap::new(),
+        resume_wait: None,
+        executed_node_outputs: BTreeMap::new(),
+        suspension: None,
     };
     let result = runtime.run(&mut executor).map_err(|error| {
         StdlibRuntimeError::runtime(format!("stdlib runtime execution failed: {error:?}"))
@@ -509,6 +738,2100 @@ fn run_stdlib_graph_values(
         output_values,
         deployment_provenance.as_ref(),
     ))
+}
+
+struct NativeCallbackRunRequest<'a> {
+    bridge_plan: RuntimeBridgePlan,
+    inputs: &'a Value,
+    run_id: &'a str,
+    checkpoint_store_path: &'a str,
+    async_operation_store_path: &'a str,
+    run_store_path: Option<&'a str>,
+    journal_store_path: Option<&'a str>,
+    callback_receipt: Option<&'a Value>,
+    initial_output_values: Value,
+    deployment_provenance: Option<&'a RunDeploymentProvenance>,
+}
+
+#[derive(Clone, Copy)]
+struct NativeCallbackEvidenceContext<'a> {
+    async_operation_store_path: &'a str,
+    run_store_path: Option<&'a str>,
+    journal_store_path: Option<&'a str>,
+    inputs: &'a Value,
+    deployment_provenance: Option<&'a RunDeploymentProvenance>,
+}
+
+impl<'a> From<&NativeCallbackRunRequest<'a>> for NativeCallbackEvidenceContext<'a> {
+    fn from(request: &NativeCallbackRunRequest<'a>) -> Self {
+        Self {
+            async_operation_store_path: request.async_operation_store_path,
+            run_store_path: request.run_store_path,
+            journal_store_path: request.journal_store_path,
+            inputs: request.inputs,
+            deployment_provenance: request.deployment_provenance,
+        }
+    }
+}
+
+struct StoredNativeCallbackRun {
+    checkpoint: Value,
+    result: StdlibRunResult,
+    phase: NativeCallbackCoordinatorPhase,
+    callback_idempotency_key: Option<String>,
+    callback_payload_digest: Option<String>,
+    callback_receipt: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeCallbackCoordinatorPhase {
+    WaitingEvidencePending,
+    WaitingCallback,
+    CallbackAccepted,
+    TerminalEvidencePending,
+    Terminal,
+}
+
+impl NativeCallbackCoordinatorPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WaitingEvidencePending => "waiting_evidence_pending",
+            Self::WaitingCallback => "waiting_callback",
+            Self::CallbackAccepted => "callback_accepted",
+            Self::TerminalEvidencePending => "terminal_evidence_pending",
+            Self::Terminal => "terminal",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "waiting_evidence_pending" => Some(Self::WaitingEvidencePending),
+            "waiting_callback" => Some(Self::WaitingCallback),
+            "callback_accepted" => Some(Self::CallbackAccepted),
+            "terminal_evidence_pending" => Some(Self::TerminalEvidencePending),
+            "terminal" => Some(Self::Terminal),
+            _ => None,
+        }
+    }
+
+    fn is_pre_acceptance(self) -> bool {
+        matches!(self, Self::WaitingEvidencePending | Self::WaitingCallback)
+    }
+
+    fn has_waiting_result(self) -> bool {
+        self.is_pre_acceptance() || self == Self::CallbackAccepted
+    }
+
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::TerminalEvidencePending | Self::Terminal)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TrustedNativeCallbackResumeAdmission {
+    authorized: bool,
+    authentication_decision_id: String,
+    policy_decision_id: String,
+    budget_reservation_id: String,
+    compatible_release_digest: String,
+    run_id: String,
+    operation_id: String,
+    node_id: String,
+    attempt_id: String,
+    checkpoint_id: String,
+    checkpoint_state_digest: String,
+    owner_id: String,
+    lease_id: String,
+    fencing_epoch: u64,
+    fence_token: String,
+    schema_verification_id: String,
+    schema_id: String,
+    payload_digest: String,
+    schema_verified_by: String,
+}
+
+fn run_native_callback_graph_values(
+    request: NativeCallbackRunRequest<'_>,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    let admission = request
+        .callback_receipt
+        .map(validate_native_callback_receipt_shape)
+        .transpose()?;
+    if admission
+        .as_ref()
+        .is_some_and(|admission| !admission.authorized)
+    {
+        return Err(trusted_native_callback_admission_rejected());
+    }
+    let stored = load_native_callback_run(request.checkpoint_store_path, request.run_id)?;
+    match (stored, request.callback_receipt) {
+        (Some(stored), Some(receipt)) => resume_native_callback_run(
+            request,
+            stored,
+            receipt,
+            admission
+                .as_ref()
+                .expect("callback receipt admission was parsed"),
+        ),
+        (Some(stored), None) => {
+            validate_native_checkpoint_identity(
+                &stored.checkpoint,
+                request.run_id,
+                &request.bridge_plan.graph_hash,
+                request.inputs,
+                request.deployment_provenance,
+            )?;
+            reconcile_native_callback_evidence(
+                NativeCallbackEvidenceContext::from(&request),
+                &stored,
+            )?;
+            let reconciled_phase = match stored.phase {
+                NativeCallbackCoordinatorPhase::WaitingEvidencePending => {
+                    NativeCallbackCoordinatorPhase::WaitingCallback
+                }
+                NativeCallbackCoordinatorPhase::WaitingCallback
+                | NativeCallbackCoordinatorPhase::CallbackAccepted => stored.phase,
+                NativeCallbackCoordinatorPhase::TerminalEvidencePending
+                | NativeCallbackCoordinatorPhase::Terminal => {
+                    NativeCallbackCoordinatorPhase::Terminal
+                }
+            };
+            mark_native_callback_phase(
+                request.checkpoint_store_path,
+                request.run_id,
+                reconciled_phase,
+            )?;
+            Ok(stored.result)
+        }
+        (None, Some(_)) => Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        )),
+        (None, None) => start_native_callback_run(request),
+    }
+}
+
+fn start_native_callback_run(
+    request: NativeCallbackRunRequest<'_>,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    let evidence_context = NativeCallbackEvidenceContext::from(&request);
+    let RuntimeBridgePlan {
+        graph_hash,
+        nodes,
+        descriptors_by_node,
+        scheduled_nodes,
+        input_output_projections: _,
+        output_projections_by_node,
+        output_ports_by_node,
+    } = request.bridge_plan;
+    let node_names = nodes.keys().cloned().collect::<Vec<_>>();
+    let mut runtime = runtime_with_inputs(scheduled_nodes, request.inputs, request.run_id)?;
+    let mut executor = StdlibExecutor {
+        nodes,
+        descriptors_by_node,
+        output_projections_by_node,
+        output_ports_by_node,
+        output_values: request.initial_output_values,
+        replay_node_outputs: BTreeMap::new(),
+        resume_wait: None,
+        executed_node_outputs: BTreeMap::new(),
+        suspension: None,
+    };
+    let result = runtime.run(&mut executor).map_err(|error| {
+        StdlibRuntimeError::runtime(format!("stdlib runtime execution failed: {error:?}"))
+    })?;
+    let Some(suspension) = executor.suspension else {
+        let output_values = if result.status == TestRunStatus::Succeeded {
+            executor.output_values
+        } else {
+            json!({})
+        };
+        persist_runtime_evidence(RuntimeEvidencePersistence {
+            result: &result,
+            graph_hash: &graph_hash,
+            inputs: request.inputs,
+            run_store_path: request.run_store_path,
+            journal_store_path: request.journal_store_path,
+            application_event_store_path: None,
+            output_values: &output_values,
+            deployment_provenance: request.deployment_provenance,
+        })?;
+        return Ok(build_runtime_result(
+            result,
+            graph_hash,
+            output_values,
+            request.deployment_provenance,
+        ));
+    };
+
+    let journal_prefix = native_waiting_journal_prefix(&result, &suspension);
+    let checkpoint = build_native_callback_checkpoint(NativeCheckpointBuildRequest {
+        run_id: request.run_id,
+        graph_hash: &graph_hash,
+        inputs: request.inputs,
+        node_names: &node_names,
+        suspension: &suspension,
+        node_outputs: &executor.executed_node_outputs,
+        output_values: &executor.output_values,
+        journal_prefix: &journal_prefix,
+        deployment_provenance: request.deployment_provenance,
+    });
+    validate_native_checkpoint_identity(
+        &checkpoint,
+        request.run_id,
+        &graph_hash,
+        request.inputs,
+        request.deployment_provenance,
+    )?;
+    let journal = waiting_native_journal(journal_prefix, &suspension, &checkpoint);
+    let waiting = StdlibRunResult {
+        run_id: request.run_id.to_owned(),
+        graph_hash: graph_hash.clone(),
+        status: StdlibRunStatus::WaitingCallback,
+        outputs: executor.output_values,
+        journal,
+        checkpoint: Some(checkpoint.clone()),
+        deployment_provenance: request.deployment_provenance.cloned(),
+    };
+    persist_native_callback_run(
+        request.checkpoint_store_path,
+        &checkpoint,
+        &waiting,
+        NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+        None,
+        None,
+        None,
+    )?;
+    let stored = StoredNativeCallbackRun {
+        checkpoint,
+        result: waiting.clone(),
+        phase: NativeCallbackCoordinatorPhase::WaitingEvidencePending,
+        callback_idempotency_key: None,
+        callback_payload_digest: None,
+        callback_receipt: None,
+    };
+    reconcile_native_callback_evidence(evidence_context, &stored)?;
+    mark_native_callback_phase(
+        request.checkpoint_store_path,
+        request.run_id,
+        NativeCallbackCoordinatorPhase::WaitingCallback,
+    )?;
+    Ok(waiting)
+}
+
+fn resume_native_callback_run(
+    request: NativeCallbackRunRequest<'_>,
+    mut stored: StoredNativeCallbackRun,
+    receipt: &Value,
+    admission: &TrustedNativeCallbackResumeAdmission,
+) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    let evidence_context = NativeCallbackEvidenceContext::from(&request);
+    validate_native_checkpoint_identity(
+        &stored.checkpoint,
+        request.run_id,
+        &request.bridge_plan.graph_hash,
+        request.inputs,
+        request.deployment_provenance,
+    )?;
+    let receipt_object = receipt
+        .as_object()
+        .expect("callback receipt shape validation requires an object");
+    let callback_idempotency_key = receipt_object["callback_idempotency_key"]
+        .as_str()
+        .expect("callback idempotency validation requires a string");
+    let callback_payload_digest = receipt_object["payload_digest"]
+        .as_str()
+        .expect("callback payload digest validation requires a string");
+    validate_native_callback_against_checkpoint(receipt, &stored.checkpoint)?;
+    validate_trusted_native_callback_admission(
+        admission,
+        receipt,
+        &stored.checkpoint,
+        request.deployment_provenance,
+        &request.bridge_plan.graph_hash,
+    )?;
+    if stored.phase.is_terminal() {
+        if stored.callback_idempotency_key.as_deref() == Some(callback_idempotency_key)
+            && stored.callback_payload_digest.as_deref() == Some(callback_payload_digest)
+        {
+            reconcile_native_callback_evidence(evidence_context, &stored)?;
+            mark_native_callback_phase(
+                request.checkpoint_store_path,
+                request.run_id,
+                NativeCallbackCoordinatorPhase::Terminal,
+            )?;
+            return Ok(stored.result);
+        }
+        return Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        ));
+    }
+    if stored.phase == NativeCallbackCoordinatorPhase::CallbackAccepted {
+        if stored.callback_receipt.as_ref() != Some(receipt)
+            || stored.callback_idempotency_key.as_deref() != Some(callback_idempotency_key)
+            || stored.callback_payload_digest.as_deref() != Some(callback_payload_digest)
+        {
+            return Err(native_callback_rejected());
+        }
+    } else {
+        let operation_id = stored
+            .checkpoint
+            .pointer("/operation/operation_id")
+            .and_then(Value::as_str)
+            .expect("validated callback checkpoint has an operation id");
+        let operation_store = SqliteAsyncOperationStore::open(request.async_operation_store_path)
+            .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to open native async operation store: {error:?}"
+            ))
+        })?;
+        let operation_state =
+            operation_store
+                .try_operation_state(operation_id)
+                .map_err(|error| {
+                    StdlibRuntimeError::runtime(format!(
+                        "failed to load native callback operation: {error:?}"
+                    ))
+                })?;
+        match operation_state {
+            Some(AsyncOperationState::CallbackReceived | AsyncOperationState::Resuming) => {
+                validate_persisted_native_operation_identity(
+                    request.async_operation_store_path,
+                    &stored.checkpoint["operation"],
+                )?;
+                validate_persisted_native_callback_acceptance(
+                    &operation_store,
+                    receipt,
+                    admission,
+                )?;
+            }
+            Some(AsyncOperationState::WaitingCallback) | None => {
+                reconcile_native_callback_evidence(evidence_context, &stored)?;
+                mark_native_callback_phase(
+                    request.checkpoint_store_path,
+                    request.run_id,
+                    NativeCallbackCoordinatorPhase::WaitingCallback,
+                )?;
+                accept_native_callback(request.async_operation_store_path, receipt, admission)?;
+            }
+            _ => return Err(native_callback_rejected()),
+        }
+        persist_native_callback_run(
+            request.checkpoint_store_path,
+            &stored.checkpoint,
+            &stored.result,
+            NativeCallbackCoordinatorPhase::CallbackAccepted,
+            Some(callback_idempotency_key),
+            Some(callback_payload_digest),
+            Some(receipt),
+        )?;
+        stored.phase = NativeCallbackCoordinatorPhase::CallbackAccepted;
+        stored.callback_idempotency_key = Some(callback_idempotency_key.to_owned());
+        stored.callback_payload_digest = Some(callback_payload_digest.to_owned());
+        stored.callback_receipt = Some(receipt.clone());
+    }
+    reconcile_native_callback_evidence(evidence_context, &stored)?;
+    let operation = stored
+        .checkpoint
+        .get("operation")
+        .cloned()
+        .expect("validated checkpoint has operation");
+    let replay_node_outputs = value_object_to_btree(
+        stored
+            .checkpoint
+            .get("node_outputs")
+            .expect("validated checkpoint has node_outputs"),
+        "native callback checkpoint node_outputs",
+    )?;
+    let wait_node = stored.checkpoint["wait_node"]
+        .as_str()
+        .expect("validated checkpoint wait_node is a string")
+        .to_owned();
+    let callback = receipt_object["payload"].clone();
+    let RuntimeBridgePlan {
+        graph_hash,
+        nodes,
+        descriptors_by_node,
+        scheduled_nodes,
+        input_output_projections: _,
+        output_projections_by_node,
+        output_ports_by_node,
+    } = request.bridge_plan;
+    let mut runtime = runtime_with_inputs(scheduled_nodes, request.inputs, request.run_id)?;
+    let mut executor = StdlibExecutor {
+        nodes,
+        descriptors_by_node,
+        output_projections_by_node,
+        output_ports_by_node,
+        output_values: stored.checkpoint["output_values"].clone(),
+        replay_node_outputs: replay_node_outputs.clone(),
+        resume_wait: Some(NativeResumeWait {
+            node_id: wait_node,
+            operation,
+            callback,
+        }),
+        executed_node_outputs: BTreeMap::new(),
+        suspension: None,
+    };
+    let resumed = match runtime.run(&mut executor) {
+        Ok(result) => {
+            let output_values = if result.status == TestRunStatus::Succeeded {
+                executor.output_values
+            } else {
+                json!({})
+            };
+            let status = match result.status {
+                TestRunStatus::Succeeded => StdlibRunStatus::Succeeded,
+                TestRunStatus::Failed => StdlibRunStatus::Failed,
+                TestRunStatus::Cancelled => StdlibRunStatus::Cancelled,
+            };
+            let journal = resumed_native_journal(
+                &stored.result.journal,
+                &result,
+                &replay_node_outputs,
+                receipt,
+            );
+            StdlibRunResult {
+                run_id: request.run_id.to_owned(),
+                graph_hash,
+                status,
+                outputs: output_values,
+                journal,
+                checkpoint: None,
+                deployment_provenance: request.deployment_provenance.cloned(),
+            }
+        }
+        Err(error) => failed_native_callback_resume_result(
+            &stored.result,
+            request.run_id,
+            graph_hash,
+            receipt,
+            format!("stdlib callback resume failed: {error:?}"),
+            request.deployment_provenance,
+        ),
+    };
+    persist_native_callback_run(
+        request.checkpoint_store_path,
+        &stored.checkpoint,
+        &resumed,
+        NativeCallbackCoordinatorPhase::TerminalEvidencePending,
+        Some(callback_idempotency_key),
+        Some(callback_payload_digest),
+        Some(receipt),
+    )?;
+    let terminal = StoredNativeCallbackRun {
+        checkpoint: stored.checkpoint,
+        result: resumed.clone(),
+        phase: NativeCallbackCoordinatorPhase::TerminalEvidencePending,
+        callback_idempotency_key: Some(callback_idempotency_key.to_owned()),
+        callback_payload_digest: Some(callback_payload_digest.to_owned()),
+        callback_receipt: Some(receipt.clone()),
+    };
+    reconcile_native_callback_evidence(evidence_context, &terminal)?;
+    mark_native_callback_phase(
+        request.checkpoint_store_path,
+        request.run_id,
+        NativeCallbackCoordinatorPhase::Terminal,
+    )?;
+    Ok(resumed)
+}
+
+fn native_callback_connection(path: &str) -> Result<Connection, StdlibRuntimeError> {
+    let connection = Connection::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open native callback checkpoint store: {error}"
+        ))
+    })?;
+    connection
+        .execute_batch(
+            "
+            PRAGMA busy_timeout = 5000;
+            CREATE TABLE IF NOT EXISTS native_callback_checkpoints (
+                run_id TEXT PRIMARY KEY NOT NULL,
+                checkpoint_json TEXT NOT NULL,
+                state_digest TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                callback_idempotency_key TEXT,
+                callback_payload_digest TEXT,
+                callback_receipt_json TEXT,
+                terminal_journal_position INTEGER,
+                terminal_journal_digest TEXT,
+                rejected_idempotency_key TEXT,
+                rejected_payload_digest TEXT
+            );
+            ",
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to initialize native callback checkpoint store: {error}"
+            ))
+        })?;
+    let columns = connection
+        .prepare("PRAGMA table_info(native_callback_checkpoints)")
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to inspect native callback checkpoint store: {error}"
+            ))
+        })?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to inspect native callback checkpoint store: {error}"
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to inspect native callback checkpoint store: {error}"
+            ))
+        })?;
+    for (name, data_type) in [
+        ("callback_receipt_json", "TEXT"),
+        ("terminal_journal_position", "INTEGER"),
+        ("terminal_journal_digest", "TEXT"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            connection
+                .execute(
+                    &format!(
+                        "ALTER TABLE native_callback_checkpoints ADD COLUMN {name} {data_type}"
+                    ),
+                    [],
+                )
+                .map_err(|error| {
+                    StdlibRuntimeError::runtime(format!(
+                        "failed to migrate native callback checkpoint store: {error}"
+                    ))
+                })?;
+        }
+    }
+    Ok(connection)
+}
+
+fn load_native_callback_run(
+    path: &str,
+    run_id: &str,
+) -> Result<Option<StoredNativeCallbackRun>, StdlibRuntimeError> {
+    let connection = native_callback_connection(path)?;
+    let row = connection
+        .query_row(
+            "
+            SELECT checkpoint_json,
+                   state_digest,
+                   status,
+                   result_json,
+                   callback_idempotency_key,
+                   callback_payload_digest,
+                   callback_receipt_json,
+                   terminal_journal_position,
+                   terminal_journal_digest
+              FROM native_callback_checkpoints
+             WHERE run_id = ?1
+            ",
+            [run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to load native callback checkpoint: {error}"
+            ))
+        })?;
+    row.map(
+        |(
+            checkpoint_json,
+            stored_state_digest,
+            status,
+            result_json,
+            callback_idempotency_key,
+            callback_payload_digest,
+            callback_receipt_json,
+            terminal_journal_position,
+            terminal_journal_digest,
+        )| {
+            let phase = NativeCallbackCoordinatorPhase::parse(&status).ok_or_else(|| {
+                StdlibRuntimeError::runtime("stored native callback coordinator phase is invalid")
+            })?;
+            let checkpoint = parse_json_argument(&checkpoint_json, "stored native checkpoint")?;
+            if checkpoint.get("state_digest").and_then(Value::as_str)
+                != Some(stored_state_digest.as_str())
+                || native_checkpoint_state_digest(&checkpoint)? != stored_state_digest
+            {
+                return Err(StdlibRuntimeError::runtime(
+                    "stored native callback checkpoint digest mismatch",
+                ));
+            }
+            let result_value = parse_json_argument(&result_json, "stored native callback result")?;
+            let result = stdlib_run_result_from_value(&result_value)?;
+            let callback_receipt = callback_receipt_json
+                .as_deref()
+                .map(|value| parse_json_argument(value, "stored native callback receipt"))
+                .transpose()?;
+            let terminal_journal_position = terminal_journal_position
+                .map(|position| {
+                    usize::try_from(position).map_err(|_| {
+                        StdlibRuntimeError::runtime(
+                            "stored native callback terminal journal position is invalid",
+                        )
+                    })
+                })
+                .transpose()?;
+            let valid_state = if phase.has_waiting_result() {
+                let callback_state_valid =
+                    if phase == NativeCallbackCoordinatorPhase::CallbackAccepted {
+                        callback_idempotency_key.is_some()
+                            && callback_payload_digest.is_some()
+                            && callback_receipt.is_some()
+                    } else {
+                        callback_idempotency_key.is_none()
+                            && callback_payload_digest.is_none()
+                            && callback_receipt.is_none()
+                    };
+                result.status == StdlibRunStatus::WaitingCallback
+                    && result.checkpoint.as_ref() == Some(&checkpoint)
+                    && callback_state_valid
+                    && terminal_journal_position.is_none()
+                    && terminal_journal_digest.is_none()
+            } else {
+                result.status != StdlibRunStatus::WaitingCallback
+                    && result.checkpoint.is_none()
+                    && callback_idempotency_key.is_some()
+                    && callback_payload_digest.is_some()
+                    && callback_receipt.is_some()
+                    && terminal_journal_position == Some(result.journal.len())
+                    && terminal_journal_digest.as_deref()
+                        == Some(canonical_hash(&Value::Array(result.journal.clone())).as_str())
+            };
+            if !valid_state
+                || result.run_id != run_id
+                || checkpoint.get("graph_hash").and_then(Value::as_str)
+                    != Some(result.graph_hash.as_str())
+            {
+                return Err(StdlibRuntimeError::runtime(
+                    "stored native callback checkpoint and result state disagree",
+                ));
+            }
+            validate_native_checkpoint_journal_binding(&checkpoint, &result.journal)?;
+            Ok(StoredNativeCallbackRun {
+                checkpoint,
+                result,
+                phase,
+                callback_idempotency_key,
+                callback_payload_digest,
+                callback_receipt,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn persist_native_callback_run(
+    path: &str,
+    checkpoint: &Value,
+    result: &StdlibRunResult,
+    phase: NativeCallbackCoordinatorPhase,
+    callback_idempotency_key: Option<&str>,
+    callback_payload_digest: Option<&str>,
+    callback_receipt: Option<&Value>,
+) -> Result<(), StdlibRuntimeError> {
+    let connection = native_callback_connection(path)?;
+    let checkpoint_json =
+        serde_json::to_string(checkpoint).map_err(StdlibRuntimeError::serialization)?;
+    let result_json = serde_json::to_string(&result.canonical_value())
+        .map_err(StdlibRuntimeError::serialization)?;
+    let state_digest = checkpoint
+        .get("state_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| StdlibRuntimeError::runtime("native checkpoint state digest is missing"))?;
+    let callback_receipt_json = callback_receipt
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(StdlibRuntimeError::serialization)?;
+    let (terminal_journal_position, terminal_journal_digest) = if phase.is_terminal() {
+        (
+            Some(i64::try_from(result.journal.len()).map_err(|_| {
+                StdlibRuntimeError::runtime("native callback journal position exceeds i64")
+            })?),
+            Some(canonical_hash(&Value::Array(result.journal.clone()))),
+        )
+    } else {
+        (None, None)
+    };
+    connection
+        .execute(
+            "
+            INSERT INTO native_callback_checkpoints (
+                run_id,
+                checkpoint_json,
+                state_digest,
+                status,
+                result_json,
+                callback_idempotency_key,
+                callback_payload_digest,
+                callback_receipt_json,
+                terminal_journal_position,
+                terminal_journal_digest
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(run_id) DO UPDATE SET
+                checkpoint_json = excluded.checkpoint_json,
+                state_digest = excluded.state_digest,
+                status = excluded.status,
+                result_json = excluded.result_json,
+                callback_idempotency_key = excluded.callback_idempotency_key,
+                callback_payload_digest = excluded.callback_payload_digest,
+                callback_receipt_json = excluded.callback_receipt_json,
+                terminal_journal_position = excluded.terminal_journal_position,
+                terminal_journal_digest = excluded.terminal_journal_digest
+            ",
+            params![
+                result.run_id,
+                checkpoint_json,
+                state_digest,
+                phase.as_str(),
+                result_json,
+                callback_idempotency_key,
+                callback_payload_digest,
+                callback_receipt_json,
+                terminal_journal_position,
+                terminal_journal_digest,
+            ],
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to persist native callback checkpoint: {error}"
+            ))
+        })?;
+    Ok(())
+}
+
+fn mark_native_callback_phase(
+    path: &str,
+    run_id: &str,
+    phase: NativeCallbackCoordinatorPhase,
+) -> Result<(), StdlibRuntimeError> {
+    let connection = native_callback_connection(path)?;
+    let changed = connection
+        .execute(
+            "UPDATE native_callback_checkpoints SET status = ?2 WHERE run_id = ?1",
+            params![run_id, phase.as_str()],
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to advance native callback coordinator phase: {error}"
+            ))
+        })?;
+    if changed != 1 {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback coordinator disappeared during reconciliation",
+        ));
+    }
+    Ok(())
+}
+
+fn reconcile_native_callback_evidence(
+    context: NativeCallbackEvidenceContext<'_>,
+    stored: &StoredNativeCallbackRun,
+) -> Result<(), StdlibRuntimeError> {
+    reconcile_native_callback_operation(context.async_operation_store_path, stored)?;
+    reconcile_native_callback_run(context, stored)?;
+    if let Some(path) = context.journal_store_path {
+        reconcile_native_callback_journal(path, &stored.result)?;
+    }
+    Ok(())
+}
+
+fn reconcile_native_callback_operation(
+    path: &str,
+    stored: &StoredNativeCallbackRun,
+) -> Result<(), StdlibRuntimeError> {
+    let operation_id = stored
+        .checkpoint
+        .pointer("/operation/operation_id")
+        .and_then(Value::as_str)
+        .expect("validated callback checkpoint has an operation id");
+    let store = SqliteAsyncOperationStore::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open native async operation store: {error:?}"
+        ))
+    })?;
+    let mut state = store.try_operation_state(operation_id).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to load native callback operation: {error:?}"
+        ))
+    })?;
+    if state.is_none() {
+        register_native_waiting_operation(path, &stored.checkpoint["operation"])?;
+        state = Some(AsyncOperationState::WaitingCallback);
+    }
+    validate_persisted_native_operation_identity(path, &stored.checkpoint["operation"])?;
+    if stored.phase.is_pre_acceptance() {
+        if state != Some(AsyncOperationState::WaitingCallback) {
+            return Err(StdlibRuntimeError::runtime(
+                "stored native callback operation and coordinator phase disagree",
+            ));
+        }
+        return Ok(());
+    }
+
+    if stored.phase == NativeCallbackCoordinatorPhase::CallbackAccepted {
+        if !matches!(
+            state,
+            Some(AsyncOperationState::CallbackReceived | AsyncOperationState::Resuming)
+        ) {
+            return Err(StdlibRuntimeError::runtime(
+                "accepted native callback operation and coordinator phase disagree",
+            ));
+        }
+        let receipt = stored.callback_receipt.as_ref().ok_or_else(|| {
+            StdlibRuntimeError::runtime(
+                "accepted native callback coordinator is missing its receipt",
+            )
+        })?;
+        let admission = validate_native_callback_receipt_shape(receipt)?;
+        validate_persisted_native_callback_acceptance(&store, receipt, &admission)?;
+        return Ok(());
+    }
+
+    match state {
+        Some(AsyncOperationState::WaitingCallback) => {
+            let receipt = stored.callback_receipt.as_ref().ok_or_else(|| {
+                StdlibRuntimeError::runtime(
+                    "terminal native callback coordinator is missing its receipt",
+                )
+            })?;
+            let admission = validate_native_callback_receipt_shape(receipt)?;
+            if !admission.authorized {
+                return Err(StdlibRuntimeError::runtime(
+                    "terminal native callback coordinator has a denied receipt",
+                ));
+            }
+            accept_native_callback(path, receipt, &admission)?;
+        }
+        Some(AsyncOperationState::CallbackReceived | AsyncOperationState::Resuming) => {
+            let receipt = stored.callback_receipt.as_ref().ok_or_else(|| {
+                StdlibRuntimeError::runtime(
+                    "terminal native callback coordinator is missing its receipt",
+                )
+            })?;
+            let admission = validate_native_callback_receipt_shape(receipt)?;
+            if !admission.authorized {
+                return Err(StdlibRuntimeError::runtime(
+                    "terminal native callback coordinator has a denied receipt",
+                ));
+            }
+            validate_persisted_native_callback_acceptance(&store, receipt, &admission)?;
+        }
+        _ => {
+            return Err(StdlibRuntimeError::runtime(
+                "stored native callback operation and coordinator phase disagree",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_persisted_native_operation_identity(
+    path: &str,
+    expected: &Value,
+) -> Result<(), StdlibRuntimeError> {
+    let operation_id = expected
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .expect("validated callback operation has an id");
+    let connection = Connection::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open native async operation store for identity validation: {error}"
+        ))
+    })?;
+    let operation_json = connection
+        .query_row(
+            "SELECT operation_json FROM async_operations WHERE operation_id = ?1",
+            [operation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to load native callback operation identity: {error}"
+            ))
+        })?;
+    let persisted = parse_json_argument(&operation_json, "stored native callback operation")?;
+    for field in [
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "kind",
+        "provider_operation_id",
+        "resume_token_hash",
+        "idempotency_key",
+        "expected_schema",
+        "created_at_unix_ms",
+        "submitted_at_unix_ms",
+        "expires_at_unix_ms",
+        "infinite_wait_policy",
+        "completed_at_unix_ms",
+    ] {
+        if persisted.get(field) != expected.get(field) {
+            return Err(StdlibRuntimeError::runtime(
+                "stored native callback operation identity does not match checkpoint",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_native_callback_run(
+    context: NativeCallbackEvidenceContext<'_>,
+    stored: &StoredNativeCallbackRun,
+) -> Result<(), StdlibRuntimeError> {
+    let Some(path) = context.run_store_path else {
+        return Ok(());
+    };
+    let mut store = SqliteRunStore::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!("failed to open SQLite run store: {error:?}"))
+    })?;
+    let expected_provenance = context.deployment_provenance.cloned().unwrap_or_default();
+    let run = match store.get_run(&stored.result.run_id) {
+        Ok(run) => run,
+        Err(RunStoreError::NotFound { .. }) => store
+            .create_run_with_run_id_and_provenance(
+                &stored.result.run_id,
+                &stored.result.graph_hash,
+                context.inputs.clone(),
+                expected_provenance.clone(),
+            )
+            .map_err(|error| {
+                StdlibRuntimeError::runtime(format!(
+                    "failed to reconstruct native callback run: {error:?}"
+                ))
+            })?,
+        Err(error) => {
+            return Err(StdlibRuntimeError::runtime(format!(
+                "failed to load native callback run: {error:?}"
+            )));
+        }
+    };
+    if run.graph_hash != stored.result.graph_hash
+        || run.inputs != *context.inputs
+        || run.deployment_provenance != expected_provenance
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "stored native callback run identity does not match coordinator",
+        ));
+    }
+
+    let target = if stored.phase.has_waiting_result() {
+        RunStatus::WaitingCallback
+    } else {
+        match stored.result.status {
+            StdlibRunStatus::Succeeded => RunStatus::Completed,
+            StdlibRunStatus::Failed => RunStatus::Failed,
+            StdlibRunStatus::Cancelled => RunStatus::Cancelled,
+            StdlibRunStatus::WaitingCallback => {
+                return Err(StdlibRuntimeError::runtime(
+                    "terminal native callback coordinator has a waiting result",
+                ));
+            }
+        }
+    };
+    advance_native_callback_run_status(&mut store, &run.run_id, run.status, target)
+}
+
+fn advance_native_callback_run_status(
+    store: &mut SqliteRunStore,
+    run_id: &str,
+    current: RunStatus,
+    target: RunStatus,
+) -> Result<(), StdlibRuntimeError> {
+    if current == target {
+        return Ok(());
+    }
+    if current.is_terminal() {
+        return Err(StdlibRuntimeError::runtime(
+            "stored native callback run terminal status disagrees with coordinator",
+        ));
+    }
+    let statuses: &[RunStatus] = if target == RunStatus::WaitingCallback {
+        match current {
+            RunStatus::Created => &[RunStatus::Running, RunStatus::WaitingCallback],
+            RunStatus::Running => &[RunStatus::WaitingCallback],
+            _ => {
+                return Err(StdlibRuntimeError::runtime(
+                    "stored native callback run status disagrees with waiting coordinator",
+                ));
+            }
+        }
+    } else {
+        match current {
+            RunStatus::Created => &[
+                RunStatus::Running,
+                RunStatus::WaitingCallback,
+                RunStatus::Resuming,
+                target,
+            ],
+            RunStatus::Running => &[RunStatus::WaitingCallback, RunStatus::Resuming, target],
+            RunStatus::WaitingCallback => &[RunStatus::Resuming, target],
+            RunStatus::Resuming => &[target],
+            _ => {
+                return Err(StdlibRuntimeError::runtime(
+                    "stored native callback run status disagrees with terminal coordinator",
+                ));
+            }
+        }
+    };
+    for status in statuses {
+        store.set_status(run_id, *status).map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to reconcile native callback run status: {error:?}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn reconcile_native_callback_journal(
+    path: &str,
+    result: &StdlibRunResult,
+) -> Result<(), StdlibRuntimeError> {
+    let journal = SqliteExecutionJournal::open(path, &result.run_id).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open SQLite execution journal: {error:?}"
+        ))
+    })?;
+    let persisted = journal.records().map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to load native callback journal prefix: {error:?}"
+        ))
+    })?;
+    if persisted.len() > result.journal.len()
+        || persisted
+            .iter()
+            .zip(&result.journal)
+            .any(|(actual, expected)| native_journal_record_value(actual) != *expected)
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback journal prefix does not match coordinator",
+        ));
+    }
+    append_native_journal_records(path, &result.run_id, &result.journal[persisted.len()..])
+}
+
+fn native_journal_record_value(record: &JournalRecord) -> Value {
+    json!({
+        "recordId": record.record_id,
+        "runId": record.run_id,
+        "runSequence": record.run_sequence,
+        "kind": record.kind,
+        "causationId": record.causation_id,
+        "nodeId": record.node_id,
+        "attemptId": record.attempt_id,
+        "leaseEpoch": record.lease_epoch,
+        "payload": record.payload,
+        "terminal": record.terminal,
+    })
+}
+
+fn build_native_callback_checkpoint(request: NativeCheckpointBuildRequest<'_>) -> Value {
+    let completed_nodes = request
+        .node_outputs
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let remaining_nodes = request
+        .node_names
+        .iter()
+        .filter(|node| !completed_nodes.contains(*node))
+        .cloned()
+        .collect::<Vec<_>>();
+    let journal_binding = json!({
+        "prefix_position": request.journal_prefix.len(),
+        "prefix_digest": canonical_hash(&Value::Array(request.journal_prefix.to_vec())),
+        "waiting_position": request.journal_prefix.len() + 1,
+        "terminal_position": Value::Null,
+    });
+    let checkpoint_seed = json!({
+        "run_id": request.run_id,
+        "graph_hash": request.graph_hash,
+        "wait_node": request.suspension.wait_node,
+        "remaining_nodes": remaining_nodes,
+        "inputs": request.inputs,
+        "node_outputs": request.node_outputs,
+        "output_values": request.output_values,
+        "operation": request.suspension.operation,
+        "journal_binding": journal_binding,
+        "deployment_provenance": request.deployment_provenance.map(RunDeploymentProvenance::canonical_value),
+    });
+    let checkpoint_id = format!("checkpoint-{}", canonical_hash(&checkpoint_seed));
+    let mut checkpoint = json!({
+        "checkpoint_id": checkpoint_id,
+        "run_id": request.run_id,
+        "graph_hash": request.graph_hash,
+        "wait_node": request.suspension.wait_node,
+        "remaining_nodes": remaining_nodes,
+        "inputs": request.inputs,
+        "node_outputs": request.node_outputs,
+        "output_values": request.output_values,
+        "operation": request.suspension.operation,
+        "journal_binding": journal_binding,
+        "deployment_provenance": request.deployment_provenance.map(RunDeploymentProvenance::canonical_value),
+    });
+    let state_digest = canonical_hash(&checkpoint);
+    checkpoint["state_digest"] = json!(state_digest);
+    checkpoint
+}
+
+fn native_checkpoint_state_digest(checkpoint: &Value) -> Result<String, StdlibRuntimeError> {
+    let Some(object) = checkpoint.as_object() else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint must be an object",
+        ));
+    };
+    let mut content = object.clone();
+    content.remove("state_digest");
+    Ok(canonical_hash(&Value::Object(content)))
+}
+
+fn native_checkpoint_id(checkpoint: &Value) -> Result<String, StdlibRuntimeError> {
+    let Some(object) = checkpoint.as_object() else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint must be an object",
+        ));
+    };
+    let mut content = object.clone();
+    content.remove("checkpoint_id");
+    content.remove("state_digest");
+    Ok(format!(
+        "checkpoint-{}",
+        canonical_hash(&Value::Object(content))
+    ))
+}
+
+fn validate_native_checkpoint_identity(
+    checkpoint: &Value,
+    run_id: &str,
+    graph_hash: &str,
+    inputs: &Value,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
+) -> Result<(), StdlibRuntimeError> {
+    let expected_provenance = deployment_provenance
+        .map(RunDeploymentProvenance::canonical_value)
+        .unwrap_or(Value::Null);
+    if checkpoint.get("run_id").and_then(Value::as_str) != Some(run_id)
+        || checkpoint.get("graph_hash").and_then(Value::as_str) != Some(graph_hash)
+        || checkpoint.get("inputs") != Some(inputs)
+        || checkpoint.get("deployment_provenance") != Some(&expected_provenance)
+        || checkpoint.get("state_digest").and_then(Value::as_str)
+            != Some(native_checkpoint_state_digest(checkpoint)?.as_str())
+    {
+        return Err(StdlibRuntimeError::invalid(
+            "native callback checkpoint does not match graph and inputs",
+        ));
+    }
+    for field in ["checkpoint_id", "wait_node"] {
+        if !checkpoint
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty() && value == value.trim())
+        {
+            return Err(StdlibRuntimeError::runtime(format!(
+                "native callback checkpoint field {field} is invalid"
+            )));
+        }
+    }
+    if checkpoint.get("checkpoint_id").and_then(Value::as_str)
+        != Some(native_checkpoint_id(checkpoint)?.as_str())
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint id does not match its canonical state",
+        ));
+    }
+    if !checkpoint.get("node_outputs").is_some_and(Value::is_object)
+        || !checkpoint
+            .get("output_values")
+            .is_some_and(Value::is_object)
+        || !checkpoint.get("operation").is_some_and(Value::is_object)
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint state is invalid",
+        ));
+    }
+    let binding = checkpoint
+        .get("journal_binding")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal binding is invalid")
+        })?;
+    let prefix_position = binding
+        .get("prefix_position")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal prefix is invalid")
+        })?;
+    let waiting_position = binding
+        .get("waiting_position")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal position is invalid")
+        })?;
+    if waiting_position != prefix_position + 1
+        || binding
+            .get("prefix_digest")
+            .and_then(Value::as_str)
+            .is_none_or(|digest| digest.trim().is_empty())
+        || binding.get("terminal_position") != Some(&Value::Null)
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal binding is invalid",
+        ));
+    }
+    let wait_node = checkpoint["wait_node"]
+        .as_str()
+        .expect("checkpoint wait_node was validated");
+    let operation = checkpoint["operation"]
+        .as_object()
+        .expect("checkpoint operation was validated");
+    if operation.get("run_id").and_then(Value::as_str) != Some(run_id)
+        || operation.get("node_id").and_then(Value::as_str) != Some(wait_node)
+        || operation.get("state").and_then(Value::as_str) != Some("waiting_callback")
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint operation identity is invalid",
+        ));
+    }
+    let Some(remaining_nodes) = checkpoint.get("remaining_nodes").and_then(Value::as_array) else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint remaining_nodes is invalid",
+        ));
+    };
+    let mut unique_remaining_nodes = BTreeSet::new();
+    if remaining_nodes.iter().any(|node| {
+        node.as_str()
+            .filter(|node| !node.is_empty() && *node == node.trim())
+            .is_none_or(|node| !unique_remaining_nodes.insert(node))
+    }) || !unique_remaining_nodes.contains(wait_node)
+        || checkpoint["node_outputs"].get(wait_node).is_some()
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint node partition is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_native_checkpoint_journal_binding(
+    checkpoint: &Value,
+    journal: &[Value],
+) -> Result<(), StdlibRuntimeError> {
+    let binding = checkpoint
+        .get("journal_binding")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal binding is invalid")
+        })?;
+    let prefix_position = binding
+        .get("prefix_position")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal prefix is invalid")
+        })?;
+    let waiting_position = binding
+        .get("waiting_position")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback checkpoint journal position is invalid")
+        })?;
+    if waiting_position != prefix_position + 1 || journal.len() < waiting_position {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal prefix position mismatch",
+        ));
+    }
+    let expected_prefix_digest = canonical_hash(&Value::Array(journal[..prefix_position].to_vec()));
+    if binding.get("prefix_digest").and_then(Value::as_str) != Some(expected_prefix_digest.as_str())
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal prefix digest mismatch",
+        ));
+    }
+    let waiting_record = &journal[waiting_position - 1];
+    if waiting_record.get("kind").and_then(Value::as_str) != Some("run_waiting_callback")
+        || waiting_record.get("terminal") != Some(&Value::Bool(false))
+        || waiting_record.pointer("/payload/checkpointId") != checkpoint.get("checkpoint_id")
+        || waiting_record.pointer("/payload/stateDigest") != checkpoint.get("state_digest")
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal wait boundary mismatch",
+        ));
+    }
+    if journal[..waiting_position]
+        .iter()
+        .any(|record| record.get("terminal") == Some(&Value::Bool(true)))
+    {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal prefix is terminal",
+        ));
+    }
+    Ok(())
+}
+
+fn stdlib_run_result_from_value(value: &Value) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    let status = match value.get("status").and_then(Value::as_str) {
+        Some("succeeded") => StdlibRunStatus::Succeeded,
+        Some("failed") => StdlibRunStatus::Failed,
+        Some("cancelled") => StdlibRunStatus::Cancelled,
+        Some("waiting_callback") => StdlibRunStatus::WaitingCallback,
+        _ => {
+            return Err(StdlibRuntimeError::runtime(
+                "stored native result status is invalid",
+            ));
+        }
+    };
+    let required_string = |field: &'static str| {
+        value
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                StdlibRuntimeError::runtime(format!(
+                    "stored native result field {field} is invalid"
+                ))
+            })
+    };
+    let journal = value
+        .get("journal")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| StdlibRuntimeError::runtime("stored native result journal is invalid"))?;
+    let deployment_provenance = value
+        .get("deploymentProvenance")
+        .filter(|provenance| !provenance.is_null())
+        .map(RunDeploymentProvenance::from_production_value)
+        .transpose()
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "stored native result deployment provenance is invalid: {error}"
+            ))
+        })?;
+    Ok(StdlibRunResult {
+        run_id: required_string("runId")?,
+        graph_hash: required_string("graphHash")?,
+        status,
+        outputs: value.get("outputs").cloned().unwrap_or_else(|| json!({})),
+        journal,
+        checkpoint: value
+            .get("checkpoint")
+            .filter(|item| !item.is_null())
+            .cloned(),
+        deployment_provenance,
+    })
+}
+
+fn value_object_to_btree(
+    value: &Value,
+    owner: &str,
+) -> Result<BTreeMap<String, Value>, StdlibRuntimeError> {
+    value
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .ok_or_else(|| StdlibRuntimeError::runtime(format!("{owner} must be an object")))
+}
+
+fn validate_native_callback_receipt_shape(
+    receipt: &Value,
+) -> Result<TrustedNativeCallbackResumeAdmission, StdlibRuntimeError> {
+    let Some(receipt) = receipt.as_object() else {
+        return Err(native_callback_rejected());
+    };
+    for field in [
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "provider_operation_id",
+        "operation_idempotency_key",
+        "callback_idempotency_key",
+        "resume_token_hash",
+        "schema_id",
+        "payload_digest",
+        "verified_by",
+    ] {
+        if !receipt
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty() && value == value.trim())
+        {
+            return Err(StdlibRuntimeError::invalid(
+                "native async callback rejected",
+            ));
+        }
+    }
+    if receipt.get("verified_by").and_then(Value::as_str) == Some("unauthenticated") {
+        return Err(native_callback_rejected());
+    }
+    if receipt.get("schema_validated") != Some(&Value::Bool(true)) {
+        return Err(native_callback_rejected());
+    }
+    let payload = receipt
+        .get("payload")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| StdlibRuntimeError::invalid("native async callback rejected"))?;
+    if receipt.get("payload_digest").and_then(Value::as_str)
+        != Some(canonical_hash(payload).as_str())
+    {
+        return Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        ));
+    }
+    if receipt
+        .get("received_at_unix_ms")
+        .and_then(Value::as_u64)
+        .is_none_or(|value| value == 0)
+    {
+        return Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        ));
+    }
+    let admission = receipt
+        .get("resume_admission")
+        .and_then(Value::as_object)
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    if admission.get("contract").and_then(Value::as_str)
+        != Some("graphblocks.trusted-callback-resume-admission.v1")
+    {
+        return Err(trusted_native_callback_admission_rejected());
+    }
+    let outcome = trusted_admission_string(admission, "outcome")?;
+    let authorized = match outcome.as_str() {
+        "authorized" => true,
+        "denied" => false,
+        _ => return Err(trusted_native_callback_admission_rejected()),
+    };
+    let ownership = admission
+        .get("ownership")
+        .and_then(Value::as_object)
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    let schema_verification = admission
+        .get("schema_verification")
+        .and_then(Value::as_object)
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    let fencing_epoch = ownership
+        .get("fencing_epoch")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or_else(trusted_native_callback_admission_rejected)?;
+    Ok(TrustedNativeCallbackResumeAdmission {
+        authorized,
+        authentication_decision_id: trusted_admission_string(
+            admission,
+            "authentication_decision_id",
+        )?,
+        policy_decision_id: trusted_admission_string(admission, "policy_decision_id")?,
+        budget_reservation_id: trusted_admission_string(admission, "budget_reservation_id")?,
+        compatible_release_digest: trusted_admission_string(
+            admission,
+            "compatible_release_digest",
+        )?,
+        run_id: trusted_admission_string(admission, "run_id")?,
+        operation_id: trusted_admission_string(admission, "operation_id")?,
+        node_id: trusted_admission_string(admission, "node_id")?,
+        attempt_id: trusted_admission_string(admission, "attempt_id")?,
+        checkpoint_id: trusted_admission_string(admission, "checkpoint_id")?,
+        checkpoint_state_digest: trusted_admission_string(admission, "checkpoint_state_digest")?,
+        owner_id: trusted_admission_string(ownership, "owner_id")?,
+        lease_id: trusted_admission_string(ownership, "lease_id")?,
+        fencing_epoch,
+        fence_token: trusted_admission_string(ownership, "fence_token")?,
+        schema_verification_id: trusted_admission_string(schema_verification, "verification_id")?,
+        schema_id: trusted_admission_string(schema_verification, "schema_id")?,
+        payload_digest: trusted_admission_string(schema_verification, "payload_digest")?,
+        schema_verified_by: trusted_admission_string(schema_verification, "verified_by")?,
+    })
+}
+
+fn trusted_admission_string(
+    value: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<String, StdlibRuntimeError> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty() && *text == text.trim())
+        .map(str::to_owned)
+        .ok_or_else(trusted_native_callback_admission_rejected)
+}
+
+fn trusted_native_callback_admission_rejected() -> StdlibRuntimeError {
+    native_callback_rejected()
+}
+
+fn native_callback_rejected() -> StdlibRuntimeError {
+    StdlibRuntimeError::invalid("native async callback rejected")
+}
+
+fn validate_trusted_native_callback_admission(
+    admission: &TrustedNativeCallbackResumeAdmission,
+    receipt: &Value,
+    checkpoint: &Value,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
+    graph_hash: &str,
+) -> Result<(), StdlibRuntimeError> {
+    let receipt = receipt
+        .as_object()
+        .expect("native callback receipt was validated");
+    let expected_release_digest = deployment_provenance
+        .and_then(|provenance| provenance.release_digest.as_deref())
+        .unwrap_or(graph_hash);
+    if !admission.authorized
+        || admission.run_id != checkpoint["run_id"]
+        || admission.operation_id != receipt["operation_id"]
+        || admission.node_id != receipt["node_id"]
+        || admission.attempt_id != receipt["attempt_id"]
+        || admission.checkpoint_id != checkpoint["checkpoint_id"]
+        || admission.checkpoint_state_digest != checkpoint["state_digest"]
+        || admission.compatible_release_digest != expected_release_digest
+        || admission.schema_id != receipt["schema_id"]
+        || admission.payload_digest != receipt["payload_digest"]
+        || admission.schema_verified_by != receipt["verified_by"]
+    {
+        return Err(trusted_native_callback_admission_rejected());
+    }
+    Ok(())
+}
+
+fn native_callback_ownership_fence_token(
+    admission: &TrustedNativeCallbackResumeAdmission,
+) -> String {
+    canonical_hash(&json!({
+        "authenticationDecisionId": admission.authentication_decision_id,
+        "ownerId": admission.owner_id,
+        "leaseId": admission.lease_id,
+        "fencingEpoch": admission.fencing_epoch,
+        "fenceToken": admission.fence_token,
+        "schemaVerificationId": admission.schema_verification_id,
+    }))
+}
+
+fn validate_persisted_native_callback_acceptance(
+    store: &SqliteAsyncOperationStore,
+    receipt: &Value,
+    admission: &TrustedNativeCallbackResumeAdmission,
+) -> Result<(), StdlibRuntimeError> {
+    let receipt = receipt
+        .as_object()
+        .expect("native callback receipt was validated");
+    let operation_id = receipt["operation_id"]
+        .as_str()
+        .expect("native callback operation id was validated");
+    let events = store
+        .try_events_for_operation(operation_id)
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to load persisted native callback acceptance: {error:?}"
+            ))
+        })?;
+    let expected_provider_operation_id = receipt["provider_operation_id"]
+        .as_str()
+        .expect("native callback provider operation id was validated");
+    let expected_ownership_fence_token = native_callback_ownership_fence_token(admission);
+    let mut callback_position = None;
+    let mut authorization_position = None;
+    for (position, event) in events.iter().enumerate() {
+        match event {
+            AsyncOperationEvent::ExternalCallbackReceived { receipt: persisted }
+                if persisted.idempotency_key == receipt["callback_idempotency_key"] =>
+            {
+                if callback_position.is_some()
+                    || persisted.callback_id != receipt["callback_idempotency_key"]
+                    || persisted.operation_id != receipt["operation_id"]
+                    || persisted.run_id != receipt["run_id"]
+                    || persisted.node_id != receipt["node_id"]
+                    || persisted.attempt_id != receipt["attempt_id"]
+                    || persisted.provider_operation_id.as_deref()
+                        != Some(expected_provider_operation_id)
+                    || persisted.payload != receipt["payload"]
+                    || persisted.payload_digest != receipt["payload_digest"]
+                    || persisted.received_at_unix_ms != receipt["received_at_unix_ms"]
+                    || persisted.verified_by != receipt["verified_by"]
+                    || persisted.policy_snapshot_id != "runtime-callback-resume"
+                    || !persisted.artifacts.is_empty()
+                {
+                    return Err(native_callback_rejected());
+                }
+                callback_position = Some(position);
+            }
+            AsyncOperationEvent::CallbackResumeAuthorized {
+                operation_id: persisted_operation_id,
+                policy_decision_id,
+                budget_reservation_id,
+                compatible_release_id,
+                ownership_fence_token,
+                ..
+            } if persisted_operation_id == operation_id => {
+                if authorization_position.is_some()
+                    || policy_decision_id != &admission.policy_decision_id
+                    || budget_reservation_id != &admission.budget_reservation_id
+                    || compatible_release_id != &admission.compatible_release_digest
+                    || ownership_fence_token != &expected_ownership_fence_token
+                {
+                    return Err(native_callback_rejected());
+                }
+                authorization_position = Some(position);
+            }
+            _ => {}
+        }
+    }
+    if !matches!(
+        (callback_position, authorization_position),
+        (Some(callback), Some(authorization)) if callback < authorization
+    ) {
+        return Err(native_callback_rejected());
+    }
+    Ok(())
+}
+
+fn validate_native_callback_against_checkpoint(
+    receipt: &Value,
+    checkpoint: &Value,
+) -> Result<(), StdlibRuntimeError> {
+    let receipt = receipt
+        .as_object()
+        .expect("callback receipt shape was validated");
+    let operation = checkpoint["operation"]
+        .as_object()
+        .expect("checkpoint operation was validated");
+    for (receipt_field, operation_field) in [
+        ("operation_id", "operation_id"),
+        ("run_id", "run_id"),
+        ("node_id", "node_id"),
+        ("attempt_id", "attempt_id"),
+        ("provider_operation_id", "provider_operation_id"),
+        ("operation_idempotency_key", "idempotency_key"),
+        ("resume_token_hash", "resume_token_hash"),
+        ("schema_id", "expected_schema"),
+    ] {
+        if receipt.get(receipt_field) != operation.get(operation_field) {
+            return Err(StdlibRuntimeError::invalid(
+                "native async callback rejected",
+            ));
+        }
+    }
+    let received_at = receipt["received_at_unix_ms"]
+        .as_u64()
+        .expect("callback timestamp was validated");
+    if operation
+        .get("submitted_at_unix_ms")
+        .and_then(Value::as_u64)
+        .is_some_and(|submitted_at| received_at < submitted_at)
+        || operation
+            .get("expires_at_unix_ms")
+            .and_then(Value::as_u64)
+            .is_some_and(|expires_at| received_at >= expires_at)
+    {
+        return Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        ));
+    }
+    Ok(())
+}
+
+fn register_native_waiting_operation(path: &str, value: &Value) -> Result<(), StdlibRuntimeError> {
+    let operation = native_async_operation_from_value(value)?;
+    let store = SqliteAsyncOperationStore::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open native async operation store: {error:?}"
+        ))
+    })?;
+    store.register(operation).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to persist native waiting operation: {error:?}"
+        ))
+    })
+}
+
+fn native_async_operation_from_value(value: &Value) -> Result<AsyncOperation, StdlibRuntimeError> {
+    let Some(value) = value.as_object() else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback operation must be an object",
+        ));
+    };
+    let string = |field: &'static str| {
+        value
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty() && *text == text.trim())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                StdlibRuntimeError::runtime(format!(
+                    "native callback operation field {field} is invalid"
+                ))
+            })
+    };
+    let kind = match string("kind")?.as_str() {
+        "tool" => AsyncOperationKind::Tool,
+        "sandbox_task" => AsyncOperationKind::SandboxTask,
+        "ci_job" => AsyncOperationKind::CiJob,
+        "browser_task" => AsyncOperationKind::BrowserTask,
+        "workspace_trial" => AsyncOperationKind::WorkspaceTrial,
+        "external_provider_job" => AsyncOperationKind::ExternalProviderJob,
+        "document_job" => AsyncOperationKind::DocumentJob,
+        "research_task" => AsyncOperationKind::ResearchTask,
+        "custom" => AsyncOperationKind::Custom,
+        _ => {
+            return Err(StdlibRuntimeError::runtime(
+                "native callback operation kind is invalid",
+            ));
+        }
+    };
+    let created_at = value
+        .get("created_at_unix_ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback operation created_at is invalid")
+        })?;
+    let submitted_at = value
+        .get("submitted_at_unix_ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            StdlibRuntimeError::runtime("native callback operation submitted_at is invalid")
+        })?;
+    let provider_operation_id = string("provider_operation_id")?;
+    let mut operation = AsyncOperation::new(
+        string("operation_id")?,
+        string("run_id")?,
+        string("node_id")?,
+        string("attempt_id")?,
+        kind,
+        string("resume_token_hash")?,
+        string("idempotency_key")?,
+        string("expected_schema")?,
+        created_at,
+    )
+    .submitted(provider_operation_id, submitted_at);
+    if let Some(expires_at) = value.get("expires_at_unix_ms").and_then(Value::as_u64) {
+        operation = operation.waiting_callback(expires_at);
+    } else if let Some(infinite_wait_policy) =
+        value.get("infinite_wait_policy").and_then(Value::as_str)
+    {
+        operation = operation.with_infinite_wait_policy(infinite_wait_policy);
+        operation.state = AsyncOperationState::WaitingCallback;
+    } else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback operation has no wait bound",
+        ));
+    }
+    operation.validate().map_err(|error| {
+        StdlibRuntimeError::runtime(format!("native callback operation is invalid: {error:?}"))
+    })?;
+    Ok(operation)
+}
+
+fn accept_native_callback(
+    path: &str,
+    receipt: &Value,
+    admission: &TrustedNativeCallbackResumeAdmission,
+) -> Result<(), StdlibRuntimeError> {
+    let receipt = receipt
+        .as_object()
+        .expect("native callback receipt was validated");
+    let schema_id = receipt["schema_id"]
+        .as_str()
+        .expect("native callback schema was validated");
+    let registry = ToolSchemaRegistry::new([JsonSchema::new(schema_id, JsonSchemaNode::any())])
+        .map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to build callback schema registry: {error:?}"
+            ))
+        })?;
+    let mut submission = AsyncCallbackSubmission::new(
+        receipt["callback_idempotency_key"]
+            .as_str()
+            .expect("callback idempotency key was validated"),
+        receipt["operation_id"]
+            .as_str()
+            .expect("operation id was validated"),
+        receipt["run_id"].as_str().expect("run id was validated"),
+        receipt["node_id"].as_str().expect("node id was validated"),
+        receipt["attempt_id"]
+            .as_str()
+            .expect("attempt id was validated"),
+        receipt["callback_idempotency_key"]
+            .as_str()
+            .expect("callback idempotency key was validated"),
+        receipt["payload"].clone(),
+        receipt["received_at_unix_ms"]
+            .as_u64()
+            .expect("callback timestamp was validated"),
+        receipt["verified_by"]
+            .as_str()
+            .expect("callback verifier was validated"),
+        "runtime-callback-resume",
+    );
+    submission = submission.with_provider_operation_id(
+        receipt["provider_operation_id"]
+            .as_str()
+            .expect("provider operation id was validated"),
+    );
+    let store = SqliteAsyncOperationStore::open(path).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open native async operation store: {error:?}"
+        ))
+    })?;
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            submission,
+            &registry,
+            AsyncCallbackResumeDecision::ResumeAuthorized {
+                authentication_verified: true,
+                policy_decision_id: admission.policy_decision_id.clone(),
+                budget_reservation_id: admission.budget_reservation_id.clone(),
+                compatible_release_id: admission.compatible_release_digest.clone(),
+                ownership_fence_token: native_callback_ownership_fence_token(admission),
+            },
+        )
+        .map_err(|_| StdlibRuntimeError::invalid("native async callback rejected"))?;
+    if !accepted.should_resume && !accepted.duplicate {
+        return Err(StdlibRuntimeError::invalid(
+            "native async callback rejected",
+        ));
+    }
+    Ok(())
+}
+
+fn native_waiting_journal_prefix(
+    result: &TestRunResult,
+    suspension: &NativeCallbackSuspension,
+) -> Vec<Value> {
+    let mut records = Vec::new();
+    for record in test_journal_values(result) {
+        if record.get("nodeId").and_then(Value::as_str) == Some(&suspension.wait_node)
+            && record.get("kind").and_then(Value::as_str) == Some("node_completed")
+        {
+            break;
+        }
+        if record.get("terminal") == Some(&Value::Bool(true)) {
+            break;
+        }
+        records.push(record);
+    }
+    records
+}
+
+fn waiting_native_journal(
+    mut records: Vec<Value>,
+    suspension: &NativeCallbackSuspension,
+    checkpoint: &Value,
+) -> Vec<Value> {
+    push_native_journal_record(
+        &mut records,
+        checkpoint["run_id"]
+            .as_str()
+            .expect("validated callback checkpoint run_id is a string"),
+        "run_waiting_callback",
+        None,
+        Some(json!({
+            "checkpointId": checkpoint["checkpoint_id"],
+            "operationId": suspension.operation["operation_id"],
+            "waitNode": suspension.wait_node,
+            "stateDigest": checkpoint["state_digest"],
+        })),
+        false,
+    );
+    records
+}
+
+fn resumed_native_journal(
+    waiting_records: &[Value],
+    result: &TestRunResult,
+    replay_node_outputs: &BTreeMap<String, Value>,
+    receipt: &Value,
+) -> Vec<Value> {
+    let mut records = waiting_records.to_vec();
+    append_native_resume_journal_boundary(&mut records, &result.run_id, receipt);
+    for record in test_journal_values(result) {
+        let kind = record.get("kind").and_then(Value::as_str);
+        let node_id = record.get("nodeId").and_then(Value::as_str);
+        if kind == Some("run_started")
+            || node_id.is_some_and(|node_id| replay_node_outputs.contains_key(node_id))
+            || (kind == Some("node_started")
+                && node_id
+                    == waiting_records
+                        .iter()
+                        .rev()
+                        .find(|record| {
+                            record.get("kind").and_then(Value::as_str)
+                                == Some("run_waiting_callback")
+                        })
+                        .and_then(|record| record.pointer("/payload/waitNode"))
+                        .and_then(Value::as_str))
+        {
+            continue;
+        }
+        let metadata = record.get("nodeId").and_then(Value::as_str);
+        push_native_journal_record(
+            &mut records,
+            &result.run_id,
+            kind.unwrap_or("runtime_record"),
+            metadata,
+            record
+                .get("payload")
+                .filter(|value| !value.is_null())
+                .cloned(),
+            record.get("terminal") == Some(&Value::Bool(true)),
+        );
+    }
+    records
+}
+
+fn append_native_resume_journal_boundary(records: &mut Vec<Value>, run_id: &str, receipt: &Value) {
+    let receipt = receipt
+        .as_object()
+        .expect("native callback receipt was validated");
+    push_native_journal_record(
+        records,
+        run_id,
+        "external_callback_received",
+        None,
+        Some(json!({
+            "operationId": receipt["operation_id"],
+            "callbackIdempotencyKey": receipt["callback_idempotency_key"],
+            "payloadDigest": receipt["payload_digest"],
+            "receivedAtUnixMs": receipt["received_at_unix_ms"],
+            "verifiedBy": receipt["verified_by"],
+        })),
+        false,
+    );
+    push_native_journal_record(
+        records,
+        run_id,
+        "run_resuming",
+        None,
+        Some(json!({
+            "operationId": receipt["operation_id"],
+            "reevaluated": ["policy", "budget", "release", "ownership_lease"],
+        })),
+        false,
+    );
+}
+
+fn failed_native_callback_resume_result(
+    waiting: &StdlibRunResult,
+    run_id: &str,
+    graph_hash: String,
+    receipt: &Value,
+    message: String,
+    deployment_provenance: Option<&RunDeploymentProvenance>,
+) -> StdlibRunResult {
+    let mut journal = waiting.journal.clone();
+    append_native_resume_journal_boundary(&mut journal, run_id, receipt);
+    push_native_journal_record(
+        &mut journal,
+        run_id,
+        "run_failed",
+        None,
+        Some(json!({"error": message})),
+        true,
+    );
+    StdlibRunResult {
+        run_id: run_id.to_owned(),
+        graph_hash,
+        status: StdlibRunStatus::Failed,
+        outputs: json!({}),
+        journal,
+        checkpoint: None,
+        deployment_provenance: deployment_provenance.cloned(),
+    }
+}
+
+fn push_native_journal_record(
+    records: &mut Vec<Value>,
+    run_id: &str,
+    kind: &str,
+    node_id: Option<&str>,
+    payload: Option<Value>,
+    terminal: bool,
+) {
+    let sequence = records.len() as u64 + 1;
+    records.push(json!({
+        "recordId": format!("{run_id}:{sequence}"),
+        "runId": run_id,
+        "runSequence": sequence,
+        "kind": kind,
+        "causationId": Value::Null,
+        "nodeId": node_id,
+        "attemptId": Value::Null,
+        "leaseEpoch": Value::Null,
+        "payload": payload,
+        "terminal": terminal,
+    }));
+}
+
+fn append_native_journal_records(
+    path: &str,
+    run_id: &str,
+    records: &[Value],
+) -> Result<(), StdlibRuntimeError> {
+    let mut journal = SqliteExecutionJournal::open(path, run_id).map_err(|error| {
+        StdlibRuntimeError::runtime(format!(
+            "failed to open SQLite execution journal: {error:?}"
+        ))
+    })?;
+    for record in records {
+        let kind = record
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| StdlibRuntimeError::runtime("native journal kind is invalid"))?;
+        let metadata = JournalMetadata {
+            causation_id: record
+                .get("causationId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            node_id: record
+                .get("nodeId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            attempt_id: record
+                .get("attemptId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            lease_epoch: record.get("leaseEpoch").and_then(Value::as_u64),
+        };
+        let payload = record
+            .get("payload")
+            .filter(|value| !value.is_null())
+            .cloned();
+        let result = if record.get("terminal") == Some(&Value::Bool(true)) {
+            journal.append_terminal_with_metadata(kind, metadata, payload)
+        } else {
+            journal.append_with_metadata(kind, metadata, payload)
+        };
+        result.map_err(|error| {
+            StdlibRuntimeError::runtime(format!(
+                "failed to persist native callback journal: {error:?}"
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 fn parse_json_argument(text: &str, label: &str) -> Result<Value, StdlibRuntimeError> {
@@ -565,6 +2888,20 @@ fn build_runtime_bridge_plan(
     let node_specs = nodes
         .iter()
         .map(|(node_id, node)| (node_id.clone(), node.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let descriptors_by_node = nodes
+        .iter()
+        .map(|(node_id, node)| {
+            let block_id = node
+                .get("block")
+                .and_then(Value::as_str)
+                .expect("compiled stdlib node has a block id");
+            let descriptor = runtime_catalog
+                .get(block_id)
+                .expect("stdlib registration was validated before compilation")
+                .clone();
+            (node_id.clone(), descriptor)
+        })
         .collect::<BTreeMap<_, _>>();
     let edges = spec
         .get("edges")
@@ -669,7 +3006,7 @@ fn build_runtime_bridge_plan(
         if target_owner.starts_with('$') {
             continue;
         }
-        let Some(target_input) = target_path
+        let Some(_target_input) = target_path
             .split('.')
             .next()
             .filter(|port| !port.is_empty())
@@ -683,10 +3020,10 @@ fn build_runtime_bridge_plan(
                 "edge target references unknown node {target_owner:?}"
             )));
         };
-        dependencies.push(InputDependency::value(
-            target_input,
-            PortRef::new(source_owner, source_port),
-        ));
+        dependencies.push(
+            InputDependency::value(target_path, PortRef::new(source_owner, source_port))
+                .with_source_path(source_path.split('.').skip(1)),
+        );
     }
 
     let mut scheduled_nodes = Vec::with_capacity(dependencies_by_node.len());
@@ -705,6 +3042,7 @@ fn build_runtime_bridge_plan(
     Ok(RuntimeBridgePlan {
         graph_hash: plan.graph_hash,
         nodes: node_specs,
+        descriptors_by_node,
         scheduled_nodes,
         input_output_projections,
         output_projections_by_node,
@@ -918,7 +3256,20 @@ fn build_runtime_result(
         TestRunStatus::Failed => StdlibRunStatus::Failed,
         TestRunStatus::Cancelled => StdlibRunStatus::Cancelled,
     };
-    let journal = result
+    let journal = test_journal_values(&result);
+    StdlibRunResult {
+        run_id: result.run_id,
+        graph_hash,
+        status,
+        outputs: output_values,
+        journal,
+        checkpoint: None,
+        deployment_provenance: deployment_provenance.cloned(),
+    }
+}
+
+fn test_journal_values(result: &TestRunResult) -> Vec<Value> {
+    result
         .journal
         .records()
         .iter()
@@ -936,15 +3287,7 @@ fn build_runtime_result(
                 "terminal": record.terminal,
             })
         })
-        .collect::<Vec<_>>();
-    StdlibRunResult {
-        run_id: result.run_id,
-        graph_hash,
-        status,
-        outputs: output_values,
-        journal,
-        deployment_provenance: deployment_provenance.cloned(),
-    }
+        .collect()
 }
 
 fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<Value, BlockError> {
@@ -952,7 +3295,7 @@ fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<V
     for (name, input) in inputs {
         match input {
             ResolvedInput::Value(value) => {
-                object.insert(name.clone(), value.clone());
+                insert_resolved_input_path(&mut object, name, value.clone())?;
             }
             ResolvedInput::Outcome(_) => {
                 return Err(BlockError::new(
@@ -965,6 +3308,49 @@ fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<V
         }
     }
     Ok(Value::Object(object))
+}
+
+fn insert_resolved_input_path(
+    object: &mut serde_json::Map<String, Value>,
+    path: &str,
+    value: Value,
+) -> Result<(), BlockError> {
+    let parts = path.split('.').collect::<Vec<_>>();
+    if parts.is_empty() || parts.iter().any(|part| part.is_empty()) {
+        return Err(BlockError::new(
+            "stdlib.invalid_input_path",
+            ErrorCategory::Configuration,
+            format!("runtime input path {path:?} must contain non-empty segments"),
+            false,
+        ));
+    }
+    let mut current = object;
+    for part in &parts[..parts.len() - 1] {
+        let nested = current
+            .entry((*part).to_owned())
+            .or_insert_with(|| json!({}));
+        let Some(nested) = nested.as_object_mut() else {
+            return Err(BlockError::new(
+                "stdlib.conflicting_input_path",
+                ErrorCategory::Configuration,
+                format!("runtime input path {path:?} conflicts at segment {part:?}"),
+                false,
+            ));
+        };
+        current = nested;
+    }
+    let leaf = parts
+        .last()
+        .expect("validated path has at least one segment");
+    if current.insert((*leaf).to_owned(), value).is_some() {
+        return Err(BlockError::new(
+            "stdlib.duplicate_input_path",
+            ErrorCategory::Configuration,
+            format!("runtime input path {path:?} was resolved more than once"),
+            false,
+        ));
+    }
+    Ok(())
 }
 
 fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
@@ -4561,8 +6947,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
-        run_stdlib_graph_with_options_json,
+        ExecutionPhase, StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
+        run_stdlib_graph_with_options_json, stdlib_block_catalog, validate_stdlib_output_contract,
     };
 
     fn unique_sqlite_path(label: &str) -> PathBuf {
@@ -4574,6 +6960,36 @@ mod tests {
                 .expect("system clock should be after epoch")
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn native_stdlib_output_contract_enforces_resumed_required_outputs() {
+        let catalog = stdlib_block_catalog().expect("stdlib catalog is valid");
+        let descriptor = catalog
+            .get("async.await_callback@1")
+            .expect("async await callback descriptor exists");
+        let initial_outputs = json!({"wait": {}});
+        let initial_outputs = initial_outputs
+            .as_object()
+            .expect("test outputs are an object");
+
+        validate_stdlib_output_contract(
+            "async.await_callback@1",
+            descriptor,
+            initial_outputs,
+            &json!({}),
+            ExecutionPhase::Initial,
+        )
+        .expect("conditional callback outputs are optional during initial execution");
+        let error = validate_stdlib_output_contract(
+            "async.await_callback@1",
+            descriptor,
+            initial_outputs,
+            &json!({}),
+            ExecutionPhase::Resumed,
+        )
+        .expect_err("callback and operation outputs are required after resume");
+        assert!(error.message.contains("callback, operation"));
     }
 
     #[test]

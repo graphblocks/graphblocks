@@ -200,6 +200,7 @@ def test_review_request_is_deterministic_and_does_not_fabricate_approval() -> No
 
     assert first == second
     assert first["status"] == "pending"
+    assert first["pending"] is True
     assert first["accepted"] is False
     assert first["record"] is None
     assert first["waitMode"] == "application_event"
@@ -229,6 +230,7 @@ def test_review_request_accepts_only_subject_bound_credentialed_review() -> None
     )
 
     assert result["accepted"] is True
+    assert result["pending"] is False
     assert result["record"]["decision"] == "accept"
 
     with pytest.raises(ValueError, match="subject digest must match"):

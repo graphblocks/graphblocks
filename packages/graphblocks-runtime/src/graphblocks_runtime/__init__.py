@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from decimal import Decimal
 import json
+import math
 
 _NATIVE_EXTENSION_MODULE = "graphblocks_runtime._native"
 _BINDING_CRATE = "graphblocks-python"
@@ -94,7 +97,12 @@ except ImportError as error:
     ) -> str:
         require_native_extension()
 
-    def compile_graph_json(document_json: str, block_catalog_json: str | None = None) -> str:
+    def compile_graph_json(
+        document_json: str,
+        block_catalog_json: str | None = None,
+        *,
+        allow_unknown_blocks: bool = False,
+    ) -> str:
         require_native_extension()
 
     def finalize_tool_call_json(
@@ -284,13 +292,112 @@ else:
 
 
 def _canonical_json(value: object) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    pending = [value]
+    occupied_strings: set[str] = set()
+    has_decimal = False
+    while pending:
+        current = pending.pop()
+        if isinstance(current, Mapping):
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    raise TypeError("native JSON object keys must be strings")
+                occupied_strings.add(key)
+                pending.append(child)
+        elif isinstance(current, list | tuple):
+            pending.extend(current)
+        elif isinstance(current, str):
+            occupied_strings.add(current)
+        elif isinstance(current, Decimal):
+            has_decimal = True
+
+    if not has_decimal:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    root: list[object] = [None]
+    copies: list[tuple[object, dict[str, object] | list[object], str | int]] = [
+        (value, root, 0)
+    ]
+    decimal_tokens: dict[str, str] = {}
+    token_index = 0
+    while copies:
+        current, parent, key = copies.pop()
+        if isinstance(current, Decimal):
+            if not current.is_finite():
+                raise ValueError("native JSON values must contain only finite numbers")
+            number = current.as_tuple()
+            digits = "".join(str(digit) for digit in number.digits)
+            significant = digits.lstrip("0")
+            if not significant:
+                rendered = "-0.0" if number.sign else "0.0"
+            else:
+                exponent = int(number.exponent) + len(significant) - 1
+                coefficient = significant.rstrip("0")
+                sign = "-" if number.sign else ""
+                if -4 <= exponent < 16:
+                    point = exponent + 1
+                    if point <= 0:
+                        rendered = sign + "0." + ("0" * -point) + coefficient
+                    elif point >= len(coefficient):
+                        rendered = sign + coefficient + ("0" * (point - len(coefficient))) + ".0"
+                    else:
+                        rendered = sign + coefficient[:point] + "." + coefficient[point:]
+                else:
+                    rendered = sign + coefficient[0]
+                    if len(coefficient) > 1:
+                        rendered += "." + coefficient[1:]
+                    rendered += f"e{'-' if exponent < 0 else '+'}{abs(exponent):02d}"
+            token = f"\x00graphblocks-native-decimal-{token_index}\x00"
+            while token in occupied_strings:
+                token_index += 1
+                token = f"\x00graphblocks-native-decimal-{token_index}\x00"
+            token_index += 1
+            occupied_strings.add(token)
+            decimal_tokens[token] = rendered
+            parent[key] = token
+        elif isinstance(current, Mapping):
+            copied: dict[str, object] = {}
+            parent[key] = copied
+            for child_key, child in reversed(tuple(current.items())):
+                copies.append((child, copied, child_key))
+        elif isinstance(current, list | tuple):
+            copied_list: list[object] = [None] * len(current)
+            parent[key] = copied_list
+            for index in range(len(current) - 1, -1, -1):
+                copies.append((current[index], copied_list, index))
+        else:
+            parent[key] = current
+
+    encoded = json.dumps(
+        root[0],
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    for token, rendered in decimal_tokens.items():
+        encoded = encoded.replace(
+            json.dumps(token, ensure_ascii=False, separators=(",", ":")),
+            rendered,
+        )
+    return encoded
 
 
 def _json_object_result(result_json: str, label: str) -> dict[str, object]:
     try:
         payload = json.loads(
             result_json,
+            parse_float=lambda token: (
+                float(token)
+                if math.isfinite(float(token))
+                and Decimal(str(float(token))) == Decimal(token)
+                else Decimal(token)
+            ),
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
         )
     except ValueError as error:
@@ -307,10 +414,21 @@ def capture_telemetry_content(decision: dict[str, object], content: dict[str, ob
     )
 
 
-def compile_graph(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
+def compile_graph(
+    document: dict[str, object],
+    block_catalog: object | None = None,
+    *,
+    allow_unknown_blocks: bool = False,
+) -> dict[str, object]:
+    if not isinstance(allow_unknown_blocks, bool):
+        raise TypeError("allow_unknown_blocks must be a boolean")
     block_catalog_json = None if block_catalog is None else _canonical_json(block_catalog)
     return _json_object_result(
-        compile_graph_json(_canonical_json(document), block_catalog_json),
+        compile_graph_json(
+            _canonical_json(document),
+            block_catalog_json,
+            allow_unknown_blocks=allow_unknown_blocks,
+        ),
         "native compiler result",
     )
 
@@ -322,12 +440,18 @@ def run_stdlib_graph(
     run_id: str | None = None,
     run_store_path: str | None = None,
     journal_store_path: str | None = None,
+    checkpoint_store_path: str | None = None,
+    async_operation_store_path: str | None = None,
+    callback_receipt: dict[str, object] | None = None,
     deployment_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if (
         run_id is not None
         or run_store_path is not None
         or journal_store_path is not None
+        or checkpoint_store_path is not None
+        or async_operation_store_path is not None
+        or callback_receipt is not None
         or deployment_provenance is not None
     ):
         options: dict[str, object] = {}
@@ -337,6 +461,12 @@ def run_stdlib_graph(
             options["runStorePath"] = run_store_path
         if journal_store_path is not None:
             options["journalStorePath"] = journal_store_path
+        if checkpoint_store_path is not None:
+            options["checkpointStorePath"] = checkpoint_store_path
+        if async_operation_store_path is not None:
+            options["asyncOperationStorePath"] = async_operation_store_path
+        if callback_receipt is not None:
+            options["callbackReceipt"] = callback_receipt
         if deployment_provenance is not None:
             options["deploymentProvenance"] = deployment_provenance
         return _json_object_result(

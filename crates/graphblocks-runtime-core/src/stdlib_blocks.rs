@@ -774,6 +774,9 @@ pub fn stdlib_block_catalog() -> Result<BlockCatalog, TypedGraphError> {
 pub fn stdlib_typed_block_catalog() -> Result<TypedBlockCatalog, TypedGraphError> {
     let required = |name, type_ref| TypedPortDescriptor::required_type(name, type_ref);
     let optional = |name, type_ref| TypedPortDescriptor::optional_type(name, type_ref);
+    let optional_when = |name, type_ref, required_when| {
+        TypedPortDescriptor::optional_type_when(name, type_ref, required_when)
+    };
     TypedBlockCatalog::from_descriptors([
         TypedBlockDescriptor::stdlib(
             "prompt.render@1",
@@ -879,7 +882,11 @@ pub fn stdlib_typed_block_catalog() -> Result<TypedBlockCatalog, TypedGraphError
             [required("items", "graphblocks.ai/Items@1")],
             [
                 required("values", "graphblocks.ai/Values@1"),
-                optional("outcomes", "graphblocks.ai/Outcomes@1"),
+                optional_when(
+                    "outcomes",
+                    "graphblocks.ai/Outcomes@1",
+                    json!({"configEquals": {"pointer": "/onError", "value": "collect"}}),
+                ),
             ],
         )?,
         TypedBlockDescriptor::stdlib(
@@ -1001,6 +1008,7 @@ pub fn stdlib_typed_block_catalog() -> Result<TypedBlockCatalog, TypedGraphError
                 required("request", "Any"),
                 optional("requestDigest", StringValue::TYPE_REF),
                 optional("record", "Any"),
+                required("pending", "graphblocks.ai/Boolean@1"),
                 required("accepted", "graphblocks.ai/Boolean@1"),
                 required("approved", "graphblocks.ai/Boolean@1"),
                 required("status", StringValue::TYPE_REF),
@@ -1043,8 +1051,12 @@ pub fn stdlib_typed_block_catalog() -> Result<TypedBlockCatalog, TypedGraphError
             [required("operation", "graphblocks.ai/AsyncOperation@1")],
             [
                 required("wait", "graphblocks.ai/AsyncWait@1"),
-                optional("callback", "Any"),
-                optional("operation", "graphblocks.ai/AsyncOperation@1"),
+                optional_when("callback", "Any", json!({"phase": "resumed"})),
+                optional_when(
+                    "operation",
+                    "graphblocks.ai/AsyncOperation@1",
+                    json!({"phase": "resumed"}),
+                ),
             ],
         )?,
         TypedBlockDescriptor::stdlib(

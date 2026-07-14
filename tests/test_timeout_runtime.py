@@ -7,6 +7,7 @@ import pytest
 
 import graphblocks.runtime as runtime_module
 from graphblocks.compiler import compile_graph
+from graphblocks.plugins import BlockCatalog
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, parse_duration_seconds
 
 
@@ -170,7 +171,10 @@ def test_compile_and_runtime_reject_invalid_timeout_before_invoking_block(timeou
         },
     }
 
-    plan = compile_graph(graph)
+    plan = compile_graph(
+        graph,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
 
     assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1019"]
     with pytest.raises(ValueError, match="GB1019.*flow.timeout must be a positive finite duration"):

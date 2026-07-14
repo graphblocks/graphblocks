@@ -826,6 +826,147 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     )
 
 
+def test_runtime_requires_conditionally_required_resumed_callback_output() -> None:
+    registry = stdlib_registry()
+    conditional_descriptor = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "async.await_callback",
+                "version": 1,
+                "inputs": [
+                    {
+                        "name": "operation",
+                        "type": "graphblocks.ai/AsyncOperation@1",
+                    }
+                ],
+                "outputs": [
+                    {"name": "wait", "type": "graphblocks.ai/AsyncWait@1"},
+                    {
+                        "name": "callback",
+                        "type": "Any",
+                        "required": False,
+                        "requiredWhen": {"phase": "resumed"},
+                    },
+                    {
+                        "name": "operation",
+                        "type": "graphblocks.ai/AsyncOperation@1",
+                        "required": False,
+                        "requiredWhen": {"phase": "resumed"},
+                    },
+                    {
+                        "name": "resumeEvidence",
+                        "type": "Any",
+                        "required": False,
+                        "requiredWhen": {"phase": "resumed"},
+                    },
+                ],
+            }
+        ]
+    ).get("async.await_callback@1")
+    assert conditional_descriptor is not None
+    registry.block_catalog = BlockCatalog(
+        {
+            **registry.block_catalog.descriptors,
+            "async.await_callback@1": conditional_descriptor,
+        }
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-resumed-conditional-output"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "operation-resumed-conditional-output",
+                        "runId": "run-resumed-conditional-output",
+                        "nodeId": "wait",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "provider-operation-1",
+                        "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
+                        "idempotencyKey": "idem-resumed-conditional-output",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeoutMs": 60_000,
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "inputs": {"operation": "start.operation"},
+                    "config": {
+                        "checkpoint": True,
+                        "onTimeout": "fail",
+                        "timeoutMs": 60_000,
+                        "idempotencyKey": "idem-resumed-conditional-output",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                },
+            }
+        },
+    }
+    runtime = InProcessRuntime(registry)
+
+    waiting = runtime.run(graph, {}, run_id="run-resumed-conditional-output")
+
+    assert waiting.status == "waiting_callback"
+    assert waiting.checkpoint is not None
+    operation = waiting.checkpoint.operation
+    payload = {"status": "completed"}
+    resumed = runtime.run(
+        graph,
+        {},
+        run_id="run-resumed-conditional-output",
+        checkpoint=waiting.checkpoint,
+        callback_receipt={
+            "operation_id": operation["operation_id"],
+            "run_id": operation["run_id"],
+            "node_id": operation["node_id"],
+            "attempt_id": operation["attempt_id"],
+            "provider_operation_id": operation["provider_operation_id"],
+            "operation_idempotency_key": operation["idempotency_key"],
+            "callback_idempotency_key": "delivery-resumed-conditional-output",
+            "resume_token_hash": operation["resume_token_hash"],
+            "schema_id": operation["expected_schema"],
+            "schema_validated": True,
+            "payload": payload,
+            "payload_digest": graphblocks.canonical_hash(payload),
+            "received_at_unix_ms": 2_000,
+            "verified_by": "callback-relay",
+            "resume_admission": {
+                "policy_reevaluated": True,
+                "budget_reserved": True,
+                "release_compatible": True,
+                "ownership_fenced": True,
+            },
+        },
+    )
+
+    assert resumed.status == "failed"
+    failure = next(
+        record for record in resumed.journal.records if record.kind == "node_failed"
+    )
+    assert failure.payload["error"] == (
+        "async.await_callback@1 omitted required output(s): resumeEvidence"
+    )
+
+
 def test_stdlib_policy_stop_turn_blocks_late_commit() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -1358,7 +1499,11 @@ def test_runtime_does_not_retry_state_changes_with_invalid_idempotency_key(
     }
     monkeypatch.setattr(
         "graphblocks.runtime.compile_graph",
-        lambda document: graphblocks.Plan(document, "sha256:test", graphblocks.DiagnosticSet(())),
+        lambda document, **_kwargs: graphblocks.Plan(
+            document,
+            "sha256:test",
+            graphblocks.DiagnosticSet(()),
+        ),
     )
 
     result = InProcessRuntime(registry).run(graph, {})
@@ -2036,12 +2181,11 @@ def test_stdlib_async_terminal_blocks_reject_non_mapping_config() -> None:
         },
     }
 
-    result = InProcessRuntime(stdlib_registry()).run(graph, {})
-
-    assert result.status == "failed"
-    failed = [record for record in result.journal.records if record.kind == "node_failed"]
-    assert failed[0].payload["node"] == "cancel"
-    assert "async.cancel_operation@1 config must be a mapping" in failed[0].payload["error"]
+    with pytest.raises(
+        ValueError,
+        match=r"GB2019 \$\.spec\.nodes\.cancel\.config",
+    ):
+        InProcessRuntime(stdlib_registry()).run(graph, {})
 
 
 def test_stdlib_async_terminal_blocks_reject_terminal_at_expiration() -> None:

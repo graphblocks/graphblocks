@@ -44,6 +44,36 @@ JournalKind = Literal[
     "run_failed",
     "run_cancelled",
 ]
+LocalJournalKind = Literal[
+    "run_started",
+    "node_started",
+    "node_retry",
+    "node_succeeded",
+    "node_failed",
+    "run_succeeded",
+    "run_failed",
+    "run_cancelled",
+]
+LocalTerminalJournalKind = Literal[
+    "run_succeeded",
+    "run_failed",
+    "run_cancelled",
+]
+_LOCAL_JOURNAL_KINDS = frozenset(
+    {
+        "run_started",
+        "node_started",
+        "node_retry",
+        "node_succeeded",
+        "node_failed",
+        "run_succeeded",
+        "run_failed",
+        "run_cancelled",
+    }
+)
+_LOCAL_TERMINAL_JOURNAL_KINDS = frozenset(
+    {"run_succeeded", "run_failed", "run_cancelled"}
+)
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
 MAX_U64 = (1 << 64) - 1
 
@@ -78,7 +108,7 @@ def _configured_retry_attempts(value: Any) -> int:
 
 
 def _freeze_json_like(value: Any) -> Any:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze_json_like(nested) for key, nested in value.items()})
     if isinstance(value, list):
         return tuple(_freeze_json_like(nested) for nested in value)
@@ -180,6 +210,83 @@ class ExecutionJournal:
             raise JournalStateError(f"terminal already recorded as {self.terminal_kind}")
         record = self.append(kind, payload)
         self.terminal_kind = kind
+        return record
+
+
+@dataclass(frozen=True, slots=True)
+class LocalJournalRecord:
+    """One stable C1 execution-journal record."""
+
+    sequence: int
+    kind: LocalJournalKind
+    payload: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.sequence, int)
+            or isinstance(self.sequence, bool)
+            or self.sequence < 1
+        ):
+            raise ValueError("local journal sequence must be a positive integer")
+        if self.kind not in _LOCAL_JOURNAL_KINDS:
+            raise ValueError(f"unsupported local journal kind {self.kind!r}")
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("local journal payload must be a mapping")
+        object.__setattr__(self, "payload", _freeze_json_like(self.payload))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sequence": self.sequence,
+            "kind": self.kind,
+            "payload": _mutable_json_like(self.payload),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LocalExecutionJournal:
+    """In-memory journal restricted to stable C1 lifecycle events."""
+
+    run_id: str
+    records: tuple[LocalJournalRecord, ...] = field(default_factory=tuple, init=False)
+    terminal_kind: LocalTerminalJournalKind | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_id, str) or not self.run_id.strip():
+            raise ValueError("local journal run id must be a nonempty string")
+
+    def append(
+        self,
+        kind: LocalJournalKind,
+        payload: dict[str, Any],
+    ) -> LocalJournalRecord:
+        if kind not in _LOCAL_JOURNAL_KINDS:
+            raise ValueError(f"unsupported local journal kind {kind!r}")
+        if kind in _LOCAL_TERMINAL_JOURNAL_KINDS:
+            raise JournalStateError(
+                f"terminal local journal kind {kind!r} must be recorded with append_terminal"
+            )
+        if self.terminal_kind is not None:
+            raise JournalStateError(
+                f"cannot append {kind} after terminal {self.terminal_kind}"
+            )
+        record = LocalJournalRecord(len(self.records) + 1, kind, payload)
+        object.__setattr__(self, "records", (*self.records, record))
+        return record
+
+    def append_terminal(
+        self,
+        kind: LocalTerminalJournalKind,
+        payload: dict[str, Any],
+    ) -> LocalJournalRecord:
+        if kind not in _LOCAL_TERMINAL_JOURNAL_KINDS:
+            raise ValueError(f"local terminal journal kind is invalid: {kind!r}")
+        if self.terminal_kind is not None:
+            raise JournalStateError(
+                f"terminal already recorded as {self.terminal_kind}"
+            )
+        record = LocalJournalRecord(len(self.records) + 1, kind, payload)
+        object.__setattr__(self, "records", (*self.records, record))
+        object.__setattr__(self, "terminal_kind", kind)
         return record
 
 
@@ -544,6 +651,38 @@ class RunResult:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class LocalRunResult:
+    """Terminal result exposed by the stable C1-only local runtime facade."""
+
+    run_id: str
+    status: Literal["succeeded", "failed", "cancelled"]
+    outputs: Mapping[str, Any]
+    journal: LocalExecutionJournal
+
+    def __post_init__(self) -> None:
+        if self.status not in {"succeeded", "failed", "cancelled"}:
+            raise ValueError(f"invalid local result status {self.status!r}")
+        if not isinstance(self.outputs, Mapping):
+            raise TypeError("local result outputs must be a mapping")
+        if not isinstance(self.journal, LocalExecutionJournal):
+            raise TypeError("local result journal must be LocalExecutionJournal")
+        if self.journal.run_id != self.run_id:
+            raise ValueError("local result and journal run ids must match")
+        expected_terminal_kind: LocalTerminalJournalKind
+        if self.status == "succeeded":
+            expected_terminal_kind = "run_succeeded"
+        elif self.status == "failed":
+            expected_terminal_kind = "run_failed"
+        else:
+            expected_terminal_kind = "run_cancelled"
+        if self.journal.terminal_kind != expected_terminal_kind:
+            raise ValueError(
+                "local result status must match its terminal journal record"
+            )
+        object.__setattr__(self, "outputs", _freeze_json_like(self.outputs))
+
+
 @dataclass(slots=True)
 class RuntimeRegistry:
     blocks: dict[str, BlockCallable] = field(default_factory=dict)
@@ -580,7 +719,7 @@ class RuntimeRegistry:
             )
         self.blocks[block_id] = block
 
-    def compilation_catalog(self) -> BlockCatalog | None:
+    def compilation_catalog(self) -> BlockCatalog:
         if not self.allow_untyped:
             if self.block_catalog.allow_unknown_blocks:
                 return BlockCatalog(
@@ -588,8 +727,6 @@ class RuntimeRegistry:
                     allow_unknown_blocks=False,
                 )
             return self.block_catalog
-        if not self.block_catalog.descriptors:
-            return None
         if self.block_catalog.allow_unknown_blocks:
             return self.block_catalog
         return BlockCatalog(
@@ -645,11 +782,10 @@ class InProcessRuntime:
             raise ValueError("deployment_provenance must be RunDeploymentProvenance")
         if deployment_provenance is not None:
             deployment_provenance.validate_for_production()
-        block_catalog = self.registry.compilation_catalog()
-        plan = (
-            compile_graph(graph, block_catalog=block_catalog)
-            if block_catalog is not None
-            else compile_graph(graph)
+        plan = compile_graph(
+            graph,
+            block_catalog=self.registry.compilation_catalog(),
+            allow_unknown_blocks=self.registry.allow_untyped,
         )
         errors = [item for item in plan.diagnostics.diagnostics if item.severity == "error"]
         if errors:
@@ -833,20 +969,122 @@ class InProcessRuntime:
                     "runtime callback_receipt must be before operation expiration"
                 )
             resume_admission = receipt.get("resume_admission")
-            required_resume_admission = {
-                "policy_reevaluated",
-                "budget_reserved",
-                "release_compatible",
-                "ownership_fenced",
-            }
-            if not isinstance(resume_admission, Mapping) or any(
-                resume_admission.get(field_name) is not True
-                for field_name in required_resume_admission
-            ):
+            if not isinstance(resume_admission, Mapping):
                 raise ValueError(
                     "runtime callback_receipt requires policy, budget, release, and ownership resume admission"
                 )
             assert expected_checkpoint_digest is not None
+            if (
+                resume_admission.get("contract")
+                == "graphblocks.trusted-callback-resume-admission.v1"
+            ):
+                ownership = resume_admission.get("ownership")
+                schema_verification = resume_admission.get(
+                    "schema_verification"
+                )
+                required_admission_strings = (
+                    "authentication_decision_id",
+                    "policy_decision_id",
+                    "budget_reservation_id",
+                    "compatible_release_digest",
+                    "run_id",
+                    "operation_id",
+                    "node_id",
+                    "attempt_id",
+                    "checkpoint_id",
+                    "checkpoint_state_digest",
+                )
+                required_ownership_strings = (
+                    "owner_id",
+                    "lease_id",
+                    "fence_token",
+                )
+                required_schema_strings = (
+                    "verification_id",
+                    "schema_id",
+                    "payload_digest",
+                    "verified_by",
+                )
+                admission_strings_valid = all(
+                    isinstance(resume_admission.get(field_name), str)
+                    and bool(resume_admission[field_name])
+                    and resume_admission[field_name]
+                    == resume_admission[field_name].strip()
+                    for field_name in required_admission_strings
+                )
+                ownership_strings_valid = isinstance(
+                    ownership, Mapping
+                ) and all(
+                    isinstance(ownership.get(field_name), str)
+                    and bool(ownership[field_name])
+                    and ownership[field_name] == ownership[field_name].strip()
+                    for field_name in required_ownership_strings
+                )
+                schema_strings_valid = isinstance(
+                    schema_verification, Mapping
+                ) and all(
+                    isinstance(schema_verification.get(field_name), str)
+                    and bool(schema_verification[field_name])
+                    and schema_verification[field_name]
+                    == schema_verification[field_name].strip()
+                    for field_name in required_schema_strings
+                )
+                fencing_epoch = (
+                    ownership.get("fencing_epoch")
+                    if isinstance(ownership, Mapping)
+                    else None
+                )
+                expected_release_digest = (
+                    deployment_provenance.release_digest
+                    if deployment_provenance is not None
+                    and deployment_provenance.release_digest is not None
+                    else plan.graph_hash
+                )
+                if (
+                    resume_admission.get("outcome") != "authorized"
+                    or not admission_strings_valid
+                    or not ownership_strings_valid
+                    or not schema_strings_valid
+                    or not isinstance(fencing_epoch, int)
+                    or isinstance(fencing_epoch, bool)
+                    or fencing_epoch < 1
+                    or resume_admission.get("compatible_release_digest")
+                    != expected_release_digest
+                    or resume_admission.get("run_id") != run_id
+                    or resume_admission.get("operation_id")
+                    != operation.get("operation_id")
+                    or resume_admission.get("node_id")
+                    != operation.get("node_id")
+                    or resume_admission.get("attempt_id")
+                    != operation.get("attempt_id")
+                    or resume_admission.get("checkpoint_id")
+                    != checkpoint.checkpoint_id
+                    or resume_admission.get("checkpoint_state_digest")
+                    != expected_checkpoint_digest
+                    or not isinstance(schema_verification, Mapping)
+                    or schema_verification.get("schema_id")
+                    != receipt.get("schema_id")
+                    or schema_verification.get("payload_digest")
+                    != receipt.get("payload_digest")
+                    or schema_verification.get("verified_by") != verified_by
+                ):
+                    raise ValueError(
+                        "runtime callback_receipt trusted resume admission is invalid"
+                    )
+            else:
+                required_resume_admission = {
+                    "policy_reevaluated",
+                    "budget_reserved",
+                    "release_compatible",
+                    "ownership_fenced",
+                }
+                if any(
+                    resume_admission.get(field_name) is not True
+                    for field_name in required_resume_admission
+                ):
+                    raise ValueError(
+                        "runtime callback_receipt requires policy, budget, release, and ownership resume admission"
+                    )
             node_outputs = {
                 str(node): _mutable_json_like(output)
                 for node, output in checkpoint.node_outputs.items()
@@ -887,7 +1125,11 @@ class InProcessRuntime:
                     missing_outputs = sorted(
                         port.name
                         for port in descriptor.outputs
-                        if port.required and port.name not in wait_result
+                        if port.required_for(
+                            wait_node.get("config", {}),
+                            phase="resumed",
+                        )
+                        and port.name not in wait_result
                     )
                     if missing_outputs:
                         raise TypeError(
@@ -1170,7 +1412,11 @@ class InProcessRuntime:
                             missing_outputs = sorted(
                                 port.name
                                 for port in descriptor.outputs
-                                if port.required and port.name not in attempt_result
+                                if port.required_for(
+                                    node.get("config", {}),
+                                    phase="initial",
+                                )
+                                and port.name not in attempt_result
                             )
                             if missing_outputs:
                                 raise TypeError(
@@ -1382,12 +1628,73 @@ class InProcessRuntime:
         return RunResult(run_id, "succeeded", output_values, journal)
 
 
-def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
+@dataclass(slots=True)
+class LocalRuntime:
+    """C1 local runtime facade without checkpoint, callback, or provenance APIs."""
+
+    registry: RuntimeRegistry
+    cancellation_token: CancellationToken | None = None
+
+    def run(
+        self,
+        graph: dict[str, Any],
+        inputs: dict[str, Any],
+        run_id: str = "run-000001",
+    ) -> LocalRunResult:
+        result = InProcessRuntime(
+            self.registry,
+            cancellation_token=self.cancellation_token,
+        ).run(graph, inputs, run_id)
+        if result.status == "waiting_callback":
+            raise RuntimeError(
+                "LocalRuntime does not support callback continuation; "
+                "use the preview InProcessRuntime API"
+            )
+        if not isinstance(result.journal, ExecutionJournal):
+            raise RuntimeError("LocalRuntime requires the in-memory execution journal")
+        journal = LocalExecutionJournal(result.journal.run_id)
+        for record in result.journal.records:
+            if record.kind in {"run_succeeded", "run_failed", "run_cancelled"}:
+                journal.append_terminal(record.kind, _mutable_json_like(record.payload))
+            elif record.kind in {
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_succeeded",
+                "node_failed",
+            }:
+                journal.append(record.kind, _mutable_json_like(record.payload))
+            else:
+                raise RuntimeError(
+                    f"LocalRuntime encountered preview journal event {record.kind!r}"
+                )
+        return LocalRunResult(
+            run_id=result.run_id,
+            status=result.status,
+            outputs=result.outputs,
+            journal=journal,
+        )
+
+
+def _stdlib_registry(
+    *,
+    allow_untyped: bool,
+    included_block_ids: frozenset[str] | None,
+) -> RuntimeRegistry:
     from .stdlib_governance import GOVERNANCE_BLOCKS
     from .stdlib_rag import RAG_BLOCKS
 
+    catalog = builtin_block_catalog(
+        profile="stable" if included_block_ids is not None else "preview"
+    )
+    if included_block_ids is not None:
+        descriptors = {
+            block_id: catalog.descriptors[block_id]
+            for block_id in sorted(included_block_ids)
+        }
+        catalog = BlockCatalog(descriptors)
     registry = RuntimeRegistry(
-        block_catalog=builtin_block_catalog(),
+        block_catalog=catalog,
         allow_untyped=allow_untyped,
     )
 
@@ -1883,13 +2190,15 @@ def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
         items = inputs.get("items", [])
         if not isinstance(items, list):
             raise TypeError("control.map@2 input 'items' must be a list")
-        block_id = config["block"]
+        block_id = config.get("block")
+        if not isinstance(block_id, str) or not block_id:
+            raise TypeError("control.map@2 config.block must be a nonempty string")
         input_name = str(config.get("inputName", "item"))
         output_name = config.get("outputName")
         block_config = config.get("config", {})
         if not isinstance(block_config, dict):
             raise TypeError("control.map@2 config.config must be a mapping")
-        block = registry.resolve(str(block_id))
+        block = registry.resolve(block_id)
         outcomes: list[dict[str, Any]] = []
         values: list[Any] = []
         for index, item in enumerate(items):
@@ -2472,23 +2781,55 @@ def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
             raise TypeError(f"{block_label} config.externalEffects.{label} must be a non-empty string")
         return value
 
-    registry.register("conversation.begin_turn@1", begin_turn)
-    registry.register("prompt.render@1", prompt_render)
-    registry.register("model.generate@1", scripted_generate)
-    registry.register("tools.resolve@1", resolve_tools)
-    registry.register("agent.run@1", scripted_agent_run)
-    registry.register("conversation.commit_turn@1", commit_turn)
-    registry.register("conversation.policy_stop_turn@1", policy_stop_turn)
-    registry.register("control.map@2", control_map)
-    registry.register("control.select@1", control_select)
-    registry.register("async.start_operation@1", async_start_operation)
-    registry.register("async.await_callback@1", async_await_callback)
-    registry.register("async.poll_operation@1", async_poll_operation)
-    registry.register("async.complete_operation@1", async_complete_operation)
-    registry.register("async.cancel_operation@1", async_cancel_operation)
-    registry.register("async.expire_operation@1", async_expire_operation)
-    for block_id, block in RAG_BLOCKS.items():
-        registry.register(block_id, block)
-    for block_id, block in GOVERNANCE_BLOCKS.items():
+    handlers = [
+        ("conversation.begin_turn@1", begin_turn),
+        ("prompt.render@1", prompt_render),
+        ("model.generate@1", scripted_generate),
+        ("tools.resolve@1", resolve_tools),
+        ("agent.run@1", scripted_agent_run),
+        ("conversation.commit_turn@1", commit_turn),
+        ("conversation.policy_stop_turn@1", policy_stop_turn),
+        ("control.map@2", control_map),
+        ("control.select@1", control_select),
+        ("async.start_operation@1", async_start_operation),
+        ("async.await_callback@1", async_await_callback),
+        ("async.poll_operation@1", async_poll_operation),
+        ("async.complete_operation@1", async_complete_operation),
+        ("async.cancel_operation@1", async_cancel_operation),
+        ("async.expire_operation@1", async_expire_operation),
+        *RAG_BLOCKS.items(),
+        *GOVERNANCE_BLOCKS.items(),
+    ]
+    for block_id, block in handlers:
+        if included_block_ids is not None and block_id not in included_block_ids:
+            continue
         registry.register(block_id, block)
     return registry
+
+
+def stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
+    """Return the full preview stdlib across all implemented profiles."""
+
+    return _stdlib_registry(
+        allow_untyped=allow_untyped,
+        included_block_ids=None,
+    )
+
+
+_CORE_STDLIB_BLOCK_IDS = frozenset(
+    {
+        "control.map@2",
+        "control.select@1",
+        "model.generate@1",
+        "prompt.render@1",
+    }
+)
+
+
+def core_stdlib_registry(*, allow_untyped: bool = False) -> RuntimeRegistry:
+    """Return the stable C1 handler and descriptor subset of the stdlib."""
+
+    return _stdlib_registry(
+        allow_untyped=allow_untyped,
+        included_block_ids=_CORE_STDLIB_BLOCK_IDS,
+    )

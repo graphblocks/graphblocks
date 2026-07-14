@@ -30,6 +30,49 @@ fn rust_stdlib_runtime_executes_prompt_render_graph() -> Result<(), String> {
 }
 
 #[test]
+fn rust_stdlib_runtime_projects_nested_node_and_input_source_paths() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-nested-source-paths"},
+        "spec": {
+            "nodes": {
+                "generate": {
+                    "block": "model.structured_generate@1",
+                    "config": {
+                        "outputSchema": "graphblocks.ai/Message@1",
+                        "response": {"text": "node-value"}
+                    }
+                },
+                "renderNode": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Node {message.text}"}
+                },
+                "renderInput": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Input {message.text}"}
+                }
+            },
+            "edges": [
+                {"from": "generate.response.text", "to": "renderNode.message.text"},
+                {"from": "$input.payload.text", "to": "renderInput.message.text"},
+                {"from": "renderNode.prompt", "to": "$output.node"},
+                {"from": "renderInput.prompt", "to": "$output.input"}
+            ]
+        }
+    });
+
+    let result = run_graph(&graph, &json!({"payload": {"text": "input-value"}}))?;
+
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(
+        result["outputs"],
+        json!({"input": "Input input-value", "node": "Node node-value"})
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_preserves_tool_implementation_mappings() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -699,7 +742,7 @@ fn rust_stdlib_async_await_callback_rejects_unknown_on_timeout_policy() -> Resul
         .expect_err("unknown await onTimeout policy should fail compiler diagnostics");
 
     assert!(
-        error.contains("InvalidAsyncOperation"),
+        error.contains("GB1026"),
         "unexpected compiler error: {error:?}",
     );
     Ok(())
@@ -1521,23 +1564,9 @@ fn rust_stdlib_async_cancel_operation_rejects_non_object_config() -> Result<(), 
         }
     });
 
-    let result = run_graph(&graph, &json!({}))?;
-    assert_eq!(result["status"], "failed");
-    let node_failed = result["journal"]
-        .as_array()
-        .and_then(|records| {
-            records.iter().find(|record| {
-                record.pointer("/kind").and_then(Value::as_str) == Some("node_failed")
-            })
-        })
-        .ok_or_else(|| "missing node_failed journal record".to_string())?;
-    assert!(
-        node_failed
-            .pointer("/payload/message")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .contains("async.cancel_operation@1 config must be an object")
-    );
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("descriptor configSchema must reject a non-object config before execution");
+    assert!(error.contains("GB2019"), "unexpected error: {error}");
     Ok(())
 }
 

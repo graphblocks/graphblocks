@@ -147,6 +147,7 @@ pub struct TypedPortDescriptor {
     name: String,
     type_ref: String,
     required: bool,
+    required_when: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -180,6 +181,7 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: T::TYPE_REF.to_owned(),
             required: true,
+            required_when: None,
         }
     }
 
@@ -188,6 +190,7 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: T::TYPE_REF.to_owned(),
             required: false,
+            required_when: None,
         }
     }
 
@@ -196,6 +199,7 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: "Any".to_owned(),
             required: true,
+            required_when: None,
         }
     }
 
@@ -204,6 +208,7 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: "Any".to_owned(),
             required: false,
+            required_when: None,
         }
     }
 
@@ -212,6 +217,7 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: type_ref.into(),
             required: true,
+            required_when: None,
         }
     }
 
@@ -220,6 +226,20 @@ impl TypedPortDescriptor {
             name: name.into(),
             type_ref: type_ref.into(),
             required: false,
+            required_when: None,
+        }
+    }
+
+    pub(crate) fn optional_type_when(
+        name: impl Into<String>,
+        type_ref: impl Into<String>,
+        required_when: Value,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            type_ref: type_ref.into(),
+            required: false,
+            required_when: Some(required_when),
         }
     }
 }
@@ -454,11 +474,15 @@ impl NodeOutputFactory<'_> {
 }
 
 fn port_descriptor_value(descriptor: &TypedPortDescriptor) -> Value {
-    json!({
+    let mut value = json!({
         "name": descriptor.name,
         "type": descriptor.type_ref,
         "required": descriptor.required,
-    })
+    });
+    if let (Some(required_when), Some(value)) = (&descriptor.required_when, value.as_object_mut()) {
+        value.insert("requiredWhen".to_owned(), required_when.clone());
+    }
+    value
 }
 
 fn resource_slot_descriptor_value(descriptor: &TypedResourceSlotDescriptor) -> Value {

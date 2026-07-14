@@ -1,0 +1,147 @@
+{
+  "contractVersion": "graphblocks.native-callback-runtime.v1",
+  "runId": "run-native-callback-1",
+  "graph": {
+    "apiVersion": "graphblocks.ai/v1alpha3",
+    "kind": "Graph",
+    "metadata": {
+      "name": "native-callback-resume"
+    },
+    "spec": {
+      "interface": {
+        "outputs": {
+          "callback": "graphblocks.ai/SelectedValue@1",
+          "operation": "graphblocks.ai/SelectedValue@1"
+        }
+      },
+      "nodes": {
+        "start": {
+          "block": "async.start_operation@1",
+          "config": {
+            "operationId": "operation-native-1",
+            "runId": "run-native-callback-1",
+            "nodeId": "wait",
+            "attemptId": "attempt-1",
+            "kind": "ci_job",
+            "providerOperationId": "provider-operation-1",
+            "resumeTokenHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "idempotencyKey": "operation-idempotency-1",
+            "expectedSchema": "schemas/CICallback@1",
+            "createdAtUnixMs": 1000,
+            "submittedAtUnixMs": 1050,
+            "timeoutMs": 60000,
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "attemptFencing": true
+          },
+          "outputs": {
+            "operation": "wait.operation"
+          }
+        },
+        "wait": {
+          "block": "async.await_callback@1",
+          "config": {
+            "checkpoint": true,
+            "onTimeout": "fail",
+            "timeoutMs": 60000,
+            "idempotencyKey": "operation-idempotency-1",
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "attemptFencing": true
+          },
+          "inputs": {
+            "operation": "start.operation"
+          },
+          "outputs": {
+            "callback": "selectCallback.cases.callback",
+            "operation": "selectOperation.cases.operation"
+          }
+        },
+        "selectCallback": {
+          "block": "control.select@1",
+          "config": {
+            "order": ["callback"]
+          },
+          "outputs": {
+            "value": "$output.callback"
+          }
+        },
+        "selectOperation": {
+          "block": "control.select@1",
+          "config": {
+            "order": ["operation"]
+          },
+          "outputs": {
+            "value": "$output.operation"
+          }
+        }
+      }
+    }
+  },
+  "receipt": {
+    "operation_id": "operation-native-1",
+    "run_id": "run-native-callback-1",
+    "node_id": "wait",
+    "attempt_id": "attempt-1",
+    "provider_operation_id": "provider-operation-1",
+    "operation_idempotency_key": "operation-idempotency-1",
+    "callback_idempotency_key": "callback-idempotency-1",
+    "resume_token_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "schema_id": "schemas/CICallback@1",
+    "schema_validated": true,
+    "payload": {
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "payload_digest": "sha256:3b5ebe1c499501a21fd05e281d3ad182d786d7b9687dde7a12a33a3f4a0bbcce",
+    "received_at_unix_ms": 2000,
+    "verified_by": "callback-relay",
+    "resume_admission": {
+      "contract": "graphblocks.trusted-callback-resume-admission.v1",
+      "outcome": "authorized",
+      "authentication_decision_id": "authentication-decision-1",
+      "policy_decision_id": "policy-decision-1",
+      "budget_reservation_id": "budget-reservation-1",
+      "compatible_release_digest": "$graphHash",
+      "run_id": "$runId",
+      "operation_id": "operation-native-1",
+      "node_id": "wait",
+      "attempt_id": "attempt-1",
+      "checkpoint_id": "$checkpointId",
+      "checkpoint_state_digest": "$checkpointStateDigest",
+      "ownership": {
+        "owner_id": "worker-1",
+        "lease_id": "lease-1",
+        "fencing_epoch": 7,
+        "fence_token": "ownership-fence-7"
+      },
+      "schema_verification": {
+        "verification_id": "schema-verification-1",
+        "schema_id": "schemas/CICallback@1",
+        "payload_digest": "sha256:3b5ebe1c499501a21fd05e281d3ad182d786d7b9687dde7a12a33a3f4a0bbcce",
+        "verified_by": "callback-relay"
+      }
+    }
+  },
+  "expected": {
+    "waitingStatus": "waiting_callback",
+    "resumedStatus": "succeeded",
+    "journalOrder": [
+      "run_waiting_callback",
+      "external_callback_received",
+      "run_resuming"
+    ]
+  }
+}
