@@ -119,6 +119,81 @@ def test_stable_plugin_blocks_require_capabilities_and_config_schema() -> None:
     ]
 
 
+def test_plugin_manifest_merges_unrelated_schema_and_semantic_diagnostics() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "PluginManifest",
+            "metadata": {
+                "name": "example.mixed_diagnostics",
+                "labels": {"invalid": 1},
+            },
+            "spec": {
+                "pluginId": "example.mixed_diagnostics",
+                "version": "1.0.0",
+                "blocks": [
+                    {
+                        "typeId": "example.echo",
+                        "version": 1,
+                        "capabilities": [],
+                        "configSchema": {"type": "object"},
+                        "outputs": [
+                            {
+                                "name": "value",
+                                "required": "yes",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("GB2015", "$.spec.blocks[0].outputs[0].required"),
+        ("GB0014", "$.metadata.labels.invalid"),
+    ]
+
+
+def test_plugin_manifest_diagnostic_merge_deduplicates_and_orders_findings() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {
+            "name": "example.ordered_diagnostics",
+            "labels": {"zeta": 1, "alpha": False},
+        },
+        "spec": {
+            "pluginId": "example.ordered_diagnostics",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "example.echo",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                    "inputs": [{"name": "request", "required": "yes"}],
+                    "outputs": [{"name": "response", "required": "yes"}],
+                    "resourceSlots": [{"name": "store", "optional": "yes"}],
+                }
+            ],
+        },
+    }
+
+    first = validate_plugin_manifest(document)
+    second = validate_plugin_manifest(document)
+    expected = [
+        ("GB2015", "$.spec.blocks[0].inputs[0].required"),
+        ("GB2015", "$.spec.blocks[0].outputs[0].required"),
+        ("GB2015", "$.spec.blocks[0].resourceSlots[0].optional"),
+        ("GB0014", "$.metadata.labels.alpha"),
+        ("GB0014", "$.metadata.labels.zeta"),
+    ]
+
+    assert [(item.code, item.path) for item in first.diagnostics] == expected
+    assert first.to_list() == second.to_list()
+
+
 def test_plugin_manifest_reports_recursive_required_when_as_a_diagnostic() -> None:
     required_when: dict[str, object] = {}
     required_when["not"] = required_when

@@ -1198,16 +1198,24 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                 Diagnostic("GB2011", "duplicate block descriptor in plugin manifest", f"$.spec.blocks[{index}]")
             )
         seen_blocks.add(key)
-    if not diagnostics:
-        diagnostics.extend(
-            Diagnostic(violation.code, violation.message, violation.path)
-            for violation in schema_violations
-        )
-    else:
-        semantic_paths = {diagnostic.path for diagnostic in diagnostics}
-        for violation in schema_violations:
-            if violation.keyword != "additionalProperties":
-                continue
+    semantic_paths = {diagnostic.path for diagnostic in diagnostics}
+    if any(diagnostic.code == "GB2006" for diagnostic in diagnostics):
+        # GB2006 covers either accepted source of plugin identity.
+        semantic_paths.add("$.metadata.name")
+    seen_diagnostics = set(diagnostics)
+    for violation in schema_violations:
+        if violation.path in semantic_paths:
+            continue
+        if violation.keyword in {"anyOf", "oneOf"} and any(
+            semantic_path.startswith(f"{violation.path}.")
+            or semantic_path.startswith(f"{violation.path}[")
+            for semantic_path in semantic_paths
+        ):
+            # Composite schemas report their parent when a selected branch has
+            # already produced a more precise semantic diagnostic below it.
+            continue
+        covered_paths: set[str] = set()
+        if violation.keyword == "additionalProperties":
             prefix = "unexpected properties are not allowed: "
             try:
                 unexpected = json.loads(violation.message.removeprefix(prefix))
@@ -1218,11 +1226,23 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                 for key in unexpected
                 if isinstance(key, str) and key.isidentifier()
             }
-            if covered_paths and covered_paths.issubset(semantic_paths):
-                continue
-            diagnostics.append(
-                Diagnostic(violation.code, violation.message, violation.path)
+        elif violation.keyword == "required":
+            missing_property = re.fullmatch(
+                r"'([^']+)' is a required property",
+                violation.message,
             )
+            if (
+                missing_property is not None
+                and missing_property.group(1).isidentifier()
+            ):
+                covered_paths = {f"{violation.path}.{missing_property.group(1)}"}
+        if covered_paths and covered_paths.issubset(semantic_paths):
+            continue
+        diagnostic = Diagnostic(violation.code, violation.message, violation.path)
+        if diagnostic in seen_diagnostics:
+            continue
+        diagnostics.append(diagnostic)
+        seen_diagnostics.add(diagnostic)
     return DiagnosticSet(tuple(diagnostics))
 
 
