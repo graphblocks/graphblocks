@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import subprocess
@@ -8,7 +9,11 @@ import sys
 import yaml
 
 import graphblocks
-from tools.check_compatibility import _check_or_update, build_testing_snapshot
+from tools.check_compatibility import (
+    _check_or_update,
+    _dataclass_contract,
+    build_testing_snapshot,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -38,6 +43,84 @@ def test_snapshot_writer_requires_explicit_update_for_drift(tmp_path, capsys) ->
     assert _check_or_update(snapshot_path, contract, update=True) is True
     capsys.readouterr()
     assert _check_or_update(snapshot_path, contract, update=False) is True
+
+
+def test_dataclass_snapshot_captures_behavioral_contracts() -> None:
+    class ContractBase:
+        __slots__ = ()
+
+    @dataclass(
+        eq=True,
+        order=True,
+        unsafe_hash=True,
+        repr=False,
+        slots=True,
+        weakref_slot=True,
+        match_args=False,
+    )
+    class Contract(ContractBase):
+        value: str = field(
+            default="value",
+            compare=False,
+            hash=True,
+            repr=False,
+            kw_only=True,
+        )
+
+    contract = _dataclass_contract(Contract)
+
+    assert contract is not None
+    assert contract["bases"] == [
+        f"{ContractBase.__module__}.{ContractBase.__qualname__}"
+    ]
+    assert {
+        name: contract[name]
+        for name in (
+            "eq",
+            "frozen",
+            "init",
+            "matchArgs",
+            "order",
+            "repr",
+            "slots",
+            "unsafeHash",
+            "weakrefSlot",
+        )
+    } == {
+        "eq": True,
+        "frozen": False,
+        "init": True,
+        "matchArgs": None,
+        "order": True,
+        "repr": False,
+        "slots": True,
+        "unsafeHash": True,
+        "weakrefSlot": True,
+    }
+    assert contract["fields"] == [
+        {
+            "name": "value",
+            "annotation": "str",
+            "default": {"kind": "value", "value": "value"},
+            "init": True,
+            "keywordOnly": True,
+            "compare": False,
+            "hash": True,
+            "repr": False,
+        }
+    ]
+
+
+def test_dataclass_snapshot_detects_equality_policy_drift() -> None:
+    @dataclass(eq=True)
+    class Comparable:
+        value: str
+
+    @dataclass(eq=False)
+    class IdentityOnly:
+        value: str
+
+    assert _dataclass_contract(Comparable) != _dataclass_contract(IdentityOnly)
 
 
 def test_stable_python_surface_is_deliberate_and_profile_bounded() -> None:

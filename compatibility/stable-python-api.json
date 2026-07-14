@@ -39,48 +39,75 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "code"
+            "name": "code",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "message"
+            "name": "message",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "$"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "path"
+            "name": "path",
+            "repr": true
           },
           {
             "annotation": "Severity",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "error"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "severity"
+            "name": "severity",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "code",
+          "message",
+          "path",
+          "severity"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.Diagnostic",
@@ -99,19 +126,34 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "tuple[Diagnostic, ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "diagnostics"
+            "name": "diagnostics",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "diagnostics"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.DiagnosticSet",
@@ -130,19 +172,34 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "raw"
+            "name": "raw",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "raw"
+        ],
+        "order": true,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.SchemaId",
@@ -161,56 +218,87 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "code"
+            "name": "code",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "path"
+            "name": "path",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "keyword"
+            "name": "keyword",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "message"
+            "name": "message",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "$"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "schema_path"
+            "name": "schema_path",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "code",
+          "path",
+          "keyword",
+          "message",
+          "schema_path"
+        ],
+        "order": true,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.ResourceSchemaViolation",
@@ -261,91 +349,138 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "plugin_id"
+            "name": "plugin_id",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "version"
+            "name": "version",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "maturity"
+            "name": "maturity",
+            "repr": true
           },
           {
             "annotation": "tuple[str, ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "capabilities"
+            "name": "capabilities",
+            "repr": true
           },
           {
             "annotation": "tuple[dict[str, Any], ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "blocks"
+            "name": "blocks",
+            "repr": true
           },
           {
             "annotation": "tuple[dict[str, Any], ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "connector_factories"
+            "name": "connector_factories",
+            "repr": true
           },
           {
             "annotation": "tuple[dict[str, Any], ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "adapters"
+            "name": "adapters",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "source"
+            "name": "source",
+            "repr": true
           },
           {
             "annotation": "dict[str, Any]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "raw"
+            "name": "raw",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "plugin_id",
+          "version",
+          "maturity",
+          "capabilities",
+          "blocks",
+          "connector_factories",
+          "adapters",
+          "source",
+          "raw"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.PluginManifest",
@@ -355,59 +490,90 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "operator"
+            "name": "operator",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "pointer"
+            "name": "pointer",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "expected_json"
+            "name": "expected_json",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "phase"
+            "name": "phase",
+            "repr": true
           },
           {
             "annotation": "tuple[OutputRequirednessPredicate, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "operands"
+            "name": "operands",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "operator",
+          "pointer",
+          "expected_json",
+          "phase",
+          "operands"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.OutputRequirednessPredicate",
@@ -419,49 +585,76 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "name"
+            "name": "name",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "type_ref"
+            "name": "type_ref",
+            "repr": true
           },
           {
             "annotation": "bool",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": true
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "required"
+            "name": "required",
+            "repr": true
           },
           {
             "annotation": "OutputRequirednessPredicate | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "required_when"
+            "name": "required_when",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "name",
+          "type_ref",
+          "required",
+          "required_when"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.PortDescriptor",
@@ -480,39 +673,62 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "name"
+            "name": "name",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "type_ref"
+            "name": "type_ref",
+            "repr": true
           },
           {
             "annotation": "bool",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": false
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "optional"
+            "name": "optional",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "name",
+          "type_ref",
+          "optional"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.ResourceSlotDescriptor",
@@ -522,78 +738,117 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "type_id"
+            "name": "type_id",
+            "repr": true
           },
           {
             "annotation": "int",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "version"
+            "name": "version",
+            "repr": true
           },
           {
             "annotation": "tuple[PortDescriptor, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "inputs"
+            "name": "inputs",
+            "repr": true
           },
           {
             "annotation": "tuple[PortDescriptor, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "outputs"
+            "name": "outputs",
+            "repr": true
           },
           {
             "annotation": "tuple[ResourceSlotDescriptor, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "resource_slots"
+            "name": "resource_slots",
+            "repr": true
           },
           {
             "annotation": "tuple[str, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "capabilities"
+            "name": "capabilities",
+            "repr": true
           },
           {
             "annotation": "Mapping[str, Any]",
+            "compare": false,
             "default": {
               "kind": "factory",
               "value": "graphblocks.plugins.BlockDescriptor.<lambda>"
             },
+            "hash": false,
             "init": true,
             "keywordOnly": false,
-            "name": "config_schema"
+            "name": "config_schema",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "type_id",
+          "version",
+          "inputs",
+          "outputs",
+          "resource_slots",
+          "capabilities",
+          "config_schema"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.BlockDescriptor",
@@ -606,29 +861,48 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "Mapping[str, BlockDescriptor]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "descriptors"
+            "name": "descriptors",
+            "repr": true
           },
           {
             "annotation": "bool",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": false
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "allow_unknown_blocks"
+            "name": "allow_unknown_blocks",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "descriptors",
+          "allow_unknown_blocks"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.BlockCatalog",
@@ -668,37 +942,60 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "dict[str, Any]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "normalized"
+            "name": "normalized",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "graph_hash"
+            "name": "graph_hash",
+            "repr": true
           },
           {
             "annotation": "DiagnosticSet",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "diagnostics"
+            "name": "diagnostics",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "normalized",
+          "graph_hash",
+          "diagnostics"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.Plan",
@@ -748,30 +1045,49 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "bool",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": false
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "cancelled"
+            "name": "cancelled",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "reason"
+            "name": "reason",
+            "repr": true
           }
         ],
         "frozen": false,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "cancelled",
+          "reason"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.CancellationToken",
@@ -788,37 +1104,60 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "int",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "sequence"
+            "name": "sequence",
+            "repr": true
           },
           {
             "annotation": "LocalJournalKind",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "kind"
+            "name": "kind",
+            "repr": true
           },
           {
             "annotation": "Mapping[str, Any]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "payload"
+            "name": "payload",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "sequence",
+          "kind",
+          "payload"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.LocalJournalRecord",
@@ -837,39 +1176,60 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "run_id"
+            "name": "run_id",
+            "repr": true
           },
           {
             "annotation": "tuple[LocalJournalRecord, ...]",
+            "compare": true,
             "default": {
               "kind": "factory",
               "value": "builtins.tuple"
             },
+            "hash": null,
             "init": false,
             "keywordOnly": false,
-            "name": "records"
+            "name": "records",
+            "repr": true
           },
           {
             "annotation": "LocalTerminalJournalKind | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": false,
             "keywordOnly": false,
-            "name": "terminal_kind"
+            "name": "terminal_kind",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "run_id"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.LocalExecutionJournal",
@@ -902,40 +1262,63 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "dict[str, BlockCallable]",
+            "compare": true,
             "default": {
               "kind": "factory",
               "value": "builtins.dict"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "blocks"
+            "name": "blocks",
+            "repr": true
           },
           {
             "annotation": "BlockCatalog",
+            "compare": true,
             "default": {
               "kind": "factory",
               "value": "graphblocks.runtime.RuntimeRegistry.<lambda>"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "block_catalog"
+            "name": "block_catalog",
+            "repr": true
           },
           {
             "annotation": "bool",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": false
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "allow_untyped"
+            "name": "allow_untyped",
+            "repr": true
           }
         ],
         "frozen": false,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "blocks",
+          "block_catalog",
+          "allow_untyped"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.RuntimeRegistry",
@@ -984,46 +1367,73 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "run_id"
+            "name": "run_id",
+            "repr": true
           },
           {
             "annotation": "Literal['succeeded', 'failed', 'cancelled']",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "status"
+            "name": "status",
+            "repr": true
           },
           {
             "annotation": "Mapping[str, Any]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "outputs"
+            "name": "outputs",
+            "repr": true
           },
           {
             "annotation": "LocalExecutionJournal",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "journal"
+            "name": "journal",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "run_id",
+          "status",
+          "outputs",
+          "journal"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.LocalRunResult",
@@ -1035,29 +1445,48 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "RuntimeRegistry",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "registry"
+            "name": "registry",
+            "repr": true
           },
           {
             "annotation": "CancellationToken | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "cancellation_token"
+            "name": "cancellation_token",
+            "repr": true
           }
         ],
         "frozen": false,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "registry",
+          "cancellation_token"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks.LocalRuntime",

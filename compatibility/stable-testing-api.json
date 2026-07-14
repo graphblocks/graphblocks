@@ -22,57 +22,88 @@
   "symbols": [
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "case_id"
+            "name": "case_id",
+            "repr": true
           },
           {
             "annotation": "TckCaseKind",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "kind"
+            "name": "kind",
+            "repr": true
           },
           {
             "annotation": "TckResultStatus",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "status"
+            "name": "status",
+            "repr": true
           },
           {
             "annotation": "tuple[dict[str, str], ...]",
+            "compare": true,
             "default": {
               "kind": "factory",
               "value": "builtins.tuple"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "diagnostics"
+            "name": "diagnostics",
+            "repr": true
           },
           {
             "annotation": "dict[str, object]",
+            "compare": true,
             "default": {
               "kind": "factory",
               "value": "builtins.dict"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "observed"
+            "name": "observed",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "case_id",
+          "kind",
+          "status",
+          "diagnostics",
+          "observed"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks_testing.TckResult",
@@ -92,64 +123,99 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "profile"
+            "name": "profile",
+            "repr": true
           },
           {
             "annotation": "tuple[TckResult, ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "results"
+            "name": "results",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "suite"
+            "name": "suite",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "implementation"
+            "name": "implementation",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "implementation_version"
+            "name": "implementation_version",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "fixture_digest"
+            "name": "fixture_digest",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "profile",
+          "results",
+          "suite",
+          "implementation",
+          "implementation_version",
+          "fixture_digest"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks_testing.TckReport",
@@ -175,56 +241,87 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "suite_id"
+            "name": "suite_id",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "path"
+            "name": "path",
+            "repr": true
           },
           {
             "annotation": "tuple[str, ...]",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "case_ids"
+            "name": "case_ids",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "fixture_digest"
+            "name": "fixture_digest",
+            "repr": true
           },
           {
             "annotation": "tuple[str, ...]",
+            "compare": true,
             "default": {
               "kind": "value-repr",
               "value": "()"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "auxiliary_paths"
+            "name": "auxiliary_paths",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "suite_id",
+          "path",
+          "case_ids",
+          "fixture_digest",
+          "auxiliary_paths"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks_testing.TckSuiteManifest",
@@ -248,79 +345,118 @@
     },
     {
       "dataclass": {
+        "bases": [
+          "builtins.object"
+        ],
+        "eq": true,
         "fields": [
           {
             "annotation": "RuntimeRegistry",
+            "compare": true,
             "default": {
               "kind": "required"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "registry"
+            "name": "registry",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "local"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "profile"
+            "name": "profile",
+            "repr": true
           },
           {
             "annotation": "Path | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "evidence_dir"
+            "name": "evidence_dir",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "suite"
+            "name": "suite",
+            "repr": true
           },
           {
             "annotation": "str | None",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": null
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "fixture_digest"
+            "name": "fixture_digest",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "graphblocks-python"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "implementation"
+            "name": "implementation",
+            "repr": true
           },
           {
             "annotation": "str",
+            "compare": true,
             "default": {
               "kind": "value",
               "value": "1.0.0rc1"
             },
+            "hash": null,
             "init": true,
             "keywordOnly": false,
-            "name": "implementation_version"
+            "name": "implementation_version",
+            "repr": true
           }
         ],
         "frozen": true,
-        "slots": true
+        "init": true,
+        "matchArgs": [
+          "registry",
+          "profile",
+          "evidence_dir",
+          "suite",
+          "fixture_digest",
+          "implementation",
+          "implementation_version"
+        ],
+        "order": false,
+        "repr": true,
+        "slots": true,
+        "unsafeHash": false,
+        "weakrefSlot": false
       },
       "kind": "class",
       "path": "graphblocks_testing.TckRunner",

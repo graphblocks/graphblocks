@@ -144,12 +144,29 @@ def _dataclass_contract(value: object) -> dict[str, object] | None:
                 "default": default,
                 "init": field.init,
                 "keywordOnly": field.kw_only,
+                "compare": field.compare,
+                "hash": field.hash,
+                "repr": field.repr,
             }
         )
+    slots = getattr(value, "__slots__", ())
+    if isinstance(slots, str):
+        slots = (slots,)
+    match_args = getattr(value, "__match_args__", None)
     return {
+        "bases": [
+            f"{base.__module__}.{base.__qualname__}" for base in value.__bases__
+        ],
+        "eq": parameters.eq,
         "fields": fields,
         "frozen": parameters.frozen,
+        "init": parameters.init,
+        "matchArgs": list(match_args) if isinstance(match_args, tuple) else None,
+        "order": parameters.order,
+        "repr": parameters.repr,
         "slots": hasattr(value, "__slots__"),
+        "unsafeHash": parameters.unsafe_hash,
+        "weakrefSlot": "__weakref__" in slots,
     }
 
 
