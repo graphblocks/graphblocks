@@ -490,6 +490,7 @@ from .rag import (
 )
 from .runtime import (
     BlockCallable,
+    CallbackReceiptVerifier,
     CancellationToken,
     ExecutionJournal,
     InProcessRuntime,
@@ -672,6 +673,7 @@ __all__ = [
     "BlockCallable",
     "BlockDescriptor",
     "BlockToolImplementation",
+    "CallbackReceiptVerifier",
     "BlobKey",
     "BlobListItem",
     "BlobMetadata",

@@ -632,6 +632,20 @@ class RuntimeCheckpoint:
         )
 
 
+class CallbackReceiptVerifier(Protocol):
+    """Trusted boundary for authorizing a callback receipt before resume."""
+
+    def __call__(
+        self,
+        receipt: Mapping[str, object],
+        *,
+        checkpoint: RuntimeCheckpoint,
+        expected_checkpoint_digest: str,
+        expected_release_digest: str,
+    ) -> bool:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class RunResult:
     run_id: str
@@ -744,11 +758,17 @@ class RuntimeRegistry:
 
 @dataclass(slots=True)
 class InProcessRuntime:
+    """Preview runtime with explicit trust injection for callback continuation."""
+
     registry: RuntimeRegistry
     run_store: InMemoryRunStore | None = None
     cancellation_token: CancellationToken | None = None
     journal_factory: JournalFactory | None = None
     lease_pool: InMemoryLeasePool | None = None
+    callback_receipt_verifier: CallbackReceiptVerifier | None = field(
+        default=None,
+        repr=False,
+    )
     _checkpoint_state_digests: dict[str, str] = field(
         default_factory=dict,
         init=False,
@@ -881,6 +901,36 @@ class InProcessRuntime:
             receipt = _mutable_json_like(callback_receipt)
             if not isinstance(receipt, dict):
                 raise ValueError("runtime callback_receipt must be a JSON object")
+            assert expected_checkpoint_digest is not None
+            expected_release_digest = (
+                deployment_provenance.release_digest
+                if deployment_provenance is not None
+                and deployment_provenance.release_digest is not None
+                else plan.graph_hash
+            )
+            verifier = self.callback_receipt_verifier
+            if verifier is None:
+                raise ValueError(
+                    "runtime checkpoint resume requires a trusted "
+                    "callback_receipt_verifier"
+                )
+            frozen_receipt = _freeze_json_like(receipt)
+            assert isinstance(frozen_receipt, Mapping)
+            try:
+                receipt_verified = verifier(
+                    frozen_receipt,
+                    checkpoint=checkpoint,
+                    expected_checkpoint_digest=expected_checkpoint_digest,
+                    expected_release_digest=expected_release_digest,
+                )
+            except Exception as error:
+                raise ValueError(
+                    "runtime callback_receipt trusted verifier failed"
+                ) from error
+            if receipt_verified is not True:
+                raise ValueError(
+                    "runtime callback_receipt was rejected by the trusted verifier"
+                )
             verified_by = receipt.get("verified_by")
             if (
                 not isinstance(verified_by, str)
@@ -973,7 +1023,6 @@ class InProcessRuntime:
                 raise ValueError(
                     "runtime callback_receipt requires policy, budget, release, and ownership resume admission"
                 )
-            assert expected_checkpoint_digest is not None
             if (
                 resume_admission.get("contract")
                 == "graphblocks.trusted-callback-resume-admission.v1"
@@ -1033,12 +1082,6 @@ class InProcessRuntime:
                     ownership.get("fencing_epoch")
                     if isinstance(ownership, Mapping)
                     else None
-                )
-                expected_release_digest = (
-                    deployment_provenance.release_digest
-                    if deployment_provenance is not None
-                    and deployment_provenance.release_digest is not None
-                    else plan.graph_hash
                 )
                 if (
                     resume_admission.get("outcome") != "authorized"

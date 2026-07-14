@@ -23,6 +23,16 @@ from graphblocks.run_store import InMemoryRunStore, RunDeploymentProvenance, SQL
 VALID_RESUME_TOKEN_HASH = "sha256:" + "a" * 64
 
 
+def _accept_callback_receipt(
+    _receipt,
+    *,
+    checkpoint,
+    expected_checkpoint_digest,
+    expected_release_digest,
+) -> bool:
+    return True
+
+
 def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
     calls: list[str] = []
     registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
@@ -337,6 +347,7 @@ def test_runtime_terminalizes_callback_resume_projection_errors() -> None:
         registry,
         run_store=store,
         lease_pool=pool,
+        callback_receipt_verifier=_accept_callback_receipt,
         journal_factory=lambda journal_run_id: journals.setdefault(
             journal_run_id,
             ExecutionJournal(journal_run_id),
@@ -548,6 +559,7 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     runtime = InProcessRuntime(
         registry,
         run_store=store,
+        callback_receipt_verifier=_accept_callback_receipt,
         journal_factory=lambda run_id: journals.setdefault(
             run_id,
             ExecutionJournal(run_id),
@@ -762,6 +774,7 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         registry,
         run_store=cancelled_store,
         cancellation_token=cancelled_token,
+        callback_receipt_verifier=_accept_callback_receipt,
     )
     cancelled_wait = cancelled_runtime.run(
         cancelled_graph,
@@ -922,7 +935,10 @@ def test_runtime_requires_conditionally_required_resumed_callback_output() -> No
             }
         },
     }
-    runtime = InProcessRuntime(registry)
+    runtime = InProcessRuntime(
+        registry,
+        callback_receipt_verifier=_accept_callback_receipt,
+    )
 
     waiting = runtime.run(graph, {}, run_id="run-resumed-conditional-output")
 

@@ -1948,6 +1948,29 @@ class _AcceptedRunExecution:
     resume_future: Future[object] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _AcceptedCallbackReceiptCapability:
+    receipt_digest: str
+    checkpoint_id: str
+    checkpoint_state_digest: str
+    release_digest: str
+
+    def __call__(
+        self,
+        receipt: Mapping[str, object],
+        *,
+        checkpoint: RuntimeCheckpoint,
+        expected_checkpoint_digest: str,
+        expected_release_digest: str,
+    ) -> bool:
+        return (
+            checkpoint.checkpoint_id == self.checkpoint_id
+            and expected_checkpoint_digest == self.checkpoint_state_digest
+            and expected_release_digest == self.release_digest
+            and canonical_hash(_thaw_json_value(receipt)) == self.receipt_digest
+        )
+
+
 @dataclass(slots=True)
 class GraphBlocksServerApp:
     route_manifest: ServerRouteManifest = field(default_factory=default_server_route_manifest)
@@ -3343,6 +3366,16 @@ class GraphBlocksServerApp:
                         },
                     )
                     assert isinstance(callback_receipt, Mapping)
+                    resumable_execution.runtime.callback_receipt_verifier = (
+                        _AcceptedCallbackReceiptCapability(
+                            receipt_digest=canonical_hash(
+                                _thaw_json_value(callback_receipt)
+                            ),
+                            checkpoint_id=checkpoint.checkpoint_id,
+                            checkpoint_state_digest=checkpoint.state_digest,
+                            release_digest=checkpoint.graph_hash,
+                        )
+                    )
                     resumable_execution.callback_receipt = callback_receipt
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 self._append_async_callback_diagnostic_event(
