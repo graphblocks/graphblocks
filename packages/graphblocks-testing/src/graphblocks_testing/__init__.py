@@ -4480,6 +4480,8 @@ def _exercise_verified_rtl_workspace_trial(
     verify_node = nodes.get("verifyTrial")
     commit_node = nodes.get("commit")
     reserve_node = trial_nodes.get("reserve")
+    fork_node = trial_nodes.get("fork")
+    apply_node = trial_nodes.get("apply")
     formal_node = trial_nodes.get("formal")
     aggregate_checks_node = trial_nodes.get("aggregateChecks")
     gate_node = trial_nodes.get("gate")
@@ -4491,6 +4493,8 @@ def _exercise_verified_rtl_workspace_trial(
             verify_node,
             commit_node,
             reserve_node,
+            fork_node,
+            apply_node,
             formal_node,
             aggregate_checks_node,
             gate_node,
@@ -4502,6 +4506,8 @@ def _exercise_verified_rtl_workspace_trial(
     assert isinstance(verify_node, Mapping)
     assert isinstance(commit_node, Mapping)
     assert isinstance(reserve_node, Mapping)
+    assert isinstance(fork_node, Mapping)
+    assert isinstance(apply_node, Mapping)
     assert isinstance(formal_node, Mapping)
     assert isinstance(aggregate_checks_node, Mapping)
     assert isinstance(gate_node, Mapping)
@@ -4557,6 +4563,13 @@ def _exercise_verified_rtl_workspace_trial(
         or formal_node.get("flow") != {"leasePool": "formal-license"}
     ):
         raise RuntimeError("verified RTL budget reservation and lease-pool contract does not match")
+    if (
+        fork_node.get("block") != "workspace.fork@1"
+        or fork_node.get("execution") != {"requires": {"isolation": "sandbox"}}
+        or apply_node.get("block") != "workspace.apply_changeset@1"
+        or apply_node.get("inputs") != {"workspace": "fork.workspace"}
+    ):
+        raise RuntimeError("verified RTL trial must apply changes in the isolated fork")
     seal_inputs = seal_node.get("inputs")
     if (
         aggregate_checks_node.get("block") != "check.aggregate@1"
