@@ -76,7 +76,7 @@ spec:
     bundle:
       block: result.bundle@1
       inputs:
-        outputs: [execute.result]
+        outputs: execute.results
         evidence: execute.evidence
         checks: verify.results
         gate: gate.result
