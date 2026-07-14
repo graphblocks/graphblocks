@@ -17,6 +17,10 @@
       "minLength": 1,
       "pattern": "^\\S+$"
     },
+    "endpointName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+    },
     "metadata": {
       "type": "object",
       "required": ["name"],
@@ -45,7 +49,7 @@
       "type": "object",
       "required": ["name"],
       "properties": {
-        "name": { "$ref": "#/$defs/identifier" },
+        "name": { "$ref": "#/$defs/endpointName" },
         "type": { "$ref": "#/$defs/identifier" },
         "required": { "type": "boolean" }
       },
@@ -55,7 +59,7 @@
       "type": "object",
       "required": ["name"],
       "properties": {
-        "name": { "$ref": "#/$defs/identifier" },
+        "name": { "$ref": "#/$defs/endpointName" },
         "type": { "$ref": "#/$defs/identifier" },
         "required": { "type": "boolean" },
         "requiredWhen": { "$ref": "#/$defs/outputRequirednessPredicate" }

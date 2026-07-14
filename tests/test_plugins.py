@@ -622,6 +622,39 @@ def test_plugin_manifest_validation_rejects_port_without_name() -> None:
     assert [item.code for item in diagnostics.diagnostics] == ["GB2015"]
 
 
+@pytest.mark.parametrize("direction", ["inputs", "outputs"])
+@pytest.mark.parametrize("name", ["nested.value", "1value", "value/path"])
+def test_plugin_manifest_validation_rejects_noncanonical_endpoint_names(
+    direction: str,
+    name: str,
+) -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_endpoint"},
+            "spec": {
+                "pluginId": "com.example.bad_endpoint",
+                "version": "1.0.0",
+                "blocks": [
+                    {
+                        "typeId": "bad.endpoint",
+                        "version": 1,
+                        "capabilities": [],
+                        "configSchema": {"type": "object"},
+                        direction: [{"name": name, "type": "Any"}],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("GB2015", f"$.spec.blocks[0].{direction}[0].name")
+    ]
+    assert "must match ^[A-Za-z][A-Za-z0-9_-]*$" in diagnostics.diagnostics[0].message
+
+
 def test_plugin_manifest_validation_rejects_invalid_descriptor_schema_ids() -> None:
     diagnostics = validate_plugin_manifest(
         {

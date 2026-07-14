@@ -995,6 +995,18 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                         )
                     )
                     continue
+                try:
+                    _validate_endpoint_name(
+                        port["name"], field_name=f"block {direction[:-1]} name"
+                    )
+                except ValueError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block {direction[:-1]} name is invalid: {error}",
+                            f"$.spec.blocks[{index}].{direction}[{port_index}].name",
+                        )
+                    )
                 if port["name"] in seen_port_names:
                     diagnostics.append(
                         Diagnostic(

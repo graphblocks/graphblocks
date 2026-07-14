@@ -49,6 +49,38 @@ def test_checked_in_resource_schemas_are_valid_draft_2020_12() -> None:
     }
 
 
+@pytest.mark.parametrize("api_version", ["graphblocks.ai/v1", "graphblocks.ai/v1alpha1"])
+@pytest.mark.parametrize("direction", ["inputs", "outputs"])
+def test_plugin_manifest_schema_rejects_noncanonical_endpoint_names(
+    api_version: str,
+    direction: str,
+) -> None:
+    document = {
+        "apiVersion": api_version,
+        "kind": "PluginManifest",
+        "metadata": {"name": "bad-endpoint"},
+        "spec": {
+            "pluginId": "bad-endpoint",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "bad.endpoint",
+                    "version": 1,
+                    "capabilities": [],
+                    "configSchema": {"type": "object"},
+                    direction: [{"name": "nested.value", "type": "Any"}],
+                }
+            ],
+        },
+    }
+
+    violations = resource_schema_errors(document, schema_root=ROOT / "schemas")
+
+    assert [(item.path, item.keyword) for item in violations] == [
+        (f"$.spec.blocks[0].{direction}[0].name", "pattern")
+    ]
+
+
 def test_python_resource_validator_matches_shared_tck_cases() -> None:
     cases = canonical_loads((ROOT / "tck" / "schema" / "resources.json").read_text(encoding="utf-8"))
 
