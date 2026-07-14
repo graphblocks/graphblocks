@@ -5,11 +5,11 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
-use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy};
-use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus};
+use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy, RetryPolicyError};
+use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
-    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
+    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus, TestRuntimeError,
 };
 use graphblocks_runtime_core::timeout::TimeoutPolicy;
 use serde_json::{Value, json};
@@ -255,6 +255,42 @@ fn in_process_test_runtime_admits_and_finalizes_run_store_record() {
 }
 
 #[test]
+fn in_process_test_runtime_rejects_excessive_retries_before_mutating_store() {
+    let mut runtime = InProcessTestRuntime::new("placeholder", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_retry_policy(
+            "model",
+            RetryPolicy::new(101).retry_on([ErrorCategory::Timeout]),
+        );
+    let mut executor = FlakyExecutor { attempts: 0 };
+    let mut store = InMemoryRunStore::new();
+    let store_before_run = store.clone();
+
+    let error = runtime
+        .run_with_store(
+            &mut store,
+            "sha256:graph",
+            json!({"message": "hello"}),
+            &mut executor,
+        )
+        .expect_err("an excessive retry policy should fail before run creation");
+
+    assert_eq!(
+        error,
+        TestRuntimeError::RetryPolicy(RetryPolicyError::MaxAttemptsExceeded { max_attempts: 101 }),
+    );
+    assert_eq!(store, store_before_run);
+    assert_eq!(
+        store.get_run("run-000001"),
+        Err(RunStoreError::NotFound {
+            run_id: "run-000001".to_owned(),
+        }),
+    );
+    assert_eq!(executor.attempts, 0);
+    assert!(runtime.journal().records().is_empty());
+}
+
+#[test]
 fn in_process_test_runtime_honors_precancelled_token() {
     let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
     token.cancel(CancelReason::new(CancelCode::UserCancel));
@@ -433,6 +469,28 @@ fn in_process_test_runtime_retries_retryable_node_failure() {
     );
 }
 
+#[test]
+fn in_process_test_runtime_rejects_excessive_retry_attempts_before_execution() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_retry_policy(
+            "model",
+            RetryPolicy::new(101).retry_on([ErrorCategory::Timeout]),
+        );
+    let mut executor = FlakyExecutor { attempts: 0 };
+
+    let error = runtime
+        .run(&mut executor)
+        .expect_err("an excessive retry policy should fail before execution");
+
+    assert_eq!(
+        error,
+        TestRuntimeError::RetryPolicy(RetryPolicyError::MaxAttemptsExceeded { max_attempts: 101 }),
+    );
+    assert_eq!(executor.attempts, 0);
+    assert!(runtime.journal().records().is_empty());
+}
+
 struct NonRetryableExecutor {
     attempts: usize,
 }
@@ -547,6 +605,34 @@ impl NodeExecutor for ExternalWriteFlakyExecutor {
             Outcome::Value(json!("ok")),
         )])
     }
+}
+
+#[test]
+fn in_process_test_runtime_allows_the_retry_attempt_limit() {
+    let policy = RetryPolicy::try_new(100)
+        .expect("the node retry attempt limit should be accepted")
+        .retry_on([ErrorCategory::Transient]);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_retry_policy("tool", policy);
+    let mut executor = ExternalWriteFlakyExecutor {
+        attempts: 0,
+        failures_before_success: 99,
+    };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.attempts, 100);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_retry")
+            .count(),
+        99,
+    );
 }
 
 #[test]

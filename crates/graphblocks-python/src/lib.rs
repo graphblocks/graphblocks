@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use graphblocks_compiler::compiler::{BlockCatalog, compile_graph_with_catalog};
+use graphblocks_compiler::compiler::{
+    BlockCatalog, MAX_NODE_RETRY_ATTEMPTS, compile_graph_with_catalog, json_integer_exceeds_u64,
+};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
@@ -3991,10 +3993,17 @@ fn parse_retry_policy(value: &Value, label: &str) -> PyResult<RetryPolicy> {
     {
         return Ok(RetryPolicy::default_model_read());
     }
-    let max_attempts = u64_to_u32(
-        required_alias_u64(object, "maxAttempts", "max_attempts", label)?,
-        &format!("{label}.maxAttempts"),
-    )?;
+    let configured_max_attempts = object
+        .get("maxAttempts")
+        .or_else(|| object.get("max_attempts"));
+    if configured_max_attempts
+        .is_some_and(|value| json_integer_exceeds_u64(value, MAX_NODE_RETRY_ATTEMPTS))
+    {
+        return Err(PyValueError::new_err(format!(
+            "node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}"
+        )));
+    }
+    let max_attempts = required_alias_u64(object, "maxAttempts", "max_attempts", label)?;
     let retry_on = object
         .get("retryOn")
         .or_else(|| object.get("retry_on"))
@@ -4023,7 +4032,8 @@ fn parse_retry_policy(value: &Value, label: &str) -> PyResult<RetryPolicy> {
         })
         .transpose()?
         .unwrap_or_default();
-    let mut policy = RetryPolicy::new(max_attempts)
+    let mut policy = RetryPolicy::try_new(max_attempts)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
         .retry_on(retry_on)
         .with_backoff(parse_retry_backoff(
             object.get("backoff"),
@@ -10503,6 +10513,69 @@ mod tests {
         assert_eq!(retry.get("decision"), Some(&json!("retry")));
         assert_eq!(retry.get("delayMs").and_then(Value::as_u64), Some(1_500));
         assert_eq!(retry.get("reason"), Some(&Value::Null));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_retry_policy_json_enforces_node_attempt_limit_before_evaluation()
+    -> Result<(), String> {
+        pyo3::Python::initialize();
+        let request = json!({
+            "attempt": 99,
+            "error": {
+                "code": "provider.transient",
+                "category": "transient",
+                "message": "transient provider error",
+                "retryable": true
+            }
+        })
+        .to_string();
+        let accepted = evaluate_retry_policy_json(
+            &json!({"maxAttempts": 100, "retryOn": ["transient"]}).to_string(),
+            &request,
+        )
+        .map_err(|error| error.to_string())?;
+        let accepted =
+            serde_json::from_str::<Value>(&accepted).map_err(|error| error.to_string())?;
+        assert_eq!(accepted.get("decision"), Some(&json!("retry")));
+
+        for max_attempts in [101_u64, u64::MAX] {
+            let error = evaluate_retry_policy_json(
+                &json!({"maxAttempts": max_attempts, "retryOn": ["transient"]}).to_string(),
+                &request,
+            )
+            .expect_err("retry attempts above the node limit must be rejected")
+            .to_string();
+            assert!(
+                error.contains("node retry attempts must not exceed 100"),
+                "{error}"
+            );
+        }
+
+        let huge_integer_error = evaluate_retry_policy_json(
+            &format!(
+                "{{\"maxAttempts\":1{},\"retryOn\":[\"transient\"]}}",
+                "0".repeat(100)
+            ),
+            &request,
+        )
+        .expect_err("arbitrary-precision retry attempts must be rejected as over the limit")
+        .to_string();
+        assert!(
+            huge_integer_error.contains("node retry attempts must not exceed 100"),
+            "{huge_integer_error}"
+        );
+
+        let type_error = evaluate_retry_policy_json(
+            &json!({"maxAttempts": true, "retryOn": ["transient"]}).to_string(),
+            &request,
+        )
+        .expect_err("boolean retry attempts must retain their type error")
+        .to_string();
+        assert!(
+            type_error.contains("retry policy.maxAttempts must be an unsigned integer"),
+            "{type_error}"
+        );
         Ok(())
     }
 

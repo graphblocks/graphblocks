@@ -1,4 +1,8 @@
 use std::collections::BTreeSet;
+use std::error::Error;
+use std::fmt;
+
+use graphblocks_compiler::compiler::MAX_NODE_RETRY_ATTEMPTS;
 
 use crate::outcome::{BlockError, ErrorCategory};
 
@@ -165,20 +169,58 @@ impl Default for ProviderLimitPolicy {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetryPolicy {
-    max_attempts: u32,
+    max_attempts: u64,
     retry_on: BTreeSet<ErrorCategory>,
     backoff: Backoff,
     partial_output_policy: PartialOutputPolicy,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetryPolicyError {
+    MaxAttemptsExceeded { max_attempts: u64 },
+}
+
+impl fmt::Display for RetryPolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MaxAttemptsExceeded { .. } => write!(
+                formatter,
+                "node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}"
+            ),
+        }
+    }
+}
+
+impl Error for RetryPolicyError {}
+
 impl RetryPolicy {
     pub fn new(max_attempts: u32) -> Self {
         Self {
-            max_attempts,
+            max_attempts: u64::from(max_attempts),
             retry_on: BTreeSet::new(),
             backoff: Backoff::None,
             partial_output_policy: PartialOutputPolicy::Fail,
         }
+    }
+
+    pub fn try_new(max_attempts: u64) -> Result<Self, RetryPolicyError> {
+        let policy = Self {
+            max_attempts,
+            retry_on: BTreeSet::new(),
+            backoff: Backoff::None,
+            partial_output_policy: PartialOutputPolicy::Fail,
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    pub fn validate(&self) -> Result<(), RetryPolicyError> {
+        if self.max_attempts > MAX_NODE_RETRY_ATTEMPTS {
+            return Err(RetryPolicyError::MaxAttemptsExceeded {
+                max_attempts: self.max_attempts,
+            });
+        }
+        Ok(())
     }
 
     pub fn default_model_read() -> Self {
@@ -207,7 +249,12 @@ impl RetryPolicy {
     }
 
     pub fn decide(&self, request: &RetryRequest) -> RetryDecision {
-        if request.attempt >= self.max_attempts {
+        if self.validate().is_err() {
+            return RetryDecision::Stop {
+                reason: "max_attempts_exceeded",
+            };
+        }
+        if u64::from(request.attempt) >= self.max_attempts {
             return RetryDecision::Stop {
                 reason: "max_attempts_exhausted",
             };

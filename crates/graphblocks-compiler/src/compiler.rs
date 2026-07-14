@@ -118,12 +118,32 @@ const FORBIDDEN_TOOL_DEFINITION_FIELDS: [&str; 9] = [
     "implementation",
 ];
 const DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES: u64 = 262_144;
+pub const MAX_NODE_RETRY_ATTEMPTS: u64 = 100;
 const MANDATORY_CALLBACK_FAILURE_POLICIES: [&str; 2] =
     ["pause_run_on_failure", "fail_run_on_failure"];
 const ORDER_CAPABLE_CALLBACK_TARGETS: [&str; 3] = ["webhook", "websocket", "sse"];
 const PRIMITIVE_TYPE_REFS: [&str; 7] = [
     "Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String",
 ];
+
+/// Returns whether a JSON integer is greater than an unsigned bound, including
+/// arbitrary-precision integer tokens that do not fit in `u64`.
+pub fn json_integer_exceeds_u64(value: &Value, maximum: u64) -> bool {
+    let Some(number) = value.as_number() else {
+        return false;
+    };
+    if let Some(value) = number.as_u64() {
+        return value > maximum;
+    }
+
+    let token = number.to_string();
+    if token.starts_with('-') || !token.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let digits = token.trim_start_matches('0');
+    let maximum = maximum.to_string();
+    digits.len() > maximum.len() || (digits.len() == maximum.len() && digits > maximum.as_str())
+}
 
 fn validate_port_type_ref(type_ref: &str) -> Result<(), String> {
     if type_ref.is_empty()
@@ -1481,6 +1501,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         };
     }
 
+    let source_uses_stable_graph_api =
+        document.get("apiVersion").and_then(Value::as_str) == Some(GRAPH_API_VERSION);
     let mut diagnostics = Vec::new();
     let migrated = migrate_graph(document);
     let document = &migrated;
@@ -1765,14 +1787,36 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
             }
             let retry = flow.and_then(|flow| flow.get("retry"));
-            let max_attempts = match retry {
-                Some(Value::Object(retry)) => retry
-                    .get("maxAttempts")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(1),
-                Some(Value::Number(retry)) => retry.as_i64().unwrap_or(1),
-                _ => 1,
+            let retry_path = format!("$.spec.nodes.{node_name}.flow.retry");
+            let (max_attempts, exceeds_max_attempts, max_attempts_path) = match retry {
+                Some(Value::Object(retry)) => {
+                    let (key, configured) = if let Some(configured) = retry.get("maxAttempts") {
+                        ("maxAttempts", Some(configured))
+                    } else {
+                        ("max_attempts", retry.get("max_attempts"))
+                    };
+                    (
+                        configured.and_then(Value::as_i64).unwrap_or(1),
+                        configured.is_some_and(|value| {
+                            json_integer_exceeds_u64(value, MAX_NODE_RETRY_ATTEMPTS)
+                        }),
+                        format!("{retry_path}.{key}"),
+                    )
+                }
+                Some(value @ Value::Number(retry)) => (
+                    retry.as_i64().unwrap_or(1),
+                    json_integer_exceeds_u64(value, MAX_NODE_RETRY_ATTEMPTS),
+                    retry_path.clone(),
+                ),
+                _ => (1, false, retry_path.clone()),
             };
+            if exceeds_max_attempts && !source_uses_stable_graph_api {
+                diagnostics.push(Diagnostic::error(
+                    "GB1008",
+                    format!("node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}"),
+                    max_attempts_path,
+                ));
+            }
             let has_valid_idempotency_key = retry
                 .and_then(Value::as_object)
                 .and_then(|retry| {

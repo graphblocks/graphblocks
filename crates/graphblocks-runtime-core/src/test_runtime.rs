@@ -6,7 +6,7 @@ use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
 use crate::outcome::{BlockError, Outcome};
 use crate::readiness::PortRef;
-use crate::retry::{EffectKind, RetryDecision, RetryPolicy, RetryRequest};
+use crate::retry::{EffectKind, RetryDecision, RetryPolicy, RetryPolicyError, RetryRequest};
 use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use crate::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
@@ -63,6 +63,7 @@ pub enum TestRuntimeError {
     Scheduler(SchedulerError),
     Journal(JournalError),
     RunStore(RunStoreError),
+    RetryPolicy(RetryPolicyError),
 }
 
 impl From<SchedulerError> for TestRuntimeError {
@@ -80,6 +81,12 @@ impl From<JournalError> for TestRuntimeError {
 impl From<RunStoreError> for TestRuntimeError {
     fn from(error: RunStoreError) -> Self {
         Self::RunStore(error)
+    }
+}
+
+impl From<RetryPolicyError> for TestRuntimeError {
+    fn from(error: RetryPolicyError) -> Self {
+        Self::RetryPolicy(error)
     }
 }
 
@@ -165,6 +172,7 @@ impl InProcessTestRuntime {
     where
         E: NodeExecutor,
     {
+        self.validate_retry_boundaries()?;
         self.run_with_cancellation_state(None, executor)
     }
 
@@ -176,7 +184,15 @@ impl InProcessTestRuntime {
     where
         E: NodeExecutor,
     {
+        self.validate_retry_boundaries()?;
         self.run_with_cancellation_state(Some(cancellation_token), executor)
+    }
+
+    fn validate_retry_boundaries(&self) -> Result<(), RetryPolicyError> {
+        for boundary in self.retry_boundaries.values() {
+            boundary.policy.validate()?;
+        }
+        Ok(())
     }
 
     fn run_with_cancellation_state<E>(
@@ -574,6 +590,7 @@ impl InProcessTestRuntime {
     where
         E: NodeExecutor,
     {
+        self.validate_retry_boundaries()?;
         let run = store.create_run(graph_hash, inputs);
         store.set_status(&run.run_id, RunStatus::Running)?;
         self.journal = ExecutionJournal::new(run.run_id);

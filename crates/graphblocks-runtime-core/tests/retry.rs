@@ -1,7 +1,9 @@
+use graphblocks_compiler::compiler::MAX_NODE_RETRY_ATTEMPTS;
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
-    ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
+    ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryPolicyError,
+    RetryRequest,
 };
 
 fn error(category: ErrorCategory, retryable: bool) -> BlockError {
@@ -30,6 +32,38 @@ fn retry_policy_stops_at_max_attempts() {
             reason: "max_attempts_exhausted",
         },
     );
+}
+
+#[test]
+fn retry_policy_accepts_the_node_attempt_limit() {
+    let policy = RetryPolicy::try_new(MAX_NODE_RETRY_ATTEMPTS)
+        .expect("the node retry attempt limit should be accepted")
+        .retry_on([ErrorCategory::Timeout]);
+
+    assert_eq!(
+        policy.decide(&RetryRequest::new(99, error(ErrorCategory::Timeout, true))),
+        RetryDecision::Retry { delay_ms: 0 },
+    );
+    assert_eq!(
+        policy.decide(&RetryRequest::new(100, error(ErrorCategory::Timeout, true))),
+        RetryDecision::Stop {
+            reason: "max_attempts_exhausted",
+        },
+    );
+}
+
+#[test]
+fn retry_policy_rejects_node_attempts_above_the_limit() {
+    for max_attempts in [MAX_NODE_RETRY_ATTEMPTS + 1, u64::MAX] {
+        let error = RetryPolicy::try_new(max_attempts)
+            .expect_err("retry policies above the attempt limit should be rejected");
+
+        assert_eq!(
+            error,
+            RetryPolicyError::MaxAttemptsExceeded { max_attempts },
+        );
+        assert_eq!(error.to_string(), "node retry attempts must not exceed 100");
+    }
 }
 
 #[test]

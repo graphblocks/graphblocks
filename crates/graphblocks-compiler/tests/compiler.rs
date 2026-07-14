@@ -2443,6 +2443,119 @@ fn compile_graph_allows_optional_resource_slot_to_be_unbound() -> Result<(), Str
     Ok(())
 }
 
+fn preview_graph_with_retry(retry: serde_json::Value) -> serde_json::Value {
+    json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "bounded-preview-retry"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.work@1",
+                    "flow": {"retry": retry}
+                }
+            }
+        }
+    })
+}
+
+#[test]
+fn compile_graph_accepts_preview_retry_attempt_limit() {
+    for retry in [
+        json!(100),
+        json!({"maxAttempts": 100}),
+        json!({"max_attempts": 100}),
+        json!({"maxAttempts": 100, "max_attempts": u64::MAX}),
+    ] {
+        let plan = compile_graph_for_discovery(&preview_graph_with_retry(retry));
+
+        assert!(
+            !plan
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "GB1008"),
+            "{:?}",
+            plan.diagnostics
+        );
+    }
+}
+
+#[test]
+fn compile_graph_rejects_preview_retry_attempts_above_limit() {
+    let huge_integer = serde_json::from_str::<serde_json::Value>(&format!("1{}", "0".repeat(100)))
+        .expect("arbitrary-precision integer fixture should parse");
+    for (retry, path) in [
+        (json!(101), "$.spec.nodes.work.flow.retry"),
+        (json!(u64::MAX), "$.spec.nodes.work.flow.retry"),
+        (huge_integer.clone(), "$.spec.nodes.work.flow.retry"),
+        (
+            json!({"maxAttempts": 101}),
+            "$.spec.nodes.work.flow.retry.maxAttempts",
+        ),
+        (
+            json!({"maxAttempts": u64::MAX}),
+            "$.spec.nodes.work.flow.retry.maxAttempts",
+        ),
+        (
+            json!({"maxAttempts": huge_integer.clone()}),
+            "$.spec.nodes.work.flow.retry.maxAttempts",
+        ),
+        (
+            json!({"max_attempts": 101}),
+            "$.spec.nodes.work.flow.retry.max_attempts",
+        ),
+        (
+            json!({"max_attempts": u64::MAX}),
+            "$.spec.nodes.work.flow.retry.max_attempts",
+        ),
+        (
+            json!({"max_attempts": huge_integer.clone()}),
+            "$.spec.nodes.work.flow.retry.max_attempts",
+        ),
+    ] {
+        let plan = compile_graph_for_discovery(&preview_graph_with_retry(retry));
+        let errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{path}: {:?}", plan.diagnostics);
+        assert_eq!(errors[0].code, "GB1008", "{path}");
+        assert_eq!(
+            errors[0].message, "node retry attempts must not exceed 100",
+            "{path}"
+        );
+        assert_eq!(errors[0].path, path);
+    }
+}
+
+#[test]
+fn compile_graph_preserves_preview_retry_type_and_bool_behavior() {
+    for retry in [
+        json!(true),
+        json!("101"),
+        json!(101.0),
+        json!({"maxAttempts": true}),
+        json!({"maxAttempts": "101"}),
+        json!({"maxAttempts": 101.0}),
+        json!({"max_attempts": true}),
+        json!({"max_attempts": "101"}),
+        json!({"max_attempts": 101.0}),
+    ] {
+        let plan = compile_graph_for_discovery(&preview_graph_with_retry(retry));
+
+        assert!(
+            !plan
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "GB1008"),
+            "{:?}",
+            plan.diagnostics
+        );
+    }
+}
+
 #[test]
 fn compile_graph_rejects_effect_retry_without_idempotency_key() {
     for effect in ["external_write", "filesystem_write"] {
