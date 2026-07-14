@@ -113,6 +113,7 @@ SERVER_TERMINAL_EVENT_KINDS = frozenset({
     "RunCompleted",
     "RunExpired",
 })
+MAX_SERVER_REQUEST_JSON_DEPTH = 64
 
 
 def _utc_now_iso() -> str:
@@ -200,11 +201,58 @@ def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object
 
 def _server_request_json_body(request: ServerRequest, owner: str) -> object:
     try:
-        return json.loads(
-            request.body.decode("utf-8") or "{}",
+        encoded = request.body.decode("utf-8") or "{}"
+        depth = 0
+        in_string = False
+        escaped = False
+        for character in encoded:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                continue
+            if character == '"':
+                in_string = True
+            elif character in "[{":
+                depth += 1
+                if depth > MAX_SERVER_REQUEST_JSON_DEPTH:
+                    raise ValueError("JSON nesting exceeds the server request limit")
+            elif character in "]}":
+                depth -= 1
+
+        def reject_duplicate_keys(
+            pairs: list[tuple[str, object]],
+        ) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON object key {key!r}")
+                result[key] = value
+            return result
+
+        decoded = json.loads(
+            encoded,
             parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=reject_duplicate_keys,
         )
-    except ValueError as error:
+        pending: list[tuple[object, int]] = [(decoded, 0)]
+        while pending:
+            value, value_depth = pending.pop()
+            if isinstance(value, dict):
+                container_depth = value_depth + 1
+                if container_depth > MAX_SERVER_REQUEST_JSON_DEPTH:
+                    raise ValueError("JSON nesting exceeds the server request limit")
+                pending.extend((item, container_depth) for item in value.values())
+            elif isinstance(value, list):
+                container_depth = value_depth + 1
+                if container_depth > MAX_SERVER_REQUEST_JSON_DEPTH:
+                    raise ValueError("JSON nesting exceeds the server request limit")
+                pending.extend((item, container_depth) for item in value)
+        return decoded
+    except (RecursionError, ValueError) as error:
         raise ValueError(f"{owner} body must be valid JSON") from error
 
 

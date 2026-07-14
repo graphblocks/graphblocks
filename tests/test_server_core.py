@@ -16,6 +16,7 @@ from graphblocks.runtime import RuntimeRegistry
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
+    MAX_SERVER_REQUEST_JSON_DEPTH,
     ServerAsyncCallbackRejection,
     ServerAsyncCallbackSubmission,
     ServerAuthRequest,
@@ -546,6 +547,86 @@ def test_server_app_rejects_non_standard_request_json_constants() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "run request body must be valid JSON",
+    }
+
+
+@pytest.mark.parametrize("field_name", ["runId", "policySnapshotId"])
+def test_server_app_rejects_duplicate_security_sensitive_request_keys(
+    field_name: str,
+) -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
+    )
+    body = (
+        f'{{"graph":{{}},"{field_name}":"trusted",'
+        f'"{field_name}":"replaced"}}'
+    ).encode("utf-8")
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=body,
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request body must be valid JSON",
+    }
+
+
+def test_server_app_rejects_excessively_nested_request_json() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
+    )
+    body = ("[" * 1_100 + "0" + "]" * 1_100).encode("utf-8")
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=body,
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request body must be valid JSON",
+    }
+
+
+def test_server_app_accepts_request_json_at_the_nesting_limit() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")})
+    )
+    padding: object = None
+    for _ in range(MAX_SERVER_REQUEST_JSON_DEPTH - 1):
+        padding = [padding]
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"padding": padding}).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request body requires graph object",
     }
 
 
