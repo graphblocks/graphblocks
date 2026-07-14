@@ -14,10 +14,7 @@ spec:
   nodes:
     snapshot:
       block: resource.snapshot@1
-      inputs:
-        resources:
-          - $input.matter.documents
-          - $input.matter.relevantDate
+      inputs: {resources: $input.matter.documents}
     extractFacts:
       block: company.legal.extract_facts@1
       inputs:
@@ -49,6 +46,9 @@ spec:
       inputs:
         facts: extractFacts.facts
         evidence: research.evidence
+    collectOutputs:
+      block: sequence.singleton@1
+      inputs: {value: synthesize.memo}
     verifySources:
       block: check.run_suite@1
       inputs: {subject: synthesize.memo}
@@ -74,12 +74,16 @@ spec:
         scope: substantive
         requiredCredential: application-defined-attorney-credential
         invalidateOnSubjectChange: true
+    collectReviews:
+      block: sequence.singleton@1
+      when: review.accepted
+      inputs: {value: review.record}
     publish:
       block: result.bundle@1
       inputs:
-        outputs: [synthesize.memo]
+        outputs: collectOutputs.values
         evidence: research.evidence
         checks: verifySources.results
-        reviews: [review.record]
+        reviews: collectReviews.values
       outputs:
         result: $output.result

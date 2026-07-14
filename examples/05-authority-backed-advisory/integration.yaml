@@ -46,6 +46,13 @@ spec:
             - {sourceRef: case://demo/adverse-1, authoritative: true}
         scriptedResponse: Approval authority must be verified against both cited sources.
         responseField: memo
+      collectOutputs:
+        service: sequence-singleton
+        expectedInputs:
+          value: Approval authority must be verified against both cited sources.
+        outputs:
+          values:
+            - Approval authority must be verified against both cited sources.
       verifySources:
         service: source-verifier
         expectedInputs:
@@ -66,17 +73,27 @@ spec:
           gate: {passed: true}
         outputs:
           record: {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
+          accepted: true
+      collectReviews:
+        service: sequence-singleton
+        expectedInputs:
+          value: {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
+        outputs:
+          values:
+            - {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
       publish:
         service: result-builder
         expectedInputs:
+          outputs:
+            - Approval authority must be verified against both cited sources.
           reviews:
-            "0": {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
+            - {reviewId: review-demo, status: accepted, subjectDigest: sha256:memo-demo}
         outputs:
           result:
             status: approved
             memo: Approval authority must be verified against both cited sources.
             sourceCount: 2
-    expectedCallOrder: [snapshot, extractFacts, identifyIssues, plan, research, synthesize, verifySources, gate, review, publish]
+    expectedCallOrder: [snapshot, extractFacts, identifyIssues, plan, research, synthesize, collectOutputs, verifySources, gate, review, collectReviews, publish]
     expectedOutput:
       result:
         status: approved
