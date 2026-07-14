@@ -551,6 +551,46 @@ fn build_context_pack_compares_source_modified_at_as_datetime() {
 }
 
 #[test]
+fn build_context_pack_rejects_invalid_minimum_source_modified_at() {
+    let error = build_context_pack(
+        "ctx-invalid-minimum",
+        vec![hit("hit-1", "chunk-1", "doc-1", "text", 1)],
+        ContextBuildOptions::new(10)
+            .with_minimum_source_modified_at("9223372036854775807-01-01T00:00:00Z"),
+    )
+    .expect_err("invalid minimum timestamp must fail closed");
+
+    assert_eq!(
+        error,
+        RagError::InvalidMinimumSourceModifiedAt {
+            value: "9223372036854775807-01-01T00:00:00Z".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn build_context_pack_drops_extreme_source_timestamp_without_overflow() {
+    let mut extreme = hit("hit-extreme", "chunk-extreme", "doc-1", "text", 1);
+    extreme.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("9223372036854775807-01-01T00:00:00Z"),
+    );
+
+    let context = build_context_pack(
+        "ctx-extreme-source",
+        vec![extreme],
+        ContextBuildOptions::new(10).with_minimum_source_modified_at("2026-01-01T00:00:00Z"),
+    )
+    .expect("malformed source timestamps remain freshness drops");
+
+    assert!(context.hits.is_empty());
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({"hit-extreme": "freshness"})
+    );
+}
+
+#[test]
 fn build_context_pack_rejects_impossible_source_modified_at_dates() {
     let hits = [
         ("hit-invalid-february-day", "2024-02-30T00:00:00Z"),

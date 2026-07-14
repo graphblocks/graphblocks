@@ -8,9 +8,9 @@ use serde_json::{Map, Value, json};
 use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
 use crate::evaluation::{MetricDirection, MetricObservation, ResultBundle};
 
-fn source_modified_at_satisfies(
+fn source_modified_at_satisfies_seconds(
     source_modified_at: Option<&str>,
-    minimum_source_modified_at: &str,
+    minimum_source_modified_at: i64,
 ) -> bool {
     let Some(source_modified_at) = source_modified_at else {
         return false;
@@ -18,21 +18,26 @@ fn source_modified_at_satisfies(
     let Some(source_time) = parse_iso_datetime_seconds(source_modified_at) else {
         return false;
     };
-    let Some(minimum_time) = parse_iso_datetime_seconds(minimum_source_modified_at) else {
-        return false;
-    };
-    source_time >= minimum_time
+    source_time >= minimum_source_modified_at
+}
+
+fn source_modified_at_satisfies(
+    source_modified_at: Option<&str>,
+    minimum_source_modified_at: &str,
+) -> bool {
+    parse_iso_datetime_seconds(minimum_source_modified_at).is_some_and(|minimum_time| {
+        source_modified_at_satisfies_seconds(source_modified_at, minimum_time)
+    })
 }
 
 fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
-    let value = value.trim();
-    if value.is_empty() {
+    if value.is_empty() || value != value.trim() {
         return None;
     }
     let (datetime, offset_seconds) = if let Some(datetime) = value.strip_suffix('Z') {
         (datetime, 0)
     } else {
-        let time_start = value.find('T').or_else(|| value.find(' '))?;
+        let time_start = value.find('T')?;
         let offset_index = value[time_start + 1..]
             .rfind(['+', '-'])
             .map(|index| time_start + 1 + index)?;
@@ -42,10 +47,16 @@ fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
             b'-' => -1,
             _ => return None,
         };
-        let mut offset_parts = offset[1..].split(':');
-        let offset_hours = offset_parts.next()?.parse::<i64>().ok()?;
-        let offset_minutes = offset_parts.next()?.parse::<i64>().ok()?;
-        if offset_parts.next().is_some() || offset_hours > 23 || offset_minutes > 59 {
+        if offset.len() != 6
+            || offset.as_bytes().get(3) != Some(&b':')
+            || !offset.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
+            || !offset.as_bytes()[4..6].iter().all(u8::is_ascii_digit)
+        {
+            return None;
+        }
+        let offset_hours = offset[1..3].parse::<i64>().ok()?;
+        let offset_minutes = offset[4..6].parse::<i64>().ok()?;
+        if offset_hours > 23 || offset_minutes > 59 {
             return None;
         }
         (
@@ -53,25 +64,41 @@ fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
             sign * (offset_hours * 3_600 + offset_minutes * 60),
         )
     };
-    let (date, time) = datetime
-        .split_once('T')
-        .or_else(|| datetime.split_once(' '))?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i64>().ok()?;
-    let month = date_parts.next()?.parse::<u32>().ok()?;
-    let day = date_parts.next()?.parse::<u32>().ok()?;
-    if date_parts.next().is_some() {
+    let (date, time) = datetime.split_once('T')?;
+    if date.len() != 10
+        || date.as_bytes().get(4) != Some(&b'-')
+        || date.as_bytes().get(7) != Some(&b'-')
+        || !date.as_bytes()[..4].iter().all(u8::is_ascii_digit)
+        || !date.as_bytes()[5..7].iter().all(u8::is_ascii_digit)
+        || !date.as_bytes()[8..].iter().all(u8::is_ascii_digit)
+    {
         return None;
     }
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<u32>().ok()?;
-    let minute = time_parts.next()?.parse::<u32>().ok()?;
-    let second_part = time_parts.next()?;
-    if time_parts.next().is_some() {
+    let year = date[..4].parse::<i64>().ok()?;
+    let month = date[5..7].parse::<u32>().ok()?;
+    let day = date[8..].parse::<u32>().ok()?;
+    if year == 0
+        || time.len() < 8
+        || time.as_bytes().get(2) != Some(&b':')
+        || time.as_bytes().get(5) != Some(&b':')
+        || !time.as_bytes()[..2].iter().all(u8::is_ascii_digit)
+        || !time.as_bytes()[3..5].iter().all(u8::is_ascii_digit)
+    {
         return None;
     }
+    let hour = time[..2].parse::<u32>().ok()?;
+    let minute = time[3..5].parse::<u32>().ok()?;
+    let second_part = &time[6..];
     let mut second_parts = second_part.split('.');
-    let second = second_parts.next()?.parse::<u32>().ok()?;
+    let second_token = second_parts.next()?;
+    if second_token.len() != 2
+        || !second_token
+            .bytes()
+            .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    let second = second_token.parse::<u32>().ok()?;
     if let Some(fraction) = second_parts.next()
         && (fraction.is_empty()
             || !fraction.bytes().all(|character| character.is_ascii_digit())
@@ -90,7 +117,7 @@ fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
         2 => 28,
         _ => return None,
     };
-    if day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 60 {
+    if day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
         return None;
     }
     let days = days_from_civil(year, month, day);
@@ -1132,6 +1159,9 @@ pub enum RagError {
     InvalidPerDocumentMaxChunks,
     InvalidPerSectionMaxChunks,
     InvalidPerSourceMaxChunks,
+    InvalidMinimumSourceModifiedAt {
+        value: String,
+    },
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
@@ -1171,6 +1201,12 @@ impl fmt::Display for RagError {
             }
             Self::InvalidPerSourceMaxChunks => {
                 write!(formatter, "per_source_max_chunks must be at least 1")
+            }
+            Self::InvalidMinimumSourceModifiedAt { value } => {
+                write!(
+                    formatter,
+                    "minimum_source_modified_at {value:?} must be an ISO datetime"
+                )
             }
             Self::InvalidFusionK => write!(formatter, "fusion k must be at least 1"),
             Self::WeightCountMismatch => {
@@ -1345,6 +1381,17 @@ pub fn build_context_pack(
     if matches!(options.per_source_max_chunks, Some(0)) {
         return Err(RagError::InvalidPerSourceMaxChunks);
     }
+    let minimum_source_modified_at = options
+        .minimum_source_modified_at
+        .as_ref()
+        .map(|value| {
+            parse_iso_datetime_seconds(value).ok_or_else(|| {
+                RagError::InvalidMinimumSourceModifiedAt {
+                    value: value.clone(),
+                }
+            })
+        })
+        .transpose()?;
     hits.sort_by(|left, right| {
         left.rank
             .cmp(&right.rank)
@@ -1442,7 +1489,7 @@ pub fn build_context_pack(
             drop_reasons.insert(hit.hit_id.clone(), json!("per_source_max_chunks"));
             continue;
         }
-        if let Some(minimum_source_modified_at) = &options.minimum_source_modified_at {
+        if let Some(minimum_source_modified_at) = minimum_source_modified_at {
             let source_modified_at = hit
                 .metadata
                 .get("source_modified_at")
@@ -1453,7 +1500,8 @@ pub fn build_context_pack(
                         .get("source_modified_at")
                         .and_then(Value::as_str)
                 });
-            if !source_modified_at_satisfies(source_modified_at, minimum_source_modified_at) {
+            if !source_modified_at_satisfies_seconds(source_modified_at, minimum_source_modified_at)
+            {
                 dropped_hit_ids.push(hit.hit_id.clone());
                 drop_reasons.insert(hit.hit_id.clone(), json!("freshness"));
                 continue;
