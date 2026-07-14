@@ -1993,7 +1993,7 @@ def test_release_bundle_requires_exact_first_party_sbom_dependency_rows(
             for row in sbom["dependencies"]
             if row["ref"] != "pkg:pypi/graphblocks-runtime@0.1.0"
         ]
-        message = "exact graphblocks-runtime runtime edges"
+        message = "omits installed distribution rows"
     else:
         testing_row = next(
             row
@@ -2046,7 +2046,78 @@ def test_release_bundle_rejects_sbom_missing_installed_distribution(
         json.dumps(platform, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    with pytest.raises(module.ReleaseBundleError, match="omits installed distributions"):
+    with pytest.raises(module.ReleaseBundleError, match="installed distribution closure"):
+        module.assemble_release_bundle(
+            platform_inputs_dir=inputs,
+            output_dir=tmp_path / "bundle",
+            git_commit=COMMIT,
+            release_ref=RELEASE_REF,
+            builder_id=BUILDER_ID,
+            invocation_id=INVOCATION_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("not-installed", "not-installed==9.9.9"),
+        ("alternate-version", "installed distribution closure"),
+        ("duplicate-reference", "duplicate component reference"),
+        ("malformed-reference", "malformed component reference"),
+        ("missing-dependency-row", "omits installed distribution rows"),
+    ),
+)
+def test_release_bundle_requires_exact_installed_sbom_component_closure(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    module = _load_module()
+    inputs = _inputs(module, tmp_path)
+    sbom_path = next(inputs.iterdir()) / "platform-evidence" / "sbom.cdx.json"
+    sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+    jsonschema_component = next(
+        component
+        for component in sbom["components"]
+        if component.get("name") == "jsonschema"
+    )
+    if mutation == "not-installed":
+        reference = "pkg:pypi/not-installed@9.9.9"
+        sbom["components"].append(
+            {
+                "type": "library",
+                "name": "not-installed",
+                "version": "9.9.9",
+                "bom-ref": reference,
+            }
+        )
+        sbom["dependencies"].append({"ref": reference, "dependsOn": []})
+    elif mutation == "alternate-version":
+        alternate = dict(jsonschema_component)
+        alternate["version"] = "9.9.9"
+        alternate["bom-ref"] = "pkg:pypi/jsonschema@9.9.9"
+        sbom["components"].append(alternate)
+        sbom["dependencies"].append(
+            {"ref": alternate["bom-ref"], "dependsOn": []}
+        )
+    elif mutation == "duplicate-reference":
+        sbom["components"].append(dict(jsonschema_component))
+    elif mutation == "malformed-reference":
+        malformed = dict(jsonschema_component)
+        malformed["bom-ref"] = " "
+        sbom["components"].append(malformed)
+    else:
+        sbom["dependencies"] = [
+            relationship
+            for relationship in sbom["dependencies"]
+            if relationship["ref"] != jsonschema_component["bom-ref"]
+        ]
+    sbom_path.write_text(
+        json.dumps(sbom, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match=message):
         module.assemble_release_bundle(
             platform_inputs_dir=inputs,
             output_dir=tmp_path / "bundle",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 import importlib.util
 import io
@@ -311,11 +312,46 @@ def test_sbom_gate_requires_pinned_generator_and_first_party_coverage(
                     "bomFormat": "CycloneDX",
                     "specVersion": "1.6",
                     "components": [
-                        {"name": "GraphBlocks_Testing", "version": "1.0.0"}
+                        {
+                            "name": "GraphBlocks_Testing",
+                            "version": "1.0.0",
+                            "bom-ref": "graphblocks-testing==1.0.0",
+                        },
+                        {
+                            "name": "pip",
+                            "version": "25.1.1",
+                            "bom-ref": "pip==25.1.1",
+                        },
+                        {
+                            "name": "setuptools",
+                            "version": "80.9.0",
+                            "bom-ref": "setuptools==80.9.0",
+                        },
                     ],
                     "metadata": {
-                        "component": {"name": "GraphBlocks", "version": "1.0.0"}
+                        "component": {
+                            "name": "GraphBlocks",
+                            "version": "1.0.0",
+                            "bom-ref": "root-component",
+                        },
+                        "tools": {
+                            "components": [
+                                {"name": "cyclonedx-py", "version": "7.3.0"}
+                            ]
+                        },
                     },
+                    "dependencies": [
+                        {
+                            "ref": "graphblocks-testing==1.0.0",
+                            "dependsOn": [],
+                        },
+                        {"ref": "pip==25.1.1", "dependsOn": []},
+                        {"ref": "root-component", "dependsOn": []},
+                        {
+                            "ref": "setuptools==80.9.0",
+                            "dependsOn": ["pip==25.1.1"],
+                        },
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -366,6 +402,18 @@ def test_sbom_gate_requires_pinned_generator_and_first_party_coverage(
     assert {
         component["hashes"][0]["content"] for component in release_components
     } == {"a" * 64, "b" * 64}
+    assert {component["name"] for component in payload["components"]} == {
+        "GraphBlocks_Testing",
+        "graphblocks-1.0.0-py3-none-any.whl",
+        "graphblocks_testing-1.0.0-py3-none-any.whl",
+    }
+    assert {relationship["ref"] for relationship in payload["dependencies"]} == {
+        "graphblocks-testing==1.0.0",
+        "root-component",
+    }
+    assert payload["metadata"]["tools"]["components"] == [
+        {"name": "cyclonedx-py", "version": "7.3.0"}
+    ]
 
 
 def test_sbom_gate_rejects_unpinned_generator_version(
@@ -700,7 +748,15 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         ),
     )
 
-    def fake_generate_sbom(*, output_path: Path, **kwargs: object) -> None:
+    generated_closures: list[dict[str, str]] = []
+
+    def fake_generate_sbom(
+        *,
+        output_path: Path,
+        expected_distributions: Mapping[str, str],
+        **kwargs: object,
+    ) -> None:
+        generated_closures.append(dict(expected_distributions))
         output_path.write_text(
             json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6"}),
             encoding="utf-8",
@@ -765,6 +821,10 @@ def test_wheelhouse_gate_uses_pep503_distribution_identity(monkeypatch, tmp_path
         ]
     ) == 0
     assert standalone_sbom.is_file()
+    assert len(generated_closures) == 2
+    assert all(
+        closure.get("jsonschema") == "4.25.1" for closure in generated_closures
+    )
 
 
 def test_wheelhouse_gate_derives_build_targets_from_package_catalog(

@@ -1606,29 +1606,30 @@ def _validate_evidence(snapshot: FileSnapshot) -> tuple[dict[str, object], str]:
     )
 
 
-def _sbom_components(payload: Mapping[str, object]) -> dict[str, set[str]]:
+def _sbom_component_candidates(
+    payload: Mapping[str, object],
+) -> tuple[tuple[Mapping[str, object], bool], ...]:
     if payload.get("bomFormat") != "CycloneDX":
         raise ReleaseBundleError("SBOM must use CycloneDX JSON")
     if payload.get("specVersion") not in {"1.6", "1.7"}:
         raise ReleaseBundleError("SBOM must use CycloneDX 1.6 or 1.7")
-    components: list[object] = []
     raw_components = payload.get("components")
-    if isinstance(raw_components, list):
-        components.extend(raw_components)
+    if not isinstance(raw_components, list):
+        raise ReleaseBundleError("SBOM must contain a component list")
+    candidates: list[tuple[Mapping[str, object], bool]] = []
+    for component in raw_components:
+        if not isinstance(component, Mapping):
+            raise ReleaseBundleError("SBOM contains a malformed component")
+        candidates.append((component, False))
     metadata = payload.get("metadata")
-    if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
-        components.append(metadata["component"])
-    observed: dict[str, set[str]] = {}
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        name = component.get("name")
-        version = component.get("version")
-        if isinstance(name, str) and isinstance(version, str):
-            observed.setdefault(canonicalize_name(name), set()).add(version)
-    if not observed:
-        raise ReleaseBundleError("SBOM contains no named versioned components")
-    return observed
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise ReleaseBundleError("SBOM contains malformed metadata")
+    if isinstance(metadata, Mapping) and "component" in metadata:
+        metadata_component = metadata.get("component")
+        if not isinstance(metadata_component, Mapping):
+            raise ReleaseBundleError("SBOM contains a malformed metadata component")
+        candidates.append((metadata_component, True))
+    return tuple(candidates)
 
 
 def _artifact_type(filename: str) -> str:
@@ -1745,28 +1746,27 @@ def _first_party_runtime_dependencies(
 def _sbom_component_references(
     payload: Mapping[str, object],
 ) -> tuple[dict[str, tuple[str, str]], dict[str, set[str]]]:
-    candidates: list[object] = []
-    components = payload.get("components")
-    if isinstance(components, list):
-        candidates.extend(components)
-    metadata = payload.get("metadata")
-    if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
-        candidates.append(metadata["component"])
     references: dict[str, tuple[str, str]] = {}
     references_by_name: dict[str, set[str]] = {}
-    for component in candidates:
-        if not isinstance(component, dict):
-            continue
+    for component, _is_metadata_component in _sbom_component_candidates(payload):
         reference = component.get("bom-ref")
         name = component.get("name")
         version = component.get("version")
-        if not isinstance(reference, str) or not reference:
-            continue
-        if reference in references and references[reference] != (str(name), str(version)):
-            raise ReleaseBundleError("SBOM contains a conflicting component reference")
-        identity = (str(name), str(version))
+        if (
+            not isinstance(reference, str)
+            or not reference
+            or reference != reference.strip()
+            or any(ord(character) < 32 for character in reference)
+        ):
+            raise ReleaseBundleError("SBOM contains a malformed component reference")
+        if reference in references:
+            raise ReleaseBundleError("SBOM contains a duplicate component reference")
+        identity = (
+            name if isinstance(name, str) else "",
+            version if isinstance(version, str) else "",
+        )
         references[reference] = identity
-        if isinstance(name, str):
+        if isinstance(name, str) and name:
             references_by_name.setdefault(canonicalize_name(name), set()).add(reference)
     return references, references_by_name
 
@@ -1808,26 +1808,22 @@ def _validate_sbom(
     *,
     installed_distributions: Mapping[str, str] | None = None,
 ) -> None:
-    components = _sbom_components(payload)
+    candidates = _sbom_component_candidates(payload)
+    described_versions: dict[str, set[str]] = {}
+    for component, _is_metadata_component in candidates:
+        name = component.get("name")
+        version = component.get("version")
+        if isinstance(name, str) and name and isinstance(version, str) and version:
+            described_versions.setdefault(canonicalize_name(name), set()).add(version)
     missing = sorted(
         f"{name}=={version}"
         for name, version in (_artifact_identity(filename) for filename in artifacts)
-        if version not in components.get(name, set())
+        if version not in described_versions.get(name, set())
     )
     if missing:
         raise ReleaseBundleError(
             "SBOM does not describe every release artifact: " + ", ".join(missing)
         )
-    if installed_distributions is not None:
-        missing_installed = sorted(
-            f"{name}=={version}"
-            for name, version in installed_distributions.items()
-            if version not in components.get(name, set())
-        )
-        if missing_installed:
-            raise ReleaseBundleError(
-                "SBOM omits installed distributions: " + ", ".join(missing_installed)
-            )
     observed_artifacts = _sbom_release_artifacts(payload)
     expected_artifacts = {
         filename: {
@@ -1842,8 +1838,88 @@ def _validate_sbom(
         raise ReleaseBundleError(
             "SBOM release-artifact filenames and hashes do not match the release set"
         )
+    references, references_by_name = _sbom_component_references(payload)
+    runtime_components: dict[str, list[tuple[str, str]]] = {}
+    runtime_references: set[str] = set()
+    release_artifact_references: set[str] = set()
+    document_references: set[str] = set()
+    unexpected_runtime_components: list[str] = []
+    for component, is_metadata_component in candidates:
+        reference = component.get("bom-ref")
+        if not isinstance(reference, str):
+            raise ReleaseBundleError("SBOM contains a malformed component reference")
+        if _component_properties(component).get("graphblocks:release-artifact") == "true":
+            if is_metadata_component:
+                raise ReleaseBundleError(
+                    "SBOM metadata component cannot be a release artifact"
+                )
+            release_artifact_references.add(reference)
+            continue
+        name = component.get("name")
+        version = component.get("version")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name != name.strip()
+            or not isinstance(version, str)
+            or not version
+            or version != version.strip()
+        ):
+            raise ReleaseBundleError("SBOM contains a malformed runtime component")
+        distribution = canonicalize_name(name)
+        if is_metadata_component and component == {
+            "type": "application",
+            "name": "graphblocks-release-bundle",
+            "version": "1.0",
+            "bom-ref": "urn:graphblocks:release-bundle:1.0",
+        }:
+            document_references.add(reference)
+            continue
+        if installed_distributions is None or distribution in installed_distributions:
+            runtime_components.setdefault(distribution, []).append((version, reference))
+            runtime_references.add(reference)
+            continue
+        unexpected_runtime_components.append(f"{distribution}=={version}")
+
+    if installed_distributions is not None:
+        closure_mismatches = list(unexpected_runtime_components)
+        for name, expected_version in installed_distributions.items():
+            observed = runtime_components.get(name, [])
+            if len(observed) != 1 or observed[0][0] != expected_version:
+                observed_versions = sorted({version for version, _reference in observed})
+                closure_mismatches.append(
+                    f"{name}=={expected_version} (observed {observed_versions!r})"
+                )
+        if closure_mismatches:
+            raise ReleaseBundleError(
+                "SBOM runtime components do not exactly match the installed distribution "
+                "closure: " + ", ".join(sorted(closure_mismatches))
+            )
+
     dependency_graph = _sbom_dependency_graph(payload)
-    _references, references_by_name = _sbom_component_references(payload)
+    missing_dependency_rows = sorted(runtime_references - set(dependency_graph))
+    if missing_dependency_rows:
+        raise ReleaseBundleError(
+            "SBOM dependency graph omits installed distribution rows: "
+            + ", ".join(missing_dependency_rows)
+        )
+    if any(
+        not dependencies <= runtime_references
+        for reference, dependencies in dependency_graph.items()
+        if reference in runtime_references
+    ):
+        raise ReleaseBundleError(
+            "SBOM runtime dependency rows escape the installed distribution closure"
+        )
+    if any(dependency_graph.get(reference) for reference in release_artifact_references):
+        raise ReleaseBundleError("SBOM release-artifact dependency rows must be empty")
+    if document_references and any(
+        dependency_graph.get(reference) != release_artifact_references
+        for reference in document_references
+    ):
+        raise ReleaseBundleError(
+            "SBOM document component must depend on the exact release-artifact set"
+        )
     first_party_dependencies = FIRST_PARTY_RUNTIME_DEPENDENCIES
     required_dependencies = set().union(*first_party_dependencies.values())
     missing_dependencies = sorted(required_dependencies - set(references_by_name))
@@ -1852,7 +1928,6 @@ def _validate_sbom(
             "SBOM omits required runtime dependencies: "
             + ", ".join(missing_dependencies)
         )
-    references, references_by_name = _sbom_component_references(payload)
     expected_versions = (
         {
             name: installed_distributions[name]

@@ -918,13 +918,32 @@ def _generate_cyclonedx_sbom(
     )
     if missing:
         raise RuntimeError(
-            "generated release SBOM omits first-party distributions: " + ", ".join(missing)
+            "generated release SBOM omits runtime distributions: " + ", ".join(missing)
+        )
+    metadata_component = metadata.get("component") if isinstance(metadata, dict) else None
+    if not isinstance(metadata_component, dict):
+        raise RuntimeError("generated release SBOM has no metadata component")
+    metadata_name = metadata_component.get("name")
+    metadata_version = metadata_component.get("version")
+    metadata_reference = metadata_component.get("bom-ref")
+    if (
+        not isinstance(metadata_name, str)
+        or not isinstance(metadata_version, str)
+        or not isinstance(metadata_reference, str)
+        or not metadata_reference
+        or expected_distributions.get(canonicalize_name(metadata_name))
+        != metadata_version
+    ):
+        raise RuntimeError(
+            "generated release SBOM metadata component is outside the runtime closure"
         )
     raw_components = payload.get("components")
     normalized_components: list[dict[str, object]] = []
+    runtime_references = {metadata_reference}
+    bootstrap_references: set[str] = set()
     for component in raw_components if isinstance(raw_components, list) else []:
         if not isinstance(component, dict):
-            continue
+            raise RuntimeError("generated release SBOM contains a malformed component")
         properties = component.get("properties")
         if isinstance(properties, list) and any(
             isinstance(prop, dict)
@@ -932,12 +951,75 @@ def _generate_cyclonedx_sbom(
             for prop in properties
         ):
             continue
-        normalized_components.append(component)
+        name = component.get("name")
+        version = component.get("version")
+        reference = component.get("bom-ref")
+        if (
+            not isinstance(name, str)
+            or not isinstance(version, str)
+            or not isinstance(reference, str)
+            or not reference
+        ):
+            raise RuntimeError("generated release SBOM contains a malformed component")
+        distribution = canonicalize_name(name)
+        if expected_distributions.get(distribution) == version:
+            normalized_components.append(component)
+            runtime_references.add(reference)
+        elif distribution in {"pip", "setuptools"} and (
+            distribution not in expected_distributions
+        ):
+            bootstrap_references.add(reference)
+        else:
+            raise RuntimeError(
+                "generated release SBOM contains a distribution outside the exact "
+                f"runtime closure: {distribution}=={version}"
+            )
+    raw_dependencies = payload.get("dependencies")
+    if not isinstance(raw_dependencies, list):
+        raise RuntimeError("generated release SBOM has no dependency graph")
+    normalized_dependencies: list[dict[str, object]] = []
+    observed_dependency_rows: set[str] = set()
+    for relationship in raw_dependencies:
+        if not isinstance(relationship, dict):
+            raise RuntimeError("generated release SBOM has a malformed dependency row")
+        reference = relationship.get("ref")
+        depends_on = relationship.get("dependsOn", [])
+        if (
+            not isinstance(reference, str)
+            or not reference
+            or not isinstance(depends_on, list)
+            or not all(isinstance(item, str) and item for item in depends_on)
+            or len(depends_on) != len(set(depends_on))
+        ):
+            raise RuntimeError("generated release SBOM has a malformed dependency row")
+        if reference in bootstrap_references:
+            continue
+        if reference not in runtime_references or reference in observed_dependency_rows:
+            raise RuntimeError(
+                "generated release SBOM dependency graph escapes the runtime closure"
+            )
+        retained_dependencies = sorted(set(depends_on) - bootstrap_references)
+        if any(dependency not in runtime_references for dependency in retained_dependencies):
+            raise RuntimeError(
+                "generated release SBOM dependency graph escapes the runtime closure"
+            )
+        observed_dependency_rows.add(reference)
+        normalized_dependencies.append(
+            {"ref": reference, "dependsOn": retained_dependencies}
+        )
+    if observed_dependency_rows != runtime_references:
+        raise RuntimeError(
+            "generated release SBOM dependency graph omits runtime components"
+        )
     normalized_components.extend(
         _release_artifact_component(expected_artifacts[filename])
         for filename in sorted(expected_artifacts)
     )
     payload["components"] = normalized_components
+    payload["dependencies"] = sorted(
+        normalized_dependencies,
+        key=lambda relationship: str(relationship["ref"]),
+    )
     output_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -1332,32 +1414,6 @@ def main(argv: list[str] | None = None) -> int:
                 canonical_dumps(acceptance_payload) + "\n",
                 encoding="utf-8",
             )
-        if args.sbom_output is not None:
-            if args.platform is not None and args.sbom_output.resolve() != (
-                evidence_root / "sbom.cdx.json"
-            ):
-                raise ValueError("platform SBOM must be retained in the platform evidence directory")
-            artifact_records = {
-                path.name: _artifact_record(path) for path in (*built_wheels, *built_sdists)
-            }
-            _generate_cyclonedx_sbom(
-                python_environment=isolated_python,
-                output_path=args.sbom_output.resolve(),
-                expected_distributions=expected_distributions,
-                expected_artifacts=artifact_records,
-            )
-        installed = subprocess.run(
-            [str(isolated_python), "-m", "pip", "list", "--format=json"],
-            check=True,
-            cwd=ROOT,
-            capture_output=True,
-            env=install_environment,
-            text=True,
-        )
-        installed_distributions = {
-            canonicalize_name(str(distribution["name"])): str(distribution["version"])
-            for distribution in json.loads(installed.stdout)
-        }
         expected_runtime_distributions = dict(expected_distributions)
         for dependency_wheel in sorted(dependency_wheelhouse.glob("*.whl")):
             try:
@@ -1376,6 +1432,32 @@ def main(argv: list[str] | None = None) -> int:
                     f"dependency wheelhouse contains conflicting versions for {name}"
                 )
             expected_runtime_distributions[name] = observed_version
+        if args.sbom_output is not None:
+            if args.platform is not None and args.sbom_output.resolve() != (
+                evidence_root / "sbom.cdx.json"
+            ):
+                raise ValueError("platform SBOM must be retained in the platform evidence directory")
+            artifact_records = {
+                path.name: _artifact_record(path) for path in (*built_wheels, *built_sdists)
+            }
+            _generate_cyclonedx_sbom(
+                python_environment=isolated_python,
+                output_path=args.sbom_output.resolve(),
+                expected_distributions=expected_runtime_distributions,
+                expected_artifacts=artifact_records,
+            )
+        installed = subprocess.run(
+            [str(isolated_python), "-m", "pip", "list", "--format=json"],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            env=install_environment,
+            text=True,
+        )
+        installed_distributions = {
+            canonicalize_name(str(distribution["name"])): str(distribution["version"])
+            for distribution in json.loads(installed.stdout)
+        }
         installed_runtime_distributions = {
             distribution: installed_distributions.get(distribution)
             for distribution in expected_runtime_distributions
