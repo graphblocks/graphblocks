@@ -170,6 +170,18 @@ def test_canonical_json_allows_shared_non_recursive_values() -> None:
     )
 
 
+def test_canonical_json_rejects_excessive_nesting_without_recursion_errors() -> None:
+    nested_value: object = 0
+    for _ in range(1_100):
+        nested_value = [nested_value]
+    nested_json = "[" * 1_100 + "0" + "]" * 1_100
+
+    with pytest.raises(ValueError, match="nesting must not exceed 64 levels"):
+        canonical_dumps(nested_value)
+    with pytest.raises(ValueError, match="nesting must not exceed 64 levels"):
+        canonical_loads(nested_json)
+
+
 def test_canonical_json_normalizes_decimal_numbers_beyond_binary64_range() -> None:
     value = {
         "equivalent": Decimal("10e399"),

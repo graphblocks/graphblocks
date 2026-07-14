@@ -11,6 +11,13 @@ from typing import Any
 from .migration import migrate_document
 
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
+MAX_CANONICAL_JSON_DEPTH = 64
+
+
+def _depth_error() -> ValueError:
+    return ValueError(
+        f"canonical JSON nesting must not exceed {MAX_CANONICAL_JSON_DEPTH} levels"
+    )
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -27,20 +34,25 @@ def _has_unicode_surrogate(value: str) -> bool:
 
 
 def canonical_loads(value: str | bytes | bytearray) -> Any:
-    decoded = json.loads(
-        value,
-        parse_float=lambda token: (
-            float(token)
-            if math.isfinite(float(token))
-            and canonical_dumps(Decimal(token)) == canonical_dumps(float(token))
-            else Decimal(token)
-        ),
-        parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-        object_pairs_hook=_reject_duplicate_keys,
-    )
-    pending_values = [decoded]
+    try:
+        decoded = json.loads(
+            value,
+            parse_float=lambda token: (
+                float(token)
+                if math.isfinite(float(token))
+                and canonical_dumps(Decimal(token)) == canonical_dumps(float(token))
+                else Decimal(token)
+            ),
+            parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except RecursionError as error:
+        raise _depth_error() from error
+    pending_values = [(decoded, 0)]
     while pending_values:
-        current_value = pending_values.pop()
+        current_value, depth = pending_values.pop()
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise _depth_error()
         if isinstance(current_value, str):
             if _has_unicode_surrogate(current_value):
                 raise ValueError(
@@ -52,27 +64,29 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
                     raise ValueError(
                         "canonical JSON strings must contain only Unicode scalar values"
                     )
-                pending_values.append(child_value)
+                pending_values.append((child_value, depth + 1))
         elif isinstance(current_value, list):
-            pending_values.extend(current_value)
+            pending_values.extend((child_value, depth + 1) for child_value in current_value)
     return decoded
 
 
 def canonical_dumps(value: Any) -> str:
-    pending_values: list[tuple[Any, bool]] = [(value, False)]
+    pending_values: list[tuple[Any, bool, int]] = [(value, False, 0)]
     active_containers: set[int] = set()
     occupied_strings: set[str] = set()
     has_decimal = False
     while pending_values:
-        current_value, leaving = pending_values.pop()
+        current_value, leaving, depth = pending_values.pop()
         if leaving:
             active_containers.remove(id(current_value))
             continue
+        if depth > MAX_CANONICAL_JSON_DEPTH:
+            raise _depth_error()
         if isinstance(current_value, Mapping):
             if id(current_value) in active_containers:
                 raise ValueError("canonical JSON values must not be recursive")
             active_containers.add(id(current_value))
-            pending_values.append((current_value, True))
+            pending_values.append((current_value, True, depth))
             for key, child_value in current_value.items():
                 if not isinstance(key, str):
                     raise TypeError("canonical JSON object keys must be strings")
@@ -81,13 +95,15 @@ def canonical_dumps(value: Any) -> str:
                         "canonical JSON strings must contain only Unicode scalar values"
                     )
                 occupied_strings.add(key)
-                pending_values.append((child_value, False))
+                pending_values.append((child_value, False, depth + 1))
         elif isinstance(current_value, list | tuple):
             if id(current_value) in active_containers:
                 raise ValueError("canonical JSON values must not be recursive")
             active_containers.add(id(current_value))
-            pending_values.append((current_value, True))
-            pending_values.extend((item, False) for item in current_value)
+            pending_values.append((current_value, True, depth))
+            pending_values.extend(
+                (item, False, depth + 1) for item in current_value
+            )
         elif isinstance(current_value, str):
             if _has_unicode_surrogate(current_value):
                 raise ValueError(
@@ -97,7 +113,16 @@ def canonical_dumps(value: Any) -> str:
         elif isinstance(current_value, Decimal):
             has_decimal = True
     if not has_decimal:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        try:
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except RecursionError as error:
+            raise _depth_error() from error
 
     root: list[Any] = [None]
     pending_copies: list[tuple[Any, dict[str, Any] | list[Any], str | int]] = [(value, root, 0)]
@@ -162,13 +187,16 @@ def canonical_dumps(value: Any) -> str:
         else:
             parent[parent_key] = current_value
 
-    encoded = json.dumps(
-        root[0],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
+    try:
+        encoded = json.dumps(
+            root[0],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except RecursionError as error:
+        raise _depth_error() from error
     for token, canonical_number in decimal_tokens.items():
         encoded = encoded.replace(
             json.dumps(token, ensure_ascii=False, separators=(",", ":")),

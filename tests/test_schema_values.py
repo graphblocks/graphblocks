@@ -118,6 +118,15 @@ def test_typed_value_rejects_recursive_values(container_kind: str) -> None:
         TypedValue.new("schemas/Message@1", value)
 
 
+def test_typed_value_rejects_excessive_nesting_without_recursion_errors() -> None:
+    value: object = 0
+    for _ in range(1_100):
+        value = [value]
+
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", value)
+
+
 @pytest.mark.parametrize(
     ("invalid_value", "expected_path", "expected_keyword"),
     [
