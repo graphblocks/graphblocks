@@ -702,6 +702,23 @@ fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
 }
 
 #[test]
+fn fuse_search_hits_saturates_reciprocal_rank_denominator() {
+    let fused = fuse_search_hits(
+        &[vec![hit_from(
+            "kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword",
+        )]],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::ReciprocalRankFusion)
+            .with_k(usize::MAX),
+    )
+    .expect("maximum fusion k must not overflow");
+
+    assert_eq!(fused.len(), 1);
+    assert!(fused[0].raw_score.is_some_and(|score| score.is_finite()));
+    assert_eq!(fused[0].normalized_score, Some(1.0));
+}
+
+#[test]
 fn fuse_search_hits_deduplicates_equivalent_source_spans() {
     let keyword_hit = hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword");
     let provider_source = SourceRef::document_chunk(
