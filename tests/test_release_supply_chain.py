@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 import importlib.util
 import json
@@ -27,6 +28,10 @@ RUSTC_OUTPUT = "rustc 1.94.0 (012345678 2026-01-01)"
 COSIGN_OUTPUT = "GitVersion: v3.0.6\nGitCommit: 0123456789abcdef"
 RUSTC_IDENTITY = {"version": "1.94.0", "output": RUSTC_OUTPUT}
 COSIGN_IDENTITY = {"version": "3.0.6", "output": COSIGN_OUTPUT}
+PROMOTION_INTEGRATED_TIME = 1781568000
+PROMOTION_INTEGRATED_AT = datetime.fromtimestamp(
+    PROMOTION_INTEGRATED_TIME, timezone.utc
+)
 PROMOTION_SOURCE_DIFF = {
     "digest": "sha256:" + "5" * 64,
     "changes": [
@@ -60,7 +65,9 @@ def _trust_test_source(
     module._current_git_tree = lambda: TREE
     module._assert_clean_source_checkout = lambda: None
     module._observe_cosign_identity = lambda _executable="cosign": dict(COSIGN_IDENTITY)
-    module._verify_promotion_report_signature = lambda **_arguments: None
+    module._verify_promotion_report_signature = (
+        lambda **_arguments: PROMOTION_INTEGRATED_AT
+    )
     module._promotion_source_diff = lambda **_arguments: {
         "digest": PROMOTION_SOURCE_DIFF["digest"],
         "changes": [dict(change) for change in PROMOTION_SOURCE_DIFF["changes"]],
@@ -471,7 +478,15 @@ def _promotion_payload_and_files(
         report_bytes = module._canonical_json_bytes(report)
         report_sha256 = module._sha256_bytes(report_bytes)
         signature_bytes = module._canonical_json_bytes(
-            {"signedReportSha256": report_sha256, "testFixture": True}
+            {
+                "verificationMaterial": {
+                    "tlogEntries": [
+                        {"integratedTime": str(PROMOTION_INTEGRATED_TIME)}
+                    ]
+                },
+                "signedReportSha256": report_sha256,
+                "testFixture": True,
+            }
         )
         report_files[report_path] = report_bytes
         report_files[signature_path] = signature_bytes
@@ -1038,12 +1053,13 @@ def test_final_release_resolves_hashes_and_verifies_every_promotion_report(
     promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
     verified: list[tuple[str, str]] = []
 
-    def record_verification(**arguments: object) -> None:
+    def record_verification(**arguments: object) -> datetime:
         report_snapshot = arguments["report_snapshot"]
         assert isinstance(report_snapshot, module.FileSnapshot)
         expected_identity = arguments["expected_certificate_identity"]
         assert isinstance(expected_identity, str)
         verified.append((report_snapshot.path.name, expected_identity))
+        return PROMOTION_INTEGRATED_AT
 
     module._verify_promotion_report_signature = record_verification
     module.assemble_release_bundle(
@@ -1115,6 +1131,135 @@ def test_promotion_report_signature_rejects_a_self_declared_signer(tmp_path: Pat
             ),
             cosign="cosign",
         )
+
+
+def test_promotion_signature_returns_one_unambiguous_rekor_time(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    module._observe_cosign_identity = lambda _executable="cosign": dict(
+        COSIGN_IDENTITY
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0),
+    )
+    report_path = tmp_path / "report.json"
+    signature_path = tmp_path / "report.sigstore.json"
+    report_path.write_bytes(module._canonical_json_bytes({"approved": True}))
+    signature_path.write_bytes(
+        module._canonical_json_bytes(
+            {
+                "verificationMaterial": {
+                    "tlogEntries": [
+                        {"integratedTime": str(PROMOTION_INTEGRATED_TIME)},
+                        {"integratedTime": PROMOTION_INTEGRATED_TIME},
+                    ]
+                }
+            }
+        )
+    )
+    identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.1"
+    )
+
+    observed = module._verify_promotion_report_signature(
+        report_snapshot=module._snapshot_regular_file(
+            report_path, owner="test promotion report"
+        ),
+        signature_snapshot=module._snapshot_regular_file(
+            signature_path, owner="test promotion signature"
+        ),
+        certificate_identity=identity,
+        certificate_oidc_issuer=module.SIGSTORE_ISSUER,
+        expected_certificate_identity=identity,
+        cosign="cosign",
+    )
+
+    assert observed == PROMOTION_INTEGRATED_AT
+
+
+@pytest.mark.parametrize(
+    ("bundle", "error"),
+    (
+        ("{", "not valid JSON"),
+        ({}, "verification material"),
+        (
+            {"verificationMaterial": {"tlogEntries": [{}]}},
+            "has no integratedTime",
+        ),
+        (
+            {
+                "verificationMaterial": {
+                    "tlogEntries": [{"integratedTime": True}]
+                }
+            },
+            "malformed integratedTime",
+        ),
+        (
+            {
+                "verificationMaterial": {
+                    "tlogEntries": [
+                        {"integratedTime": "1781568000"},
+                        {"integratedTime": "1781568001"},
+                    ]
+                }
+            },
+            "inconsistent Rekor integratedTime",
+        ),
+    ),
+    ids=("invalid-json", "missing", "entry-missing", "malformed", "inconsistent"),
+)
+def test_promotion_signature_rejects_invalid_rekor_times_after_cosign_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bundle: object,
+    error: str,
+) -> None:
+    module = _load_module()
+    module._observe_cosign_identity = lambda _executable="cosign": dict(
+        COSIGN_IDENTITY
+    )
+    cosign_calls = 0
+
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal cosign_calls
+        cosign_calls += 1
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    report_path = tmp_path / "report.json"
+    signature_path = tmp_path / "report.sigstore.json"
+    report_path.write_bytes(module._canonical_json_bytes({"approved": True}))
+    if isinstance(bundle, str):
+        signature_path.write_text(bundle, encoding="utf-8")
+    else:
+        signature_path.write_bytes(module._canonical_json_bytes(bundle))
+    identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/"
+        "promotion-reports.yml@refs/tags/v1.0.0-rc.1"
+    )
+
+    with pytest.raises(module.ReleaseBundleError, match=error):
+        module._verify_promotion_report_signature(
+            report_snapshot=module._snapshot_regular_file(
+                report_path, owner="test promotion report"
+            ),
+            signature_snapshot=module._snapshot_regular_file(
+                signature_path, owner="test promotion signature"
+            ),
+            certificate_identity=identity,
+            certificate_oidc_issuer=module.SIGSTORE_ISSUER,
+            expected_certificate_identity=identity,
+            cosign="cosign",
+        )
+
+    assert cosign_calls == 1
 
 
 @pytest.mark.parametrize(
@@ -1356,6 +1501,25 @@ def test_final_release_rejects_future_and_out_of_period_soak_evidence(
     with pytest.raises(module.ReleaseBundleError, match="does not cover the soak period"):
         module._validate_promotion_evidence(
             module._snapshot_regular_file(outside_path, owner="outside promotion"),
+            git_commit=COMMIT,
+            git_tree=TREE,
+            release_ref="refs/tags/v1.0.0",
+            release_version="1.0.0",
+            verify_source_diff=True,
+        )
+
+
+def test_soak_report_signature_cannot_predate_its_claimed_end(tmp_path: Path) -> None:
+    module = _load_module()
+    _trust_test_source(module, stable_version="1.0.0")
+    module._verify_promotion_report_signature = lambda **_arguments: datetime(
+        2026, 6, 14, 23, 59, 59, tzinfo=timezone.utc
+    )
+    promotion = _write_promotion_evidence(module, tmp_path / "promotion.json")
+
+    with pytest.raises(module.ReleaseBundleError, match="signed before its claimed end"):
+        module._validate_promotion_evidence(
+            module._snapshot_regular_file(promotion, owner="self-dated promotion"),
             git_commit=COMMIT,
             git_tree=TREE,
             release_ref="refs/tags/v1.0.0",

@@ -127,6 +127,13 @@ class FileSnapshot(NamedTuple):
     sha256: str
 
 
+class PromotionReportArtifact(NamedTuple):
+    payload: dict[str, object]
+    report_snapshot: FileSnapshot
+    signature_snapshot: FileSnapshot
+    signature_integrated_at: datetime
+
+
 def _release_version_from_ref(release_ref: str) -> str:
     if RELEASE_REF.fullmatch(release_ref) is None:
         raise ReleaseBundleError("release ref is not an allowed stable release ref")
@@ -625,6 +632,69 @@ def _promotion_report_path(root: Path, value: object, *, owner: str) -> Path:
     return root.joinpath(*relative.parts)
 
 
+def _promotion_signature_integrated_time(
+    signature_snapshot: FileSnapshot,
+) -> datetime:
+    owner = "promotion report Sigstore bundle"
+    try:
+        bundle = _json_from_snapshot(signature_snapshot, owner=owner)
+    except ReleaseBundleError:
+        raise
+    except (ArithmeticError, RecursionError, ValueError) as error:
+        raise ReleaseBundleError(f"{owner} could not be parsed safely") from error
+    verification_material = bundle.get("verificationMaterial")
+    if not isinstance(verification_material, Mapping):
+        raise ReleaseBundleError(
+            f"{owner} has no valid Rekor verification material"
+        )
+    tlog_entries = verification_material.get("tlogEntries")
+    if not isinstance(tlog_entries, list) or not tlog_entries:
+        raise ReleaseBundleError(f"{owner} has no Rekor transparency-log entry")
+
+    integrated_times: set[int] = set()
+    for index, entry in enumerate(tlog_entries):
+        if not isinstance(entry, Mapping) or "integratedTime" not in entry:
+            raise ReleaseBundleError(
+                f"{owner} Rekor entry {index} has no integratedTime"
+            )
+        raw_integrated_time = entry.get("integratedTime")
+        if isinstance(raw_integrated_time, bool):
+            raise ReleaseBundleError(
+                f"{owner} Rekor entry {index} has a malformed integratedTime"
+            )
+        if isinstance(raw_integrated_time, int):
+            integrated_time = raw_integrated_time
+        elif isinstance(raw_integrated_time, str) and re.fullmatch(
+            r"[1-9][0-9]*", raw_integrated_time
+        ):
+            try:
+                integrated_time = int(raw_integrated_time)
+            except ValueError as error:
+                raise ReleaseBundleError(
+                    f"{owner} Rekor entry {index} has a malformed integratedTime"
+                ) from error
+        else:
+            raise ReleaseBundleError(
+                f"{owner} Rekor entry {index} has a malformed integratedTime"
+            )
+        if integrated_time <= 0:
+            raise ReleaseBundleError(
+                f"{owner} Rekor entry {index} has a malformed integratedTime"
+            )
+        integrated_times.add(integrated_time)
+
+    if len(integrated_times) != 1:
+        raise ReleaseBundleError(
+            f"{owner} contains inconsistent Rekor integratedTime values"
+        )
+    try:
+        return datetime.fromtimestamp(integrated_times.pop(), timezone.utc)
+    except (OverflowError, OSError, ValueError) as error:
+        raise ReleaseBundleError(
+            f"{owner} contains an out-of-range Rekor integratedTime"
+        ) from error
+
+
 def _verify_promotion_report_signature(
     *,
     report_snapshot: FileSnapshot,
@@ -633,7 +703,7 @@ def _verify_promotion_report_signature(
     certificate_oidc_issuer: str,
     expected_certificate_identity: str,
     cosign: str | Sequence[str],
-) -> None:
+) -> datetime:
     if certificate_identity != expected_certificate_identity:
         raise ReleaseBundleError(
             "promotion report signature identity does not match its trusted attestor"
@@ -668,6 +738,7 @@ def _verify_promotion_report_signature(
             raise ReleaseBundleError(
                 "promotion report signature verification failed"
             ) from error
+    return _promotion_signature_integrated_time(signature_snapshot)
 
 
 def _promotion_report_artifacts(
@@ -677,12 +748,12 @@ def _promotion_report_artifacts(
     candidate_ref: str,
     cosign: str | Sequence[str],
 ) -> tuple[
-    dict[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]],
+    dict[str, PromotionReportArtifact],
     tuple[FileSnapshot, ...],
 ]:
     if not isinstance(value, list) or not value:
         raise ReleaseBundleError("stable promotion evidence has no signed report artifacts")
-    reports: dict[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]] = {}
+    reports: dict[str, PromotionReportArtifact] = {}
     snapshots: list[FileSnapshot] = []
     observed_paths: set[str] = set()
     for index, raw_record in enumerate(value):
@@ -756,7 +827,7 @@ def _promotion_report_artifacts(
             f"{trusted_workflow}@"
             f"{candidate_ref}"
         )
-        _verify_promotion_report_signature(
+        signature_integrated_at = _verify_promotion_report_signature(
             report_snapshot=report_snapshot,
             signature_snapshot=signature_snapshot,
             certificate_identity=certificate_identity,
@@ -764,21 +835,35 @@ def _promotion_report_artifacts(
             expected_certificate_identity=candidate_workflow_identity,
             cosign=cosign,
         )
-        reports[digest] = (report_payload, report_snapshot, signature_snapshot)
+        reports[digest] = PromotionReportArtifact(
+            report_payload,
+            report_snapshot,
+            signature_snapshot,
+            signature_integrated_at,
+        )
         snapshots.extend((report_snapshot, signature_snapshot))
     return reports, tuple(snapshots)
 
 
+def _promotion_report_artifact(
+    reports: Mapping[str, PromotionReportArtifact],
+    digest: str,
+    *,
+    owner: str,
+) -> PromotionReportArtifact:
+    artifact = reports.get(digest)
+    if artifact is None:
+        raise ReleaseBundleError(f"{owner} does not resolve to a signed report artifact")
+    return artifact
+
+
 def _promotion_report(
-    reports: Mapping[str, tuple[dict[str, object], FileSnapshot, FileSnapshot]],
+    reports: Mapping[str, PromotionReportArtifact],
     digest: str,
     *,
     owner: str,
 ) -> dict[str, object]:
-    artifact = reports.get(digest)
-    if artifact is None:
-        raise ReleaseBundleError(f"{owner} does not resolve to a signed report artifact")
-    return artifact[0]
+    return _promotion_report_artifact(reports, digest, owner=owner).payload
 
 
 def _candidate_manifest_report(
@@ -1242,12 +1327,13 @@ def _validate_promotion_evidence(
             )
         application_ids.add(application_id)
         application_digests.add(report_digest)
+        application_artifact = _promotion_report_artifact(
+            reports,
+            report_digest,
+            owner=f"stable promotion soak application {index}",
+        )
         application_report = _require_exact_keys(
-            _promotion_report(
-                reports,
-                report_digest,
-                owner=f"stable promotion soak application {index}",
-            ),
+            application_artifact.payload,
             {"applicationId", "nontrivial", "startedAt", "endedAt"},
             owner=f"stable promotion soak application {index} report",
         )
@@ -1267,6 +1353,10 @@ def _validate_promotion_evidence(
         ):
             raise ReleaseBundleError(
                 "stable promotion soak application report does not cover the soak period"
+            )
+        if application_artifact.signature_integrated_at < application_ended_at:
+            raise ReleaseBundleError(
+                "stable promotion soak application report was signed before its claimed end"
             )
         used_report_digests.add(report_digest)
 
