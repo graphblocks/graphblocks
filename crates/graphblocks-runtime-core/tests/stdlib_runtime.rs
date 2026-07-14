@@ -73,7 +73,7 @@ fn rust_stdlib_runtime_projects_nested_node_and_input_source_paths() -> Result<(
 }
 
 #[test]
-fn rust_stdlib_runtime_rejects_unsupported_pseudo_node_edges_during_preflight() {
+fn rust_stdlib_runtime_rejects_unsupported_pseudo_node_edges_during_compilation() {
     for pseudo_node in ["$context", "$state", "$execution"] {
         for (source, target) in [
             (
@@ -102,11 +102,10 @@ fn rust_stdlib_runtime_rejects_unsupported_pseudo_node_edges_during_preflight() 
 
             let error = run_stdlib_graph_json(&graph.to_string(), "{}")
                 .expect_err("unsupported pseudo-node edges must not be silently discarded");
-            assert!(
-                error
-                    .to_string()
-                    .contains("does not support pseudo-node edge"),
-                "unexpected error for {pseudo_node}: {error}"
+            assert_eq!(
+                error.to_string(),
+                "graph did not compile: GB1020",
+                "unexpected error for {pseudo_node}"
             );
         }
     }
