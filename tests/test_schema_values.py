@@ -27,6 +27,25 @@ def test_schema_id_accepts_canonical_major_version_reference() -> None:
     assert str(schema_id) == "schemas/Message@1"
 
 
+def test_schema_id_accepts_maximum_u32_major_version() -> None:
+    schema_id = SchemaId.parse("schemas/Message@4294967295")
+
+    assert schema_id.major_version == 4294967295
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["4294967296", "9" * 10_000],
+    ids=["u32-overflow", "conversion-limit"],
+)
+def test_schema_id_rejects_major_versions_outside_u32(version: str) -> None:
+    with pytest.raises(
+        SchemaIdError,
+        match="schema id major version must be a positive integer",
+    ):
+        SchemaId.parse(f"schemas/Message@{version}")
+
+
 def test_schema_id_rejects_missing_or_invalid_version() -> None:
     with pytest.raises(SchemaIdError, match="must not be empty"):
         SchemaId.parse("")

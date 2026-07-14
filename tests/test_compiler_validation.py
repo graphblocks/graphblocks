@@ -50,6 +50,29 @@ def test_compile_allows_unknown_blocks_only_with_explicit_discovery_opt_in() -> 
     assert compile_graph(_unknown_block_graph(), allow_unknown_blocks=True).ok
 
 
+def test_compile_reports_oversized_schema_version_as_diagnostic() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "oversized-schema-version"},
+        "spec": {
+            "interface": {
+                "inputs": {"request": f"schemas/Request@{'9' * 10_000}"},
+            },
+            "nodes": {},
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB0015",
+            "graph interface input schema id is invalid: "
+            "schema id major version must be a positive integer",
+            "$.spec.interface.inputs.request",
+        )
+    ]
+
+
 def test_compile_discovery_mode_still_validates_known_builtin_blocks() -> None:
     graph = _unknown_block_graph()
     spec = graph["spec"]

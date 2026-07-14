@@ -22,6 +22,7 @@ from .canonical import (
 
 SCHEMA_MANIFEST_VERSION = 1
 MAX_RESOURCE_DOCUMENT_DEPTH = 64
+_U32_MAX_DECIMAL = "4294967295"
 
 
 class SchemaIdError(ValueError):
@@ -95,6 +96,11 @@ class SchemaId:
             raise SchemaIdError("schema id major version must be a positive integer")
         if len(version) > 1 and version.startswith("0"):
             raise SchemaIdError("schema id major version must not use leading zeroes")
+        if len(version) > len(_U32_MAX_DECIMAL) or (
+            len(version) == len(_U32_MAX_DECIMAL)
+            and version > _U32_MAX_DECIMAL
+        ):
+            raise SchemaIdError("schema id major version must be a positive integer")
 
         major_version = int(version)
         if major_version == 0:
