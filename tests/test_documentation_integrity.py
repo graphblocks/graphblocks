@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import tomllib
 
+import yaml
+
 
 ROOT = Path(__file__).parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
@@ -54,6 +56,9 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         "crates/graphblocks-runtime-core/tests/fixtures/builtin-plugin.yaml": (
             "src/graphblocks/data/builtin-plugin.yaml"
         ),
+        "crates/graphblocks-runtime-core/tests/fixtures/native-callback-runtime.json": (
+            "tck/durable/native-callback-runtime.json"
+        ),
         "crates/graphblocks-runtime-core/tests/fixtures/application-events-cases.json": (
             "tck/application-events/cases.json"
         ),
@@ -95,6 +100,7 @@ def test_rust_packages_declare_publishable_path_versions_and_bundle_local_fixtur
         "crates/graphblocks-runtime-durable/tests/fixtures/durable-cases.json": "tck/durable/cases.json",
         "crates/graphblocks-runtime-seq/tests/fixtures/sequence-cases.json": "tck/sequence/cases.json",
         "crates/graphblocks-schema/tests/fixtures/cases.json": "tck/schema/cases.json",
+        "crates/graphblocks-schema/tests/fixtures/resources.json": "tck/schema/resources.json",
         "crates/graphblocks-schema/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
         "crates/graphblocks-types/tests/fixtures/typed-values.json": "tck/schema/typed-values.json",
     }
@@ -144,3 +150,105 @@ def test_living_documentation_has_one_authority_tree() -> None:
     assert (ROOT / "src" / "graphblocks" / "data" / "package-catalog.yaml").is_file()
     assert (ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml").is_file()
     assert (ROOT / "profiles" / "policy-profiles.yaml").is_file()
+
+
+def test_stable_release_matrix_is_complete_and_machine_readable() -> None:
+    matrix = yaml.safe_load((ROOT / "docs" / "project" / "stable-release-matrix.yaml").read_text())
+    assert matrix["matrixVersion"] == 1
+    assert matrix["targetRelease"] == "1.0"
+    assert matrix["currentReadiness"] == "blocked"
+
+    tiers = {"stable", "preview", "internal", "reserved"}
+    assert set(matrix["tierDefinitions"]) == tiers
+    for section in ("artifacts", "profiles", "wireVersions", "integrations"):
+        entries = matrix[section]
+        identities = [entry["id"] for entry in entries]
+        assert len(identities) == len(set(identities)), f"duplicate {section} identity"
+        assert all(entry["tier"] in tiers for entry in entries)
+
+    artifacts = {entry["id"]: entry for entry in matrix["artifacts"]}
+    for artifact in artifacts.values():
+        if path := artifact.get("path"):
+            assert (ROOT / path).is_file(), f"missing release-matrix artifact path: {path}"
+        if source := artifact.get("source"):
+            assert source in artifacts, f"unknown release-matrix artifact source: {source}"
+
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    workspace_crates = {
+        f"crate:{Path(member).name}" for member in workspace["workspace"]["members"]
+    }
+    assert workspace_crates <= set(artifacts)
+
+    profile_catalog = yaml.safe_load(
+        (ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml").read_text()
+    )
+    catalog_profiles = {entry["id"] for entry in profile_catalog["spec"]["profiles"]}
+    assert {entry["id"] for entry in matrix["profiles"]} == catalog_profiles
+
+    stable_wires = [entry for entry in matrix["wireVersions"] if entry["tier"] == "stable"]
+    assert {entry["id"] for entry in stable_wires} == {
+        "graphblocks.ai/v1:Graph",
+        "graphblocks.ai/v1:PluginManifest",
+    }
+    assert all(entry["readiness"] == "candidate-enforced" for entry in stable_wires)
+
+    catalog = yaml.safe_load(
+        (ROOT / "src" / "graphblocks" / "data" / "package-catalog.yaml").read_text()
+    )
+    catalog_integrations = {
+        entry["name"]
+        for entry in catalog["components"]
+        if entry["stability"] in {"integration", "adapter"}
+    }
+    matrix_integrations = {entry["id"] for entry in matrix["integrations"]}
+    assert catalog_integrations <= matrix_integrations
+
+    gate_ids = [entry["id"] for entry in matrix["releaseGates"]]
+    assert len(gate_ids) == len(set(gate_ids))
+    referenced_gates = {
+        gate
+        for section in ("profiles", "wireVersions")
+        for entry in matrix[section]
+        for gate in entry.get("requiredGates", [])
+    }
+    assert referenced_gates <= set(gate_ids)
+
+    api_gate = next(entry for entry in matrix["releaseGates"] if entry["id"] == "REL-API-SNAPSHOT")
+    assert api_gate["readiness"] == "candidate-enforced"
+    assert set(api_gate["blockers"]) == {"compatibility-review"}
+    for evidence_path in api_gate["evidence"]:
+        assert (ROOT / evidence_path).is_file(), f"missing API snapshot evidence: {evidence_path}"
+
+
+def test_numeric_diagnostic_codes_have_unique_registry_entries() -> None:
+    registry = yaml.safe_load(
+        (ROOT / "docs" / "specification" / "reference" / "diagnostic-codes.yaml").read_text()
+    )
+    assert registry["registryVersion"] == 1
+    pattern = re.compile(registry["codePattern"])
+    status_values = set(registry["statusValues"])
+    tier_values = set(registry["tierValues"])
+
+    entries = registry["codes"]
+    registered = [entry["code"] for entry in entries]
+    assert len(registered) == len(set(registered))
+    for entry in entries:
+        assert pattern.fullmatch(entry["code"])
+        assert entry["status"] in status_values
+        assert entry["tier"] in tier_values
+        assert entry["defaultSeverity"] in {"error", "warning", "info"}
+        assert entry["meaning"].strip()
+
+    emitted: set[str] = set()
+    for root, suffix in (
+        (ROOT / "src", "*.py"),
+        (ROOT / "packages", "*.py"),
+        (ROOT / "crates", "*.rs"),
+    ):
+        for source in root.rglob(suffix):
+            emitted.update(re.findall(r"\bGB\d{4}\b", source.read_text(encoding="utf-8")))
+    assert emitted == set(registered)
+
+    stable_entries = [entry for entry in entries if entry["tier"] == "stable"]
+    assert stable_entries
+    assert all(entry["status"] == "active" for entry in stable_entries)

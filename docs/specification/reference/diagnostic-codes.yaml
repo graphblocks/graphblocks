@@ -1,0 +1,144 @@
+registryVersion: 1
+codePattern: '^GB[0-9]{4}$'
+authority: docs/specification/reference/diagnostic-codes.yaml
+statusValues: [candidate, active, deprecated, retired]
+tierValues: [stable, preview, internal]
+stableReleaseRules:
+  - Every diagnostic emitted by a stable surface is present in this registry.
+  - Every stable entry has status active before the 1.0 release candidate.
+  - One code identifies one invariant-level meaning and one default severity.
+  - Codes are never deleted or reused; removed codes remain with status retired.
+  - Named preview diagnostics receive a numeric allocation before their surface is promoted.
+  - A code allocation and its positive and negative fixture land with the emitting change.
+ranges:
+  - {range: GB0000-GB0999, owner: schema-and-resource-validation}
+  - {range: GB1000-GB1999, owner: graph-compiler-and-local-runtime}
+  - {range: GB2000-GB2999, owner: plugins-and-block-catalog}
+  - {range: GB3000-GB3999, owner: stable-conformance-testing}
+  - {range: GB4000-GB5999, owner: reserved}
+  - {range: GB6000-GB6999, owner: production-async-and-callbacks}
+  - {range: GB7000-GB7999, owner: remote-boundary-and-production-provenance}
+  - {range: GB8000-GB8999, owner: reserved}
+  - {range: GB9000-GB9999, owner: internal-tooling}
+
+codes:
+  - {code: GB0001, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Document kind is unsupported for the requested operation.}
+  - {code: GB0002, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Graph apiVersion is unsupported and has no applicable migration.}
+  - {code: GB0003, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Graph metadata.name is missing or invalid.}
+  - {code: GB0004, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Required resource structure is missing or the Graph spec is not a mapping.}
+  - {code: GB0005, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Graph spec.nodes is not a mapping.}
+  - {code: GB0006, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A node name is empty or is not a string.}
+  - {code: GB0007, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A user node uses the reserved pseudo-node prefix.}
+  - {code: GB0008, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A node specification is not a mapping.}
+  - {code: GB0009, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A node block reference is not a valid type-at-major identity.}
+  - {code: GB0010, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge is not a mapping.}
+  - {code: GB0011, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge source or target is not a string.}
+  - {code: GB0012, status: active, tier: stable, owner: resource-validation, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A resource envelope is not an object or lacks string apiVersion and kind fields.}
+  - {code: GB0013, status: active, tier: stable, owner: resource-validation, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A resource apiVersion and kind pair has no supported schema.}
+  - {code: GB0014, status: active, tier: stable, owner: resource-validation, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A resource violates its selected JSON Schema.}
+  - {code: GB0015, status: active, tier: stable, owner: schema-identities, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A declared schema identity is malformed or noncanonical.}
+
+  - {code: GB1001, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: warning, meaning: A graph node is disconnected.}
+  - {code: GB1002, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge or condition references an unknown node.}
+  - {code: GB1003, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A required block input has no producer.}
+  - {code: GB1004, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: warning, meaning: A graph declares outputs but no edge writes to the graph output interface.}
+  - {code: GB1006, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Connection shorthand is combined with explicit bindings.}
+  - {code: GB1011, status: active, tier: stable, owner: compiler, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Retrying an effectful node lacks an idempotency key.}
+  - {code: GB1013, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge target names an input port that does not exist.}
+  - {code: GB1014, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge or condition source names an output port that does not exist.}
+  - {code: GB1015, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An optional branch output feeds a required input.}
+  - {code: GB1016, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A required resource slot is not bound.}
+  - {code: GB1017, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Node resource bindings are malformed or name an unknown slot.}
+  - {code: GB1018, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Connected port schema types are incompatible.}
+  - {code: GB1019, status: active, tier: stable, owner: compiler, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A node flow timeout is not a positive finite duration.}
+  - {code: GB1020, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A graph endpoint or condition reference has invalid syntax or direction.}
+  - {code: GB1021, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: The graph dependency relation contains a cycle.}
+  - {code: GB1022, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A node block identity is absent from the closed block catalog.}
+  - {code: GB1023, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Explicit tool approval is not bound to an immutable argument digest.}
+  - {code: GB1024, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A policy-stopped response attempts to commit a durable result.}
+  - {code: GB1025, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Immediate draft delivery lacks incomplete or retracted draft semantics.}
+  - {code: GB1026, status: candidate, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: An async operation contract is structurally invalid or internally inconsistent.}
+  - {code: GB1027, status: candidate, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A callback subscription contract is structurally invalid or internally inconsistent.}
+  - {code: GB1028, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid draft disposition.}
+  - {code: GB1029, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid flush boundary.}
+  - {code: GB1030, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid delivery mode.}
+  - {code: GB1031, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid output disposition.}
+  - {code: GB1032, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid durable-result disposition.}
+  - {code: GB1033, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy declares an invalid enforcement point.}
+  - {code: GB1034, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy resource is structurally invalid.}
+  - {code: GB1035, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid pending-tool-call disposition.}
+  - {code: GB1036, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid provider-cancellation mode.}
+  - {code: GB1037, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition names an invalid approval mode.}
+  - {code: GB1038, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition names an invalid cancellation mode.}
+  - {code: GB1039, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition is structurally invalid or exposes execution-only details.}
+  - {code: GB1040, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition declares an invalid or inconsistent effect.}
+  - {code: GB1041, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool execution contract is structurally invalid.}
+  - {code: GB1042, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition names an invalid idempotency mode.}
+  - {code: GB1043, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool definition names an invalid result mode.}
+  - {code: GB1044, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An output policy names an invalid violation action.}
+  - {code: GB1045, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Retrying a state-changing tool lacks required idempotency.}
+  - {code: GB1046, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Required output-policy enforcement is bypassed.}
+  - {code: GB1047, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Pending tool calls can survive a policy-aborted response.}
+  - {code: GB1048, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Output-policy evaluation occurs after client delivery.}
+  - {code: GB1049, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A model-visible tool lacks an executable implementation binding.}
+  - {code: GB1050, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A model-visible tool lacks its required input schema.}
+  - {code: GB1051, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Bounded holdback delivery lacks a finite token byte or duration bound.}
+  - {code: GB1052, status: candidate, tier: preview, owner: composition, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A graph reaches compilation with unmaterialized composition or slot placeholders.}
+  - {code: GB1053, status: active, tier: stable, owner: tools, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Parallel state-changing tools lack a serialization key.}
+  - {code: GB1054, status: active, tier: stable, owner: output-policy, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Holdback bounds are configured for a delivery mode that does not hold output back.}
+  - {code: GB1055, status: candidate, tier: preview, owner: remote-boundary, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A remote inline payload exceeds its configured size boundary.}
+
+  - {code: GB2001, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest is not a mapping.}
+  - {code: GB2002, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest apiVersion is unsupported.}
+  - {code: GB2003, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest kind is not PluginManifest.}
+  - {code: GB2004, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin metadata is not a mapping.}
+  - {code: GB2005, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin spec is not a mapping.}
+  - {code: GB2006, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin identity is missing.}
+  - {code: GB2007, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin spec.blocks is not a list.}
+  - {code: GB2008, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin block descriptor is not a mapping.}
+  - {code: GB2009, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin block descriptor lacks a type identity.}
+  - {code: GB2010, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin block descriptor lacks a version.}
+  - {code: GB2011, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest repeats a block identity and version.}
+  - {code: GB2012, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A plugin manifest cannot be loaded or decoded.}
+  - {code: GB2013, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin discovery found a duplicate plugin identity and version.}
+  - {code: GB2014, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Plugin discovery found a duplicate implementation for a block identity and version.}
+  - {code: GB2015, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A block port or resource-slot descriptor is malformed.}
+  - {code: GB2016, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A block descriptor version is invalid.}
+  - {code: GB2017, status: active, tier: stable, owner: cli, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: The assembled block catalog is invalid.}
+  - {code: GB2018, status: active, tier: stable, owner: plugins, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A block descriptor lacks valid capability or configuration schema declarations.}
+  - {code: GB2019, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A graph node configuration violates its resolved block configuration schema.}
+
+  - {code: GB3001, status: active, tier: stable, owner: testing, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A compiler conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3002, status: active, tier: stable, owner: testing, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: A schema conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3003, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A runtime conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3004, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: An application-event conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3005, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A retry conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3006, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A sequence conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3007, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-execution conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3008, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-lifecycle conformance case does not satisfy its declared fixture contract.}
+  - {code: GB3009, status: active, tier: stable, owner: testing, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A tool-result conformance case does not satisfy its declared fixture contract.}
+
+  - {code: GB6001, status: active, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A callback wait lacks a timeout or explicit infinite-wait policy.}
+  - {code: GB6002, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A webhook callback subscription lacks signing configuration.}
+  - {code: GB6003, status: active, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: An async callback operation lacks an idempotency key.}
+  - {code: GB6004, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Callback delivery is configured as an authority for correctness or accounting.}
+  - {code: GB6005, status: active, tier: preview, owner: background-runs, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A background run lacks a replayable application event stream.}
+  - {code: GB6006, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Mandatory callback delivery lacks retry dead-letter or fallback behavior.}
+  - {code: GB6007, status: active, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: An async callback lacks an expected callback schema.}
+  - {code: GB6008, status: active, tier: preview, owner: async-operations, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Callback resume lacks policy budget or release-compatibility reevaluation.}
+  - {code: GB6009, status: active, tier: preview, owner: background-runs, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A background run is bound to one client connection.}
+  - {code: GB6010, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Expected callback payload size exceeds the configured inline limit.}
+  - {code: GB6011, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A webhook endpoint violates the default egress policy.}
+  - {code: GB6012, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Ordered delivery is requested from a target that cannot guarantee it.}
+  - {code: GB6013, status: active, tier: preview, owner: background-runs, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Event retention is shorter than the reconnect replay guarantee.}
+  - {code: GB6014, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A mandatory callback failure policy lacks dead-letter or fallback behavior.}
+  - {code: GB6015, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Async callback configuration lacks attempt fencing.}
+  - {code: GB6016, status: active, tier: preview, owner: callbacks, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Callback resume lacks run ownership lease or fencing protection.}
+
+  - {code: GB7001, status: active, tier: preview, owner: remote-boundary, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A remote-boundary inline value is not serializable and must use an artifact reference.}
+  - {code: GB7002, status: active, tier: preview, owner: remote-boundary, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: A remote-boundary inline value exceeds the configured size limit.}
+  - {code: GB7101, status: active, tier: preview, owner: run-provenance, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Production run provenance lacks a signed release digest.}
+  - {code: GB7102, status: active, tier: preview, owner: run-provenance, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Production run provenance lacks a physical plan hash.}
+  - {code: GB7103, status: active, tier: preview, owner: run-provenance, profile: GB-C4-PRODUCTION, defaultSeverity: error, meaning: Production run provenance lacks a release signature digest.}
+
+  - {code: GB9001, status: active, tier: internal, owner: native-cli, profile: null, defaultSeverity: error, meaning: Native tooling cannot construct the built-in block catalog.}

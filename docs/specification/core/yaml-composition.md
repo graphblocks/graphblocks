@@ -11,18 +11,22 @@ the living specification.
 
 ## Authoring boundary
 
-Composition MUST finish before authoritative graph migration, normalization,
-compilation, or hashing. Its authoring implementation MAY lower ordinary
+Composition MUST finish before authoritative graph migration, compilation, or
+hashing. Its authoring implementation MAY lower ordinary
 `inputs` and `outputs` shorthand into an edge intermediate representation while
-splicing fragment boundaries; that lowering is not a graph identity boundary.
+splicing fragment boundaries and then normalize the expanded graph; that
+lowering is not a graph identity boundary.
 A compiler that receives an unresolved `spec.composition` member or a node with
-`slot` MUST reject it with `UnexpandedComposition`. A runtime MUST NOT read
+`slot` MUST reject it with `GB1052`. A runtime MUST NOT read
 composition sources. A composed root MUST already use
 `graphblocks.ai/v1alpha3`; composition does not migrate legacy graph versions.
 
-The materialized document is a regular `graphblocks.ai/v1alpha3` `Graph`.
-`GraphFragment` is an authoring resource and MUST NOT appear in a physical plan
-or runtime document stream.
+After expansion, the implementation MUST apply the ordinary graph migration
+boundary. A stable-representable result materializes as a regular
+`graphblocks.ai/v1` `Graph`; a result containing preview-only graph fields
+remains a regular `graphblocks.ai/v1alpha3` `Graph`. `GraphFragment` is an
+authoring resource and MUST NOT appear in a physical plan or runtime document
+stream.
 
 Version 1 supports only:
 
@@ -225,7 +229,9 @@ An implementation MUST perform these operations deterministically:
    same instance prefix. Arbitrary strings in `config`, prompts, metadata, or
    bindings MUST NOT be rewritten.
 8. Remove the placeholder, `spec.composition`, and all `GraphFragment`
-   documents, then pass the expanded graph to the existing graph normalizer.
+   documents, then pass the expanded graph through ordinary graph migration and
+   normalization. Preserve `v1alpha3` only when preview-only fields prevent
+   stable migration.
 
 For example, placeholder `retrieve` containing fragment nodes `embed` and
 `search` produces `retrieve__embed` and `retrieve__search`. The example above
@@ -332,7 +338,7 @@ Composition diagnostics MUST be stable and SHOULD use these identifiers:
 - `CompositionNodeCollision`
 - `CompositionLimitExceeded`
 - `CompositionOutputError`
-- `UnexpandedComposition`
+- `GB1052`
 
 A diagnostic SHOULD identify the root-relative logical source, YAML document
 index, JSONPath, and import or placeholder expansion stack. It MUST NOT depend

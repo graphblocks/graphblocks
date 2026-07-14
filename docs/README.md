@@ -23,6 +23,7 @@ organized by audience and authority.
 - [Testing](development/testing.md)
 - [Language support](specification/conformance/language-support.md)
 - [Implementation status](project/status.md)
+- [First stable release boundary](project/first-stable-release.md)
 - [Roadmap](project/roadmap.md)
 
 ## Document authority
@@ -58,3 +59,7 @@ The Python distribution surface is deliberately smaller than the package
 catalog: `graphblocks` contains the pure-Python SDK, built-ins, CLI, and server
 contracts; `graphblocks-runtime` contains native bindings; and
 `graphblocks-testing` contains the TCK tooling.
+
+Release stability is narrower than distribution contents. Consult the
+[first stable release boundary](project/first-stable-release.md) before treating
+an artifact, profile, wire version, or integration as a compatibility promise.

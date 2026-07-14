@@ -10,7 +10,7 @@ release compatibility promise.
 | Typed code graph authoring | Implemented and mypy-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph | Implemented and trybuild-tested for the stdlib RAG vertical slice; catalog-backed and materializes a portable Graph |
 | Local runtime, cancellation, tools, budget core | Implemented | Implemented |
 | Documents, RAG, conversation reference APIs | Implemented | Selected core models/TCK behavior |
-| Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Core async/callback records and TCK behavior |
+| Accepted runs and callback resume | Reference server; process-local checkpoint continuation | Preview single-process/single-worker SQLite continuation plus core async/callback records and TCK behavior; consumes trusted pre-admission assertions and does not query policy/budget/schema/lease authorities or verify lease freshness |
 | Registered-secret signed webhook dispatch | Implemented in `graphblocks.callbacks` | Implemented in runtime-core with HMAC signing, replay verification, and egress-bound delivery hooks |
 | Bounded orchestration | Full acceptance contract, including depth/parallel limits and budget-bound leases | Core task-plan/lease contracts; not full Python parity |
 | Workspace governed commit | Implemented | Evaluation primitives only; not full commit contract |

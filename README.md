@@ -10,8 +10,9 @@ application protocols, policy and budget boundaries, package metadata, and
 conformance profiles without requiring a particular model provider, database,
 parser, server framework, or deployment platform.
 
-The project is alpha software. Compatibility is claimed by conformance profile
-and executable evidence, not by package or directory presence.
+The project is preparing its first 1.0 release candidate. Compatibility is
+claimed by conformance profile and executable evidence, not by package or
+directory presence; higher profiles and native bindings remain preview.
 
 ## What is here
 

@@ -49,4 +49,6 @@ claim.
 - [Acceptance applications](conformance/acceptance-applications.md)
 - [Language support](conformance/language-support.md)
 - [Versioning and diagnostics](reference/versioning-and-diagnostics.md)
+- [Compatibility and deprecation policy](reference/compatibility-policy.md)
+- [Diagnostic-code registry](reference/diagnostic-codes.yaml)
 - [Architecture decisions](decisions/README.md)

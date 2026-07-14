@@ -22,6 +22,20 @@ integration work.
 
 ## After MVP
 
+The machine-readable [stable release matrix](stable-release-matrix.yaml) is the
+authority for the 1.0 boundary and unmet gates. Immediate stable-core work is:
+
+1. Close and promote the Graph and PluginManifest resources to
+   `graphblocks.ai/v1`, retain golden-tested alpha migrations, and make all
+   stable readers and compilers fail closed.
+2. Finish the stable Python/CLI surface and diagnostic registries, then enforce
+   API, CLI, canonical-byte/hash, schema, and diagnostic snapshots.
+3. Run digest-bound C0/C1 conformance from installed artifacts across the
+   supported platform matrix and build the signed release evidence described in
+   the [release boundary](first-stable-release.md).
+
+The continuing stabilization tracks are:
+
 1. Replace remaining lightweight adapter contracts or test doubles with
    production external integrations only where required by a release target.
 2. Extend `graphblocks-native` adapter injection beyond the current stdlib
@@ -30,3 +44,6 @@ integration work.
    alpha or become a long-running HTTP service in the next milestone.
 4. Expand restart-durable accepted-run recovery and remote-worker claim coverage
    in deployment-like tests.
+
+These later tracks promote C2-C4, native, operator, and X1-X3 surfaces; their
+preview classification is sequencing, not abandonment.

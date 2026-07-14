@@ -1,8 +1,16 @@
 # Implementation Status
 
-GraphBlocks is source-tree alpha software. The Python implementation provides
-the broad reference surface, and Rust implements canonical schema/compiler,
-core runtime, protocol, durable, and selected extension contracts.
+GraphBlocks is pre-1.0 release-candidate software. The Python implementation
+provides the broad reference surface, and Rust implements canonical
+schema/compiler, core runtime, protocol, durable, and selected extension
+contracts.
+
+The intended 1.0 scope and its unmet gates are recorded in the
+[first stable release boundary](first-stable-release.md). The closed
+`graphblocks.ai/v1` core wire, explicit alpha migrations, compatibility
+snapshots, and candidate enforcement are implemented. Independent review,
+release-candidate soak, upgrade evidence, protected-ref signing, and authorized
+publish/rollback rehearsal remain before the stable tag.
 
 The Python release surface is consolidated into three distributions:
 `graphblocks` for the pure-Python SDK, built-ins, CLI, and server contracts;
@@ -10,7 +18,7 @@ The Python release surface is consolidated into three distributions:
 TCK. Package catalog component entries remain capability and binding identities,
 not separately published wheels.
 
-The consolidated checkout is verified by 2,625 Python tests, the complete Rust
+The consolidated checkout is verified by more than 2,700 Python tests, the complete Rust
 workspace formatting/strict-Clippy/test gates, all 42 acceptance gates, and a
 fresh no-index wheelhouse install of the three Python distributions followed by
 `pip check`.

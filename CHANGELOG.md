@@ -1,13 +1,16 @@
 # Changelog
 
 Notable project changes are documented here. GraphBlocks follows semantic
-versioning once public compatibility guarantees begin; the current series is
-pre-release alpha software.
+versioning for the explicitly listed stable surfaces; the current series is
+preparing the first 1.0 release candidate.
 
-## Unreleased
+## 1.0.0rc1 - Unreleased
 
 ### Added
 
+- Candidate-stable C0 schema/compiler and C1 local-runtime boundaries, closed
+  `graphblocks.ai/v1` Graph and PluginManifest schemas, compatibility snapshots,
+  numeric diagnostics, bundled stable TCK fixtures, and release evidence gates.
 - Deterministic local YAML composition with typed `GraphFragment` slots,
   imported bindings, materialized output, and bounded filesystem access.
 - Living English specification organized by contract domain.

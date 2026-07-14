@@ -203,3 +203,68 @@ project a paused callback-delivery state for explicit retry. The Python
 reference server retains checkpoints and executors in process; this continuation
 does not survive process restart. A restart-durable or remote-worker claim
 requires a durable runtime implementation.
+
+The native stdlib runtime provides a preview, single-process/single-worker
+SQLite continuation through `checkpointStorePath`. It does not coordinate
+concurrent workers or provide a distributed checkpoint lease/claim service.
+A graph that reaches `async.await_callback@1` with
+checkpointing enabled returns `waiting_callback`, persists the canonical
+checkpoint, and leaves the run and journal nonterminal. `asyncOperationStorePath`
+selects the SQLite async-operation receipt store and defaults to the checkpoint
+store. These options and `callbackReceipt` are available through the raw native
+JSON entry point, the Rust `StdlibRunOptions` builder, and the
+`graphblocks_runtime.run_stdlib_graph` wrapper. A later invocation with the same
+graph, inputs, `runId`, store paths, deployment provenance, and the
+shared callback receipt envelope reloads the checkpoint and may resume it. The
+checkpoint digest binds the deployment provenance so a continuation
+cannot silently cross release or physical-plan identity. The receipt must carry
+matching operation, run, node, attempt,
+provider-operation, operation-idempotency, resume-token, and schema identities;
+an explicit `schema_validated: true` assertion from a trusted schema validator;
+a canonical payload digest; and a
+`graphblocks.trusted-callback-resume-admission.v1` decision. That decision binds
+non-empty authentication, policy, and budget decision identifiers; the
+compatible release digest; run, operation, node, attempt, checkpoint, and
+checkpoint-state identities; a positive ownership fencing epoch plus owner,
+lease, and fence-token identities; and schema-verification identity to the same
+schema, payload digest, and verifier as the receipt.
+
+These are trusted pre-admission assertions, not authorities implemented by the
+native stdlib runtime. Before invoking it, the embedding ingress/coordinator
+MUST authenticate the assertion producer and MUST obtain fresh authentication,
+policy, budget, compatible-release, schema-validation, and ownership/lease
+decisions from deployment-owned authorities. The native runtime checks the
+assertion shape and its structured identity/digest bindings; it does not query
+those authorities, validate the callback payload against the referenced schema,
+or verify that the asserted lease remains fresh. Consequently this preview is
+not a multi-worker production admission boundary.
+
+The external rejection surface is deliberately non-oracular for callback
+admission: a denied assertion, unknown coordinator/operation, malformed or
+missing trusted evidence (including `schema_validated` other than the boolean
+`true`), and callback/admission identity mismatch all return the same
+`native async callback rejected` error. They do not mutate a waiting or terminal
+coordinator. Distinct runtime errors are reserved for local storage corruption,
+I/O failure, or divergence in already-authoritative persisted evidence; callers
+MUST NOT expose those operator-facing failures on an unauthenticated callback
+endpoint.
+
+The callback coordinator persists five recoverable phases:
+`waiting_evidence_pending`, `waiting_callback`,
+`callback_accepted`, `terminal_evidence_pending`, and `terminal`. On retry it
+reconstructs missing
+async-operation, run, or journal evidence from the canonical coordinator record;
+accepts only an exact persisted journal prefix bound by position and digest; and
+then advances the phase. If callback acceptance commits before the coordinator
+advances, retry verifies the persisted receipt and `CallbackResumeAuthorized`
+event against the incoming structured admission, repairs `callback_accepted`,
+and continues without accepting or journaling the callback a second time. This
+recovery retains the persisted payload for both `callback_received` and
+`resuming` operation states. A divergent prefix or persisted receipt fails
+closed. The runtime appends
+`external_callback_received` before `run_resuming`, replays completed node
+outputs without re-executing those blocks, and persists the terminal result.
+An identical callback idempotency key and payload digest returns the persisted
+result without a second resume. If resumed execution itself fails, the
+coordinator consumes the checkpoint into a terminal failed result so identical
+retries return that result rather than executing again.

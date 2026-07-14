@@ -6,16 +6,22 @@ by the matching schema under `schemas/`.
 
 ## Values and identity
 
+<a id="GB-CDM-VALUES-001"></a>
+
 An implementation MUST preserve the distinction among null, boolean, integer,
 floating-point, string, bytes/artifact reference, list, and mapping values.
 Schema validation MUST reject values that cannot be represented by the declared
 port or field type.
+
+<a id="GB-CDM-IDENTITY-001"></a>
 
 Canonical JSON MUST be deterministic across mapping order and presentation
 format. Identity digests MUST use the canonical byte representation and name
 their algorithm; GraphBlocks SHA-256 identities use the `sha256:<hex>` form.
 Digest inputs MUST exclude fields explicitly declared as signatures or computed
 identities and MUST NOT silently coerce malformed persisted data.
+
+<a id="GB-CDM-NUMBERS-001"></a>
 
 Canonical JSON numbers MUST retain their JSON type across implementations.
 Integers are emitted as their exact base-10 digits, including values outside a
@@ -36,10 +42,23 @@ distinct canonical identities.
 
 ## Versions and migration
 
+<a id="GB-CDM-MIGRATION-001"></a>
+
 Readers MUST reject unsupported `apiVersion`/`kind` pairs with a stable
 diagnostic. A migration MUST be explicit, deterministic, and preserve source
 identity and diagnostic evidence. Loading a legacy version MUST NOT silently
 claim current-version conformance.
+
+<a id="GB-CDM-MIGRATION-002"></a>
+
+A legacy resource may be rewritten to a stable version only after the complete
+migration target validates against that stable version's schema. If a preview
+field has no stable representation, migration MUST fail rather than copy the
+field into a stable envelope. A preview compiler MAY continue to process the
+original alpha envelope; its normalized result retains the alpha version and
+does not constitute stable-wire evidence.
+
+<a id="GB-CDM-NORMALIZATION-001"></a>
 
 Normalization may fill defined defaults, canonicalize unordered sets, and
 remove presentation-only differences. It MUST NOT invent provider choices,
