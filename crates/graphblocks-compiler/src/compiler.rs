@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use graphblocks_schema::{ResourceSchemaViolation, SchemaId, resource_schema_errors};
+use graphblocks_schema::{
+    ResourceSchemaViolation, SchemaId, resource_depth_violation, resource_schema_errors,
+};
 use serde_json::{Map, Value};
 
 use crate::canonical::canonical_hash;
@@ -1458,6 +1460,27 @@ pub fn compile_graph_for_discovery(document: &Value) -> Plan {
 }
 
 pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
+    if let Some(violation) = resource_depth_violation(document) {
+        let diagnostic = Diagnostic::error(
+            violation.code.as_str(),
+            violation.message.as_str(),
+            violation.path.as_str(),
+        );
+        let normalized = serde_json::json!({
+            "invalidResource": [{
+                "code": violation.code,
+                "keyword": violation.keyword,
+                "message": violation.message,
+                "path": violation.path,
+            }]
+        });
+        return Plan {
+            graph_hash: canonical_hash(&normalized),
+            normalized,
+            diagnostics: vec![diagnostic],
+        };
+    }
+
     let mut diagnostics = Vec::new();
     let migrated = migrate_graph(document);
     let document = &migrated;

@@ -1,4 +1,4 @@
-use graphblocks_schema::{SchemaIdError, TypedValue};
+use graphblocks_schema::{TypedValue, TypedValueError};
 use serde_json::Value;
 
 #[test]
@@ -51,14 +51,10 @@ fn rust_typed_values_match_shared_tck_cases() -> Result<(), String> {
     Ok(())
 }
 
-fn schema_error_name(error: &SchemaIdError) -> &'static str {
+fn schema_error_name(error: &TypedValueError) -> &'static str {
     match error {
-        SchemaIdError::Empty
-        | SchemaIdError::MissingVersion
-        | SchemaIdError::EmptyName
-        | SchemaIdError::InvalidName
-        | SchemaIdError::InvalidMajorVersion
-        | SchemaIdError::NonCanonicalVersion => "SchemaIdError",
+        TypedValueError::SchemaId(_) => "SchemaIdError",
+        TypedValueError::CanonicalJson(_) => "CanonicalJsonError",
     }
 }
 

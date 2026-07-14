@@ -1,5 +1,10 @@
-use graphblocks_compiler::canonical::{canonical_hash, canonical_json};
-use serde_json::json;
+use std::mem;
+
+use graphblocks_compiler::canonical::{
+    canonical_hash, canonical_json, try_canonical_hash, try_canonical_json,
+};
+use graphblocks_schema::{CanonicalJsonError, MAX_CANONICAL_JSON_DEPTH};
+use serde_json::{Value, json};
 
 #[test]
 fn canonical_json_sorts_object_keys_recursively() {
@@ -123,4 +128,44 @@ fn canonical_json_keeps_distinct_decimals_above_binary64_integer_precision() {
     assert_eq!(canonical_json(&right_equivalent), "9007199254740993.0");
     assert_ne!(canonical_hash(&left), canonical_hash(&right));
     assert_eq!(canonical_hash(&right), canonical_hash(&right_equivalent));
+}
+
+#[test]
+fn checked_compiler_identity_rejects_excessive_json_depth() {
+    let mut at_limit = Value::Null;
+    for _ in 0..MAX_CANONICAL_JSON_DEPTH {
+        at_limit = Value::Array(vec![at_limit]);
+    }
+    let over_limit = Value::Array(vec![at_limit.clone()]);
+
+    assert!(try_canonical_json(&at_limit).is_ok());
+    assert!(try_canonical_hash(&at_limit).is_ok());
+    assert_eq!(
+        try_canonical_json(&over_limit),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+    assert_eq!(
+        try_canonical_hash(&over_limit),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+}
+
+#[test]
+fn checked_compiler_hash_rejects_very_deep_values_without_recursive_abort() {
+    let mut value = Value::Null;
+    for _ in 0..100_000 {
+        value = Value::Array(vec![value]);
+    }
+
+    assert_eq!(
+        try_canonical_hash(&value),
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    );
+    mem::forget(value);
 }

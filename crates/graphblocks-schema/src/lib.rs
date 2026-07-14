@@ -141,22 +141,179 @@ impl Display for SchemaIdError {
 
 impl Error for SchemaIdError {}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Maximum JSON container nesting accepted by GraphBlocks identity and resource APIs.
+pub const MAX_CANONICAL_JSON_DEPTH: usize = 64;
+
+/// Maximum resource-document nesting, kept identical to canonical JSON admission.
+pub const MAX_RESOURCE_DOCUMENT_DEPTH: usize = MAX_CANONICAL_JSON_DEPTH;
+
+/// A JSON value cannot be represented by the bounded canonical identity format.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalJsonError {
+    NestingTooDeep { max_depth: usize },
+}
+
+impl Display for CanonicalJsonError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NestingTooDeep { max_depth } => write!(
+                formatter,
+                "canonical JSON nesting must not exceed {max_depth} levels"
+            ),
+        }
+    }
+}
+
+impl Error for CanonicalJsonError {}
+
+/// Typed-value construction failed schema or canonical JSON admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TypedValueError {
+    SchemaId(SchemaIdError),
+    CanonicalJson(CanonicalJsonError),
+}
+
+impl Display for TypedValueError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SchemaId(error) => Display::fmt(error, formatter),
+            Self::CanonicalJson(error) => {
+                write!(
+                    formatter,
+                    "typed value value must be canonical JSON: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TypedValueError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SchemaId(error) => Some(error),
+            Self::CanonicalJson(error) => Some(error),
+        }
+    }
+}
+
+impl From<SchemaIdError> for TypedValueError {
+    fn from(error: SchemaIdError) -> Self {
+        Self::SchemaId(error)
+    }
+}
+
+impl From<CanonicalJsonError> for TypedValueError {
+    fn from(error: CanonicalJsonError) -> Self {
+        Self::CanonicalJson(error)
+    }
+}
+
+impl PartialEq<SchemaIdError> for TypedValueError {
+    fn eq(&self, other: &SchemaIdError) -> bool {
+        matches!(self, Self::SchemaId(error) if error == other)
+    }
+}
+
+impl PartialEq<TypedValueError> for SchemaIdError {
+    fn eq(&self, other: &TypedValueError) -> bool {
+        other == self
+    }
+}
+
+#[derive(Clone, Copy)]
+enum JsonPathSegment<'a> {
+    Property(&'a str),
+    Index(usize),
+}
+
+fn excessive_json_nesting_path(
+    value: &Value,
+    initial_depth: usize,
+    max_depth: usize,
+) -> Option<Vec<JsonPathSegment<'_>>> {
+    let mut pending = vec![(value, Vec::new(), initial_depth)];
+    while let Some((value, path, depth)) = pending.pop() {
+        if depth > max_depth {
+            return Some(path);
+        }
+        match value {
+            Value::Array(values) => {
+                for (index, child) in values.iter().enumerate() {
+                    let mut child_path = path.clone();
+                    child_path.push(JsonPathSegment::Index(index));
+                    pending.push((child, child_path, depth + 1));
+                }
+            }
+            Value::Object(values) => {
+                let mut entries = values.iter().collect::<Vec<_>>();
+                entries.sort_unstable_by(|(left, _), (right, _)| right.cmp(left));
+                for (key, child) in entries {
+                    let mut child_path = path.clone();
+                    child_path.push(JsonPathSegment::Property(key));
+                    pending.push((child, child_path, depth + 1));
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    None
+}
+
+fn validate_json_depth_from(value: &Value, initial_depth: usize) -> Result<(), CanonicalJsonError> {
+    if excessive_json_nesting_path(value, initial_depth, MAX_CANONICAL_JSON_DEPTH).is_some() {
+        Err(CanonicalJsonError::NestingTooDeep {
+            max_depth: MAX_CANONICAL_JSON_DEPTH,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/// Checks canonical JSON depth without cloning or recursively traversing the value.
+pub fn validate_canonical_json_depth(value: &Value) -> Result<(), CanonicalJsonError> {
+    validate_json_depth_from(value, 0)
+}
+
+fn drop_json_value_iteratively(value: Value) {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Array(values) => pending.extend(values),
+            Value::Object(values) => pending.extend(values.into_iter().map(|(_, value)| value)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TypedValue {
     schema: SchemaId,
     value: Value,
 }
 
 impl TypedValue {
-    pub fn new(schema_id: impl AsRef<str>, value: Value) -> Result<Self, SchemaIdError> {
-        Ok(Self {
-            schema: SchemaId::parse(schema_id)?,
-            value,
-        })
+    pub fn new(schema_id: impl AsRef<str>, value: Value) -> Result<Self, TypedValueError> {
+        let schema = match SchemaId::parse(schema_id) {
+            Ok(schema) => schema,
+            Err(error) => {
+                drop_json_value_iteratively(value);
+                return Err(error.into());
+            }
+        };
+        Self::try_from_schema(schema, value).map_err(Into::into)
     }
 
     pub fn from_schema(schema: SchemaId, value: Value) -> Self {
-        Self { schema, value }
+        Self::try_from_schema(schema, value)
+            .expect("typed value value must satisfy canonical JSON depth limits")
+    }
+
+    pub fn try_from_schema(schema: SchemaId, value: Value) -> Result<Self, CanonicalJsonError> {
+        if let Err(error) = validate_canonical_json_depth(&value) {
+            drop_json_value_iteratively(value);
+            return Err(error);
+        }
+        Ok(Self { schema, value })
     }
 
     pub fn schema_id(&self) -> &SchemaId {
@@ -168,18 +325,33 @@ impl TypedValue {
     }
 
     pub fn canonical_value(&self) -> Value {
-        json!({
+        self.try_canonical_value()
+            .expect("typed value envelope must satisfy canonical JSON depth limits")
+    }
+
+    pub fn try_canonical_value(&self) -> Result<Value, CanonicalJsonError> {
+        validate_json_depth_from(&self.value, 1)?;
+        Ok(json!({
             "schema": self.schema.as_str(),
             "value": self.value,
-        })
+        }))
     }
 
     pub fn canonical_json(&self) -> String {
-        canonical_json(&self.canonical_value())
+        self.try_canonical_json()
+            .expect("typed value envelope must satisfy canonical JSON depth limits")
+    }
+
+    pub fn try_canonical_json(&self) -> Result<String, CanonicalJsonError> {
+        try_canonical_json(&self.try_canonical_value()?)
     }
 
     pub fn to_canonical_json(&self) -> String {
         self.canonical_json()
+    }
+
+    pub fn try_to_canonical_json(&self) -> Result<String, CanonicalJsonError> {
+        self.try_canonical_json()
     }
 
     pub fn into_value(self) -> Value {
@@ -187,8 +359,34 @@ impl TypedValue {
     }
 }
 
+impl<'de> Deserialize<'de> for TypedValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedValueEnvelope {
+            schema: SchemaId,
+            value: Value,
+        }
+
+        let envelope = TypedValueEnvelope::deserialize(deserializer)?;
+        Self::try_from_schema(envelope.schema, envelope.value).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Serializes a JSON value using the cross-language GraphBlocks identity format.
 pub fn canonical_json(value: &Value) -> String {
+    try_canonical_json(value).expect("value must satisfy canonical JSON depth limits")
+}
+
+/// Fallible canonical JSON serialization for values crossing an untrusted boundary.
+pub fn try_canonical_json(value: &Value) -> Result<String, CanonicalJsonError> {
+    validate_canonical_json_depth(value)?;
+    Ok(canonical_json_unchecked(value))
+}
+
+fn canonical_json_unchecked(value: &Value) -> String {
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
@@ -372,7 +570,7 @@ pub fn canonical_json(value: &Value) -> String {
                 if index > 0 {
                     output.push(',');
                 }
-                output.push_str(&canonical_json(value));
+                output.push_str(&canonical_json_unchecked(value));
             }
             output.push(']');
             output
@@ -388,7 +586,7 @@ pub fn canonical_json(value: &Value) -> String {
                 }
                 output.push_str(&Value::String(key.clone()).to_string());
                 output.push(':');
-                output.push_str(&canonical_json(value));
+                output.push_str(&canonical_json_unchecked(value));
             }
             output.push('}');
             output
@@ -535,6 +733,18 @@ mod resource_validation {
 
     impl Error for ResourceValidationError {}
 
+    /// Returns the first excessive resource nesting violation without cloning the document.
+    pub fn resource_depth_violation(document: &Value) -> Option<ResourceSchemaViolation> {
+        let path = excessive_json_nesting_path(document, 0, MAX_RESOURCE_DOCUMENT_DEPTH)?;
+        Some(resource_violation(
+            "GB0014",
+            &json_depth_path(&path),
+            "maxDepth",
+            &format!("resource nesting must not exceed {MAX_RESOURCE_DOCUMENT_DEPTH} levels"),
+            "$",
+        ))
+    }
+
     /// Returns ordered violations for a versioned GraphBlocks resource.
     ///
     /// Selection is an exact match on `apiVersion` and `kind`. Schemas are embedded
@@ -551,6 +761,10 @@ mod resource_validation {
                 "$",
             )]);
         };
+
+        if let Some(violation) = resource_depth_violation(document) {
+            return Ok(vec![violation]);
+        }
 
         let api_version = object.get("apiVersion").and_then(Value::as_str);
         let kind = object.get("kind").and_then(Value::as_str);
@@ -788,6 +1002,23 @@ mod resource_validation {
         }
     }
 
+    fn json_depth_path(path: &[JsonPathSegment<'_>]) -> String {
+        let mut output = "$".to_owned();
+        for segment in path {
+            match segment {
+                JsonPathSegment::Property(property) => {
+                    append_property_path(&mut output, property);
+                }
+                JsonPathSegment::Index(index) => {
+                    output.push('[');
+                    output.push_str(&index.to_string());
+                    output.push(']');
+                }
+            }
+        }
+        output
+    }
+
     fn json_pointer_to_path(pointer: &str, root: &Value) -> String {
         let mut output = "$".to_owned();
         let mut current = Some(root);
@@ -841,5 +1072,6 @@ mod resource_validation {
 #[cfg(feature = "resource-validation")]
 pub use resource_validation::{
     RESOURCE_SCHEMA_PATHS, ResourceSchemaDescriptor, ResourceSchemaError, ResourceSchemaViolation,
-    ResourceValidationError, resource_schema_errors, resource_schema_path, validate_resource,
+    ResourceValidationError, resource_depth_violation, resource_schema_errors,
+    resource_schema_path, validate_resource,
 };
