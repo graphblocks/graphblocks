@@ -418,6 +418,7 @@ fn task_plan_error_code(error: &TaskPlanError) -> &'static str {
         TaskPlanError::Identity { .. } => "task_identity",
         TaskPlanError::Limit { .. } => "task_limit",
         TaskPlanError::PatchMismatch { .. } => "task_patch_mismatch",
+        TaskPlanError::RevisionOverflow { .. } => "task_revision_overflow",
         TaskPlanError::StepNotFound { .. } => "task_step_not_found",
     }
 }

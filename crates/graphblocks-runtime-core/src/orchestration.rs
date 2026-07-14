@@ -288,6 +288,9 @@ pub enum TaskPlanError {
         expected_revision: u64,
         actual_revision: u64,
     },
+    RevisionOverflow {
+        revision: u64,
+    },
     StepNotFound {
         step_id: String,
     },
@@ -332,6 +335,12 @@ impl fmt::Display for TaskPlanError {
                 formatter,
                 "task plan patch mismatch: expected {expected_plan_id}@{expected_revision}, got {actual_plan_id}@{actual_revision}"
             ),
+            Self::RevisionOverflow { revision } => {
+                write!(
+                    formatter,
+                    "task plan revision {revision} cannot be incremented"
+                )
+            }
             Self::StepNotFound { step_id } => {
                 write!(formatter, "task step {step_id:?} does not exist")
             }
@@ -608,10 +617,16 @@ impl TaskPlan {
 
         let mut metadata = self.metadata.clone();
         metadata.extend(patch.metadata);
+        let next_revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(TaskPlanError::RevisionOverflow {
+                    revision: self.revision,
+                })?;
         Self::from_parts(
             self.plan_id.clone(),
             self.objective.clone(),
-            self.revision + 1,
+            next_revision,
             steps_by_id.into_values().collect(),
             metadata,
             self.limits.clone(),

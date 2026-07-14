@@ -72,6 +72,30 @@ fn task_plan_patch_rejects_duplicate_upsert_steps() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn task_plan_patch_rejects_revision_overflow() -> Result<(), Box<dyn Error>> {
+    let plan = TaskPlan::from_parts(
+        "plan-max",
+        "preserve revision safety",
+        u64::MAX,
+        Vec::new(),
+        BTreeMap::new(),
+        TaskPlanLimits::default(),
+        Vec::new(),
+        Vec::new(),
+    )?;
+
+    let error = plan
+        .apply_patch(TaskPlanPatch::new("patch-max", "plan-max", u64::MAX))
+        .expect_err("maximum task plan revision must not wrap");
+
+    assert_eq!(
+        error,
+        TaskPlanError::RevisionOverflow { revision: u64::MAX }
+    );
+    Ok(())
+}
+
+#[test]
 fn task_plan_reports_missing_dependencies_cycles_and_context_errors() -> Result<(), Box<dyn Error>>
 {
     let missing = TaskPlan::new("plan-1", "answer support request")?
