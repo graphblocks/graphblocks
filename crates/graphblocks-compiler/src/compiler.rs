@@ -3084,6 +3084,17 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     ));
                     continue;
                 }
+                if matches!(owner, "$context" | "$execution" | "$state") {
+                    let endpoint_direction = if key == "from" { "source" } else { "target" };
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        format!(
+                            "{owner} is not supported as an edge {endpoint_direction} by the local runtime"
+                        ),
+                        format!("$.spec.edges[{index}].{key}"),
+                    ));
+                    continue;
+                }
                 if key == "to" && owner == "$input" {
                     diagnostics.push(Diagnostic::error(
                         "GB1020",
@@ -3454,6 +3465,12 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             format!("$.spec.nodes.{node_name}.when"),
                         ));
                     }
+                } else if matches!(owner, "$context" | "$execution" | "$state") {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1020",
+                        format!("{owner} is not supported as a when source by the local runtime"),
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
                 } else if PSEUDO_NODES.contains(&owner) {
                     continue;
                 } else if !normalized_nodes.contains_key(owner) {

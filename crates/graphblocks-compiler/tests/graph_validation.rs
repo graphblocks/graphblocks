@@ -103,6 +103,49 @@ fn compile_graph_rejects_missing_endpoint_ports_and_invalid_pseudo_node_directio
 }
 
 #[test]
+fn compile_graph_rejects_local_runtime_unsupported_pseudo_edge_endpoints() {
+    for owner in ["$state", "$context", "$execution"] {
+        for (direction, edge, expected_path) in [
+            (
+                "source",
+                json!({"from": format!("{owner}.value"), "to": "$output.value"}),
+                "$.spec.edges[0].from",
+            ),
+            (
+                "target",
+                json!({"from": "$input.value", "to": format!("{owner}.value")}),
+                "$.spec.edges[0].to",
+            ),
+        ] {
+            let graph = json!({
+                "apiVersion": GRAPH_API_VERSION,
+                "kind": "Graph",
+                "metadata": {"name": "unsupported-pseudo-edge"},
+                "spec": {
+                    "nodes": {},
+                    "edges": [edge]
+                }
+            });
+
+            let plan = compile_graph_for_discovery(&graph);
+            let errors = plan
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .collect::<Vec<_>>();
+
+            assert_eq!(errors.len(), 1, "{owner} edge {direction}");
+            assert_eq!(errors[0].code, "GB1020");
+            assert_eq!(
+                errors[0].message,
+                format!("{owner} is not supported as an edge {direction} by the local runtime")
+            );
+            assert_eq!(errors[0].path, expected_path);
+        }
+    }
+}
+
+#[test]
 fn compile_graph_rejects_edge_and_guard_dependency_cycles() {
     let graphs = [
         json!({
@@ -252,6 +295,40 @@ fn compile_graph_rejects_malformed_and_output_when_references() {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, "GB1020");
         assert_eq!(errors[0].message, expected_message);
+        assert_eq!(errors[0].path, "$.spec.nodes.branch.when");
+    }
+}
+
+#[test]
+fn compile_graph_rejects_local_runtime_unsupported_pseudo_when_sources() {
+    for owner in ["$state", "$context", "$execution"] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "unsupported-pseudo-when"},
+            "spec": {
+                "nodes": {
+                    "branch": {
+                        "block": "test.branch@1",
+                        "when": format!("{owner}.enabled")
+                    }
+                }
+            }
+        });
+
+        let plan = compile_graph_for_discovery(&graph);
+        let errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .collect::<Vec<_>>();
+
+        assert_eq!(errors.len(), 1, "{owner} when source");
+        assert_eq!(errors[0].code, "GB1020");
+        assert_eq!(
+            errors[0].message,
+            format!("{owner} is not supported as a when source by the local runtime")
+        );
         assert_eq!(errors[0].path, "$.spec.nodes.branch.when");
     }
 }
