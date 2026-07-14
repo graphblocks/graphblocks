@@ -747,6 +747,68 @@ def test_plugin_manifest_validation_allows_descriptor_type_expressions() -> None
     assert diagnostics.ok
 
 
+def test_plugin_manifest_validation_reports_excessive_type_expression_depth() -> None:
+    type_ref = "Optional<" * 1_100 + "Any" + ">" * 1_100
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.deep_type_expression"},
+            "spec": {
+                "pluginId": "com.example.deep_type_expression",
+                "blocks": [
+                    {
+                        "typeId": "deep.block",
+                        "version": 1,
+                        "outputs": [{"name": "value", "type": type_ref}],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("GB0015", "$.spec.blocks[0].outputs[0].type")
+    ]
+    assert "nesting must not exceed 32 constructor levels" in diagnostics.diagnostics[0].message
+
+
+def test_block_catalog_rejects_excessive_type_expression_depth() -> None:
+    type_ref = "Optional<" * 1_100 + "Any" + ">" * 1_100
+
+    with pytest.raises(
+        ValueError,
+        match="type reference nesting must not exceed 32 constructor levels",
+    ):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "deep.block",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": type_ref}],
+                }
+            ]
+        )
+
+
+def test_block_catalog_allows_type_expression_at_depth_limit() -> None:
+    type_ref = "Optional<" * 32 + "Any" + ">" * 32
+
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "deep.block",
+                "version": 1,
+                "outputs": [{"name": "value", "type": type_ref}],
+            }
+        ]
+    )
+
+    descriptor = catalog.get("deep.block@1")
+    assert descriptor is not None
+    assert descriptor.outputs[0].type_ref == type_ref
+
+
 @pytest.mark.parametrize("type_ref", ["List<Any", "Tuple<Any>", "Map<String>", 42])
 def test_plugin_manifest_validation_rejects_malformed_type_expressions(type_ref: object) -> None:
     diagnostics = validate_plugin_manifest(

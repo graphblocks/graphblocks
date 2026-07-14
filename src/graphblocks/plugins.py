@@ -39,6 +39,7 @@ STATIC_MANIFEST_NAMES = {
 }
 _PRIMITIVE_TYPE_REFS = frozenset({"Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String"})
 _TYPE_CONSTRUCTOR_ARITY = {"List": 1, "Map": 2, "Optional": 1}
+_MAX_TYPE_REF_DEPTH = 32
 _OUTPUT_REQUIREDNESS_PHASES = frozenset({"initial", "resumed"})
 _OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
     {"configEquals", "phase", "all", "any", "not"}
@@ -137,7 +138,7 @@ def _freeze_json(value: object) -> object:
     return value
 
 
-def _validate_type_ref(type_ref: object) -> str:
+def _validate_type_ref(type_ref: object, *, nesting_depth: int = 0) -> str:
     if not isinstance(type_ref, str):
         raise ValueError("type reference must be a string")
     if not type_ref or type_ref != type_ref.strip() or any(character.isspace() for character in type_ref):
@@ -156,6 +157,11 @@ def _validate_type_ref(type_ref: object) -> str:
     constructor = type_ref[:opening]
     if constructor not in _TYPE_CONSTRUCTOR_ARITY:
         raise ValueError(f"unsupported type constructor {constructor!r}")
+    if nesting_depth >= _MAX_TYPE_REF_DEPTH:
+        raise ValueError(
+            "type reference nesting must not exceed "
+            f"{_MAX_TYPE_REF_DEPTH} constructor levels"
+        )
     body = type_ref[opening + 1 : -1]
     arguments: list[str] = []
     depth = 0
@@ -176,7 +182,7 @@ def _validate_type_ref(type_ref: object) -> str:
     if len(arguments) != _TYPE_CONSTRUCTOR_ARITY[constructor] or any(not argument for argument in arguments):
         raise ValueError(f"invalid type reference {type_ref!r}")
     for argument in arguments:
-        _validate_type_ref(argument)
+        _validate_type_ref(argument, nesting_depth=nesting_depth + 1)
     return type_ref
 
 
