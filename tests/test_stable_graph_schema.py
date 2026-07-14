@@ -41,6 +41,47 @@ def test_stable_graph_schema_accepts_closed_c0_c1_graph() -> None:
     validate_resource(_stable_graph())
 
 
+@pytest.mark.parametrize("retry", (100, {"maxAttempts": 100}))
+def test_stable_graph_schema_accepts_retry_attempt_limit(retry: object) -> None:
+    graph = _stable_graph()
+    graph["spec"]["nodes"]["worker"]["flow"]["retry"] = retry  # type: ignore[index]
+
+    validate_resource(graph)
+
+
+@pytest.mark.parametrize(
+    "retry",
+    (
+        101,
+        10**100,
+        {"maxAttempts": 101},
+        {"maxAttempts": 10**100},
+    ),
+)
+def test_stable_graph_schema_rejects_retry_attempts_above_limit(
+    retry: object,
+) -> None:
+    graph = _stable_graph()
+    graph["spec"]["nodes"]["worker"]["flow"]["retry"] = retry  # type: ignore[index]
+
+    violations = resource_schema_errors(graph)
+
+    assert [(violation.path, violation.keyword) for violation in violations] == [
+        ("$.spec.nodes.worker.flow.retry", "oneOf")
+    ]
+
+
+@pytest.mark.parametrize(
+    "retry",
+    (True, "100", {"maxAttempts": True}, {"maxAttempts": "100"}),
+)
+def test_stable_graph_schema_preserves_retry_type_rejection(retry: object) -> None:
+    graph = _stable_graph()
+    graph["spec"]["nodes"]["worker"]["flow"]["retry"] = retry  # type: ignore[index]
+
+    assert resource_schema_errors(graph)
+
+
 @pytest.mark.parametrize(
     "field,value",
     (

@@ -447,6 +447,69 @@ def test_compile_does_not_coerce_non_numeric_effect_retry_attempts() -> None:
         assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"]
 
 
+@pytest.mark.parametrize("retry", (100, {"maxAttempts": 100}))
+def test_preview_compile_accepts_retry_attempt_limit(retry: object) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "bounded-preview-retry"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.work@1",
+                    "flow": {"retry": retry},
+                }
+            }
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
+
+    assert "GB1008" not in [item.code for item in plan.diagnostics.diagnostics]
+
+
+@pytest.mark.parametrize(
+    ("retry", "path"),
+    (
+        (101, "$.spec.nodes.work.flow.retry"),
+        (10**100, "$.spec.nodes.work.flow.retry"),
+        ({"maxAttempts": 101}, "$.spec.nodes.work.flow.retry.maxAttempts"),
+        ({"maxAttempts": 10**100}, "$.spec.nodes.work.flow.retry.maxAttempts"),
+    ),
+)
+def test_preview_compile_rejects_retry_attempts_above_limit(
+    retry: object,
+    path: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unbounded-preview-retry"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.work@1",
+                    "flow": {"retry": retry},
+                }
+            }
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
+
+    assert [
+        (item.code, item.message, item.path)
+        for item in plan.diagnostics.diagnostics
+        if item.severity == "error"
+    ] == [
+        (
+            "GB1008",
+            "node retry attempts must not exceed 100",
+            path,
+        )
+    ]
+
+
 def test_compile_allows_effect_retry_with_idempotency_key() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

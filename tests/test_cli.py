@@ -347,7 +347,7 @@ def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifestVersion"] == 1
-    assert payload["contentDigest"] == "sha256:384fa6dca6f04990159d7589510e3ba880668660fb9160d1bff43ef59ec88882"
+    assert payload["contentDigest"] == "sha256:23b4e4a819cfff101cb8d7fb6fc943bcd3bc2c981f9a02a779a50d66fca59b45"
     assert [entry["schemaId"] for entry in payload["schemas"]] == [
         "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
         "graphblocks.ai/v1/graph.schema.json",

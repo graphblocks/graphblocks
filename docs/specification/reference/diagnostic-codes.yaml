@@ -45,6 +45,7 @@ codes:
   - {code: GB1005, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Two normalized graph edges share the same source and target identity.}
   - {code: GB1006, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Connection shorthand is combined with explicit bindings.}
   - {code: GB1007, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: Distinct normalized edge sources write the same target endpoint.}
+  - {code: GB1008, status: active, tier: stable, owner: compiler, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: A node retry policy exceeds the stable maximum attempt count.}
   - {code: GB1011, status: active, tier: stable, owner: compiler, profile: GB-C1-LOCAL-RUNTIME, defaultSeverity: error, meaning: Retrying an effectful node lacks an idempotency key.}
   - {code: GB1013, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge target names an input port that does not exist.}
   - {code: GB1014, status: active, tier: stable, owner: compiler, profile: GB-C0-SCHEMA, defaultSeverity: error, meaning: An edge or condition source names an output port that does not exist.}

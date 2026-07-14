@@ -94,11 +94,11 @@
     },
     "retry": {
       "oneOf": [
-        {"type": "integer", "minimum": 1},
+        {"type": "integer", "minimum": 1, "maximum": 100},
         {
           "type": "object",
           "properties": {
-            "maxAttempts": {"type": "integer", "minimum": 1},
+            "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 100},
             "idempotencyKey": {"$ref": "#/$defs/nonEmptyString"}
           },
           "additionalProperties": false

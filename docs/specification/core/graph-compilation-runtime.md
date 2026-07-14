@@ -158,6 +158,10 @@ an effect. An adapter that cannot cooperate MUST provide its own force-
 termination or effect-fencing boundary. A stale retry, lease holder, or fencing
 token MUST NOT mutate a newer attempt.
 
+Node retry attempts MUST be an integer from 1 through 100. Stable schemas MUST
+enforce that maximum, and compilers admitting preview or legacy graph forms
+MUST reject a larger value with `GB1008` before execution.
+
 ### Bounded work and durable state
 
 Sequences and dynamic task work MUST declare hard bounds. State mutation MUST

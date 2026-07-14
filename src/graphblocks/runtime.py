@@ -13,7 +13,11 @@ from typing import Any, Callable, Literal, Protocol
 
 from .async_operation import VALID_ASYNC_OPERATION_KINDS
 from .canonical import canonical_dumps, canonical_hash, canonical_loads
-from .compiler import STATE_CHANGING_TOOL_EFFECTS, compile_graph
+from .compiler import (
+    MAX_NODE_RETRY_ATTEMPTS,
+    STATE_CHANGING_TOOL_EFFECTS,
+    compile_graph,
+)
 from .duration import parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
@@ -103,6 +107,10 @@ class JournalStateError(RuntimeError):
 
 def _configured_retry_attempts(value: Any) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
+        if value > MAX_NODE_RETRY_ATTEMPTS:
+            raise ValueError(
+                f"node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}"
+            )
         return max(value, 1)
     return 1
 

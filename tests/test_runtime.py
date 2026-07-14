@@ -1567,6 +1567,78 @@ def test_runtime_ignores_malformed_retry_attempts_without_crashing() -> None:
     ]
 
 
+def test_runtime_allows_retry_attempt_limit() -> None:
+    attempts = {"count": 0}
+    registry = RuntimeRegistry(allow_untyped=True)
+
+    def eventually_succeeds(inputs, config, context):
+        attempts["count"] += 1
+        if attempts["count"] < 100:
+            raise RuntimeError("retry")
+        return {}
+
+    registry.register("test.eventually-succeeds@1", eventually_succeeds)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "bounded-retry-runtime"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.eventually-succeeds@1",
+                    "flow": {"retry": {"maxAttempts": 100}},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert attempts["count"] == 100
+
+
+@pytest.mark.parametrize("max_attempts", (101, 10**100))
+def test_runtime_rejects_retry_attempts_above_limit_before_loop(
+    max_attempts: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = {"count": 0}
+    registry = RuntimeRegistry(allow_untyped=True)
+
+    def must_not_run(inputs, config, context):
+        attempts["count"] += 1
+        return {}
+
+    registry.register("test.must-not-run@1", must_not_run)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unbounded-retry-runtime"},
+        "spec": {
+            "nodes": {
+                "work": {
+                    "block": "test.must-not-run@1",
+                    "flow": {"retry": {"maxAttempts": max_attempts}},
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        "graphblocks.runtime.compile_graph",
+        lambda document, **_kwargs: graphblocks.Plan(
+            document,
+            "sha256:test",
+            graphblocks.DiagnosticSet(()),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="node retry attempts must not exceed 100"):
+        InProcessRuntime(registry).run(graph, {})
+
+    assert attempts["count"] == 0
+
+
 @pytest.mark.parametrize("idempotency_key", (None, "", " ", " idem-1", {"path": "$input.request_id"}))
 def test_runtime_does_not_retry_state_changes_with_invalid_idempotency_key(
     idempotency_key: object,

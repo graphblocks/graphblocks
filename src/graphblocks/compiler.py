@@ -40,6 +40,7 @@ from .tools import (
 from .url_validation import validate_webhook_url
 
 STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
+MAX_NODE_RETRY_ATTEMPTS = 100
 FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
     {
         "credentials",
@@ -952,14 +953,30 @@ def compile_graph(
             )
         retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
         max_attempts = 1
+        max_attempts_path = f"$.spec.nodes.{node_name}.flow.retry"
         idempotency_key = None
         if isinstance(retry, dict):
-            configured_max_attempts = retry.get("maxAttempts", retry.get("max_attempts", 1))
+            max_attempts_key = (
+                "maxAttempts" if "maxAttempts" in retry else "max_attempts"
+            )
+            configured_max_attempts = retry.get(max_attempts_key, 1)
+            max_attempts_path = f"{max_attempts_path}.{max_attempts_key}"
             if isinstance(configured_max_attempts, int) and not isinstance(configured_max_attempts, bool):
                 max_attempts = configured_max_attempts
             idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
         elif isinstance(retry, int) and not isinstance(retry, bool):
             max_attempts = retry
+        if (
+            max_attempts > MAX_NODE_RETRY_ATTEMPTS
+            and migrated.get("apiVersion") != GRAPH_API_VERSION
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "GB1008",
+                    f"node retry attempts must not exceed {MAX_NODE_RETRY_ATTEMPTS}",
+                    max_attempts_path,
+                )
+            )
         effect_retry_requires_key = bool(effect_set & STATE_CHANGING_TOOL_EFFECTS)
         valid_idempotency_key = (
             isinstance(idempotency_key, str)
