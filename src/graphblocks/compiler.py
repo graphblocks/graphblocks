@@ -632,8 +632,16 @@ def _diagnose_callback_subscription_config(
     path: str,
 ) -> None:
     delivery = config.get("delivery")
-    if not isinstance(delivery, dict):
-        return
+    delivery_is_mapping = isinstance(delivery, dict)
+    if not delivery_is_mapping:
+        diagnostics.append(
+            Diagnostic(
+                "GB1027",
+                "callback subscription delivery must be a mapping",
+                f"{path}.delivery",
+            )
+        )
+        delivery = {}
     scope = config.get("scope")
     if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
         diagnostics.append(
@@ -644,7 +652,7 @@ def _diagnose_callback_subscription_config(
             )
         )
     delivery_kind = delivery.get("kind")
-    if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
+    if delivery_is_mapping and delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
         diagnostics.append(
             Diagnostic(
                 "GB1027",
@@ -763,7 +771,8 @@ def compile_graph(
     domain_violations = tuple(
         violation
         for violation in resource_schema_errors(document)
-        if violation.keyword in {"finiteNumber", "jsonObjectKey", "recursive"}
+        if violation.keyword
+        in {"finiteNumber", "jsonObjectKey", "jsonValue", "maxDepth", "recursive"}
     )
     if domain_violations:
         invalid_resource_identity = {

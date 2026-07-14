@@ -9,6 +9,7 @@ from graphblocks import (
     SchemaId,
     SchemaIdError,
     SchemaManifest,
+    SchemaManifestEntry,
     SchemaManifestError,
     TypedValue,
     compile_graph,
@@ -41,6 +42,9 @@ def test_schema_id_rejects_missing_or_invalid_version() -> None:
 
     with pytest.raises(SchemaIdError, match="leading zero"):
         SchemaId.parse("schemas/Message@01")
+
+    with pytest.raises(SchemaIdError, match="name is not canonical"):
+        SchemaId.parse("schemas/Message Type@1")
 
 
 def test_typed_value_preserves_schema_id_and_round_trips_canonical_json() -> None:
@@ -77,6 +81,19 @@ def test_typed_value_rejects_python_only_json_like_values() -> None:
 
     with pytest.raises(ValueError, match="canonical JSON"):
         TypedValue.new("schemas/Message@1", {1: "not a json object key"})
+
+
+@pytest.mark.parametrize("container_kind", ["mapping", "array"])
+def test_typed_value_rejects_recursive_values(container_kind: str) -> None:
+    if container_kind == "mapping":
+        value: object = {}
+        value["self"] = value  # type: ignore[index]
+    else:
+        value = []
+        value.append(value)  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="canonical JSON"):
+        TypedValue.new("schemas/Message@1", value)
 
 
 @pytest.mark.parametrize(
@@ -228,6 +245,79 @@ def test_schema_manifest_rejects_non_standard_json_constants(tmp_path: Path) -> 
 
     with pytest.raises(SchemaManifestError, match="strict JSON"):
         SchemaManifest.from_directory(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../schema.json", "/schema.json", "schemas//schema.json", "schemas\\schema.json", "C:/schema.json"],
+)
+def test_schema_manifest_rejects_unsafe_or_noncanonical_paths(path: str) -> None:
+    with pytest.raises(SchemaManifestError, match="safe canonical relative path"):
+        SchemaManifest(
+            (
+                SchemaManifestEntry(
+                    schema_id="example.com/schema.json",
+                    path=path,
+                    digest="sha256:" + "0" * 64,
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "digest",
+    ["sha256:abcd", "sha256:" + "A" * 64, "sha512:" + "0" * 64],
+)
+def test_schema_manifest_rejects_noncanonical_sha256_digests(digest: str) -> None:
+    with pytest.raises(SchemaManifestError, match="requires a sha256 digest"):
+        SchemaManifest(
+            (
+                SchemaManifestEntry(
+                    schema_id="example.com/schema.json",
+                    path="schemas/schema.json",
+                    digest=digest,
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize("value", [b"bytes", {"set"}, object()])
+def test_compile_graph_reports_non_json_values_as_diagnostics(value: object) -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-json-value"},
+        "spec": {"nodes": {}, "extensions": value},
+    }
+
+    plan = compile_graph(document)
+
+    assert not plan.ok
+    assert [(item.code, item.path) for item in plan.diagnostics.diagnostics] == [
+        ("GB0014", "$.spec.extensions")
+    ]
+
+
+def test_compile_graph_reports_excessive_depth_as_a_diagnostic() -> None:
+    nested: dict[str, object] = {}
+    current = nested
+    for _ in range(65):
+        child: dict[str, object] = {}
+        current["next"] = child
+        current = child
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "too-deep"},
+        "spec": {"nodes": {}, "extensions": nested},
+    }
+
+    plan = compile_graph(document)
+
+    assert not plan.ok
+    assert [(item.code, item.message) for item in plan.diagnostics.diagnostics] == [
+        ("GB0014", "resource nesting must not exceed 64 levels")
+    ]
 
 
 def test_checked_in_schema_manifest_digest_is_golden() -> None:

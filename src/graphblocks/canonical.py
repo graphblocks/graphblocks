@@ -13,6 +13,15 @@ from .migration import migrate_document
 PSEUDO_NODES = {"$input", "$output", "$state", "$context", "$execution"}
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
 def canonical_loads(value: str | bytes | bytearray) -> Any:
     return json.loads(
         value,
@@ -23,23 +32,36 @@ def canonical_loads(value: str | bytes | bytearray) -> Any:
             else Decimal(token)
         ),
         parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+        object_pairs_hook=_reject_duplicate_keys,
     )
 
 
 def canonical_dumps(value: Any) -> str:
-    pending_values: list[Any] = [value]
+    pending_values: list[tuple[Any, bool]] = [(value, False)]
+    active_containers: set[int] = set()
     occupied_strings: set[str] = set()
     has_decimal = False
     while pending_values:
-        current_value = pending_values.pop()
+        current_value, leaving = pending_values.pop()
+        if leaving:
+            active_containers.remove(id(current_value))
+            continue
         if isinstance(current_value, Mapping):
+            if id(current_value) in active_containers:
+                raise ValueError("canonical JSON values must not be recursive")
+            active_containers.add(id(current_value))
+            pending_values.append((current_value, True))
             for key, child_value in current_value.items():
                 if not isinstance(key, str):
                     raise TypeError("canonical JSON object keys must be strings")
                 occupied_strings.add(key)
-                pending_values.append(child_value)
+                pending_values.append((child_value, False))
         elif isinstance(current_value, list | tuple):
-            pending_values.extend(current_value)
+            if id(current_value) in active_containers:
+                raise ValueError("canonical JSON values must not be recursive")
+            active_containers.add(id(current_value))
+            pending_values.append((current_value, True))
+            pending_values.extend((item, False) for item in current_value)
         elif isinstance(current_value, str):
             occupied_strings.add(current_value)
         elif isinstance(current_value, Decimal):

@@ -107,6 +107,32 @@ def test_canonical_json_rejects_non_string_object_keys() -> None:
         canonical_hash({"nested": {3: "coerced"}})
 
 
+def test_canonical_json_rejects_duplicate_object_keys() -> None:
+    with pytest.raises(ValueError, match="duplicate JSON object key 'policy'"):
+        canonical_loads('{"policy":"deny","policy":"allow"}')
+
+
+@pytest.mark.parametrize("container_kind", ["mapping", "array"])
+def test_canonical_json_rejects_recursive_values(container_kind: str) -> None:
+    if container_kind == "mapping":
+        value: object = {}
+        value["self"] = value  # type: ignore[index]
+    else:
+        value = []
+        value.append(value)  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="must not be recursive"):
+        canonical_dumps(value)
+
+
+def test_canonical_json_allows_shared_non_recursive_values() -> None:
+    shared = {"value": Decimal("1.25")}
+
+    assert canonical_dumps({"left": shared, "right": shared}) == (
+        '{"left":{"value":1.25},"right":{"value":1.25}}'
+    )
+
+
 def test_canonical_json_normalizes_decimal_numbers_beyond_binary64_range() -> None:
     value = {
         "equivalent": Decimal("10e399"),
@@ -1686,6 +1712,41 @@ def test_compile_reports_invalid_callback_subscription_scope() -> None:
             errors[0].message
             == "callback subscription scope must be one of run, conversation, project, tenant, or deployment"
         )
+
+
+def test_compile_keeps_validating_callback_safety_when_delivery_is_not_a_mapping() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "malformed-authoritative-callback"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-malformed",
+                    "scope": "billing",
+                    "scopeId": "account-1",
+                    "authoritativeFor": ["billing"],
+                    "delivery": "https://127.0.0.1/events",
+                }
+            ],
+        },
+    }
+
+    errors = [
+        diagnostic
+        for diagnostic in compile_graph(
+            graph,
+            block_catalog=DISCOVERY_CATALOG,
+        ).diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ]
+
+    assert [(item.code, item.path) for item in errors] == [
+        ("GB1027", "$.spec.callbackSubscriptions[0].delivery"),
+        ("GB1027", "$.spec.callbackSubscriptions[0].scope"),
+        ("GB6004", "$.spec.callbackSubscriptions[0]"),
+    ]
 
 
 def test_compile_reports_userinfo_callback_webhook_url_as_unsafe() -> None:

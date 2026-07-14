@@ -6,7 +6,7 @@ from decimal import Decimal
 from importlib import resources
 from importlib.resources.abc import Traversable
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
 from jsonschema import Draft202012Validator
@@ -78,6 +78,8 @@ class SchemaId:
             raise SchemaIdError("schema id must not be empty")
         if raw.strip() != raw:
             raise SchemaIdError("schema id name is not canonical")
+        if any(character.isspace() for character in raw):
+            raise SchemaIdError("schema id name is not canonical")
 
         name, separator, version = raw.rpartition("@")
         if separator == "":
@@ -121,19 +123,31 @@ class TypedValue:
     value: object
 
     def __post_init__(self) -> None:
-        stack: list[object] = [self.value]
+        stack: list[tuple[object, bool]] = [(self.value, False)]
+        active_containers: set[int] = set()
         while stack:
-            current = stack.pop()
+            current, leaving = stack.pop()
+            if leaving:
+                active_containers.remove(id(current))
+                continue
             if current is None or isinstance(current, (str, bool, int, float, Decimal)):
                 continue
             if isinstance(current, list):
-                stack.extend(current)
+                if id(current) in active_containers:
+                    raise ValueError("typed value value must be canonical JSON")
+                active_containers.add(id(current))
+                stack.append((current, True))
+                stack.extend((item, False) for item in current)
                 continue
             if isinstance(current, dict):
+                if id(current) in active_containers:
+                    raise ValueError("typed value value must be canonical JSON")
+                active_containers.add(id(current))
+                stack.append((current, True))
                 for key, nested in current.items():
                     if not isinstance(key, str):
                         raise ValueError("typed value value must be canonical JSON")
-                    stack.append(nested)
+                    stack.append((nested, False))
                 continue
             raise ValueError("typed value value must be canonical JSON")
 
@@ -197,11 +211,27 @@ class SchemaManifest:
         entries = tuple(sorted(self.entries, key=lambda entry: (entry.schema_id, entry.path)))
         seen: set[str] = set()
         for entry in entries:
-            if not entry.schema_id.strip():
+            if not isinstance(entry.schema_id, str) or not entry.schema_id.strip():
                 raise SchemaManifestError("schema manifest entries require a non-empty schema id")
-            if not entry.path.strip():
+            if not isinstance(entry.path, str) or not entry.path.strip():
                 raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a relative path")
-            if not entry.digest.startswith("sha256:"):
+            path = entry.path
+            path_parts = path.split("/")
+            canonical_path = PurePosixPath(path).as_posix()
+            if (
+                path != canonical_path
+                or PurePosixPath(path).is_absolute()
+                or "\\" in path
+                or "\x00" in path
+                or any(part in {"", ".", ".."} for part in path_parts)
+                or re.match(r"^[A-Za-z]:", path) is not None
+            ):
+                raise SchemaManifestError(
+                    f"schema manifest entry {entry.schema_id} requires a safe canonical relative path"
+                )
+            if not isinstance(entry.digest, str) or re.fullmatch(
+                r"sha256:[0-9a-f]{64}", entry.digest
+            ) is None:
                 raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a sha256 digest")
             if entry.schema_id in seen:
                 raise SchemaManifestError(f"duplicate schema id {entry.schema_id}")
@@ -445,6 +475,18 @@ def resource_schema_errors(
                     path=_json_path(path),
                     keyword="finiteNumber",
                     message="resource numbers must be finite",
+                )
+            )
+        elif not (
+            value is None
+            or isinstance(value, (str, bool, int, float, Decimal))
+        ):
+            json_domain_violations.append(
+                ResourceSchemaViolation(
+                    code="GB0014",
+                    path=_json_path(path),
+                    keyword="jsonValue",
+                    message="resource values must be canonical JSON values",
                 )
             )
 
