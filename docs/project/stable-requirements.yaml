@@ -57,6 +57,7 @@ profiles:
           - GB-GCR-PREDICATES-001
           - GB-GCR-ENDPOINTS-001
           - GB-GCR-PLAN-001
+          - GB-GCR-SINGLE-WRITER-001
         implementation:
           - src/graphblocks/canonical.py
           - src/graphblocks/compiler.py
@@ -180,14 +181,18 @@ profiles:
         clauses:
           - GB-GCR-CONDITIONAL-EXECUTION-001
           - GB-GCR-TIMEOUT-RETRY-001
+          - GB-GCR-RETRY-LIMIT-001
         implementation:
           - src/graphblocks/compiler.py
           - src/graphblocks/runtime.py
           - src/graphblocks/tools.py
-        schemas: []
+        schemas:
+          - schemas/graphblocks.ai/v1/graph.schema.json
         tckSuites: [retry, sequence, tool-execution]
         evidence:
           - tests/test_runtime.py
+          - tests/test_canonical.py
+          - tests/test_stable_graph_schema.py
           - tests/test_timeout_runtime.py
           - tests/test_tool_facade.py
           - tck/retry/cases.json

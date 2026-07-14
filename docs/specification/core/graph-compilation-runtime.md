@@ -60,6 +60,8 @@ views of one connection and MUST normalize to one edge. Explicit edges remain
 independent declarations; an explicit edge matching shorthand, or another
 explicit edge, MUST fail as a duplicate edge identity.
 
+<a id="GB-GCR-SINGLE-WRITER-001"></a>
+
 Each normalized target endpoint MUST have at most one distinct source. Distinct
 sources writing the same block input or graph output MUST fail with `GB1007`.
 One source MAY fan out to multiple targets, and symmetric input-side and
@@ -157,6 +159,8 @@ the block context; cooperative blocks MUST inspect that token before committing
 an effect. An adapter that cannot cooperate MUST provide its own force-
 termination or effect-fencing boundary. A stale retry, lease holder, or fencing
 token MUST NOT mutate a newer attempt.
+
+<a id="GB-GCR-RETRY-LIMIT-001"></a>
 
 Node retry attempts MUST be an integer from 1 through 100. Stable schemas MUST
 enforce that maximum, and compilers admitting preview or legacy graph forms
