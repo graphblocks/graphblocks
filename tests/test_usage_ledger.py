@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import json
 import sqlite3
+from threading import Barrier
 
 import pytest
 
@@ -12,6 +14,7 @@ from graphblocks.usage import (
     SQLiteUsageLedger,
     UsageRecord,
     UsageRecordConflictError,
+    UsageRecordNotFoundError,
 )
 
 
@@ -460,6 +463,46 @@ def test_sqlite_usage_ledger_replays_identical_records_without_double_counting()
         ledger.append(changed)
     assert ledger.records_for_run("run-1") == [record]
     assert ledger.totals_for_run("run-1") == [_tokens("12")]
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_deduplicates_racing_identical_record_ids(
+    tmp_path,
+) -> None:
+    database = tmp_path / "concurrent-usage.sqlite3"
+    barrier = Barrier(2)
+    record = UsageRecord(
+        record_id="usage-racing",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("12")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+    )
+
+    class CoordinatedUsageLedger(SQLiteUsageLedger):
+        def get(self, record_id: str) -> UsageRecord:
+            try:
+                return super().get(record_id)
+            except UsageRecordNotFoundError:
+                barrier.wait()
+                raise
+
+    def append() -> tuple[UsageRecord, bool]:
+        ledger = CoordinatedUsageLedger(database)
+        try:
+            appended = ledger.append(record)
+            return appended, ledger._connection.in_transaction
+        finally:
+            ledger.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: append(), range(2)))
+
+    assert results == [(record, False), (record, False)]
+    ledger = SQLiteUsageLedger(database)
+    assert ledger.records_for_run("run-1") == [record]
     ledger.close()
 
 

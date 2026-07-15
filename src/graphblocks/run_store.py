@@ -476,64 +476,72 @@ class SQLiteRunStore:
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         invocation_mode = _validate_invocation_mode("run", invocation_mode)
-        row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
-        sequence = int(row[0])
-        if requested_run_id is None:
-            while True:
-                run_id = f"run-{sequence:06d}"
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            row = self.connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs"
+            ).fetchone()
+            sequence = int(row[0])
+            if requested_run_id is None:
+                while True:
+                    run_id = f"run-{sequence:06d}"
+                    existing = self.connection.execute(
+                        "SELECT 1 FROM runs WHERE run_id = ?",
+                        (run_id,),
+                    ).fetchone()
+                    if existing is None:
+                        break
+                    sequence += 1
+            else:
+                run_id = requested_run_id
                 existing = self.connection.execute(
                     "SELECT 1 FROM runs WHERE run_id = ?",
                     (run_id,),
                 ).fetchone()
-                if existing is None:
-                    break
-                sequence += 1
-        else:
-            run_id = requested_run_id
-            existing = self.connection.execute(
-                "SELECT 1 FROM runs WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
-            if existing is not None:
-                raise ValueError(f"run store run_id {run_id!r} already exists")
-        record = RunRecord(
-            run_id=run_id,
-            graph_hash=graph_hash,
-            inputs=deepcopy(inputs),
-            deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
-            invocation_mode=invocation_mode,
-            model_visible_tools=tuple(model_visible_tools),
-        )
-        self.connection.execute(
-            """
-            INSERT INTO runs (
-              run_id,
-              sequence,
-              graph_hash,
-              inputs_json,
-              deployment_provenance_json,
-              invocation_mode,
-              model_visible_tools_json,
-              status,
-              state_json,
-              state_revision
+                if existing is not None:
+                    raise ValueError(f"run store run_id {run_id!r} already exists")
+            record = RunRecord(
+                run_id=run_id,
+                graph_hash=graph_hash,
+                inputs=deepcopy(inputs),
+                deployment_provenance=deployment_provenance
+                or RunDeploymentProvenance(),
+                invocation_mode=invocation_mode,
+                model_visible_tools=tuple(model_visible_tools),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.run_id,
-                sequence,
-                record.graph_hash,
-                _dumps_strict_json(record.inputs),
-                _deployment_provenance_json(record.deployment_provenance),
-                record.invocation_mode,
-                _model_visible_tools_json(record.model_visible_tools),
-                record.status,
-                _dumps_strict_json(record.state),
-                record.state_revision,
-            ),
-        )
-        self.connection.commit()
+            self.connection.execute(
+                """
+                INSERT INTO runs (
+                  run_id,
+                  sequence,
+                  graph_hash,
+                  inputs_json,
+                  deployment_provenance_json,
+                  invocation_mode,
+                  model_visible_tools_json,
+                  status,
+                  state_json,
+                  state_revision
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    sequence,
+                    record.graph_hash,
+                    _dumps_strict_json(record.inputs),
+                    _deployment_provenance_json(record.deployment_provenance),
+                    record.invocation_mode,
+                    _model_visible_tools_json(record.model_visible_tools),
+                    record.status,
+                    _dumps_strict_json(record.state),
+                    record.state_revision,
+                ),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
         return deepcopy(record)
 
     def get_run(self, run_id: str) -> RunRecord:

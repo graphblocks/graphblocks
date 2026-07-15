@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import math
 import sqlite3
+from threading import Barrier
 
 import pytest
 
@@ -341,6 +343,27 @@ def test_sqlite_run_store_auto_ids_skip_requested_generated_ids(tmp_path) -> Non
 
     assert requested.run_id == "run-000002"
     assert generated.run_id == "run-000003"
+
+
+def test_sqlite_run_store_assigns_unique_sequences_to_concurrent_writers(
+    tmp_path,
+) -> None:
+    database = tmp_path / "concurrent-runs.sqlite3"
+    writer_count = 8
+    barrier = Barrier(writer_count)
+
+    def create_run(index: int) -> str:
+        store = SQLiteRunStore(database)
+        try:
+            barrier.wait()
+            return store.create_run(f"sha256:{index}", {}).run_id
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=writer_count) as executor:
+        run_ids = list(executor.map(create_run, range(writer_count)))
+
+    assert sorted(run_ids) == [f"run-{index:06d}" for index in range(1, 9)]
 
 
 def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) -> None:

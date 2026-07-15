@@ -398,6 +398,17 @@ class SQLiteUsageLedger:
             )
             self._connection.commit()
         except sqlite3.IntegrityError as error:
+            self._connection.rollback()
+            try:
+                existing = self.get(record.record_id)
+            except UsageRecordNotFoundError:
+                existing = None
+            if existing is not None:
+                if existing == record:
+                    return existing
+                raise UsageRecordConflictError(
+                    f"usage record {record.record_id!r} already exists"
+                ) from error
             if record.provider_response_id is not None and record.reconciliation_of is None:
                 existing = self._provider_dedupe_record(record.provider_response_id, record.attempt_id)
                 if existing is not None:

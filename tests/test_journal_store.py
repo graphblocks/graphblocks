@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import math
+from threading import Barrier
 
 import pytest
 
@@ -47,6 +49,27 @@ def test_sqlite_execution_journal_persists_records_across_instances(tmp_path) ->
     assert [record.kind for record in second.records] == ["run_started", "node_started", "run_succeeded"]
     assert second.records[2].payload == {"outputs": {"answer": "ok"}}
     assert second.terminal_kind == "run_succeeded"
+
+
+def test_sqlite_execution_journal_serializes_concurrent_sequence_assignment(
+    tmp_path,
+) -> None:
+    database = tmp_path / "concurrent-journal.sqlite3"
+    writer_count = 8
+    barrier = Barrier(writer_count)
+
+    def append(index: int) -> int:
+        journal = SQLiteExecutionJournal(database, "run-000001")
+        try:
+            barrier.wait()
+            return journal.append("node_started", {"writer": index}).sequence
+        finally:
+            journal.close()
+
+    with ThreadPoolExecutor(max_workers=writer_count) as executor:
+        sequences = list(executor.map(append, range(writer_count)))
+
+    assert sorted(sequences) == list(range(1, writer_count + 1))
 
 
 def test_sqlite_execution_journal_rejects_non_standard_payload_json_on_replay(tmp_path) -> None:

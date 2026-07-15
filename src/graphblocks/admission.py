@@ -258,6 +258,7 @@ class AdmissionTicketQueue:
 
         with self._lock:
             self._expire_locked(now_ms)
+            self._promote_locked(now_ms)
             existing_id = self._request_tickets.get((owner_id, request_id))
             if existing_id is not None:
                 existing = self._tickets[existing_id]
@@ -267,7 +268,8 @@ class AdmissionTicketQueue:
 
             self._refresh_window_locked(now_ms)
             can_admit = (
-                len(self._active) < self.max_concurrent
+                not self._pending
+                and len(self._active) < self.max_concurrent
                 and self._window_used + units <= self.rate_limit
             )
             if not can_admit and len(self._pending) >= self.max_pending:
@@ -346,6 +348,7 @@ class AdmissionTicketQueue:
         )
         now_ms = _non_negative_integer("admission queue", "now_ms", now_ms)
         with self._lock:
+            self._expire_locked(now_ms)
             ticket = self.get(ticket_id)
             self._validate_fencing_locked(ticket, fencing_token)
             if ticket.state == "running":
@@ -497,9 +500,12 @@ class AdmissionTicketQueue:
     def _expire_locked(self, now_ms: int) -> tuple[AdmissionTicket, ...]:
         expired: list[AdmissionTicket] = []
         for ticket_id, ticket in tuple(self._tickets.items()):
-            if ticket.state != "queued" or ticket.expires_at_ms > now_ms:
+            if ticket.state not in {"queued", "admitted"} or ticket.expires_at_ms > now_ms:
                 continue
-            self._pending.remove(ticket_id)
+            if ticket.state == "queued":
+                self._pending.remove(ticket_id)
+            else:
+                self._active.discard(ticket_id)
             terminal = replace(
                 ticket,
                 state="expired",
@@ -535,3 +541,4 @@ class AdmissionTicketQueue:
                     queue_position=position,
                     retry_after_ms=retry_after_ms,
                 )
+            projected_used += ticket.units

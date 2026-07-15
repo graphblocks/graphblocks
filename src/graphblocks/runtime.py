@@ -18,7 +18,7 @@ from .compiler import (
     STATE_CHANGING_TOOL_EFFECTS,
     compile_graph,
 )
-from .duration import parse_duration_seconds
+from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
 from .plugins import BlockCatalog, builtin_block_catalog
@@ -372,10 +372,17 @@ class SQLiteExecutionJournal:
             for row in rows
         ]
 
-    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+    def _append_in_transaction(
+        self,
+        kind: JournalKind,
+        payload: dict[str, Any],
+        *,
+        terminal: bool,
+    ) -> JournalRecord:
         terminal_kind = self.terminal_kind
         if terminal_kind is not None:
-            raise JournalStateError(f"cannot append {kind} after terminal {terminal_kind}")
+            action = "record terminal" if terminal else f"append {kind}"
+            raise JournalStateError(f"cannot {action} after terminal {terminal_kind}")
         sequence_column = self._sequence_column()
         row = self.connection.execute(
             f"SELECT COALESCE(MAX({sequence_column}), 0) + 1 FROM journal_records WHERE run_id = ?",
@@ -399,36 +406,45 @@ class SQLiteExecutionJournal:
                   payload_json,
                   terminal
                 )
-                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 0)
+                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
                 """,
-                (self.run_id, sequence, f"{self.run_id}:{sequence}", kind, payload_json),
+                (
+                    self.run_id,
+                    sequence,
+                    f"{self.run_id}:{sequence}",
+                    kind,
+                    payload_json,
+                    int(terminal),
+                ),
             )
         else:
             self.connection.execute(
                 """
                 INSERT INTO journal_records (run_id, sequence, kind, payload_json, terminal)
-                VALUES (?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (self.run_id, sequence, kind, payload_json),
+                (self.run_id, sequence, kind, payload_json, int(terminal)),
             )
-        self.connection.commit()
         return JournalRecord(sequence, kind, dict(payload))
 
+    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            record = self._append_in_transaction(kind, payload, terminal=False)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return record
+
     def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
-        terminal_kind = self.terminal_kind
-        if terminal_kind is not None:
-            raise JournalStateError(f"terminal already recorded as {terminal_kind}")
-        record = self.append(kind, payload)
-        sequence_column = self._sequence_column()
-        self.connection.execute(
-            f"""
-            UPDATE journal_records
-            SET terminal = 1
-            WHERE run_id = ? AND {sequence_column} = ?
-            """,
-            (self.run_id, record.sequence),
-        )
-        self.connection.commit()
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            record = self._append_in_transaction(kind, payload, terminal=True)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
         return record
 
     def close(self) -> None:
@@ -1157,6 +1173,15 @@ class InProcessRuntime:
                 "callback": callback_payload,
                 "operation": operation,
             }
+            with self._checkpoint_lock:
+                claimed_checkpoint_digest = self._checkpoint_state_digests.pop(
+                    checkpoint.checkpoint_id,
+                    None,
+                )
+            if claimed_checkpoint_digest != expected_checkpoint_digest:
+                raise ValueError(
+                    "runtime checkpoint state does not match the issuing runtime"
+                )
             try:
                 descriptor = self.registry.block_catalog.get(
                     "async.await_callback@1"
@@ -1215,11 +1240,6 @@ class InProcessRuntime:
                         current = nested
                     current[parts[-1]] = value
             except Exception as exc:
-                with self._checkpoint_lock:
-                    self._checkpoint_state_digests.pop(
-                        checkpoint.checkpoint_id,
-                        None,
-                    )
                 journal.append(
                     "node_failed",
                     {
@@ -1240,33 +1260,22 @@ class InProcessRuntime:
             remaining.remove(checkpoint.wait_node)
             if self.run_store is not None:
                 self.run_store.set_status(run_id, "resuming")
-            with self._checkpoint_lock:
-                if self._checkpoint_state_digests.get(
-                    checkpoint.checkpoint_id
-                ) != expected_checkpoint_digest:
-                    raise ValueError(
-                        "runtime checkpoint state does not match the issuing runtime"
-                    )
-                journal.append(
-                    "external_callback_received",
-                    {
-                        "operationId": operation.get("operation_id"),
-                        "callbackIdempotencyKey": callback_idempotency_key,
-                        "payloadDigest": receipt.get("payload_digest"),
-                        "verifiedBy": verified_by,
-                    },
-                )
-                journal.append(
-                    "run_resuming",
-                    {
-                        "operationId": operation.get("operation_id"),
-                        "node": checkpoint.wait_node,
-                    },
-                )
-                self._checkpoint_state_digests.pop(
-                    checkpoint.checkpoint_id,
-                    None,
-                )
+            journal.append(
+                "external_callback_received",
+                {
+                    "operationId": operation.get("operation_id"),
+                    "callbackIdempotencyKey": callback_idempotency_key,
+                    "payloadDigest": receipt.get("payload_digest"),
+                    "verifiedBy": verified_by,
+                },
+            )
+            journal.append(
+                "run_resuming",
+                {
+                    "operationId": operation.get("operation_id"),
+                    "node": checkpoint.wait_node,
+                },
+            )
 
         while remaining:
             token = context["cancellation_token"]
@@ -1348,13 +1357,44 @@ class InProcessRuntime:
                             break
                     elif source_owner in node_outputs:
                         value = node_outputs[source_owner]
+                        source_value_missing = False
                         if source_path:
                             for part in source_path.split("."):
                                 if isinstance(value, dict) and part in value:
                                     value = value[part]
                                 else:
-                                    ready = False
+                                    source_value_missing = True
                                     break
+                            if source_value_missing:
+                                target_optional = False
+                                target_descriptor = self.registry.block_catalog.get(
+                                    str(node.get("block"))
+                                )
+                                if target_descriptor is not None:
+                                    target_path = edge["to"].partition(".")[2]
+                                    target_port_name = target_path.split(".", 1)[0]
+                                    target_port = next(
+                                        (
+                                            port
+                                            for port in target_descriptor.inputs
+                                            if port.name == target_port_name
+                                        ),
+                                        None,
+                                    )
+                                    target_config = node.get("config", {})
+                                    if not isinstance(target_config, Mapping):
+                                        target_config = {}
+                                    target_optional = (
+                                        target_port is not None
+                                        and not target_port.required_for(
+                                            target_config,
+                                            phase="initial",
+                                        )
+                                    )
+                                if target_optional:
+                                    continue
+                                ready = False
+                                break
                         if not ready:
                             break
                     else:
@@ -2426,11 +2466,20 @@ def _stdlib_registry(
 
     def async_poll_operation(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         operation = dict(_required_async_operation_input(inputs, "async.poll_operation@1"))
-        interval_ms = _optional_duration_ms(config, ("intervalMs", "interval_ms", "interval"), "interval") or 30_000
-        max_interval_ms = (
-            _optional_duration_ms(config, ("maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"), "maxInterval")
-            or interval_ms
+        interval_ms = _optional_duration_ms(
+            config,
+            ("intervalMs", "interval_ms", "interval"),
+            "interval",
         )
+        if interval_ms is None:
+            interval_ms = 30_000
+        max_interval_ms = _optional_duration_ms(
+            config,
+            ("maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"),
+            "maxInterval",
+        )
+        if max_interval_ms is None:
+            max_interval_ms = interval_ms
         if max_interval_ms < interval_ms:
             raise ValueError("async.poll_operation@1 maxInterval must not be less than interval")
         timeout_ms = _optional_duration_ms(config, ("timeoutMs", "timeout_ms", "timeout"), "timeout")
@@ -2648,13 +2697,15 @@ def _stdlib_registry(
             if value > MAX_U64:
                 raise ValueError(f"async operation config.{label} must be an unsigned 64-bit duration")
             return value
-        seconds = parse_duration_seconds(value)
-        if seconds is None or seconds <= 0:
+        duration_ms = parse_duration_milliseconds(value)
+        if duration_ms is None:
+            seconds = parse_duration_seconds(value)
+            if seconds is not None and seconds * 1000 > MAX_U64:
+                raise ValueError(
+                    f"async operation config.{label} must be an unsigned 64-bit duration"
+                )
             raise ValueError(f"async operation config.{label} must be a positive duration")
-        duration_ms = seconds * 1000
-        if not math.isfinite(duration_ms) or duration_ms > MAX_U64:
-            raise ValueError(f"async operation config.{label} must be an unsigned 64-bit duration")
-        return int(duration_ms)
+        return duration_ms
 
     def _required_async_operation_input(inputs: Mapping[str, Any], block_label: str) -> dict[str, Any]:
         operation = inputs.get("operation")

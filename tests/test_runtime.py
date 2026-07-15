@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from copy import deepcopy
 from decimal import Decimal
+from threading import Barrier
 import graphblocks
 import pytest
 
 from graphblocks.leases import InMemoryLeasePool
-from graphblocks.plugins import BlockCatalog
+from graphblocks.plugins import BlockCatalog, BlockDescriptor, PortDescriptor
 from graphblocks.runtime import (
     ExecutionJournal,
     InProcessRuntime,
@@ -149,6 +151,177 @@ def test_runtime_skips_a_false_when_guard_without_invoking_the_block() -> None:
         if record.kind == "node_succeeded" and record.payload["node"] == "aBranch"
     ]
     assert skipped[0].payload["skipped"] is True
+
+
+def test_runtime_treats_condition_skipped_optional_output_as_absent() -> None:
+    observed_inputs: list[dict[str, object]] = []
+    catalog = BlockCatalog(
+        {
+            "test.condition@1": BlockDescriptor(
+                "test.condition",
+                1,
+                outputs=(PortDescriptor("enabled", "graphblocks.ai/Flag@1"),),
+            ),
+            "test.branch@1": BlockDescriptor(
+                "test.branch",
+                1,
+                outputs=(
+                    PortDescriptor(
+                        "value",
+                        "graphblocks.ai/Text@1",
+                        required=False,
+                    ),
+                ),
+            ),
+            "test.consumer@1": BlockDescriptor(
+                "test.consumer",
+                1,
+                inputs=(
+                    PortDescriptor(
+                        "value",
+                        "graphblocks.ai/Text@1",
+                        required=False,
+                    ),
+                ),
+                outputs=(PortDescriptor("observed", "graphblocks.ai/Flag@1"),),
+            ),
+        }
+    )
+    registry = RuntimeRegistry(block_catalog=catalog)
+    registry.register(
+        "test.condition@1",
+        lambda inputs, config, context: {"enabled": False},
+    )
+    registry.register(
+        "test.branch@1",
+        lambda inputs, config, context: {"value": "must-not-run"},
+    )
+
+    def consume(inputs, config, context):
+        observed_inputs.append(dict(inputs))
+        return {"observed": "value" in inputs}
+
+    registry.register("test.consumer@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "condition-skipped-optional-output"},
+        "spec": {
+            "interface": {"outputs": {"observed": "graphblocks.ai/Flag@1"}},
+            "nodes": {
+                "condition": {"block": "test.condition@1"},
+                "branch": {
+                    "block": "test.branch@1",
+                    "when": "condition.enabled",
+                },
+                "consumer": {"block": "test.consumer@1"},
+            },
+            "edges": [
+                {"from": "branch.value", "to": "consumer.value"},
+                {"from": "consumer.observed", "to": "$output.observed"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"observed": False}
+    assert observed_inputs == [{}]
+
+
+def test_runtime_treats_omitted_optional_block_output_as_absent() -> None:
+    observed_inputs: list[dict[str, object]] = []
+    catalog = BlockCatalog(
+        {
+            "test.producer@1": BlockDescriptor(
+                "test.producer",
+                1,
+                outputs=(PortDescriptor("value", required=False),),
+            ),
+            "test.consumer@1": BlockDescriptor(
+                "test.consumer",
+                1,
+                inputs=(PortDescriptor("value", required=False),),
+                outputs=(PortDescriptor("observed"),),
+            ),
+        }
+    )
+    registry = RuntimeRegistry(block_catalog=catalog)
+    registry.register("test.producer@1", lambda inputs, config, context: {})
+
+    def consume(inputs, config, context):
+        observed_inputs.append(dict(inputs))
+        return {"observed": "value" in inputs}
+
+    registry.register("test.consumer@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "omitted-optional-output"},
+        "spec": {
+            "nodes": {
+                "producer": {"block": "test.producer@1"},
+                "consumer": {"block": "test.consumer@1"},
+            },
+            "edges": [
+                {"from": "producer.value", "to": "consumer.value"},
+                {"from": "consumer.observed", "to": "$output.observed"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"observed": False}
+    assert observed_inputs == [{}]
+
+
+def test_runtime_does_not_assume_unknown_target_accepts_optional_absence() -> None:
+    consumer_calls: list[dict[str, object]] = []
+    registry = RuntimeRegistry(
+        block_catalog=BlockCatalog(
+            {
+                "test.producer@1": BlockDescriptor(
+                    "test.producer",
+                    1,
+                    outputs=(PortDescriptor("value", required=False),),
+                ),
+            },
+            allow_unknown_blocks=True,
+        ),
+        allow_untyped=True,
+    )
+    registry.register("test.producer@1", lambda inputs, config, context: {})
+
+    def consume(inputs, config, context):
+        consumer_calls.append(dict(inputs))
+        return {}
+
+    registry.register("test.consumer@1", consume)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unknown-target-optional-absence"},
+        "spec": {
+            "nodes": {
+                "producer": {"block": "test.producer@1"},
+                "consumer": {"block": "test.consumer@1"},
+            },
+            "edges": [
+                {"from": "producer.value", "to": "consumer.value"},
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.journal.records[-1].payload["error"] == (
+        "unresolved dependencies: consumer"
+    )
+    assert consumer_calls == []
 
 
 def test_runtime_fails_closed_for_a_non_boolean_when_guard() -> None:
@@ -511,6 +684,13 @@ def test_runtime_executes_conversation_vertical_slice() -> None:
 def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None:
     prepare_calls = 0
     consume_calls = 0
+    runtime_holder: dict[str, InProcessRuntime] = {}
+
+    class CheckpointClaimRunStore(InMemoryRunStore):
+        def set_status(self, run_id, status):
+            if status == "resuming":
+                assert runtime_holder["runtime"]._checkpoint_state_digests == {}
+            return super().set_status(run_id, status)
 
     def prepare(
         inputs: dict[str, object],
@@ -529,17 +709,61 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         nonlocal consume_calls
         consume_calls += 1
         assert store.get_run("run-runtime-resume-1").status == "resuming"
+        assert "optionalValue" not in inputs
         return {"result": inputs["callback"]}
 
     registry = stdlib_registry(allow_untyped=True)
     registry.register("test.prepare@1", prepare)
     registry.register("test.consume-callback@1", consume)
+    registry.register(
+        "test.condition@1",
+        lambda inputs, config, context: {"enabled": False},
+    )
+    registry.register(
+        "test.optional@1",
+        lambda inputs, config, context: {"value": "must-not-run"},
+    )
+    registry.block_catalog = BlockCatalog(
+        {
+            **registry.block_catalog.descriptors,
+            "test.prepare@1": BlockDescriptor(
+                "test.prepare",
+                1,
+                outputs=(PortDescriptor("subject"),),
+            ),
+            "test.consume-callback@1": BlockDescriptor(
+                "test.consume-callback",
+                1,
+                inputs=(
+                    PortDescriptor("callback", required=False),
+                    PortDescriptor("optionalValue", required=False),
+                ),
+                outputs=(PortDescriptor("result"),),
+            ),
+            "test.condition@1": BlockDescriptor(
+                "test.condition",
+                1,
+                outputs=(PortDescriptor("enabled"),),
+            ),
+            "test.optional@1": BlockDescriptor(
+                "test.optional",
+                1,
+                outputs=(PortDescriptor("value", required=False),),
+            ),
+        },
+        allow_unknown_blocks=True,
+    )
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
         "metadata": {"name": "runtime-callback-checkpoint"},
         "spec": {
             "nodes": {
+                "condition": {"block": "test.condition@1"},
+                "optional": {
+                    "block": "test.optional@1",
+                    "when": "condition.enabled",
+                },
                 "prepare": {"block": "test.prepare@1"},
                 "start": {
                     "block": "async.start_operation@1",
@@ -586,13 +810,16 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
                 },
                 "consume": {
                     "block": "test.consume-callback@1",
-                    "inputs": {"callback": "wait.callback"},
+                    "inputs": {
+                        "callback": "wait.callback",
+                        "optionalValue": "optional.value",
+                    },
                     "outputs": {"result": "$output.result"},
                 },
             }
         },
     }
-    store = InMemoryRunStore()
+    store = CheckpointClaimRunStore()
     journals: dict[str, ExecutionJournal] = {}
     runtime = InProcessRuntime(
         registry,
@@ -603,6 +830,7 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
             ExecutionJournal(run_id),
         ),
     )
+    runtime_holder["runtime"] = runtime
 
     waiting = runtime.run(graph, {}, run_id="run-runtime-resume-1")
 
@@ -611,6 +839,7 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     assert graphblocks.RuntimeCheckpoint is type(waiting.checkpoint)
     assert waiting.checkpoint.wait_node == "wait"
     assert waiting.checkpoint.operation["operation_id"] == "operation-runtime-resume-1"
+    assert waiting.checkpoint.node_outputs["optional"] == {}
     assert waiting.journal.records[-1].kind == "run_waiting_callback"
     assert store.get_run("run-runtime-resume-1").status == "waiting_callback"
     assert prepare_calls == 1
@@ -769,13 +998,43 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
             callback_receipt=callback_receipt,
         )
 
-    resumed = runtime.run(
-        graph,
-        {},
-        run_id="run-runtime-resume-1",
-        checkpoint=waiting.checkpoint,
-        callback_receipt=callback_receipt,
+    resume_barrier = Barrier(2)
+
+    def synchronized_callback_verifier(
+        receipt,
+        *,
+        checkpoint,
+        expected_checkpoint_digest,
+        expected_release_digest,
+    ) -> bool:
+        resume_barrier.wait()
+        return True
+
+    runtime.callback_receipt_verifier = synchronized_callback_verifier
+
+    def resume_once():
+        try:
+            return runtime.run(
+                graph,
+                {},
+                run_id="run-runtime-resume-1",
+                checkpoint=waiting.checkpoint,
+                callback_receipt=callback_receipt,
+            )
+        except ValueError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: resume_once(), range(2)))
+
+    resumed_results = [outcome for outcome in outcomes if not isinstance(outcome, ValueError)]
+    resume_errors = [outcome for outcome in outcomes if isinstance(outcome, ValueError)]
+    assert len(resumed_results) == 1
+    assert len(resume_errors) == 1
+    assert "runtime checkpoint state does not match the issuing runtime" in str(
+        resume_errors[0]
     )
+    resumed = resumed_results[0]
 
     assert resumed.status == "succeeded"
     assert resumed.outputs == {
@@ -851,6 +1110,14 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     malformed_registry = stdlib_registry(allow_untyped=True)
     malformed_registry.register("test.prepare@1", prepare)
     malformed_registry.register("test.consume-callback@1", consume)
+    malformed_registry.register(
+        "test.condition@1",
+        lambda inputs, config, context: {"enabled": False},
+    )
+    malformed_registry.register(
+        "test.optional@1",
+        lambda inputs, config, context: {"value": "must-not-run"},
+    )
     malformed_registry.replace(
         "async.await_callback@1",
         lambda inputs, config, context: {
@@ -2116,6 +2383,36 @@ def test_stdlib_async_await_callback_rejects_ambiguous_wait_bounds() -> None:
         )
 
 
+def test_stdlib_async_duration_rounds_positive_submillisecond_timeout_up() -> None:
+    operation = stdlib_registry().resolve("async.start_operation@1")(
+        {},
+        {
+            "operationId": "op-submillisecond",
+            "runId": "run-submillisecond",
+            "nodeId": "start",
+            "attemptId": "attempt-1",
+            "kind": "ci_job",
+            "providerOperationId": "provider-op-submillisecond",
+            "resumeTokenHash": VALID_RESUME_TOKEN_HASH,
+            "idempotencyKey": "idem-submillisecond",
+            "expectedSchema": "schemas/CICallback@1",
+            "createdAtUnixMs": 1_000,
+            "submittedAtUnixMs": 1_000,
+            "timeout": "0.5ms",
+            "resume": {
+                "requirePolicyReevaluation": True,
+                "requireBudgetReservation": True,
+                "requireReleaseCompatibility": True,
+                "requireOwnershipFence": True,
+            },
+            "attemptFencing": True,
+        },
+        {},
+    )["operation"]
+
+    assert operation["expires_at_unix_ms"] == 1_001
+
+
 def test_stdlib_async_await_callback_rejects_operation_without_expected_schema() -> None:
     operation = {
         "operation_id": "op-ci-1",
@@ -2813,7 +3110,7 @@ def test_stdlib_async_poll_rejects_max_interval_below_interval() -> None:
     assert "maxInterval must not be less than interval" in failed[0].payload["error"]
 
 
-def test_stdlib_async_poll_rejects_oversized_string_duration() -> None:
+def test_runtime_preflight_rejects_oversized_string_duration() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -2870,12 +3167,11 @@ def test_stdlib_async_poll_rejects_oversized_string_duration() -> None:
         },
     }
 
-    result = InProcessRuntime(stdlib_registry()).run(graph, {})
-
-    assert result.status == "failed"
-    failed = [record for record in result.journal.records if record.kind == "node_failed"]
-    assert failed[0].payload["node"] == "poll"
-    assert "timeout must be an unsigned 64-bit duration" in failed[0].payload["error"]
+    with pytest.raises(
+        ValueError,
+        match=r"GB6001 \$\.spec\.nodes\.poll\.config",
+    ):
+        InProcessRuntime(stdlib_registry()).run(graph, {})
 
 
 def test_stdlib_async_await_callback_rejects_non_boolean_checkpoint() -> None:
