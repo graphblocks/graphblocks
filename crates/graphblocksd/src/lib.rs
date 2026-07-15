@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use graphblocks_protocol::{
     WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
@@ -10,6 +11,8 @@ use graphblocks_protocol::{
     evaluate_worker_admission,
 };
 use graphblocks_runtime_core::callback_delivery::{WebhookHttpRequest, WebhookHttpResponse};
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -270,14 +273,60 @@ pub trait WebhookHttpClient {
     ) -> Result<WebhookHttpResponse, WebhookHttpClientError>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct StdWebhookHttpClient {
     timeout: Duration,
+    tls_config: Arc<ClientConfig>,
+    tls_roots: TlsRoots,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TlsRoots {
+    WebPki,
+    Custom(Vec<Vec<u8>>),
+}
+
+impl PartialEq for StdWebhookHttpClient {
+    fn eq(&self, other: &Self) -> bool {
+        self.timeout == other.timeout && self.tls_roots == other.tls_roots
+    }
+}
+
+impl Eq for StdWebhookHttpClient {}
 
 impl StdWebhookHttpClient {
     pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+        let roots = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
+        Self::with_root_store(timeout, roots, TlsRoots::WebPki)
+    }
+
+    pub fn with_root_certificates(
+        timeout: Duration,
+        certificates: impl IntoIterator<Item = Vec<u8>>,
+    ) -> Result<Self, WebhookHttpClientError> {
+        let certificates = certificates.into_iter().collect::<Vec<_>>();
+        let mut roots = RootCertStore::empty();
+        for certificate in &certificates {
+            roots
+                .add(CertificateDer::from(certificate.clone()))
+                .map_err(|error| WebhookHttpClientError::Tls(error.to_string()))?;
+        }
+        Ok(Self::with_root_store(
+            timeout,
+            roots,
+            TlsRoots::Custom(certificates),
+        ))
+    }
+
+    fn with_root_store(timeout: Duration, roots: RootCertStore, tls_roots: TlsRoots) -> Self {
+        let tls_config = ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Self {
+            timeout,
+            tls_config: Arc::new(tls_config),
+            tls_roots,
+        }
     }
 }
 
@@ -360,18 +409,54 @@ impl WebhookHttpClient for StdWebhookHttpClient {
         wire.push_str("\r\n");
         wire.push_str(&body);
 
-        stream
-            .write_all(wire.as_bytes())
-            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
-        stream
-            .flush()
-            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
-
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+        let response = if endpoint.use_tls {
+            let server_name = ServerName::try_from(endpoint.server_name.clone())
+                .map_err(|_| WebhookHttpClientError::MalformedUrl)?;
+            let connection = ClientConnection::new(self.tls_config.clone(), server_name)
+                .map_err(|error| WebhookHttpClientError::Tls(error.to_string()))?;
+            let mut stream = StreamOwned::new(connection, stream);
+            exchange_http(&mut stream, &wire)?
+        } else {
+            exchange_http(&mut stream, &wire)?
+        };
         parse_http_response(&response)
+    }
+}
+
+fn exchange_http(
+    stream: &mut (impl Read + Write),
+    wire: &str,
+) -> Result<String, WebhookHttpClientError> {
+    const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+
+    stream
+        .write_all(wire.as_bytes())
+        .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+    stream
+        .flush()
+        .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+        if read == 0 {
+            return Err(WebhookHttpClientError::MalformedResponse);
+        }
+        response.extend_from_slice(&buffer[..read]);
+        if let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") {
+            let header_end = header_end + 4;
+            if header_end > MAX_RESPONSE_HEADER_BYTES {
+                return Err(WebhookHttpClientError::ResponseHeadersTooLarge);
+            }
+            return String::from_utf8(response[..header_end].to_vec())
+                .map_err(|_| WebhookHttpClientError::MalformedResponse);
+        }
+        if response.len() > MAX_RESPONSE_HEADER_BYTES {
+            return Err(WebhookHttpClientError::ResponseHeadersTooLarge);
+        }
     }
 }
 
@@ -385,33 +470,47 @@ pub enum WebhookHttpClientError {
     InvalidHeader,
     MissingValidatedAddress,
     Connect(String),
+    Tls(String),
     Transport(String),
+    ResponseHeadersTooLarge,
     MalformedResponse,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedHttpEndpoint {
     host_header: String,
+    server_name: String,
     port: u16,
     path_and_query: String,
+    use_tls: bool,
 }
 
 fn parse_http_url(url: &str) -> Result<ParsedHttpEndpoint, WebhookHttpClientError> {
     if url.trim().is_empty() {
         return Err(WebhookHttpClientError::EmptyUrl);
     }
-    if let Some(_rest) = url.strip_prefix("https://") {
-        return Err(WebhookHttpClientError::UnsupportedScheme(
-            "https".to_owned(),
-        ));
+    let (rest, default_port, use_tls) = if let Some(rest) = url.strip_prefix("https://") {
+        (rest, 443, true)
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        (rest, 80, false)
+    } else if let Some((scheme, _)) = url.split_once("://") {
+        return Err(WebhookHttpClientError::UnsupportedScheme(scheme.to_owned()));
+    } else {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    };
+    if rest.contains('#') {
+        return Err(WebhookHttpClientError::MalformedUrl);
     }
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or(WebhookHttpClientError::MalformedUrl)?;
     let (authority, path_and_query) = rest
-        .split_once('/')
-        .map_or((rest, "/".to_owned()), |(authority, path)| {
-            (authority, format!("/{path}"))
+        .char_indices()
+        .find(|(_, character)| matches!(character, '/' | '?'))
+        .map_or((rest, "/".to_owned()), |(index, character)| {
+            let path_and_query = if character == '?' {
+                format!("/{}", &rest[index..])
+            } else {
+                rest[index..].to_owned()
+            };
+            (&rest[..index], path_and_query)
         });
     if path_and_query.bytes().any(|byte| byte <= 32 || byte == 127) {
         return Err(WebhookHttpClientError::MalformedUrl);
@@ -419,15 +518,20 @@ fn parse_http_url(url: &str) -> Result<ParsedHttpEndpoint, WebhookHttpClientErro
     if authority.is_empty() || authority.contains('@') {
         return Err(WebhookHttpClientError::MalformedUrl);
     }
-    let (_host, port) = parse_authority(authority)?;
+    let (server_name, port) = parse_authority(authority, default_port)?;
     Ok(ParsedHttpEndpoint {
         host_header: authority.to_owned(),
+        server_name,
         port,
         path_and_query,
+        use_tls,
     })
 }
 
-fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientError> {
+fn parse_authority(
+    authority: &str,
+    default_port: u16,
+) -> Result<(String, u16), WebhookHttpClientError> {
     if let Some(rest) = authority.strip_prefix('[') {
         let (host, suffix) = rest
             .split_once(']')
@@ -438,7 +542,7 @@ fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientEr
         let port = if let Some(port) = suffix.strip_prefix(':') {
             parse_port(port)?
         } else if suffix.is_empty() {
-            80
+            default_port
         } else {
             return Err(WebhookHttpClientError::MalformedUrl);
         };
@@ -446,7 +550,7 @@ fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientEr
     }
     let (host, port) = authority
         .split_once(':')
-        .map_or(Ok((authority, 80)), |(host, port)| {
+        .map_or(Ok((authority, default_port)), |(host, port)| {
             Ok((host, parse_port(port)?))
         })?;
     if host.is_empty() || host.contains(':') {
@@ -486,6 +590,13 @@ fn validate_header(name: &str, value: &str) -> Result<(), WebhookHttpClientError
 }
 
 fn parse_http_response(response: &str) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
+    parse_http_response_at(response, SystemTime::now())
+}
+
+fn parse_http_response_at(
+    response: &str,
+    now: SystemTime,
+) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
     let header_end = response
         .find("\r\n\r\n")
         .ok_or(WebhookHttpClientError::MalformedResponse)?;
@@ -504,16 +615,67 @@ fn parse_http_response(response: &str) -> Result<WebhookHttpResponse, WebhookHtt
         if !name.eq_ignore_ascii_case("retry-after") {
             return None;
         }
-        value
-            .trim()
-            .parse::<u64>()
-            .ok()
-            .map(|seconds| seconds.saturating_mul(1_000))
+        retry_after_milliseconds(value.trim(), now)
     });
     Ok(WebhookHttpResponse {
         status,
         retry_after_ms,
     })
+}
+
+fn retry_after_milliseconds(value: &str, now: SystemTime) -> Option<u64> {
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds.saturating_mul(1_000));
+    }
+    let retry_at = httpdate::parse_http_date(value).ok()?;
+    let delay = retry_at.duration_since(now).unwrap_or_default();
+    Some(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
+}
+
+#[cfg(test)]
+mod webhook_http_client_tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::parse_http_response_at;
+
+    #[test]
+    fn retry_after_http_date_uses_reference_time_and_saturates_past_dates() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_445_412_478);
+        let future = parse_http_response_at(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2015 07:28:00 GMT\r\n\r\n",
+            now,
+        )
+        .expect("future HTTP date parses");
+        assert_eq!(future.retry_after_ms, Some(2_000));
+
+        let past = parse_http_response_at(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: Wed, 21 Oct 2015 07:27:00 GMT\r\n\r\n",
+            now,
+        )
+        .expect("past HTTP date parses");
+        assert_eq!(past.retry_after_ms, Some(0));
+    }
+
+    #[test]
+    fn retry_after_seconds_and_invalid_dates_remain_safe() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_445_412_478);
+        let saturated = parse_http_response_at(
+            &format!(
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {}\r\n\r\n",
+                u64::MAX
+            ),
+            now,
+        )
+        .expect("integer Retry-After parses");
+        assert_eq!(saturated.retry_after_ms, Some(u64::MAX));
+
+        let invalid = parse_http_response_at(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: not-a-date\r\n\r\n",
+            now,
+        )
+        .expect("invalid Retry-After does not invalidate the response");
+        assert_eq!(invalid.retry_after_ms, None);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

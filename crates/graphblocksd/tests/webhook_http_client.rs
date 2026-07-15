@@ -1,16 +1,20 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use graphblocks_runtime_core::callback_delivery::WebhookHttpRequest;
 use graphblocksd::{StdWebhookHttpClient, WebhookHttpClient, WebhookHttpClientError};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use serde_json::json;
 
 const VALIDATED_TEST_ADDRESSES: [IpAddr; 1] = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
 
-fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+fn read_http_request(stream: &mut impl Read) -> String {
     let mut received = Vec::new();
     let mut buffer = [0_u8; 1024];
     loop {
@@ -35,6 +39,85 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> String {
             return String::from_utf8(received).expect("request should be utf8");
         }
     }
+}
+
+#[test]
+fn std_webhook_http_client_delivers_https_to_validated_address() {
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["callbacks.example.test".to_string()])
+            .expect("test certificate generates");
+    let certificate = cert.der().clone();
+    let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der()));
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], private_key)
+        .expect("TLS server config is valid");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let listener_address = listener.local_addr().expect("listener has address");
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("client connects");
+        let connection =
+            ServerConnection::new(Arc::new(server_config)).expect("TLS connection initializes");
+        let mut stream = StreamOwned::new(connection, stream);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /?delivery=del-1 HTTP/1.1\r\n"));
+        assert!(request.contains(&format!(
+            "\r\nHost: callbacks.example.test:{}\r\n",
+            listener_address.port(),
+        )));
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+            .expect("response writes");
+    });
+    let request = WebhookHttpRequest {
+        url: format!(
+            "https://callbacks.example.test:{}?delivery=del-1",
+            listener_address.port(),
+        ),
+        method: "POST".to_owned(),
+        headers: BTreeMap::new(),
+        body: json!({"secure": true}),
+    };
+    let mut client = StdWebhookHttpClient::with_root_certificates(
+        Duration::from_secs(2),
+        [certificate.as_ref().to_vec()],
+    )
+    .expect("test root is valid");
+
+    let response = client
+        .send(request, &[listener_address.ip()])
+        .expect("HTTPS request succeeds over the validated address");
+
+    assert_eq!(response.status, 204);
+    server.join().expect("server joins");
+}
+
+#[test]
+fn std_webhook_http_client_supports_http_query_without_path() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let listener_address = listener.local_addr().expect("listener has address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("client connects");
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /?delivery=del-1 HTTP/1.1\r\n"));
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+            .expect("response writes");
+    });
+    let request = WebhookHttpRequest {
+        url: format!("http://{listener_address}?delivery=del-1"),
+        method: "POST".to_owned(),
+        headers: BTreeMap::new(),
+        body: json!({}),
+    };
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+
+    let response = client
+        .send(request, &[listener_address.ip()])
+        .expect("query-only HTTP URL succeeds");
+
+    assert_eq!(response.status, 204);
+    server.join().expect("server joins");
 }
 
 #[test]
@@ -76,6 +159,32 @@ fn std_webhook_http_client_posts_canonical_json_and_parses_retry_after() {
 }
 
 #[test]
+fn std_webhook_http_client_rejects_oversized_response_headers() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
+    let listener_address = listener.local_addr().expect("listener has address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("client connects");
+        let _request = read_http_request(&mut stream);
+        let mut response = b"HTTP/1.1 200 OK\r\nX-Oversized: ".to_vec();
+        response.extend(std::iter::repeat_n(b'a', 65 * 1024));
+        stream.write_all(&response).expect("response writes");
+    });
+    let request = WebhookHttpRequest {
+        url: format!("http://{listener_address}/callbacks/deliveries"),
+        method: "POST".to_owned(),
+        headers: BTreeMap::new(),
+        body: json!({}),
+    };
+    let mut client = StdWebhookHttpClient::new(Duration::from_secs(2));
+
+    assert_eq!(
+        client.send(request, &[listener_address.ip()]),
+        Err(WebhookHttpClientError::ResponseHeadersTooLarge),
+    );
+    server.join().expect("server joins");
+}
+
+#[test]
 fn std_webhook_http_client_connects_only_to_validated_address() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("listener binds");
     let address = listener.local_addr().expect("listener has address");
@@ -113,7 +222,7 @@ fn std_webhook_http_client_connects_only_to_validated_address() {
 #[test]
 fn std_webhook_http_client_rejects_unsupported_scheme_before_network_io() {
     let request = WebhookHttpRequest {
-        url: "https://callbacks.example.test/events".to_owned(),
+        url: "ftp://callbacks.example.test/events".to_owned(),
         method: "POST".to_owned(),
         headers: BTreeMap::new(),
         body: json!({}),
@@ -122,9 +231,7 @@ fn std_webhook_http_client_rejects_unsupported_scheme_before_network_io() {
 
     assert_eq!(
         client.send(request, &VALIDATED_TEST_ADDRESSES),
-        Err(WebhookHttpClientError::UnsupportedScheme(
-            "https".to_owned()
-        )),
+        Err(WebhookHttpClientError::UnsupportedScheme("ftp".to_owned())),
     );
 }
 
@@ -183,6 +290,8 @@ fn std_webhook_http_client_rejects_malformed_request_target_before_network_io() 
         "http://127.0.0.1:9/callback\r\nX-Injected: true",
         "http://127.0.0.1:9/callback\ttrail",
         "http://127.0.0.1:9/callback with space",
+        "http://127.0.0.1:9/callback#fragment",
+        "https://callbacks.example.test?delivery=del-1#fragment",
     ] {
         let request = WebhookHttpRequest {
             url: url.to_owned(),

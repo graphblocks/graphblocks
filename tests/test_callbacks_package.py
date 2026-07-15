@@ -1461,6 +1461,16 @@ def test_webhook_response_classification_parses_retry_after() -> None:
     assert decision.reason == "rate_limited"
 
 
+def test_webhook_response_classification_parses_http_date_retry_after() -> None:
+    decision = classify_webhook_response(
+        429,
+        headers={"Retry-After": "Wed, 15 Jul 2026 07:28:00 GMT"},
+        received_at="2026-07-15T07:27:45Z",
+    )
+
+    assert decision.retry_after == "2026-07-15T07:28:00.000Z"
+
+
 def test_webhook_response_decision_rejects_malformed_retry_after() -> None:
     _assert_raises_value_error(
         "retry_after must be an ISO-8601 datetime",

@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import hmac
 import json
 import math
@@ -292,7 +293,13 @@ def _retry_after_timestamp(headers: Mapping[str, str] | None, received_at: str |
     try:
         retry_at = _parse_utc_timestamp(retry_after)
     except ValueError:
-        return None
+        try:
+            retry_at = parsedate_to_datetime(retry_after)
+        except (TypeError, ValueError):
+            return None
+        if retry_at.tzinfo is None:
+            return None
+        retry_at = retry_at.astimezone(timezone.utc)
     received = _parse_utc_timestamp(_utc_now_iso() if received_at is None else received_at)
     if retry_at <= received:
         return None
