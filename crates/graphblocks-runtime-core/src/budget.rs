@@ -315,8 +315,12 @@ impl BudgetPermit {
             return false;
         }
 
-        let authorized = amounts_to_map(authorized_amounts);
-        let requested = amounts_to_map(requested_amounts);
+        let (Ok(authorized), Ok(requested)) = (
+            amounts_to_map(authorized_amounts),
+            amounts_to_map(requested_amounts),
+        ) else {
+            return false;
+        };
         requested
             .iter()
             .all(|(key, amount)| *amount <= authorized.get(key).copied().unwrap_or(0))
@@ -390,7 +394,7 @@ impl InMemoryBudgetLedger {
 
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let allocated = amounts_to_map(amounts);
+        let allocated = amounts_to_map(amounts)?;
         let account = BudgetAccount {
             budget_id: budget_id.clone(),
             scope: scope.into(),
@@ -426,7 +430,7 @@ impl InMemoryBudgetLedger {
 
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let requested = amounts_to_map(amounts);
+        let requested = amounts_to_map(amounts)?;
         let held_budget_ids = self.budget_chain(budget_id)?;
         for held_budget_id in &held_budget_ids {
             let available = self.available_map(held_budget_id)?;
@@ -455,7 +459,7 @@ impl InMemoryBudgetLedger {
                     .get_mut(held_budget_id)
                     .expect("budget has reserved balance map"),
                 &requested,
-            );
+            )?;
             self.bump_revision(held_budget_id);
         }
 
@@ -526,8 +530,8 @@ impl InMemoryBudgetLedger {
             validate_usage_amounts(max_overdraft)?;
         }
 
-        let reserved = amounts_to_map(reservation.amounts.clone());
-        let actual = amounts_to_map(actual_amounts);
+        let reserved = amounts_to_map(reservation.amounts.clone())?;
+        let actual = amounts_to_map(actual_amounts)?;
         let held_budget_ids = self
             .reservation_holds
             .get(reservation_id)
@@ -548,7 +552,7 @@ impl InMemoryBudgetLedger {
             }
         }
         if let Some(max_overdraft) = max_overdraft {
-            let overdraft_limit = amounts_to_map(max_overdraft);
+            let overdraft_limit = amounts_to_map(max_overdraft)?;
             for (key, amount) in &overdraft {
                 if *amount > overdraft_limit.get(key).copied().unwrap_or(0) {
                     return Err(BudgetError::BudgetExceeded {
@@ -560,26 +564,43 @@ impl InMemoryBudgetLedger {
             }
         }
 
+        let mut updated_balances = Vec::with_capacity(held_budget_ids.len());
         for held_budget_id in &held_budget_ids {
-            subtract_amounts(
-                self.reserved
-                    .get_mut(held_budget_id)
-                    .expect("budget has reserved balance map"),
-                &reserved,
-            );
-            add_amounts(
-                self.committed
-                    .get_mut(held_budget_id)
-                    .expect("budget has committed balance map"),
-                &actual,
-            );
-            add_amounts(
-                self.overdraft
-                    .get_mut(held_budget_id)
-                    .expect("budget has overdraft balance map"),
-                &overdraft,
-            );
-            self.bump_revision(held_budget_id);
+            let mut reserved_balance = self
+                .reserved
+                .get(held_budget_id)
+                .expect("budget has reserved balance map")
+                .clone();
+            let mut committed_balance = self
+                .committed
+                .get(held_budget_id)
+                .expect("budget has committed balance map")
+                .clone();
+            let mut overdraft_balance = self
+                .overdraft
+                .get(held_budget_id)
+                .expect("budget has overdraft balance map")
+                .clone();
+            subtract_amounts(&mut reserved_balance, &reserved)?;
+            add_amounts(&mut committed_balance, &actual)?;
+            add_amounts(&mut overdraft_balance, &overdraft)?;
+            updated_balances.push((
+                held_budget_id.clone(),
+                reserved_balance,
+                committed_balance,
+                overdraft_balance,
+            ));
+        }
+        for (held_budget_id, reserved_balance, committed_balance, overdraft_balance) in
+            updated_balances
+        {
+            self.reserved
+                .insert(held_budget_id.clone(), reserved_balance);
+            self.committed
+                .insert(held_budget_id.clone(), committed_balance);
+            self.overdraft
+                .insert(held_budget_id.clone(), overdraft_balance);
+            self.bump_revision(&held_budget_id);
         }
 
         let updated = BudgetReservation {
@@ -622,7 +643,7 @@ impl InMemoryBudgetLedger {
             });
         }
 
-        let reserved = amounts_to_map(reservation.amounts.clone());
+        let reserved = amounts_to_map(reservation.amounts.clone())?;
         let held_budget_ids = self
             .reservation_holds
             .get(reservation_id)
@@ -634,7 +655,7 @@ impl InMemoryBudgetLedger {
                     .get_mut(held_budget_id)
                     .expect("budget has reserved balance map"),
                 &reserved,
-            );
+            )?;
             self.bump_revision(held_budget_id);
         }
 
@@ -678,7 +699,7 @@ impl InMemoryBudgetLedger {
             });
         }
 
-        let reserved = amounts_to_map(reservation.amounts.clone());
+        let reserved = amounts_to_map(reservation.amounts.clone())?;
         let held_budget_ids = self
             .reservation_holds
             .get(reservation_id)
@@ -690,7 +711,7 @@ impl InMemoryBudgetLedger {
                     .get_mut(held_budget_id)
                     .expect("budget has reserved balance map"),
                 &reserved,
-            );
+            )?;
             self.bump_revision(held_budget_id);
         }
 
@@ -757,13 +778,13 @@ impl InMemoryBudgetLedger {
         let reservation = self.validate_permit_for_reservation(permit_id, reservation_id)?;
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&actual_amounts)?;
-        let actual = amounts_to_map(actual_amounts.clone());
+        let actual = amounts_to_map(actual_amounts.clone())?;
         self.ensure_permit_allows_additional(permit_id, &actual, &reservation.budget_id)?;
         let settlement = self.commit(reservation_id, actual_amounts)?;
         add_amounts(
             self.permit_spent.entry(permit_id.to_string()).or_default(),
             &actual,
-        );
+        )?;
         Ok(settlement)
     }
 
@@ -861,8 +882,8 @@ impl InMemoryBudgetLedger {
             }
             add_amounts(
                 &mut authorized,
-                &amounts_to_map(reservation.amounts.clone()),
-            );
+                &amounts_to_map(reservation.amounts.clone())?,
+            )?;
             let held_budget_ids = self
                 .reservation_holds
                 .get(reservation_id)
@@ -921,7 +942,7 @@ impl InMemoryBudgetLedger {
 
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let requested = amounts_to_map(amounts);
+        let requested = amounts_to_map(amounts)?;
         let spendable_by = spendable_by
             .into_iter()
             .map(Into::into)
@@ -948,7 +969,7 @@ impl InMemoryBudgetLedger {
                     .get_mut(held_budget_id)
                     .expect("budget has reserved balance map"),
                 &requested,
-            );
+            )?;
             self.bump_revision(held_budget_id);
         }
 
@@ -1080,7 +1101,7 @@ impl InMemoryBudgetLedger {
             });
         }
 
-        let reserved = amounts_to_map(reserve.amounts.clone());
+        let reserved = amounts_to_map(reserve.amounts.clone())?;
         let held_budget_ids = self
             .completion_reserve_holds
             .get(reserve_id)
@@ -1092,7 +1113,7 @@ impl InMemoryBudgetLedger {
                     .get_mut(held_budget_id)
                     .expect("completion reserve hold points to an existing budget"),
                 &reserved,
-            );
+            )?;
             self.bump_revision(held_budget_id);
         }
 
@@ -1123,10 +1144,12 @@ impl InMemoryBudgetLedger {
         keys.extend(committed.keys().cloned());
         let mut available = BTreeMap::new();
         for key in keys {
-            let remaining = allocated.get(&key).copied().unwrap_or(0)
-                - reserved.get(&key).copied().unwrap_or(0)
-                - committed.get(&key).copied().unwrap_or(0);
-            if remaining > 0 {
+            let remaining = i128::from(allocated.get(&key).copied().unwrap_or(0))
+                - i128::from(reserved.get(&key).copied().unwrap_or(0))
+                - i128::from(committed.get(&key).copied().unwrap_or(0));
+            if let Ok(remaining) = i64::try_from(remaining)
+                && remaining > 0
+            {
                 available.insert(key, remaining);
             }
         }
@@ -1235,14 +1258,17 @@ impl InMemoryBudgetLedger {
             .ok_or_else(|| BudgetError::PermitNotFound {
                 permit_id: permit_id.to_string(),
             })?;
-        let authorized = amounts_to_map(permit.authorized_amounts.clone());
+        let authorized = amounts_to_map(permit.authorized_amounts.clone())?;
         let spent = self.permit_spent.get(permit_id);
         for (key, amount) in requested {
             let already_spent = spent
                 .and_then(|values| values.get(key))
                 .copied()
                 .unwrap_or(0);
-            if already_spent + amount > authorized.get(key).copied().unwrap_or(0) {
+            if already_spent
+                .checked_add(*amount)
+                .is_none_or(|total| total > authorized.get(key).copied().unwrap_or(0))
+            {
                 return Err(BudgetError::BudgetExceeded {
                     budget_id: budget_id.to_string(),
                     kind: key.0.clone(),
@@ -1293,10 +1319,12 @@ impl StoredBudgetAccount {
         keys.extend(self.committed.keys().cloned());
         let mut available = BTreeMap::new();
         for key in keys {
-            let remaining = self.allocated.get(&key).copied().unwrap_or(0)
-                - self.reserved.get(&key).copied().unwrap_or(0)
-                - self.committed.get(&key).copied().unwrap_or(0);
-            if remaining > 0 {
+            let remaining = i128::from(self.allocated.get(&key).copied().unwrap_or(0))
+                - i128::from(self.reserved.get(&key).copied().unwrap_or(0))
+                - i128::from(self.committed.get(&key).copied().unwrap_or(0));
+            if let Ok(remaining) = i64::try_from(remaining)
+                && remaining > 0
+            {
                 available.insert(key, remaining);
             }
         }
@@ -1405,7 +1433,7 @@ impl SqliteBudgetLedger {
         let budget_id = budget_id.into();
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let allocated = amounts_to_map(amounts);
+        let allocated = amounts_to_map(amounts)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1477,7 +1505,7 @@ impl SqliteBudgetLedger {
         let budget_id = budget_id.as_ref();
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let requested = amounts_to_map(amounts);
+        let requested = amounts_to_map(amounts)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1515,7 +1543,7 @@ impl SqliteBudgetLedger {
         for held_budget_id in &held_budget_ids {
             let mut account = sqlite_load_account(&transaction, held_budget_id)?
                 .expect("budget chain only returns existing accounts");
-            add_amounts(&mut account.reserved, &requested);
+            add_amounts(&mut account.reserved, &requested)?;
             account.account.revision += 1;
             sqlite_update_account_balances(&transaction, &account)?;
         }
@@ -1672,8 +1700,8 @@ impl SqliteBudgetLedger {
             }
             add_amounts(
                 &mut authorized,
-                &amounts_to_map(reservation.amounts.clone()),
-            );
+                &amounts_to_map(reservation.amounts.clone())?,
+            )?;
             for held_budget_id in stored_reservation.held_budget_ids {
                 let current = fencing_tokens.get(&held_budget_id).copied().unwrap_or(0);
                 if reservation.fencing_token > current {
@@ -1772,7 +1800,7 @@ impl SqliteBudgetLedger {
     ) -> Result<BudgetSettlement, BudgetError> {
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&actual_amounts)?;
-        let actual = amounts_to_map(actual_amounts.clone());
+        let actual = amounts_to_map(actual_amounts.clone())?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1789,7 +1817,7 @@ impl SqliteBudgetLedger {
         )?;
         let settlement =
             sqlite_commit_reserved(&transaction, reservation_id, actual_amounts, None)?;
-        add_amounts(&mut permit.spent, &actual);
+        add_amounts(&mut permit.spent, &actual)?;
         sqlite_update_permit_spent(&transaction, permit_id, &permit.spent)?;
         transaction.commit().map_err(budget_storage_error)?;
         Ok(settlement)
@@ -1851,7 +1879,7 @@ impl SqliteBudgetLedger {
         let budget_id = budget_id.as_ref();
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
-        let requested = amounts_to_map(amounts);
+        let requested = amounts_to_map(amounts)?;
         let spendable_by = spendable_by
             .into_iter()
             .map(Into::into)
@@ -1890,7 +1918,7 @@ impl SqliteBudgetLedger {
         for held_budget_id in &held_budget_ids {
             let mut account = sqlite_load_account(&transaction, held_budget_id)?
                 .expect("budget chain only returns existing accounts");
-            add_amounts(&mut account.reserved, &requested);
+            add_amounts(&mut account.reserved, &requested)?;
             account.account.revision += 1;
             sqlite_update_account_balances(&transaction, &account)?;
         }
@@ -2048,11 +2076,11 @@ impl SqliteBudgetLedger {
             });
         }
 
-        let reserved = amounts_to_map(reserve.amounts.clone());
+        let reserved = amounts_to_map(reserve.amounts.clone())?;
         for held_budget_id in &stored_reserve.held_budget_ids {
             let mut account = sqlite_load_account(&transaction, held_budget_id)?
                 .expect("completion reserve hold points to an existing budget account");
-            subtract_amounts(&mut account.reserved, &reserved);
+            subtract_amounts(&mut account.reserved, &reserved)?;
             account.account.revision += 1;
             sqlite_update_account_balances(&transaction, &account)?;
         }
@@ -2085,6 +2113,7 @@ fn amount_key(amount: &UsageAmount) -> AmountKey {
 }
 
 fn validate_usage_amounts(amounts: &[UsageAmount]) -> Result<(), BudgetError> {
+    let mut totals = BTreeMap::new();
     for amount in amounts {
         if amount.amount < 0 {
             return Err(BudgetError::InvalidUsageAmount {
@@ -2113,6 +2142,10 @@ fn validate_usage_amounts(amounts: &[UsageAmount]) -> Result<(), BudgetError> {
                 });
             }
         }
+        let total = totals.entry(amount_key(amount)).or_insert(0_i64);
+        *total = total
+            .checked_add(amount.amount)
+            .ok_or_else(usage_amount_overflow_error)?;
     }
     Ok(())
 }
@@ -2156,14 +2189,19 @@ fn validate_completion_reserve_spenders(
     Ok(())
 }
 
-fn amounts_to_map(amounts: impl IntoIterator<Item = UsageAmount>) -> BTreeMap<AmountKey, i64> {
+fn amounts_to_map(
+    amounts: impl IntoIterator<Item = UsageAmount>,
+) -> Result<BTreeMap<AmountKey, i64>, BudgetError> {
     let mut values = BTreeMap::new();
     for amount in amounts {
         let key = amount_key(&amount);
-        *values.entry(key).or_insert(0) += amount.amount;
+        let current = values.entry(key).or_insert(0_i64);
+        *current = current
+            .checked_add(amount.amount)
+            .ok_or_else(usage_amount_overflow_error)?;
     }
     values.retain(|_, value| *value != 0);
-    values
+    Ok(values)
 }
 
 fn map_to_amounts(values: &BTreeMap<AmountKey, i64>) -> Vec<UsageAmount> {
@@ -2183,18 +2221,42 @@ fn map_to_amounts(values: &BTreeMap<AmountKey, i64>) -> Vec<UsageAmount> {
         .collect()
 }
 
-fn add_amounts(target: &mut BTreeMap<AmountKey, i64>, amounts: &BTreeMap<AmountKey, i64>) {
+fn add_amounts(
+    target: &mut BTreeMap<AmountKey, i64>,
+    amounts: &BTreeMap<AmountKey, i64>,
+) -> Result<(), BudgetError> {
+    let mut updated = target.clone();
     for (key, amount) in amounts {
-        *target.entry(key.clone()).or_insert(0) += amount;
+        let current = updated.entry(key.clone()).or_insert(0);
+        *current = current
+            .checked_add(*amount)
+            .ok_or_else(usage_amount_overflow_error)?;
     }
-    target.retain(|_, value| *value != 0);
+    updated.retain(|_, value| *value != 0);
+    *target = updated;
+    Ok(())
 }
 
-fn subtract_amounts(target: &mut BTreeMap<AmountKey, i64>, amounts: &BTreeMap<AmountKey, i64>) {
+fn subtract_amounts(
+    target: &mut BTreeMap<AmountKey, i64>,
+    amounts: &BTreeMap<AmountKey, i64>,
+) -> Result<(), BudgetError> {
+    let mut updated = target.clone();
     for (key, amount) in amounts {
-        *target.entry(key.clone()).or_insert(0) -= amount;
+        let current = updated.entry(key.clone()).or_insert(0);
+        *current = current
+            .checked_sub(*amount)
+            .ok_or_else(usage_amount_overflow_error)?;
     }
-    target.retain(|_, value| *value != 0);
+    updated.retain(|_, value| *value != 0);
+    *target = updated;
+    Ok(())
+}
+
+fn usage_amount_overflow_error() -> BudgetError {
+    BudgetError::InvalidUsageAmount {
+        message: "budget usage amount total exceeds the signed 64-bit range".to_string(),
+    }
 }
 
 fn sqlite_account_exists(connection: &Connection, budget_id: &str) -> Result<bool, BudgetError> {
@@ -2548,8 +2610,8 @@ fn sqlite_commit_reserved(
         validate_usage_amounts(max_overdraft)?;
     }
 
-    let reserved = amounts_to_map(reservation.amounts.clone());
-    let actual = amounts_to_map(actual_amounts);
+    let reserved = amounts_to_map(reservation.amounts.clone())?;
+    let actual = amounts_to_map(actual_amounts)?;
     let mut released = BTreeMap::new();
     let mut overdraft = BTreeMap::new();
     for (key, amount) in &reserved {
@@ -2565,7 +2627,7 @@ fn sqlite_commit_reserved(
         }
     }
     if let Some(max_overdraft) = max_overdraft {
-        let overdraft_limit = amounts_to_map(max_overdraft);
+        let overdraft_limit = amounts_to_map(max_overdraft)?;
         for (key, amount) in &overdraft {
             if *amount > overdraft_limit.get(key).copied().unwrap_or(0) {
                 return Err(BudgetError::BudgetExceeded {
@@ -2580,9 +2642,9 @@ fn sqlite_commit_reserved(
     for held_budget_id in &stored_reservation.held_budget_ids {
         let mut account = sqlite_load_account(connection, held_budget_id)?
             .expect("reservation hold points to an existing budget account");
-        subtract_amounts(&mut account.reserved, &reserved);
-        add_amounts(&mut account.committed, &actual);
-        add_amounts(&mut account.overdraft, &overdraft);
+        subtract_amounts(&mut account.reserved, &reserved)?;
+        add_amounts(&mut account.committed, &actual)?;
+        add_amounts(&mut account.overdraft, &overdraft)?;
         account.account.revision += 1;
         sqlite_update_account_balances(connection, &account)?;
     }
@@ -2623,11 +2685,11 @@ fn sqlite_release_reserved(
         });
     }
 
-    let reserved = amounts_to_map(reservation.amounts.clone());
+    let reserved = amounts_to_map(reservation.amounts.clone())?;
     for held_budget_id in &stored_reservation.held_budget_ids {
         let mut account = sqlite_load_account(connection, held_budget_id)?
             .expect("reservation hold points to an existing budget account");
-        subtract_amounts(&mut account.reserved, &reserved);
+        subtract_amounts(&mut account.reserved, &reserved)?;
         account.account.revision += 1;
         sqlite_update_account_balances(connection, &account)?;
     }
@@ -2757,7 +2819,7 @@ fn sqlite_load_permit(
             low_watermark,
             fencing_tokens,
         },
-        spent: amounts_to_map(spent_amounts),
+        spent: amounts_to_map(spent_amounts)?,
     }))
 }
 
@@ -2842,10 +2904,13 @@ fn sqlite_ensure_permit_allows_additional(
     requested: &BTreeMap<AmountKey, i64>,
     budget_id: &str,
 ) -> Result<(), BudgetError> {
-    let authorized = amounts_to_map(permit.permit.authorized_amounts.clone());
+    let authorized = amounts_to_map(permit.permit.authorized_amounts.clone())?;
     for (key, amount) in requested {
         let already_spent = permit.spent.get(key).copied().unwrap_or(0);
-        if already_spent + amount > authorized.get(key).copied().unwrap_or(0) {
+        if already_spent
+            .checked_add(*amount)
+            .is_none_or(|total| total > authorized.get(key).copied().unwrap_or(0))
+        {
             return Err(BudgetError::BudgetExceeded {
                 budget_id: budget_id.to_string(),
                 kind: key.0.clone(),
@@ -2915,10 +2980,10 @@ fn sqlite_load_account(
     let status = BudgetStatus::from_str(&status).ok_or_else(|| BudgetError::Storage {
         message: format!("unknown budget status {status:?}"),
     })?;
-    let allocated = amounts_to_map(usage_amounts_from_json(&allocated_json)?);
-    let reserved = amounts_to_map(usage_amounts_from_json(&reserved_json)?);
-    let committed = amounts_to_map(usage_amounts_from_json(&committed_json)?);
-    let overdraft = amounts_to_map(usage_amounts_from_json(&overdraft_json)?);
+    let allocated = amounts_to_map(usage_amounts_from_json(&allocated_json)?)?;
+    let reserved = amounts_to_map(usage_amounts_from_json(&reserved_json)?)?;
+    let committed = amounts_to_map(usage_amounts_from_json(&committed_json)?)?;
+    let overdraft = amounts_to_map(usage_amounts_from_json(&overdraft_json)?)?;
 
     Ok(Some(StoredBudgetAccount {
         account: BudgetAccount {

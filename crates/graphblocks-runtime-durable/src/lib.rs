@@ -332,6 +332,9 @@ impl WindowAccumulator {
     }
 
     pub fn ingest(&mut self, event: SourceEvent) -> Result<(), DurableError> {
+        if self.policy.size_ms == 0 {
+            return Err(DurableError::InvalidWindowSize);
+        }
         let Some(event_time_unix_ms) = event.event_time_unix_ms else {
             return Err(DurableError::MissingEventTime {
                 cursor: event.cursor,

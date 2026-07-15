@@ -1153,7 +1153,7 @@ fn cached_decision_is_expired(valid_until: Option<&str>, evaluated_at: &str) -> 
 
 pub(crate) fn parse_policy_datetime_millis(value: &str) -> Option<i128> {
     let value = value.trim();
-    if value.is_empty() {
+    if value.is_empty() || !value.is_ascii() {
         return None;
     }
     let separator = value.find('T').or_else(|| value.find('t'))?;

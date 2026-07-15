@@ -129,6 +129,127 @@ fn budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), BudgetE
 }
 
 #[test]
+fn budget_ledgers_reject_duplicate_amount_totals_that_overflow() -> Result<(), BudgetError> {
+    let expected = Err(BudgetError::InvalidUsageAmount {
+        message: "budget usage amount total exceeds the signed 64-bit range".to_string(),
+    });
+    let mut memory = InMemoryBudgetLedger::new();
+    let mut sqlite = SqliteBudgetLedger::open_in_memory()?;
+
+    assert_eq!(
+        memory.allocate(
+            "budget-overflow",
+            "tenant:acme",
+            [tokens(i64::MAX), tokens(1)],
+            "policy-1",
+            None,
+        ),
+        expected,
+    );
+    assert_eq!(
+        sqlite.allocate(
+            "budget-overflow",
+            "tenant:acme",
+            [tokens(i64::MAX), tokens(1)],
+            "policy-1",
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount total exceeds the signed 64-bit range".to_string(),
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn in_memory_budget_ledger_rejects_cumulative_overflow_atomically() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "budget-overflow",
+        "tenant:acme",
+        [tokens(i64::MAX)],
+        "policy-1",
+        None,
+    )?;
+    let first = ledger.reserve(
+        "budget-overflow",
+        "run:first",
+        [tokens(1)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        Some("reservation-first".to_string()),
+    )?;
+    let second = ledger.reserve(
+        "budget-overflow",
+        "run:second",
+        [tokens(1)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        Some("reservation-second".to_string()),
+    )?;
+    ledger.commit_with_overdraft_limit(
+        &first.reservation_id,
+        [tokens(i64::MAX)],
+        [tokens(i64::MAX)],
+    )?;
+
+    assert_eq!(
+        ledger.commit(&second.reservation_id, [tokens(1)]),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount total exceeds the signed 64-bit range".to_string(),
+        }),
+    );
+    let balance = ledger.balance("budget-overflow")?;
+    assert_eq!(balance.reserved, vec![tokens(1)]);
+    assert_eq!(balance.committed, vec![tokens(i64::MAX)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_rejects_cumulative_overflow_atomically() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate(
+        "budget-overflow",
+        "tenant:acme",
+        [tokens(i64::MAX)],
+        "policy-1",
+        None,
+    )?;
+    let first = ledger.reserve(
+        "budget-overflow",
+        "run:first",
+        [tokens(1)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        Some("reservation-first".to_string()),
+    )?;
+    let second = ledger.reserve(
+        "budget-overflow",
+        "run:second",
+        [tokens(1)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        Some("reservation-second".to_string()),
+    )?;
+    ledger.commit_with_overdraft_limit(
+        &first.reservation_id,
+        [tokens(i64::MAX)],
+        [tokens(i64::MAX)],
+    )?;
+
+    assert_eq!(
+        ledger.commit(&second.reservation_id, [tokens(1)]),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount total exceeds the signed 64-bit range".to_string(),
+        }),
+    );
+    let balance = ledger.balance("budget-overflow")?;
+    assert_eq!(balance.reserved, vec![tokens(1)]);
+    assert_eq!(balance.committed, vec![tokens(i64::MAX)]);
+    Ok(())
+}
+
+#[test]
 fn sqlite_budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), BudgetError> {
     let mut ledger = SqliteBudgetLedger::open_in_memory()?;
     let invalid_key = dimensioned_tokens(1, " ", "support-model");

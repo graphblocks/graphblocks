@@ -124,6 +124,21 @@ fn window_policy_rejects_size_without_event_time() {
 }
 
 #[test]
+fn window_accumulator_rejects_bypassed_zero_size_policy() {
+    let policy = WindowPolicy {
+        size_ms: 0,
+        allowed_lateness_ms: 250,
+        accumulation_mode: AccumulationMode::Accumulating,
+    };
+    let mut windows = WindowAccumulator::new(policy);
+
+    assert_eq!(
+        windows.ingest(event(1, 1_000)),
+        Err(DurableError::InvalidWindowSize)
+    );
+}
+
+#[test]
 fn accumulating_window_emits_on_time_and_final_replacement() {
     let policy = WindowPolicy::tumbling_event_time(100, 50, AccumulationMode::Accumulating)
         .expect("policy should be valid");

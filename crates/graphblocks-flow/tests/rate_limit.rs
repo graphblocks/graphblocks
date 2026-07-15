@@ -39,8 +39,8 @@ fn rate_limiter_rejects_request_larger_than_limit() -> Result<(), RateLimitError
 
     assert_eq!(
         limiter.check_at("run-1", 0, 3),
-        RateLimitDecision::Limited {
-            retry_after_ms: 1_000
+        RateLimitDecision::Rejected {
+            reason: "units_exceed_limit",
         },
     );
     assert_eq!(limiter.available_at(0), 2);
@@ -75,5 +75,25 @@ fn rate_limiter_tracks_identity_and_window() -> Result<(), RateLimitError> {
     assert_eq!(limiter.id(), "embedding-api");
     assert_eq!(limiter.limit(), 600);
     assert_eq!(limiter.window_ms(), 60_000);
+    Ok(())
+}
+
+#[test]
+fn rate_limiter_handles_maximum_usage_without_overflow() -> Result<(), RateLimitError> {
+    let limiter = LocalRateLimiter::new("unbounded-api", u64::MAX, 1_000)?;
+
+    assert_eq!(
+        limiter.check_at("run-1", 0, u64::MAX - 1),
+        RateLimitDecision::Allowed,
+    );
+    assert_eq!(
+        limiter.check_at("run-1", 0, 2),
+        RateLimitDecision::Limited {
+            retry_after_ms: 1_000,
+        },
+    );
+    assert_eq!(limiter.available_at(0), 1);
+    assert_eq!(limiter.check_at("run-1", 0, 1), RateLimitDecision::Allowed);
+    assert_eq!(limiter.available_at(0), 0);
     Ok(())
 }

@@ -85,14 +85,19 @@ impl LocalRateLimiter {
             inner.used = 0;
         }
         if units > inner.limit {
+            return RateLimitDecision::Rejected {
+                reason: "units_exceed_limit",
+            };
+        }
+        let Some(next_used) = inner.used.checked_add(units) else {
             return RateLimitDecision::Limited {
                 retry_after_ms: inner
                     .window_start_ms
                     .saturating_add(inner.window_ms)
                     .saturating_sub(now_ms),
             };
-        }
-        if inner.used.saturating_add(units) > inner.limit {
+        };
+        if next_used > inner.limit {
             return RateLimitDecision::Limited {
                 retry_after_ms: inner
                     .window_start_ms
@@ -101,7 +106,7 @@ impl LocalRateLimiter {
             };
         }
 
-        inner.used += units;
+        inner.used = next_used;
         RateLimitDecision::Allowed
     }
 

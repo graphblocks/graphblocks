@@ -535,6 +535,49 @@ fn unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() {
 }
 
 #[test]
+fn unavailable_policy_cache_rejects_non_ascii_timestamps_without_panicking() {
+    let request = PolicyRequest::new(
+        "req-cache-unicode",
+        EnforcementPoint::BeforeProviderCall,
+        "model.generate",
+        ResourceRef::new("model:support").with_resource_kind("model"),
+        "2026-06-23T00:00:00Z",
+    );
+    let mut cached = PolicyDecision {
+        decision_id: "decision:cached-unicode".to_string(),
+        effect: PolicyEffect::Allow,
+        reason_codes: vec!["cached_allow".to_string()],
+        policy_refs: vec!["bundle-1".to_string()],
+        obligations: Vec::new(),
+        advice: Vec::new(),
+        evaluated_at: "2026-06-23T00:00:00Z".to_string(),
+        valid_until: Some("123é-01-0T00:00:00Z".to_string()),
+        input_digest: request.clone().with_input_digest().input_digest,
+    };
+
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::UseCachedDecision,
+            "2026-06-23T00:01:00Z",
+            Some(&cached),
+        ),
+        Err(PolicyUnavailableError::CachedDecisionExpired),
+    );
+
+    cached.valid_until = Some("2026-06-23T00:05:00Z".to_string());
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::UseCachedDecision,
+            "12é3-01-01T00:00:00Z",
+            Some(&cached),
+        ),
+        Err(PolicyUnavailableError::CachedDecisionExpired),
+    );
+}
+
+#[test]
 fn policy_bundle_digest_is_stable_for_rule_content() {
     let rule = PolicyRule::new(
         "allow-model",
