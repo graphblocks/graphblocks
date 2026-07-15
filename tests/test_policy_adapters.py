@@ -365,6 +365,18 @@ def test_cedar_adapter_rejects_non_standard_authorization_json_constants(monkeyp
         authorization.authorization_contract()
 
 
+def test_cedar_adapter_rejects_non_object_authorization_json(monkeypatch) -> None:
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
+
+    for payload in ("null", "[1,2]", '"authorization"'):
+        authorization = graphblocks_policy_cedar.CedarAuthorizationRequest(
+            authorization_json=payload
+        )
+
+        with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="JSON object"):
+            authorization.authorization_contract()
+
+
 def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:
     graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 

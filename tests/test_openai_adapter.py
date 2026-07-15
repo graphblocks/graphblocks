@@ -42,6 +42,14 @@ def test_openai_chat_request_encodes_messages_tools_and_options(monkeypatch) -> 
             ),
         ),
         tools=(tool,),
+        tool_schemas={
+            "schemas/SearchRequest@1": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            }
+        },
         tool_choice="auto",
         temperature=0.2,
         max_tokens=128,
@@ -75,7 +83,12 @@ def test_openai_chat_request_encodes_messages_tools_and_options(monkeypatch) -> 
                     "function": {
                         "name": "knowledge.search",
                         "description": "Search support docs.",
-                        "parameters": {"$ref": "schemas/SearchRequest@1"},
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"],
+                            "additionalProperties": False,
+                        },
                     },
                 }
             ],
@@ -99,6 +112,64 @@ def test_openai_chat_request_rejects_invalid_contract_inputs(monkeypatch) -> Non
             messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
             max_tokens=0,
         )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="n must be 1"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
+            extra_body={"n": 2},
+        )
+
+    tool = ToolDefinition(
+        name="knowledge.search",
+        description="Search support docs.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="tool_schemas"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
+            tools=(tool,),
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="SearchRequest"):
+        graphblocks_openai.openai_chat_completion_request(
+            model="gpt-test",
+            messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
+            tools=(tool,),
+            tool_schemas={},
+        )
+    for schema in (
+        {"$ref": "schemas/SearchRequest@1"},
+        {"allOf": [{"$dynamicRef": "https://schemas.example/SearchRequest"}]},
+        {"allOf": ({"$ref": "schemas/SearchRequest@1"},)},
+        {"type": "number", "maximum": float("nan")},
+    ):
+        with pytest.raises(
+            graphblocks_openai.OpenAICompatibleAdapterError,
+            match="(non-local|strict JSON)",
+        ):
+            graphblocks_openai.openai_chat_completion_request(
+                model="gpt-test",
+                messages=(
+                    Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),
+                ),
+                tools=(tool,),
+                tool_schemas={"schemas/SearchRequest@1": schema},
+            )
+
+    local_ref_request = graphblocks_openai.openai_chat_completion_request(
+        model="gpt-test",
+        messages=(Message("msg-1", "user", (ContentPart(kind="text", text="hello"),)),),
+        tools=(tool,),
+        tool_schemas={
+            "schemas/SearchRequest@1": {
+                "$ref": "#/$defs/request",
+                "$defs": {"request": {"type": "object"}},
+            }
+        },
+    )
+    assert local_ref_request.body["tools"][0]["function"]["parameters"]["$ref"] == (
+        "#/$defs/request"
+    )
 
 
 def test_openai_response_maps_text_choice_to_content_parts_and_usage(monkeypatch) -> None:
@@ -142,6 +213,22 @@ def test_openai_response_maps_text_choice_to_content_parts_and_usage(monkeypatch
         "tool_calls": [],
         "usage": {"completion_tokens": 5, "prompt_tokens": 20, "total_tokens": 25},
     }
+
+
+def test_openai_response_rejects_multiple_choices_instead_of_flattening(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="requires n=1"):
+        graphblocks_openai.openai_chat_response_from_provider(
+            {
+                "id": "chatcmpl-multiple",
+                "model": "gpt-test",
+                "choices": [
+                    {"index": 0, "message": {"content": "first"}, "finish_reason": "stop"},
+                    {"index": 1, "message": {"content": "second"}, "finish_reason": "length"},
+                ],
+            }
+        )
 
 
 def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) -> None:
@@ -402,6 +489,39 @@ def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> N
         "finish_reason": None,
         "usage_delta": {"completion_tokens": 5, "prompt_tokens": 20, "total_tokens": 25},
     }
+
+
+def test_openai_stream_chunk_accepts_empty_provider_metadata_chunk(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-filter-results",
+            "choices": [],
+            "prompt_filter_results": [{"prompt_index": 0}],
+        },
+        sequence=1,
+    )
+
+    assert delta.choice_index is None
+    assert delta.content_delta is None
+    assert delta.usage_delta == {}
+
+
+def test_openai_stream_chunk_rejects_multiple_choices_instead_of_dropping_them(monkeypatch) -> None:
+    graphblocks_openai = importlib.import_module("graphblocks.integrations.openai")
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="requires n=1"):
+        graphblocks_openai.openai_chat_delta_from_chunk(
+            {
+                "id": "chatcmpl-multiple",
+                "choices": [
+                    {"index": 0, "delta": {"content": "first"}},
+                    {"index": 1, "delta": {"content": "second"}},
+                ],
+            },
+            sequence=1,
+        )
 
 
 def test_openai_provider_usage_converts_to_usage_record(monkeypatch) -> None:

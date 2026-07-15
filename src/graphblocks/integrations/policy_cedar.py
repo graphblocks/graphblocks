@@ -39,6 +39,9 @@ class CedarAuthorizationRequest:
             )
         except ValueError as error:
             raise CedarPolicyAdapterError("Cedar authorization input must be valid strict JSON") from error
+        if not isinstance(contract, Mapping):
+            raise CedarPolicyAdapterError("Cedar authorization input must be a JSON object")
+        contract = dict(contract)
         contract["schema_ref"] = self.schema_ref
         return contract
 

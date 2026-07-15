@@ -35,8 +35,10 @@ DEFAULT_BLOCKED_METRIC_LABELS = (
     "user_id",
 )
 DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS = (
+    "access_token",
     "api_key",
     "authorization",
+    "bearer_token",
     "credential",
     "credentials",
     "password",
@@ -52,6 +54,26 @@ DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS = (
     "tool_result",
 )
 
+_TOKEN_USAGE_ATTRIBUTE_KEYS = frozenset(
+    {
+        "cachedtokencount",
+        "cachedtokens",
+        "completiontokencount",
+        "completiontokens",
+        "inputtokencount",
+        "inputtokens",
+        "outputtokencount",
+        "outputtokens",
+        "prompttokencount",
+        "prompttokens",
+        "reasoningtokencount",
+        "reasoningtokens",
+        "tokencount",
+        "totaltokencount",
+        "totaltokens",
+    }
+)
+
 
 class TelemetryProjectionError(RuntimeError):
     pass
@@ -63,6 +85,30 @@ class TelemetryExportConflictError(TelemetryProjectionError):
 
 class TelemetryCorrectnessViolation(TelemetryProjectionError):
     pass
+
+
+def _normalized_attribute_key(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _attribute_key_matches(key: str, protected_keys: Iterable[str]) -> bool:
+    normalized_key = _normalized_attribute_key(key)
+    for protected_key in protected_keys:
+        normalized_protected_key = _normalized_attribute_key(protected_key)
+        if not normalized_protected_key:
+            continue
+        if normalized_key == normalized_protected_key:
+            return True
+        if normalized_protected_key == "token" and normalized_key in _TOKEN_USAGE_ATTRIBUTE_KEYS:
+            continue
+        if (
+            normalized_protected_key in {"completion", "input", "output", "prompt"}
+            and normalized_key in _TOKEN_USAGE_ATTRIBUTE_KEYS
+        ):
+            continue
+        if normalized_protected_key in normalized_key:
+            return True
+    return False
 
 
 def _require_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -476,12 +522,12 @@ class TelemetryCapturePolicy:
         return replace(record, attributes=self._protected_attributes(record.attributes))
 
     def _protected_attributes(self, attributes: Mapping[str, object]) -> dict[str, object]:
-        dropped = set(self.dropped_attribute_keys)
-        redacted = set(self.redacted_attribute_keys)
         return {
-            key: self.replacement if key in redacted else value
+            key: self.replacement
+            if _attribute_key_matches(key, self.redacted_attribute_keys)
+            else value
             for key, value in attributes.items()
-            if key not in dropped
+            if not _attribute_key_matches(key, self.dropped_attribute_keys)
         }
 
 
@@ -528,12 +574,12 @@ class TelemetryCapturePolicyLinter:
         object.__setattr__(self, "content_attribute_keys", tuple(sorted(set(self.content_attribute_keys))))
 
     def lint_policy(self, policy: TelemetryCapturePolicy) -> TelemetryCapturePolicyLintResult:
-        redacted = set(policy.redacted_attribute_keys)
-        dropped = set(policy.dropped_attribute_keys)
-        protected = redacted | dropped
         issues: list[TelemetryCapturePolicyIssue] = []
         for attribute_key in self.sensitive_attribute_keys:
-            if attribute_key not in protected:
+            if not (
+                _attribute_key_matches(attribute_key, policy.redacted_attribute_keys)
+                or _attribute_key_matches(attribute_key, policy.dropped_attribute_keys)
+            ):
                 issues.append(
                     TelemetryCapturePolicyIssue(
                         attribute_key=attribute_key,
@@ -542,7 +588,10 @@ class TelemetryCapturePolicyLinter:
                     )
                 )
         for attribute_key in self.content_attribute_keys:
-            if attribute_key not in protected:
+            if not (
+                _attribute_key_matches(attribute_key, policy.redacted_attribute_keys)
+                or _attribute_key_matches(attribute_key, policy.dropped_attribute_keys)
+            ):
                 issues.append(
                     TelemetryCapturePolicyIssue(
                         attribute_key=attribute_key,
@@ -550,8 +599,8 @@ class TelemetryCapturePolicyLinter:
                         required_action="redact_or_drop",
                     )
                 )
-        if redacted and not policy.replacement.strip():
-            for attribute_key in redacted:
+        if policy.redacted_attribute_keys and not policy.replacement.strip():
+            for attribute_key in policy.redacted_attribute_keys:
                 issues.append(
                     TelemetryCapturePolicyIssue(
                         attribute_key=attribute_key,

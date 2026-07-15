@@ -628,7 +628,12 @@ class ModelPool:
                 raise ModelToolNotAllowedError(tool_name)
         if request.sensitivity is not None and request.worker.sensitivity_ceiling is not None:
             sensitivity_ranks = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
-            if sensitivity_ranks.get(request.sensitivity, 4) > sensitivity_ranks.get(request.worker.sensitivity_ceiling, 4):
+            ceiling_rank = sensitivity_ranks.get(request.worker.sensitivity_ceiling)
+            if ceiling_rank is None:
+                raise ModelSelectionError(
+                    f"unknown worker sensitivity ceiling {request.worker.sensitivity_ceiling!r}"
+                )
+            if sensitivity_ranks.get(request.sensitivity, 4) > ceiling_rank:
                 raise ModelSensitivityAboveCeilingError(request.sensitivity, request.worker.sensitivity_ceiling)
 
         required_capabilities = set(request.worker.required_capabilities)

@@ -16,6 +16,7 @@ from graphblocks.orchestration import (
     ModelPool,
     ModelPoolMismatchError,
     ModelProfile,
+    ModelSelectionError,
     ModelSelectionRequest,
     ModelSensitivityAboveCeilingError,
     ModelToolNotAllowedError,
@@ -355,6 +356,12 @@ def test_model_pool_rejects_worker_policy_mismatches() -> None:
 
     assert sensitivity_error.value.requested == "restricted"
     assert sensitivity_error.value.ceiling == "internal"
+
+    misspelled_ceiling = worker.with_sensitivity_ceiling("confidental")
+    with pytest.raises(ModelSelectionError, match="unknown worker sensitivity ceiling"):
+        pool.select_model(
+            ModelSelectionRequest(misspelled_ceiling).with_sensitivity("public")
+        )
 
 
 def test_worker_pool_selects_ready_worker_for_required_block() -> None:

@@ -312,6 +312,60 @@ def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypat
     assert "TelemetryCapturePolicy" in graphblocks_telemetry.__all__
 
 
+def test_default_telemetry_capture_redacts_normalized_sensitive_keys(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks.integrations.langfuse")
+    graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-sensitive",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        attributes={
+            "Authorization": "Bearer secret",
+            "apiKey": "sk-api",
+            "openai_api_key": "sk-openai",
+            "access_token": "access-secret",
+            "bearer_token": "bearer-secret",
+            "client_secret": "client-secret",
+            "id_token": "id-secret",
+            "input_tokens": 23,
+            "oauth-token": "oauth-secret",
+            "output_tokens": 7,
+            "refreshToken": "refresh-secret",
+            "session_token": "session-secret",
+            "token_count": 30,
+            "tenant": "tenant-1",
+        },
+    )
+
+    otel_redacted = graphblocks_otel.DEFAULT_OTLP_CAPTURE_POLICY.apply_generation(observation)
+    langfuse_redacted = graphblocks_langfuse.DEFAULT_LANGFUSE_CAPTURE_POLICY.apply_generation(
+        observation
+    )
+
+    expected_attributes = {
+        "Authorization": "[redacted]",
+        "access_token": "[redacted]",
+        "apiKey": "[redacted]",
+        "bearer_token": "[redacted]",
+        "client_secret": "[redacted]",
+        "id_token": "[redacted]",
+        "input_tokens": 23,
+        "oauth-token": "[redacted]",
+        "openai_api_key": "[redacted]",
+        "output_tokens": 7,
+        "refreshToken": "[redacted]",
+        "session_token": "[redacted]",
+        "tenant": "tenant-1",
+        "token_count": 30,
+    }
+    assert otel_redacted.attributes == expected_attributes
+    assert langfuse_redacted.attributes == expected_attributes
+
+
 def test_telemetry_capture_policy_linter_flags_unprotected_secret_and_content_keys(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     linter = graphblocks_telemetry.TelemetryCapturePolicyLinter(
@@ -1040,7 +1094,7 @@ def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkey
         "exporters": {
             "otlp/graphblocks": {
                 "endpoint": "collector.example:4317",
-                "tls": {"insecure": True},
+                "tls": {"insecure": False},
             }
         },
         "processors": {
@@ -1056,8 +1110,8 @@ def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkey
         "receivers": {
             "otlp": {
                 "protocols": {
-                    "grpc": {"endpoint": "0.0.0.0:4317"},
-                    "http": {"endpoint": "0.0.0.0:4318"},
+                    "grpc": {"endpoint": "127.0.0.1:4317"},
+                    "http": {"endpoint": "127.0.0.1:4318"},
                 }
             }
         },

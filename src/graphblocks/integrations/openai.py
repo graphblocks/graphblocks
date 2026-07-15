@@ -14,6 +14,7 @@ from graphblocks import (
     UsageAmount,
     UsageRecord,
     canonical_dumps,
+    canonical_loads,
 )
 
 
@@ -42,6 +43,34 @@ def _non_negative_integer(field_name: str, value: object) -> int:
     if value < 0:
         raise OpenAICompatibleAdapterError(f"{field_name} must be a non-negative integer")
     return value
+
+
+def _validated_inline_json_schema(schema_ref: str, schema: Mapping[str, object]) -> dict[str, object]:
+    try:
+        normalized_schema = canonical_loads(canonical_dumps(schema))
+    except (TypeError, ValueError) as error:
+        raise OpenAICompatibleAdapterError(
+            f"tool_schemas entry {schema_ref!r} must be a strict JSON object"
+        ) from error
+    if not isinstance(normalized_schema, dict):
+        raise OpenAICompatibleAdapterError(
+            f"tool_schemas entry {schema_ref!r} must be a strict JSON object"
+        )
+    pending: list[object] = [normalized_schema]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if key in {"$ref", "$dynamicRef"} and (
+                    not isinstance(child, str) or not child.startswith("#")
+                ):
+                    raise OpenAICompatibleAdapterError(
+                        f"tool_schemas entry {schema_ref!r} contains non-local {key}"
+                    )
+                pending.append(child)
+        elif isinstance(value, list):
+            pending.extend(value)
+    return normalized_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +280,7 @@ def openai_chat_completion_request(
     model: str,
     messages: Sequence[Message],
     tools: Sequence[ToolDefinition] = (),
+    tool_schemas: Mapping[str, Mapping[str, object]] | None = None,
     tool_choice: str | Mapping[str, object] | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
@@ -258,6 +288,7 @@ def openai_chat_completion_request(
     metadata: Mapping[str, object] | None = None,
     extra_body: Mapping[str, object] | None = None,
 ) -> OpenAIChatCompletionRequest:
+    """Build a request for the adapter's stable single-choice (``n=1``) contract."""
     if not isinstance(model, str) or not model.strip():
         raise OpenAICompatibleAdapterError("model must not be empty")
     if isinstance(messages, (str, bytes)) or not messages:
@@ -288,21 +319,33 @@ def openai_chat_completion_request(
         "stream": bool(stream),
     }
     if tools:
+        if not isinstance(tool_schemas, Mapping):
+            raise OpenAICompatibleAdapterError(
+                "tool_schemas must map every tool input_schema ref to an inline JSON Schema object"
+            )
         encoded_tools: list[dict[str, object]] = []
         for tool in tools:
             if not isinstance(tool, ToolDefinition):
                 raise OpenAICompatibleAdapterError("tools must be ToolDefinition instances")
+            parameters = tool_schemas.get(tool.input_schema)
+            if not isinstance(parameters, Mapping):
+                raise OpenAICompatibleAdapterError(
+                    f"tool_schemas must provide an inline JSON Schema object for {tool.input_schema!r}"
+                )
+            inline_parameters = _validated_inline_json_schema(tool.input_schema, parameters)
             encoded_tools.append(
                 {
                     "type": "function",
                     "function": {
                         "name": tool.name,
                         "description": tool.description,
-                        "parameters": {"$ref": tool.input_schema},
+                        "parameters": inline_parameters,
                     },
                 }
             )
         body["tools"] = encoded_tools
+    elif tool_schemas is not None:
+        raise OpenAICompatibleAdapterError("tool_schemas requires at least one tool")
     if tool_choice is not None:
         if isinstance(tool_choice, str):
             if not tool_choice.strip():
@@ -326,6 +369,13 @@ def openai_chat_completion_request(
     if extra_body is not None:
         if not isinstance(extra_body, Mapping):
             raise OpenAICompatibleAdapterError("extra_body must be a mapping")
+        requested_choices = extra_body.get("n", 1)
+        if (
+            isinstance(requested_choices, bool)
+            or not isinstance(requested_choices, int)
+            or requested_choices != 1
+        ):
+            raise OpenAICompatibleAdapterError("extra_body n must be 1 for the single-choice adapter")
         conflicting_keys = set(extra_body).intersection(body)
         if conflicting_keys:
             raise OpenAICompatibleAdapterError(
@@ -468,6 +518,7 @@ def openai_usage_record_from_delta(
 
 
 def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChatResponse:
+    """Normalize one choice, rejecting multi-choice responses instead of flattening them."""
     if not isinstance(data, Mapping):
         raise OpenAICompatibleAdapterError("provider response must be a mapping")
     response_id = data.get("id")
@@ -477,6 +528,10 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
     model = _strip_required_string("provider response model", model)
     if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
         raise OpenAICompatibleAdapterError("provider response choices must be a non-empty sequence")
+    if len(choices) != 1:
+        raise OpenAICompatibleAdapterError(
+            "provider response contains multiple choices; this adapter requires n=1"
+        )
 
     parts: list[ContentPart] = []
     tool_calls: list[dict[str, object]] = []
@@ -562,6 +617,7 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
 
 
 def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -> OpenAIChatDelta:
+    """Normalize one choice or an empty metadata/usage chunk from an ``n=1`` stream."""
     if not isinstance(data, Mapping):
         raise OpenAICompatibleAdapterError("provider chunk must be a mapping")
     response_id = data.get("id")
@@ -575,14 +631,16 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
     if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)):
         raise OpenAICompatibleAdapterError("provider chunk choices must be a sequence")
     if not choices:
-        if usage:
-            return OpenAIChatDelta(
-                response_id=response_id,
-                sequence=sequence,
-                choice_index=None,
-                usage_delta=usage,
-            )
-        raise OpenAICompatibleAdapterError("provider chunk choices must be a non-empty sequence")
+        return OpenAIChatDelta(
+            response_id=response_id,
+            sequence=sequence,
+            choice_index=None,
+            usage_delta=usage,
+        )
+    if len(choices) != 1:
+        raise OpenAICompatibleAdapterError(
+            "provider chunk contains multiple choices; this adapter requires n=1"
+        )
     choice = choices[0]
     if not isinstance(choice, Mapping):
         raise OpenAICompatibleAdapterError("provider chunk choice must be a mapping")
