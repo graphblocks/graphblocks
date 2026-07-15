@@ -1443,14 +1443,157 @@ def _main(argv: list[str] | None = None) -> int:
                 )
                 if not isinstance(payload, Mapping):
                     raise ValueError("deploy plan payload must be a JSON object")
-                if payload.get("ok") is False:
+                if payload.get("ok") is not True:
                     raise ValueError("deploy plan payload is not successful")
+                provenance_fields: dict[str, str] = {}
+                for field_name in (
+                    "releaseDigest",
+                    "deploymentRevisionId",
+                    "planHash",
+                ):
+                    value = payload.get(field_name)
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError(
+                            f"deploy plan payload {field_name} must be a non-empty string"
+                        )
+                    if value != value.strip():
+                        raise ValueError(
+                            f"deploy plan payload {field_name} must not contain surrounding whitespace"
+                        )
+                    provenance_fields[field_name] = value
+                release_digest = provenance_fields["releaseDigest"]
+                release_digest_value = release_digest.removeprefix("sha256:")
+                if (
+                    not release_digest.startswith("sha256:")
+                    or len(release_digest_value) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in release_digest_value
+                    )
+                ):
+                    raise ValueError(
+                        "deploy plan payload releaseDigest must be a canonical sha256 digest"
+                    )
+                deployment_revision = payload.get("deploymentRevision")
+                if not isinstance(deployment_revision, Mapping):
+                    raise ValueError("deploy plan payload deploymentRevision must be an object")
+                for revision_field, top_level_field in (
+                    ("revisionId", "deploymentRevisionId"),
+                    ("releaseDigest", "releaseDigest"),
+                    ("physicalPlanHash", "planHash"),
+                ):
+                    if deployment_revision.get(revision_field) != provenance_fields[top_level_field]:
+                        raise ValueError(
+                            "deploy plan payload deploymentRevision does not match top-level provenance"
+                        )
                 plan_payload = payload.get("plan")
                 if not isinstance(plan_payload, Mapping):
                     raise ValueError("deploy plan payload requires plan mapping")
+                graph_hash = plan_payload.get("graphHash")
+                if not isinstance(graph_hash, str) or not graph_hash.strip():
+                    raise ValueError("deploy plan payload plan.graphHash must be a non-empty string")
                 targets_payload = plan_payload.get("targets")
                 if not isinstance(targets_payload, Mapping) or not targets_payload:
                     raise ValueError("deploy plan payload requires non-empty plan.targets")
+                canonical_targets: list[dict[str, object]] = []
+                for target_id, target in sorted(targets_payload.items()):
+                    if not isinstance(target, Mapping):
+                        raise ValueError("deploy plan payload plan target must be an object")
+                    capabilities = target.get("capabilities", [])
+                    effects = target.get("effects", [])
+                    if not isinstance(capabilities, list) or not isinstance(effects, list):
+                        raise ValueError(
+                            "deploy plan payload plan target capabilities and effects must be arrays"
+                        )
+                    canonical_targets.append(
+                        {
+                            "target_id": target_id,
+                            "kind": target.get("kind"),
+                            "execution_host": target.get("executionHost"),
+                            "capabilities": capabilities,
+                            "effects": effects,
+                            "package_lock": target.get("packageLock"),
+                            "image": target.get("image"),
+                        }
+                    )
+                placements = plan_payload.get("placements", [])
+                if not isinstance(placements, list):
+                    raise ValueError("deploy plan payload plan.placements must be an array")
+                canonical_placements: list[dict[str, object]] = []
+                for placement in placements:
+                    if not isinstance(placement, Mapping):
+                        raise ValueError("deploy plan payload plan placement must be an object")
+                    selector = placement.get("selector")
+                    if not isinstance(selector, Mapping):
+                        raise ValueError("deploy plan payload plan placement selector must be an object")
+                    selector_values = selector.get("values", [])
+                    if not isinstance(selector_values, list):
+                        raise ValueError(
+                            "deploy plan payload plan placement selector values must be an array"
+                        )
+                    canonical_placements.append(
+                        {
+                            "rule_id": placement.get("ruleId"),
+                            "selector": {
+                                "kind": selector.get("kind"),
+                                "values": selector_values,
+                            },
+                            "target_id": placement.get("target"),
+                        }
+                    )
+                canonical_placements.sort(key=canonical_dumps)
+                computed_plan_hash = canonical_hash(
+                    {
+                        "release_digest": provenance_fields["releaseDigest"],
+                        "deployment_revision_id": provenance_fields["deploymentRevisionId"],
+                        "graph_hash": graph_hash,
+                        "package_lock_hash": plan_payload.get("packageLockHash"),
+                        "targets": canonical_targets,
+                        "placements": canonical_placements,
+                        "default_target": plan_payload.get("defaultTarget"),
+                    }
+                )
+                if computed_plan_hash != provenance_fields["planHash"]:
+                    raise ValueError("deploy plan payload planHash does not match plan content")
+                revision_digest_fields: dict[str, str] = {}
+                for field_name in (
+                    "deploymentSpecHash",
+                    "resolvedBindingHash",
+                    "targetCapabilityHash",
+                    "contentDigest",
+                ):
+                    value = deployment_revision.get(field_name)
+                    if not isinstance(value, str):
+                        raise ValueError(
+                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                        )
+                    digest = value.removeprefix("sha256:")
+                    if (
+                        not value.startswith("sha256:")
+                        or len(digest) != 64
+                        or any(character not in "0123456789abcdef" for character in digest)
+                    ):
+                        raise ValueError(
+                            f"deploy plan payload deploymentRevision.{field_name} must be a canonical sha256 digest"
+                        )
+                    revision_digest_fields[field_name] = value
+                if payload.get("deploymentSpecHash") != revision_digest_fields["deploymentSpecHash"]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision deploymentSpecHash does not match top-level provenance"
+                    )
+                computed_revision_digest = canonical_hash(
+                    {
+                        "release_digest": provenance_fields["releaseDigest"],
+                        "deployment_spec_hash": revision_digest_fields["deploymentSpecHash"],
+                        "physical_plan_hash": provenance_fields["planHash"],
+                        "resolved_binding_hash": revision_digest_fields["resolvedBindingHash"],
+                        "target_capability_hash": revision_digest_fields["targetCapabilityHash"],
+                    }
+                )
+                if computed_revision_digest != revision_digest_fields["contentDigest"]:
+                    raise ValueError(
+                        "deploy plan payload deploymentRevision contentDigest does not match revision content"
+                    )
 
                 options = KubernetesRenderOptions(namespace=args.namespace)
                 manifest_documents: list[dict[str, object]] = []

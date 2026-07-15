@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import json
+
+import pytest
 
 
 def _import_oci(monkeypatch):
     return importlib.import_module("graphblocks.integrations.oci")
+
+
+def _digest(label: str) -> str:
+    return "sha256:" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
 def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkeypatch) -> None:
@@ -18,7 +25,7 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
     )
     bundle = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.graphblocks.release.bundle.v1+tar",
-        digest="sha256:bundle",
+        digest=_digest("bundle"),
         size=4096,
     )
 
@@ -27,7 +34,7 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
         bundle_descriptor=bundle,
         config_descriptor=graphblocks_oci.OciDescriptor(
             media_type="application/vnd.graphblocks.release.config.v1+json",
-            digest="sha256:config",
+            digest=_digest("config"),
             size=256,
         ),
     )
@@ -35,7 +42,7 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
 
     assert contract["schemaVersion"] == 2
     assert contract["artifactType"] == "application/vnd.graphblocks.release.v1"
-    assert contract["config"]["digest"] == "sha256:config"
+    assert contract["config"]["digest"] == _digest("config")
     assert contract["layers"] == [bundle.descriptor_contract()]
     assert contract["annotations"]["graphblocks.ai/release-name"] == "support-agent"
     assert contract["annotations"]["graphblocks.ai/release-version"] == "2026.06.23.1"
@@ -53,17 +60,17 @@ def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monk
     )
     bundle = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.graphblocks.release.bundle.v1+tar",
-        digest="sha256:bundle",
+        digest=_digest("bundle"),
         size=4096,
     )
     provenance = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.in-toto+json",
-        digest="sha256:provenance",
+        digest=_digest("provenance"),
         size=512,
     )
     signature = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.dev.cosign.simplesigning.v1+json",
-        digest="sha256:signature",
+        digest=_digest("signature"),
         size=256,
     )
 
@@ -75,13 +82,18 @@ def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monk
     )
     contract = manifest.manifest_contract()
 
+    assert contract["config"] == {
+        "mediaType": "application/vnd.oci.empty.v1+json",
+        "digest": _digest("{}"),
+        "size": 2,
+    }
     assert contract["layers"] == [
         bundle.descriptor_contract(),
         provenance.descriptor_contract(),
         signature.descriptor_contract(),
     ]
-    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
-    assert contract["annotations"]["graphblocks.ai/signature-digest"] == "sha256:signature"
+    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == _digest("provenance")
+    assert contract["annotations"]["graphblocks.ai/signature-digest"] == _digest("signature")
 
 
 def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
@@ -94,18 +106,18 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
     )
     bundle = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.graphblocks.release.bundle.v1+tar",
-        digest="sha256:bundle",
+        digest=_digest("bundle"),
         size=4096,
     )
     sbom = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.cyclonedx+json",
-        digest="sha256:sbom",
+        digest=_digest("sbom"),
         size=1024,
         annotations={"graphblocks.ai/artifact-kind": "sbom"},
     )
     provenance = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.in-toto+json",
-        digest="sha256:provenance",
+        digest=_digest("provenance"),
         size=512,
     )
 
@@ -122,8 +134,8 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
         sbom.descriptor_contract(),
         provenance.descriptor_contract(),
     ]
-    assert contract["annotations"]["graphblocks.ai/sbom-digest"] == "sha256:sbom"
-    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
+    assert contract["annotations"]["graphblocks.ai/sbom-digest"] == _digest("sbom")
+    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == _digest("provenance")
 
 
 def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) -> None:
@@ -136,22 +148,22 @@ def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) 
     )
     bundle = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.graphblocks.release.bundle.v1+tar",
-        digest="sha256:bundle",
+        digest=_digest("bundle"),
         size=4096,
     )
     sbom = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.cyclonedx+json",
-        digest="sha256:sbom",
+        digest=_digest("sbom"),
         size=1024,
     )
     provenance = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.in-toto+json",
-        digest="sha256:provenance",
+        digest=_digest("provenance"),
         size=512,
     )
     signature = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.dev.cosign.simplesigning.v1+json",
-        digest="sha256:signature",
+        digest=_digest("signature"),
         size=256,
     )
 
@@ -323,8 +335,8 @@ def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monk
         build_type="https://graphblocks.ai/build/release-bundle/v1",
         invocation_id="build-123",
         materials={
-            "Cargo.lock": "sha256:cargo-lock",
-            "pylock.toml": "sha256:pylock",
+            "Cargo.lock": _digest("cargo-lock"),
+            "pylock.toml": _digest("pylock"),
         },
         metadata={"source": "git+https://example.com/support-agent@abc123"},
     )
@@ -334,8 +346,8 @@ def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monk
         build_type="https://graphblocks.ai/build/release-bundle/v1",
         invocation_id="build-123",
         materials={
-            "pylock.toml": "sha256:pylock",
-            "Cargo.lock": "sha256:cargo-lock",
+            "pylock.toml": _digest("pylock"),
+            "Cargo.lock": _digest("cargo-lock"),
         },
         metadata={"source": "git+https://example.com/support-agent@abc123"},
     )
@@ -364,10 +376,10 @@ def test_oci_signature_policy_evaluates_descriptor_metadata(monkeypatch) -> None
     graphblocks_oci = _import_oci(monkeypatch)
     signature = graphblocks_oci.OciDescriptor(
         media_type="application/vnd.dev.cosign.simplesigning.v1+json",
-        digest="sha256:signature",
+        digest=_digest("signature"),
         size=256,
         annotations={
-            "graphblocks.ai/release-digest": "sha256:release",
+            "graphblocks.ai/release-digest": _digest("release"),
             "graphblocks.ai/signature-kind": "cosign",
         },
     )
@@ -380,21 +392,22 @@ def test_oci_signature_policy_evaluates_descriptor_metadata(monkeypatch) -> None
     accepted = policy.evaluate(
         signature,
         signer="cosign://ci.example.com/release",
-        subject_digest="sha256:release",
+        subject_digest=_digest("release"),
+        cryptographic_verifier=lambda descriptor, signer, subject: True,
     )
     denied = policy.evaluate(
         signature,
         signer="cosign://unknown",
-        subject_digest="sha256:other-release",
+        subject_digest=_digest("other-release"),
     )
 
     assert accepted.verified is True
     assert accepted.reason_codes == ()
     assert accepted.verification_contract() == {
         "policy_id": "production-publishers",
-        "signature_digest": "sha256:signature",
+        "signature_digest": _digest("signature"),
         "signer": "cosign://ci.example.com/release",
-        "subject_digest": "sha256:release",
+        "subject_digest": _digest("release"),
         "verified": True,
         "reason_codes": [],
     }
@@ -402,13 +415,70 @@ def test_oci_signature_policy_evaluates_descriptor_metadata(monkeypatch) -> None
     assert denied.reason_codes == (
         "signature.subject_digest_mismatch",
         "signature.untrusted_signer",
+        "signature.cryptographic_verification_required",
     )
+
+
+def test_oci_signature_policy_fails_closed_without_crypto_or_trust_roots(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    subject_digest = _digest("release")
+    signature = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.dev.cosign.simplesigning.v1+json",
+        digest=_digest("signature"),
+        size=256,
+        annotations={"graphblocks.ai/release-digest": subject_digest},
+    )
+
+    missing_verifier = graphblocks_oci.SignatureVerificationPolicy(
+        policy_id="production-publishers",
+        trusted_signers=("cosign://ci.example.com/release",),
+    ).evaluate(
+        signature,
+        signer="cosign://ci.example.com/release",
+        subject_digest=subject_digest,
+    )
+    missing_trust_roots = graphblocks_oci.SignatureVerificationPolicy(
+        policy_id="no-publishers",
+    ).evaluate(
+        signature,
+        signer="cosign://ci.example.com/release",
+        subject_digest=subject_digest,
+        cryptographic_verifier=lambda descriptor, signer, subject: True,
+    )
+
+    assert missing_verifier.verified is False
+    assert missing_verifier.reason_codes == (
+        "signature.cryptographic_verification_required",
+    )
+    assert missing_trust_roots.verified is False
+    assert missing_trust_roots.reason_codes == ("signature.no_trusted_signers",)
+
+
+@pytest.mark.parametrize(
+    "digest",
+    (
+        "sha256:",
+        "sha256:abc",
+        "sha256:" + ("A" * 64),
+        "sha256:" + ("g" * 64),
+        "sha512:" + ("a" * 128),
+    ),
+)
+def test_oci_contract_rejects_noncanonical_sha256_digests(monkeypatch, digest) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+
+    with pytest.raises(graphblocks_oci.OciContractError, match="canonical sha256"):
+        graphblocks_oci.OciDescriptor("application/octet-stream", digest, 1)
 
 
 def test_oci_manifest_digest_uses_canonical_serialization(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
-    config = graphblocks_oci.OciDescriptor("application/vnd.graphblocks.config.v1+json", "sha256:config", 64)
-    layer = graphblocks_oci.OciDescriptor("application/vnd.graphblocks.layer.v1+tar", "sha256:layer", 512)
+    config = graphblocks_oci.OciDescriptor(
+        "application/vnd.graphblocks.config.v1+json", _digest("config"), 64
+    )
+    layer = graphblocks_oci.OciDescriptor(
+        "application/vnd.graphblocks.layer.v1+tar", _digest("layer"), 512
+    )
     left = graphblocks_oci.OciManifest(
         config=config,
         layers=(layer,),
@@ -436,8 +506,8 @@ def test_oci_reference_renders_tag_and_digest_forms(monkeypatch) -> None:
     digested = graphblocks_oci.OciArtifactReference(
         registry="registry.example.com",
         repository="graphblocks/support-agent",
-        digest="sha256:manifest",
+        digest=_digest("manifest"),
     )
 
     assert tagged.ref() == "registry.example.com/graphblocks/support-agent:2026.06.23.1"
-    assert digested.ref() == "registry.example.com/graphblocks/support-agent@sha256:manifest"
+    assert digested.ref() == f"registry.example.com/graphblocks/support-agent@{_digest('manifest')}"

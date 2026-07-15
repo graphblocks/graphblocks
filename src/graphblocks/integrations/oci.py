@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
@@ -12,6 +12,7 @@ from graphblocks.deployment import GraphRelease
 GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE = "application/vnd.graphblocks.release.v1"
 GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE = "application/vnd.graphblocks.release.config.v1+json"
 OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+OCI_EMPTY_CONFIG_MEDIA_TYPE = "application/vnd.oci.empty.v1+json"
 CYCLONEDX_JSON_MEDIA_TYPE = "application/vnd.cyclonedx+json"
 
 
@@ -24,8 +25,13 @@ def _canonical_dumps(value: object) -> str:
 
 
 def _validate_digest(digest: str) -> None:
-    if not digest.startswith("sha256:") or len(digest) <= len("sha256:"):
-        raise OciContractError("OCI digests must use sha256:<digest>")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise OciContractError("OCI digests must use canonical sha256:<64 lowercase hex> form")
+    encoded_digest = digest.removeprefix("sha256:")
+    if len(encoded_digest) != 64 or any(
+        character not in "0123456789abcdef" for character in encoded_digest
+    ):
+        raise OciContractError("OCI digests must use canonical sha256:<64 lowercase hex> form")
 
 
 def _payload_bytes(payload: str | bytes) -> bytes:
@@ -412,7 +418,9 @@ class SignatureVerificationPolicy:
         *,
         signer: str,
         subject_digest: str,
+        cryptographic_verifier: Callable[[OciDescriptor, str, str], bool] | None = None,
     ) -> SignatureVerificationResult:
+        """Require external cryptographic verification in addition to annotation constraints."""
         _validate_digest(subject_digest)
         reason_codes: list[str] = []
         signed_subject = signature_descriptor.annotations.get("graphblocks.ai/release-digest")
@@ -421,8 +429,24 @@ class SignatureVerificationPolicy:
         for key, expected in self.required_annotations.items():
             if signature_descriptor.annotations.get(key) != expected:
                 reason_codes.append(f"signature.annotation_mismatch:{key}")
-        if self.trusted_signers and signer not in self.trusted_signers:
+        if not self.trusted_signers:
+            reason_codes.append("signature.no_trusted_signers")
+        elif signer not in self.trusted_signers:
             reason_codes.append("signature.untrusted_signer")
+        if cryptographic_verifier is None:
+            reason_codes.append("signature.cryptographic_verification_required")
+        else:
+            try:
+                cryptographically_verified = cryptographic_verifier(
+                    signature_descriptor,
+                    signer,
+                    subject_digest,
+                )
+            except Exception:
+                reason_codes.append("signature.cryptographic_verification_failed")
+            else:
+                if cryptographically_verified is not True:
+                    reason_codes.append("signature.cryptographic_verification_failed")
         return SignatureVerificationResult(
             policy_id=self.policy_id,
             signature_digest=signature_descriptor.digest,
@@ -466,11 +490,7 @@ def build_release_manifest(
 
     return OciManifest(
         config=config_descriptor
-        or OciDescriptor(
-            media_type=GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE,
-            digest=release.content_digest(),
-            size=0,
-        ),
+        or OciDescriptor.from_payload(OCI_EMPTY_CONFIG_MEDIA_TYPE, b"{}"),
         layers=tuple(layers),
         annotations=release_annotations,
     )
@@ -514,6 +534,7 @@ __all__ = [
     "CYCLONEDX_JSON_MEDIA_TYPE",
     "GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE",
     "GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE",
+    "OCI_EMPTY_CONFIG_MEDIA_TYPE",
     "OCI_IMAGE_MANIFEST_MEDIA_TYPE",
     "OciArtifactReference",
     "OciContractError",

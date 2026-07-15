@@ -86,6 +86,76 @@ def _deployment_plan_payload(
     }
 
 
+def _render_plan_payload() -> dict[str, object]:
+    release_digest = "sha256:" + ("8" * 64)
+    deployment_spec_hash = "sha256:" + ("9" * 64)
+    resolved_binding_hash = "sha256:" + ("a" * 64)
+    target_capability_hash = "sha256:" + ("b" * 64)
+    target = {
+        "kind": "service",
+        "executionHost": "rust",
+        "capabilities": ["graph.coordinator"],
+        "effects": [],
+        "packageLock": None,
+        "image": "registry.example.com/graphblocks/control@sha256:control",
+    }
+    plan = {
+        "graphHash": "sha256:graph-turn",
+        "packageLockHash": None,
+        "defaultTarget": "control",
+        "targets": {"control": target},
+        "placements": [],
+    }
+    plan_hash = canonical_hash(
+        {
+            "release_digest": release_digest,
+            "deployment_revision_id": "rev-1",
+            "graph_hash": plan["graphHash"],
+            "package_lock_hash": None,
+            "targets": [
+                {
+                    "target_id": "control",
+                    "kind": target["kind"],
+                    "execution_host": target["executionHost"],
+                    "capabilities": target["capabilities"],
+                    "effects": target["effects"],
+                    "package_lock": target["packageLock"],
+                    "image": target["image"],
+                }
+            ],
+            "placements": [],
+            "default_target": "control",
+        }
+    )
+    revision_content_digest = canonical_hash(
+        {
+            "release_digest": release_digest,
+            "deployment_spec_hash": deployment_spec_hash,
+            "physical_plan_hash": plan_hash,
+            "resolved_binding_hash": resolved_binding_hash,
+            "target_capability_hash": target_capability_hash,
+        }
+    )
+    return {
+        "ok": True,
+        "deploymentId": "support-production",
+        "deploymentRevisionId": "rev-1",
+        "releaseDigest": release_digest,
+        "deploymentSpecHash": deployment_spec_hash,
+        "planHash": plan_hash,
+        "deploymentRevision": {
+            "revisionId": "rev-1",
+            "releaseDigest": release_digest,
+            "deploymentSpecHash": deployment_spec_hash,
+            "physicalPlanHash": plan_hash,
+            "resolvedBindingHash": resolved_binding_hash,
+            "targetCapabilityHash": target_capability_hash,
+            "contentDigest": revision_content_digest,
+        },
+        "plan": plan,
+    }
+
+
 def test_validate_cli_accepts_valid_graph(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -347,7 +417,7 @@ def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifestVersion"] == 1
-    assert payload["contentDigest"] == "sha256:23b4e4a819cfff101cb8d7fb6fc943bcd3bc2c981f9a02a779a50d66fca59b45"
+    assert payload["contentDigest"] == "sha256:f3f12cfefc92869ed83e0da2d1779528484b603293759ad9c653f090f60a985f"
     assert [entry["schemaId"] for entry in payload["schemas"]] == [
         "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
         "graphblocks.ai/v1/graph.schema.json",
@@ -1654,25 +1724,7 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
 
 
 def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys) -> None:
-    plan = {
-        "ok": True,
-        "deploymentId": "support-production",
-        "deploymentRevisionId": "rev-1",
-        "releaseDigest": "sha256:release",
-        "planHash": "sha256:plan",
-        "plan": {
-            "targets": {
-                "control": {
-                    "kind": "service",
-                    "executionHost": "rust",
-                    "capabilities": ["graph.coordinator"],
-                    "effects": [],
-                    "packageLock": None,
-                    "image": "registry.example.com/graphblocks/control@sha256:control",
-                }
-            }
-        },
-    }
+    plan = _render_plan_payload()
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(plan), encoding="utf-8")
 
@@ -1691,26 +1743,63 @@ def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys) -> 
     )
 
 
-def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys) -> None:
-    plan = {
-        "ok": True,
-        "deploymentId": "support-production",
-        "deploymentRevisionId": "rev-1",
-        "releaseDigest": "sha256:release",
-        "planHash": "sha256:plan",
-        "plan": {
-            "targets": {
-                "control": {
-                    "kind": "service",
-                    "executionHost": "rust",
-                    "capabilities": ["graph.coordinator"],
-                    "effects": [],
-                    "packageLock": None,
-                    "image": "registry.example.com/graphblocks/control@sha256:control",
-                }
-            }
-        },
+def test_deploy_render_cli_requires_explicit_successful_plan(tmp_path, capsys) -> None:
+    plan = _render_plan_payload()
+    del plan["ok"]
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": False, "error": "deploy plan payload is not successful"}
+
+
+def test_deploy_render_cli_rejects_noncanonical_release_digest(tmp_path, capsys) -> None:
+    plan = _render_plan_payload()
+    plan["releaseDigest"] = "not-a-digest"
+    deployment_revision = plan["deploymentRevision"]
+    assert isinstance(deployment_revision, dict)
+    deployment_revision["releaseDigest"] = "not-a-digest"
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "ok": False,
+        "error": "deploy plan payload releaseDigest must be a canonical sha256 digest",
     }
+
+
+def test_deploy_render_cli_rejects_tampered_plan_and_revision_digests(tmp_path, capsys) -> None:
+    path = tmp_path / "plan.json"
+    plan = _render_plan_payload()
+    plan_payload = plan["plan"]
+    assert isinstance(plan_payload, dict)
+    targets = plan_payload["targets"]
+    assert isinstance(targets, dict)
+    control = targets["control"]
+    assert isinstance(control, dict)
+    control["image"] = "registry.example.com/graphblocks/control@sha256:tampered"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--json"]) == 1
+    assert "planHash does not match plan content" in capsys.readouterr().out
+
+    plan = _render_plan_payload()
+    deployment_revision = plan["deploymentRevision"]
+    assert isinstance(deployment_revision, dict)
+    deployment_revision["contentDigest"] = "sha256:" + ("c" * 64)
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--json"]) == 1
+    assert "contentDigest does not match revision content" in capsys.readouterr().out
+
+
+def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys) -> None:
+    plan = _render_plan_payload()
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(plan), encoding="utf-8")
 
@@ -1732,8 +1821,8 @@ def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys) -> None:
         "deploymentId": "support-production",
         "deploymentRevisionId": "rev-1",
         "manifestDigest": payload["manifestDigest"],
-        "planHash": "sha256:plan",
-        "releaseDigest": "sha256:release",
+        "planHash": plan["planHash"],
+        "releaseDigest": plan["releaseDigest"],
     }
     deployment = yaml.safe_load(payload["files"]["templates/support-production-control-deployment.yaml"])
     assert deployment["metadata"]["namespace"] == "support"
