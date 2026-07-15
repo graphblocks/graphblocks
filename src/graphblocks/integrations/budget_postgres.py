@@ -237,7 +237,7 @@ ON CONFLICT (budget_id) DO UPDATE SET
   policy_ref = EXCLUDED.policy_ref,
   revision = EXCLUDED.revision,
   updated_at = now()
-WHERE {schema.schema}.budget_accounts.revision <= EXCLUDED.revision;
+WHERE {schema.schema}.budget_accounts.revision < EXCLUDED.revision;
 """.strip(),
         params=encode_budget_account(account),
     )
@@ -279,7 +279,8 @@ ON CONFLICT (reservation_id) DO UPDATE SET
   expires_at = EXCLUDED.expires_at,
   fencing_token = EXCLUDED.fencing_token,
   status = EXCLUDED.status,
-  updated_at = now();
+  updated_at = now()
+WHERE {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token;
 """.strip(),
         params=encode_budget_reservation(reservation),
     )

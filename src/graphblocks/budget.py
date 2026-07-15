@@ -869,7 +869,13 @@ class InMemoryBudgetLedger:
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
         actual = _amounts_to_dict(actual_amounts)
-        self._ensure_permit_allows_additional(permit, actual, reservation_id)
+        overdraft_limit = _amounts_to_dict(max_overdraft or [])
+        self._ensure_permit_allows_additional(
+            permit,
+            actual,
+            reservation_id,
+            overdraft_limit,
+        )
         settlement = self.commit(reservation_id, actual_amounts, max_overdraft=max_overdraft)
         spent = self._permit_spent.setdefault(permit.permit_id, {})
         for key, amount in actual.items():
@@ -1068,14 +1074,28 @@ class InMemoryBudgetLedger:
         permit: BudgetPermit,
         requested: dict[AmountKey, Decimal],
         reservation_id: str,
+        overdraft_limit: dict[AmountKey, Decimal],
     ) -> None:
         reservation = self._reservations[reservation_id]
-        authorized = _amounts_to_dict(reservation.amounts)
+        reservation_authorized = _amounts_to_dict(reservation.amounts)
         for key, amount in requested.items():
-            if amount > authorized.get(key, Decimal("0")):
+            if amount > (
+                reservation_authorized.get(key, Decimal("0"))
+                + overdraft_limit.get(key, Decimal("0"))
+            ):
                 raise BudgetExceededError(
                     f"permit {permit.permit_id!r} exceeds authorized {key[0]} {key[1]} "
                     f"for reservation {reservation_id!r}"
+                )
+        permit_authorized = _amounts_to_dict(permit.authorized_amounts)
+        spent = self._permit_spent.get(permit.permit_id, {})
+        for key, amount in requested.items():
+            cumulative = spent.get(key, Decimal("0")) + amount
+            cumulative_limit = permit_authorized.get(key, Decimal("0"))
+            if cumulative > cumulative_limit:
+                raise BudgetExceededError(
+                    f"permit {permit.permit_id!r} exceeds cumulative authorized "
+                    f"{key[0]} {key[1]}"
                 )
 
 

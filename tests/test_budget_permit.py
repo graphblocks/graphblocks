@@ -280,6 +280,110 @@ def test_budget_ledger_commit_with_permit_settles_authorized_reservation() -> No
     assert ledger.balance("budget-1").available == [_tokens("75")]
 
 
+def test_budget_ledger_permit_allows_overdraft_within_cumulative_authority() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("120")],
+        policy_ref="policy-1",
+    )
+    first = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    second = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("60")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[first.reservation_id, second.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at=PERMIT_EXPIRES_AT,
+    )
+    ledger.commit_with_permit(
+        permit.permit_id,
+        first.reservation_id,
+        [_tokens("30")],
+        now="2026-06-22T00:30:00Z",
+    )
+
+    settlement = ledger.commit_with_permit(
+        permit.permit_id,
+        second.reservation_id,
+        [_tokens("70")],
+        now="2026-06-22T00:30:00Z",
+        max_overdraft=[_tokens("10")],
+    )
+
+    assert settlement.committed == [_tokens("70")]
+    assert settlement.overdraft == [_tokens("10")]
+
+
+def test_budget_ledger_permit_enforces_cumulative_spend_with_overdraft() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [_tokens("120")],
+        policy_ref="policy-1",
+    )
+    first = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    second = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("60")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[first.reservation_id, second.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at=PERMIT_EXPIRES_AT,
+    )
+    ledger.commit_with_permit(
+        permit.permit_id,
+        first.reservation_id,
+        [_tokens("50")],
+        now="2026-06-22T00:30:00Z",
+        max_overdraft=[_tokens("10")],
+    )
+
+    with pytest.raises(BudgetExceededError, match="cumulative authorized"):
+        ledger.commit_with_permit(
+            permit.permit_id,
+            second.reservation_id,
+            [_tokens("60")],
+            now="2026-06-22T00:30:00Z",
+            max_overdraft=[_tokens("10")],
+        )
+
+    assert ledger.balance("budget-1").reserved == [_tokens("60")]
+    assert ledger.balance("budget-1").committed == [_tokens("50")]
+
+
 def test_budget_ledger_release_with_permit_restores_authorized_reservation() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")

@@ -67,9 +67,18 @@ CREATE TABLE IF NOT EXISTS {self.schema}.usage_records (
 );
 """.strip(),
             f"""
-CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe
+CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_with_attempt
 ON {self.schema}.usage_records(provider_response_id, attempt_id)
-WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL;
+WHERE provider_response_id IS NOT NULL
+  AND attempt_id IS NOT NULL
+  AND reconciliation_of IS NULL;
+""".strip(),
+            f"""
+CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_without_attempt
+ON {self.schema}.usage_records(provider_response_id)
+WHERE provider_response_id IS NOT NULL
+  AND attempt_id IS NULL
+  AND reconciliation_of IS NULL;
 """.strip(),
         )
 

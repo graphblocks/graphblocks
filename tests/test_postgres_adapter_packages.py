@@ -58,6 +58,8 @@ def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
     statement = graphblocks_budget_postgres.upsert_budget_account_statement(account, schema=schema)
     assert statement.name == "budget_account_upsert"
     assert "ON CONFLICT (budget_id) DO UPDATE" in statement.sql
+    assert "budget_accounts.revision < EXCLUDED.revision" in statement.sql
+    assert "budget_accounts.revision <= EXCLUDED.revision" not in statement.sql
     assert statement.params["budget_id"] == "budget-1"
 
 
@@ -110,6 +112,7 @@ def test_budget_postgres_reservation_statement(monkeypatch) -> None:
     assert statement.name == "budget_reservation_upsert"
     assert "INSERT INTO gb_budget.budget_reservations" in statement.sql
     assert "ON CONFLICT (reservation_id) DO UPDATE" in statement.sql
+    assert "budget_reservations.fencing_token <= EXCLUDED.fencing_token" in statement.sql
     assert statement.params["reservation_id"] == "reservation-1"
     assert statement.params["fencing_token"] == 7
 
@@ -372,6 +375,11 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     assert "CREATE TABLE IF NOT EXISTS gb_usage.usage_records" in "\n".join(schema.migration_statements())
     assert "quota_window_id text NULL" in "\n".join(schema.migration_statements())
     assert "execution_scope text NULL" in "\n".join(schema.migration_statements())
+    migrations = "\n".join(schema.migration_statements())
+    assert "usage_records_provider_dedupe_with_attempt" in migrations
+    assert "usage_records_provider_dedupe_without_attempt" in migrations
+    assert "ON gb_usage.usage_records(provider_response_id)" in migrations
+    assert "attempt_id IS NULL" in migrations
     assert graphblocks_usage_postgres.encode_usage_record(record) == {
         "record_id": "usage-1",
         "source": "provider_reported",
