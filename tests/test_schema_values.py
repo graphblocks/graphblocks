@@ -385,4 +385,4 @@ def test_checked_in_schema_manifest_digest_is_golden() -> None:
         "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha3/graph.schema.json",
     ]
-    assert manifest.content_digest() == "sha256:23b4e4a819cfff101cb8d7fb6fc943bcd3bc2c981f9a02a779a50d66fca59b45"
+    assert manifest.content_digest() == "sha256:f3f12cfefc92869ed83e0da2d1779528484b603293759ad9c653f090f60a985f"

@@ -82,6 +82,20 @@ def test_stable_graph_schema_preserves_retry_type_rejection(retry: object) -> No
     assert resource_schema_errors(graph)
 
 
+@pytest.mark.parametrize("retry", ({}, {"idempotencyKey": "$input.request_id"}))
+def test_stable_graph_schema_rejects_retry_object_without_attempts(
+    retry: object,
+) -> None:
+    graph = _stable_graph()
+    graph["spec"]["nodes"]["worker"]["flow"]["retry"] = retry  # type: ignore[index]
+
+    violations = resource_schema_errors(graph)
+
+    assert [(violation.path, violation.keyword) for violation in violations] == [
+        ("$.spec.nodes.worker.flow.retry", "oneOf")
+    ]
+
+
 @pytest.mark.parametrize(
     "field,value",
     (
@@ -174,7 +188,7 @@ def test_stable_graph_schema_accepts_closed_tool_and_output_policy_contracts() -
                         },
                         "implementation": {"kind": "block", "block": "knowledge.lookup@1"},
                         "effects": "external_read",
-                        "approval": "never",
+                        "approval": {"mode": "never"},
                         "idempotency": "not_applicable",
                         "cancellation": "cooperative",
                         "resultMode": "value",
@@ -208,6 +222,46 @@ def test_stable_graph_schema_accepts_closed_tool_and_output_policy_contracts() -
     )
 
     validate_resource(graph)
+
+
+@pytest.mark.parametrize(
+    "approval",
+    (
+        {},
+        {"bindArgumentsDigest": True},
+        {
+            "mode": "always",
+            "argumentsDigest": "sha256:resolved",
+            "argumentsDigestRef": "$input.arguments_digest",
+        },
+    ),
+)
+def test_stable_graph_schema_rejects_ambiguous_tool_approval_objects(
+    approval: object,
+) -> None:
+    graph = _stable_graph()
+    graph["spec"]["bindings"] = {  # type: ignore[index]
+        "tools": {
+            "lookup": {
+                "definition": {
+                    "name": "knowledge.lookup",
+                    "description": "Look up deterministic local knowledge.",
+                    "inputSchema": "schemas/LookupRequest@1",
+                },
+                "implementation": {
+                    "kind": "block",
+                    "block": "knowledge.lookup@1",
+                },
+                "approval": approval,
+            }
+        }
+    }
+
+    violations = resource_schema_errors(graph)
+
+    assert [(violation.path, violation.keyword) for violation in violations] == [
+        ("$.spec.bindings.tools.lookup.approval", "oneOf")
+    ]
 
 
 def test_preview_alpha_graph_retains_preview_fields_without_widening_v1() -> None:

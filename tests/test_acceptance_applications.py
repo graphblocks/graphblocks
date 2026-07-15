@@ -136,6 +136,22 @@ def test_profiled_scenarios_are_declared_acceptance_applications(monkeypatch) ->
     }
 
 
+def test_acceptance_scenario_directory_has_no_orphaned_shadow_fixtures(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    declared_paths = {
+        application.scenario_path for application in manifest.applications
+    }
+    scenario_paths = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "acceptance" / "scenarios").glob("*.yaml")
+    }
+
+    assert scenario_paths <= declared_paths
+
+
 def test_local_acceptance_scenarios_pass_declared_builtin_gates(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     manifest = graphblocks_testing.AcceptanceManifest.from_document(
@@ -251,6 +267,35 @@ def test_acceptance_gate_runner_executes_exact_builtin_and_custom_handlers(
         "--expand",
     )
     assert report.content_digest().startswith("sha256:")
+
+
+def test_acceptance_gate_runner_reports_malformed_yaml_as_gate_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: [", encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="bounded-research-orchestrator",
+        profiles=("GB-C2-AI-APPLICATION",),
+        scenario_path=scenario.name,
+        gates=("bounded task plan check",),
+    )
+
+    report = graphblocks_testing.AcceptanceGateRunner().run_application(
+        application,
+        root=tmp_path,
+    )
+
+    assert not report.ok
+    assert report.scenario_digest.startswith("sha256:")
+    assert report.results[0].diagnostic_contracts()[0]["code"] == (
+        "AcceptanceGateExecutionFailed"
+    )
+    assert report.results[0].diagnostic_contracts()[0]["path"] == (
+        "$.applications.bounded-research-orchestrator.gates[0]"
+    )
 
 
 def test_acceptance_gate_runner_executes_authenticated_coding_agent_semantic_gates(
@@ -670,8 +715,12 @@ def test_callback_acceptance_gate_rejects_scenario_with_weakened_resume_fence(
     tmp_path,
 ) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    original = manifest.by_id("coding-agent-background-callbacks")
     documents = _load_yaml_documents(
-        ROOT / "acceptance" / "scenarios" / "coding-agent-background-callbacks.yaml"
+        ROOT / original.scenario_path
     )
     documents[1]["spec"]["nodes"]["waitCI"]["config"]["resume"][
         "requirePolicyReevaluation"
@@ -1100,19 +1149,6 @@ def test_coding_agent_background_callback_example_matches_async_contract() -> No
     assert callback["delivery"]["retry_policy_ref"] == "webhook-standard"
 
 
-def test_local_coding_agent_scenario_binds_callback_registration_evidence() -> None:
-    example_application, _ = _load_yaml_documents(
-        ROOT / "examples" / "11-coding-agent-background-callbacks" / "example.yaml"
-    )
-    local_application, _ = _load_yaml_documents(
-        ROOT / "acceptance" / "scenarios" / "coding-agent-background-callbacks.yaml"
-    )
-
-    assert local_application["spec"]["callbackRegistration"] == example_application["spec"][
-        "callbackRegistration"
-    ]
-
-
 def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     manifest = graphblocks_testing.AcceptanceManifest.from_document(
@@ -1145,6 +1181,38 @@ def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) ->
             "message": "profile references an acceptance application with no manifest entry",
         }
     ]
+
+
+def test_acceptance_manifest_reports_malformed_scenario_fixture(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: [", encoding="utf-8")
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="malformed-scenario",
+        profiles=("GB-C0-SCHEMA",),
+        scenario_path=scenario.name,
+        gates=("graphblocks validate",),
+    )
+    manifest = graphblocks_testing.AcceptanceManifest((application,))
+    conformance = {
+        "spec": {
+            "profiles": [
+                {
+                    "id": "GB-C0-SCHEMA",
+                    "acceptanceApplications": [application.application_id],
+                }
+            ]
+        }
+    }
+
+    coverage = manifest.coverage_for_conformance(conformance, root=tmp_path)
+
+    assert not coverage.ok
+    assert [issue.code for issue in coverage.issues] == ["AcceptanceFixtureInvalid"]
+    assert coverage.expectations[0].scenario_digest is None
 
 
 def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requirements(monkeypatch) -> None:

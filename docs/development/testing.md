@@ -45,8 +45,8 @@ tests require those mirrors to remain byte-for-byte equal to the authoritative
 files under `tck/`.
 
 Python tests run on Python 3.11 and 3.12 on both Ubuntu and Windows. The complete
-catalog-derived wheelhouse is also built and installed on Python 3.11 on both
-operating systems.
+catalog-derived wheelhouse is also built and installed for both Python versions
+on both operating systems.
 
 Example-local integration tests invoke each example's runner. Documentation
 integrity tests verify links and ensure retired bundle artifacts do not become a

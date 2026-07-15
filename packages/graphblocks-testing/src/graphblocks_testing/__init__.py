@@ -18,6 +18,8 @@ from tempfile import TemporaryDirectory
 from types import MappingProxyType
 from typing import Literal, get_args
 
+import yaml
+
 from graphblocks.application_event import (
     APPLICATION_COMMAND_KINDS,
     APPLICATION_PROTOCOL_EVENT_KINDS,
@@ -4086,7 +4088,7 @@ class AcceptanceManifest:
             elif scenario_path is not None:
                 try:
                     scenario_digest = canonical_hash(load_documents(scenario_path))
-                except (OSError, TypeError, ValueError):
+                except (OSError, TypeError, ValueError, yaml.YAMLError):
                     issues.append(
                         AcceptanceCoverageIssue(
                             code="AcceptanceFixtureInvalid",
@@ -7263,7 +7265,7 @@ class AcceptanceGateRunner:
         scenario_path = root / application.scenario_path
         try:
             scenario_digest = canonical_hash(load_documents(scenario_path))
-        except (OSError, TypeError, ValueError) as error:
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
             scenario_digest = canonical_hash(
                 {
                     "scenario_path": application.scenario_path,
@@ -7287,7 +7289,13 @@ class AcceptanceGateRunner:
                     with redirect_stdout(output_buffer):
                         exit_code = graphblocks_cli_main(arguments)
                     output = output_buffer.getvalue()
-                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                except (
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    yaml.YAMLError,
+                ) as error:
                     output = output_buffer.getvalue()
                     diagnostic = AcceptanceGateDiagnostic(
                         code="AcceptanceGateExecutionFailed",
@@ -7314,7 +7322,13 @@ class AcceptanceGateRunner:
                     with redirect_stdout(output_buffer):
                         exit_code = graphblocks_cli_main(arguments)
                     output = output_buffer.getvalue()
-                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                except (
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    yaml.YAMLError,
+                ) as error:
                     output = output_buffer.getvalue()
                     diagnostic = AcceptanceGateDiagnostic(
                         code="AcceptanceGateExecutionFailed",
@@ -7335,7 +7349,13 @@ class AcceptanceGateRunner:
                         raise TypeError("acceptance gate handler exit code must be an integer")
                     if not isinstance(output, str):
                         raise TypeError("acceptance gate handler output must be a string")
-                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                except (
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    yaml.YAMLError,
+                ) as error:
                     diagnostic = AcceptanceGateDiagnostic(
                         code="AcceptanceGateExecutionFailed",
                         message=(
@@ -7355,7 +7375,13 @@ class AcceptanceGateRunner:
                         raise TypeError("acceptance gate handler exit code must be an integer")
                     if not isinstance(output, str):
                         raise TypeError("acceptance gate handler output must be a string")
-                except (OSError, RuntimeError, TypeError, ValueError) as error:
+                except (
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    yaml.YAMLError,
+                ) as error:
                     diagnostic = AcceptanceGateDiagnostic(
                         code="AcceptanceGateExecutionFailed",
                         message=(

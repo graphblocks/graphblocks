@@ -97,6 +97,7 @@
         {"type": "integer", "minimum": 1, "maximum": 100},
         {
           "type": "object",
+          "required": ["maxAttempts"],
           "properties": {
             "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 100},
             "idempotencyKey": {"$ref": "#/$defs/nonEmptyString"}
@@ -234,12 +235,14 @@
         {"enum": ["never", "policy", "always"]},
         {
           "type": "object",
+          "required": ["mode"],
           "properties": {
             "mode": {"enum": ["never", "policy", "always"]},
             "bindArgumentsDigest": {"type": "boolean"},
             "argumentsDigest": {"$ref": "#/$defs/nonEmptyString"},
             "argumentsDigestRef": {"$ref": "#/$defs/nonEmptyString"}
           },
+          "not": {"required": ["argumentsDigest", "argumentsDigestRef"]},
           "additionalProperties": false
         }
       ]
