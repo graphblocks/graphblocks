@@ -32,6 +32,10 @@ def test_parse_duration_seconds_rejects_unsupported_values() -> None:
         math.inf,
         "nan",
         "inf",
+        "1_000ms",
+        "1_0e1s",
+        "١s",
+        10**1000,
     ):
         assert parse_duration_seconds(value) is None
 
@@ -145,8 +149,22 @@ def test_runtime_exposes_expired_timeout_through_attempt_cancellation_token(
     }
 
 
-@pytest.mark.parametrize("timeout", ("soon", "0s", "-1s", "nan", "inf"))
-def test_compile_and_runtime_reject_invalid_timeout_before_invoking_block(timeout: str) -> None:
+@pytest.mark.parametrize(
+    "timeout",
+    (
+        "soon",
+        "0s",
+        "-1s",
+        "nan",
+        "inf",
+        "1_000ms",
+        "١s",
+        pytest.param(10**1000, id="overflowing-integer"),
+    ),
+)
+def test_compile_and_runtime_reject_invalid_timeout_before_invoking_block(
+    timeout: object,
+) -> None:
     invoked = False
     registry = RuntimeRegistry(allow_untyped=True)
 

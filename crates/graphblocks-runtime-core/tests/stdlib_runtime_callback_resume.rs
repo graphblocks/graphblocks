@@ -936,7 +936,7 @@ fn resume_rejects_a_journal_prefix_that_no_longer_matches_checkpoint() -> Result
 fn failed_resume_consumes_checkpoint_and_retries_deterministically() -> Result<(), String> {
     let path = sqlite_path("failed-resume");
     let mut graph = callback_graph();
-    graph["spec"]["nodes"]["selectCallback"]["config"]["order"] = json!(["missing"]);
+    graph["spec"]["nodes"]["selectCallback"]["config"]["outputSchema"] = Value::Null;
     let waiting = run_graph(&path, &graph, None)?;
 
     let failed = run_graph(&path, &graph, Some(callback_receipt(&waiting, true)))?;

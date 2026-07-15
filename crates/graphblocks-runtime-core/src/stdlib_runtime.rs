@@ -10,6 +10,7 @@ use graphblocks_compiler::compiler::{
     BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
 };
 use graphblocks_compiler::diagnostics::Severity;
+use graphblocks_schema::parse_duration_milliseconds;
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -6407,36 +6408,9 @@ fn optional_alias_duration_ms(
     else {
         return Ok(None);
     };
-    if let Some(duration_ms) = value.as_u64().filter(|duration_ms| *duration_ms > 0) {
-        return Ok(Some(duration_ms));
-    }
-    if let Some(text) = value.as_str() {
-        let text = text.trim();
-        for (suffix, multiplier) in [
-            ("ms", 1_u64),
-            ("s", 1_000),
-            ("m", 60_000),
-            ("h", 3_600_000),
-            ("d", 86_400_000),
-        ] {
-            let Some(amount) = text.strip_suffix(suffix) else {
-                continue;
-            };
-            if amount.as_bytes().iter().all(u8::is_ascii_digit)
-                && let Ok(amount) = amount.parse::<u64>()
-                && amount > 0
-                && let Some(duration_ms) = amount.checked_mul(multiplier)
-            {
-                return Ok(Some(duration_ms));
-            }
-        }
-    }
-    Err(BlockError::new(
-        code,
-        ErrorCategory::Configuration,
-        message,
-        false,
-    ))
+    parse_duration_milliseconds(value)
+        .map(Some)
+        .ok_or_else(|| BlockError::new(code, ErrorCategory::Configuration, message, false))
 }
 
 fn optional_infinite_wait_policy<'a>(
@@ -7182,9 +7156,45 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        ExecutionPhase, StdlibRunOptions, StdlibRunStatus, run_stdlib_graph_with_options,
-        run_stdlib_graph_with_options_json, stdlib_block_catalog, validate_stdlib_output_contract,
+        ExecutionPhase, StdlibRunOptions, StdlibRunStatus, optional_alias_duration_ms,
+        run_stdlib_graph_with_options, run_stdlib_graph_with_options_json, stdlib_block_catalog,
+        validate_stdlib_output_contract,
     };
+
+    #[test]
+    fn native_duration_parser_rounds_up_and_enforces_u64_milliseconds() {
+        for (value, expected) in [
+            (json!("5e-1ms"), 1),
+            (json!("1.5s"), 1_500),
+            (json!("1d"), 86_400_000),
+            (json!(0.0005), 1),
+            (json!("1 s"), 1_000),
+            (json!("1e-1000ms"), 1),
+            (json!(u64::MAX), u64::MAX),
+            (json!("18446744073709551615ms"), u64::MAX),
+        ] {
+            let config = json!({"timeout": value});
+            let parsed = optional_alias_duration_ms(
+                config.as_object().expect("config is an object"),
+                &["timeout"],
+                "duration.invalid",
+                "duration must be positive and fit in milliseconds",
+            )
+            .expect("duration is valid");
+            assert_eq!(parsed, Some(expected));
+        }
+
+        let config = json!({"timeout": "18446744073709551616ms"});
+        assert!(
+            optional_alias_duration_ms(
+                config.as_object().expect("config is an object"),
+                &["timeout"],
+                "duration.invalid",
+                "duration must be positive and fit in milliseconds",
+            )
+            .is_err()
+        );
+    }
 
     fn unique_sqlite_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

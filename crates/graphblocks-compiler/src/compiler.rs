@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use graphblocks_schema::{
-    ResourceSchemaViolation, SchemaId, resource_depth_violation, resource_schema_errors,
+    ResourceSchemaViolation, SchemaId, parse_duration_milliseconds, parse_duration_seconds,
+    resource_depth_violation, resource_schema_errors,
 };
 use serde_json::{Map, Value};
 
@@ -693,36 +694,7 @@ fn truthy_flag(config: &Map<String, Value>, names: &[&str]) -> bool {
 }
 
 fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
-    match value {
-        Some(Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
-        Some(Value::String(duration)) => {
-            let duration = duration.trim();
-            for (suffix, multiplier) in [
-                ("ms", 1_u64),
-                ("s", 1_000),
-                ("m", 60_000),
-                ("h", 3_600_000),
-                ("d", 86_400_000),
-            ] {
-                let Some(amount) = duration.strip_suffix(suffix) else {
-                    continue;
-                };
-                if amount.is_empty() || !amount.chars().all(|character| character.is_ascii_digit())
-                {
-                    return None;
-                }
-                let Ok(parsed) = amount.parse::<u64>() else {
-                    return None;
-                };
-                if parsed == 0 {
-                    return None;
-                }
-                return parsed.checked_mul(multiplier);
-            }
-            None
-        }
-        _ => None,
-    }
+    value.and_then(parse_duration_milliseconds)
 }
 
 fn has_async_relative_timeout(config: &Map<String, Value>) -> bool {
@@ -1214,7 +1186,10 @@ fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
     let Some(rest) = url.strip_prefix("https://") else {
         return true;
     };
-    let authority = rest.split(&['/', '?', '#'][..]).next().unwrap_or_default();
+    if rest.contains('#') || rest.bytes().any(|byte| byte <= 32 || byte == 127) {
+        return true;
+    }
+    let authority = rest.split(&['/', '?'][..]).next().unwrap_or_default();
     if authority.is_empty() || authority.contains('@') {
         return true;
     }
@@ -1756,28 +1731,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             };
             let flow = node.get("flow").and_then(Value::as_object);
             if let Some(timeout) = flow.and_then(|flow| flow.get("timeout")) {
-                let valid_timeout = match timeout {
-                    Value::Number(number) => number
-                        .as_f64()
-                        .is_some_and(|seconds| seconds.is_finite() && seconds > 0.0),
-                    Value::String(duration) => {
-                        let duration = duration.trim();
-                        let (amount, multiplier) =
-                            [("ms", 0.001_f64), ("s", 1.0), ("m", 60.0), ("h", 3_600.0)]
-                                .into_iter()
-                                .find_map(|(suffix, multiplier)| {
-                                    duration
-                                        .strip_suffix(suffix)
-                                        .map(|amount| (amount, multiplier))
-                                })
-                                .unwrap_or((duration, 1.0));
-                        amount.parse::<f64>().is_ok_and(|amount| {
-                            let seconds = amount * multiplier;
-                            seconds.is_finite() && seconds > 0.0
-                        })
-                    }
-                    _ => false,
-                };
+                let valid_timeout = parse_duration_seconds(timeout).is_some();
                 if !valid_timeout {
                     diagnostics.push(Diagnostic::error(
                         "GB1019",
@@ -2228,13 +2182,15 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "output policy enforcement must include the before_client_delivery gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
-            } else if on_generation_chunk_index.is_none() {
+            }
+            if on_generation_chunk_index.is_none() {
                 diagnostics.push(Diagnostic::error(
                     "GB1046",
                     "output policy enforcement must include the on_generation_chunk gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
-            } else if before_output_commit_index.is_none() {
+            }
+            if before_output_commit_index.is_none() {
                 diagnostics.push(Diagnostic::error(
                     "GB1046",
                     "output policy enforcement must include the before_output_commit gate",
@@ -3298,14 +3254,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             .iter()
                             .find(|port| port.name == port_name)
                         {
+                            let source_config = source_node
+                                .get("config")
+                                .filter(|config| config.is_object())
+                                .unwrap_or(&empty_config);
+                            source_required =
+                                Some(port.required_for(source_config, ExecutionPhase::Initial));
                             if !nested {
                                 source_type = port.type_ref.as_deref();
-                                let source_config = source_node
-                                    .get("config")
-                                    .filter(|config| config.is_object())
-                                    .unwrap_or(&empty_config);
-                                source_required =
-                                    Some(port.required_for(source_config, ExecutionPhase::Initial));
                             }
                         } else {
                             diagnostics.push(Diagnostic::error(
@@ -3331,12 +3287,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     inbound_ports.insert(port_name.to_owned());
                 }
                 if let Some((target_owner, port_name, nested)) = target_port {
-                    if target_owner == "$output" && !nested {
-                        target_type = interface_outputs
-                            .and_then(|ports| ports.get(port_name))
-                            .and_then(Value::as_str);
-                        if target_type.is_some() {
+                    if target_owner == "$output" {
+                        if let Some(output_type) =
+                            interface_outputs.and_then(|ports| ports.get(port_name))
+                        {
                             target_required = Some(true);
+                            if !nested {
+                                target_type = output_type.as_str();
+                            }
                         }
                     } else if !PSEUDO_NODES.contains(&target_owner)
                         && let Some(target_node) = normalized_nodes.get(target_owner)
@@ -3349,9 +3307,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         if let Some(port) =
                             descriptor.inputs.iter().find(|port| port.name == port_name)
                         {
+                            target_required = Some(port.required);
                             if !nested {
                                 target_type = port.type_ref.as_deref();
-                                target_required = Some(port.required);
                             }
                         } else {
                             invalid_input_port_nodes.insert(target_owner.to_owned());

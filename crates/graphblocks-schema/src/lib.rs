@@ -4,6 +4,160 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+pub fn parse_duration_seconds(value: &Value) -> Option<f64> {
+    let seconds = match value {
+        Value::Number(number) => number.as_f64()?,
+        Value::String(duration) => {
+            let (amount, _, seconds_multiplier) = duration_string_parts(duration.trim());
+            amount.trim().parse::<f64>().ok()? * seconds_multiplier
+        }
+        _ => return None,
+    };
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+}
+
+pub fn parse_duration_milliseconds(value: &Value) -> Option<u64> {
+    if let Some(milliseconds) = value.as_u64().filter(|milliseconds| *milliseconds > 0) {
+        return Some(milliseconds);
+    }
+    let (amount, milliseconds_multiplier, _) = match value {
+        Value::Number(number) => (number.to_string(), 1_000, 1.0),
+        Value::String(duration) => {
+            let (amount, milliseconds_multiplier, seconds_multiplier) =
+                duration_string_parts(duration.trim());
+            (
+                amount.to_owned(),
+                milliseconds_multiplier,
+                seconds_multiplier,
+            )
+        }
+        _ => return None,
+    };
+    exact_decimal_ceil_scaled(&amount, milliseconds_multiplier)
+}
+
+fn duration_string_parts(duration: &str) -> (&str, u64, f64) {
+    for (suffix, milliseconds_multiplier, seconds_multiplier) in [
+        ("ms", 1, 0.001),
+        ("s", 1_000, 1.0),
+        ("m", 60_000, 60.0),
+        ("h", 3_600_000, 3_600.0),
+        ("d", 86_400_000, 86_400.0),
+    ] {
+        if let Some(amount) = duration.strip_suffix(suffix) {
+            return (amount, milliseconds_multiplier, seconds_multiplier);
+        }
+    }
+    (duration, 1_000, 1.0)
+}
+
+fn exact_decimal_ceil_scaled(amount: &str, multiplier: u64) -> Option<u64> {
+    let amount = amount.trim();
+    let amount = amount.strip_prefix('+').unwrap_or(amount);
+    if amount.starts_with('-') {
+        return None;
+    }
+    let (mantissa, exponent) = if let Some(index) = amount.find(['e', 'E']) {
+        if amount[index + 1..].contains(['e', 'E']) {
+            return None;
+        }
+        (
+            &amount[..index],
+            parse_decimal_exponent(&amount[index + 1..])?,
+        )
+    } else {
+        (amount, 0_i64)
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if whole.contains('.')
+        || fraction.contains('.')
+        || (whole.is_empty() && fraction.is_empty())
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let coefficient = format!("{whole}{fraction}");
+    let coefficient = coefficient.trim_start_matches('0');
+    if coefficient.is_empty() {
+        return None;
+    }
+    let mut digits = coefficient
+        .bytes()
+        .rev()
+        .map(|byte| byte - b'0')
+        .collect::<Vec<_>>();
+    let mut carry = 0_u64;
+    for digit in &mut digits {
+        let scaled = u64::from(*digit) * multiplier + carry;
+        *digit = u8::try_from(scaled % 10).ok()?;
+        carry = scaled / 10;
+    }
+    while carry > 0 {
+        digits.push(u8::try_from(carry % 10).ok()?);
+        carry /= 10;
+    }
+
+    let fractional_digits = i64::try_from(fraction.len()).ok()?;
+    let power = exponent.checked_sub(fractional_digits)?;
+    if power >= 0 {
+        let zeros = usize::try_from(power).ok()?;
+        if digits.len().checked_add(zeros)? > 20 {
+            return None;
+        }
+        digits.splice(0..0, std::iter::repeat_n(0, zeros));
+    } else {
+        let places = usize::try_from(power.unsigned_abs()).ok()?;
+        if places >= digits.len() {
+            return Some(1);
+        }
+        let round_up = digits[..places].iter().any(|digit| *digit != 0);
+        digits.drain(..places);
+        if round_up {
+            let mut index = 0;
+            loop {
+                if index == digits.len() {
+                    digits.push(1);
+                    break;
+                }
+                if digits[index] < 9 {
+                    digits[index] += 1;
+                    break;
+                }
+                digits[index] = 0;
+                index += 1;
+            }
+        }
+    }
+    while digits.len() > 1 && digits.last() == Some(&0) {
+        digits.pop();
+    }
+    if digits.len() > 20 {
+        return None;
+    }
+    digits.iter().rev().try_fold(0_u64, |value, digit| {
+        value.checked_mul(10)?.checked_add(u64::from(*digit))
+    })
+}
+
+fn parse_decimal_exponent(exponent: &str) -> Option<i64> {
+    let (negative, exponent) = if let Some(exponent) = exponent.strip_prefix('-') {
+        (true, exponent)
+    } else {
+        (false, exponent.strip_prefix('+').unwrap_or(exponent))
+    };
+    if exponent.is_empty() || !exponent.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let exponent = exponent.trim_start_matches('0');
+    let magnitude = if exponent.is_empty() {
+        0
+    } else {
+        exponent.parse::<i64>().ok()?
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SchemaId {
     raw: String,

@@ -15,6 +15,10 @@ from graphblocks import (
     normalize_graph,
 )
 from graphblocks import compiler as compiler_module
+from graphblocks.duration import (
+    MAX_DURATION_MILLISECONDS,
+    parse_duration_milliseconds,
+)
 from graphblocks.output_policy import (
     VALID_DELIVERY_MODES,
     VALID_DRAFT_DISPOSITIONS,
@@ -26,7 +30,7 @@ from graphblocks.output_policy import (
     VALID_VIOLATION_ACTIONS,
 )
 from graphblocks.policy import VALID_ENFORCEMENT_POINTS
-from graphblocks.plugins import BlockCatalog
+from graphblocks.plugins import BlockCatalog, BlockDescriptor, PortDescriptor
 from graphblocks.tools import (
     VALID_TOOL_APPROVALS,
     VALID_TOOL_CANCELLATIONS,
@@ -48,6 +52,74 @@ def _error_codes(graph: dict) -> list[str]:
         ).diagnostics.diagnostics
         if item.severity == "error"
     ]
+
+
+def test_compile_rejects_nested_optional_output_into_required_input() -> None:
+    catalog = BlockCatalog(
+        {
+            "test.producer@1": BlockDescriptor(
+                "test.producer",
+                1,
+                outputs=(PortDescriptor("payload", required=False),),
+            ),
+            "test.consumer@1": BlockDescriptor(
+                "test.consumer",
+                1,
+                inputs=(PortDescriptor("payload"),),
+            ),
+        }
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "nested-optional-required-edge"},
+        "spec": {
+            "nodes": {
+                "producer": {"block": "test.producer@1"},
+                "consumer": {"block": "test.consumer@1"},
+            },
+            "edges": [
+                {
+                    "from": "producer.payload.value",
+                    "to": "consumer.payload.value",
+                }
+            ],
+        },
+    }
+
+    error_codes = [
+        diagnostic.code
+        for diagnostic in compile_graph(
+            graph,
+            block_catalog=catalog,
+        ).diagnostics.diagnostics
+        if diagnostic.severity == "error"
+    ]
+
+    assert error_codes == ["GB1015"]
+
+
+def test_duration_milliseconds_enforces_unsigned_64_bit_boundary() -> None:
+    assert parse_duration_milliseconds(MAX_DURATION_MILLISECONDS) == (
+        MAX_DURATION_MILLISECONDS
+    )
+    assert parse_duration_milliseconds(
+        f"{MAX_DURATION_MILLISECONDS}ms"
+    ) == MAX_DURATION_MILLISECONDS
+    assert parse_duration_milliseconds(MAX_DURATION_MILLISECONDS + 1) is None
+    assert parse_duration_milliseconds(
+        f"{MAX_DURATION_MILLISECONDS + 1}ms"
+    ) is None
+    assert parse_duration_milliseconds("1e999999999ms") is None
+    assert (
+        parse_duration_milliseconds(
+            f"{MAX_DURATION_MILLISECONDS}.000000001ms"
+        )
+        is None
+    )
+    assert parse_duration_milliseconds("1e-999999999ms") == 1
+    assert parse_duration_milliseconds("1_000ms") is None
+    assert parse_duration_milliseconds("١s") is None
 
 
 def test_python_compiler_uses_canonical_literal_sets() -> None:
@@ -735,7 +807,7 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
 
     assert _error_codes(base) == ["GB1046"]
     assert _error_codes(missing_enforcement_points) == ["GB1046"]
-    assert _error_codes(missing_generation_gate) == ["GB1046"]
+    assert _error_codes(missing_generation_gate) == ["GB1046", "GB1046"]
     assert _error_codes(missing_commit_gate) == ["GB1046"]
     assert _error_codes(late_gate) == ["GB1048"]
 
@@ -1694,6 +1766,77 @@ def test_compile_reports_async_poll_operation_node_invalid_interval_durations() 
         }
 
         assert _error_codes(graph) == ["GB1026"]
+
+
+def test_compile_accepts_runtime_supported_fractional_async_durations() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-poll-fractional-durations"},
+        "spec": {
+            "nodes": {
+                "pollCI": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "timeout": "1.5s",
+                        "interval": "5e-1s",
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == []
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    (
+        f"{MAX_DURATION_MILLISECONDS + 1}ms",
+        f"{MAX_DURATION_MILLISECONDS}.000000001ms",
+        "1e999999999ms",
+        "1_000ms",
+        "١s",
+    ),
+)
+def test_compile_rejects_async_duration_above_unsigned_64_bit_milliseconds(
+    timeout: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-poll-oversized-duration"},
+        "spec": {
+            "nodes": {
+                "pollCI": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "timeout": timeout,
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6001"]
 
 
 def test_compile_reports_async_await_callback_node_invalid_on_timeout_policy() -> None:

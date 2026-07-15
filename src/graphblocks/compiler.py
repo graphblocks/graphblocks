@@ -10,7 +10,7 @@ from referencing.exceptions import Unresolvable
 
 from .canonical import PSEUDO_NODES, _normalize_graph_unchecked, canonical_dumps, canonical_hash
 from .diagnostics import Diagnostic, DiagnosticSet
-from .duration import parse_duration_seconds
+from .duration import parse_duration_milliseconds, parse_duration_seconds
 from .migration import (
     GRAPH_API_VERSION,
     LEGACY_GRAPH_API_VERSIONS,
@@ -221,25 +221,7 @@ def _truthy_config_flag(config: dict[str, Any], *names: str) -> bool:
 
 
 def _duration_milliseconds(value: object) -> int | None:
-    if _is_positive_integer(value):
-        return int(value)
-    if not isinstance(value, str):
-        return None
-    duration_text = value.strip()
-    duration_units = (
-        ("ms", 1),
-        ("s", 1_000),
-        ("m", 60_000),
-        ("h", 3_600_000),
-        ("d", 86_400_000),
-    )
-    for suffix, multiplier in duration_units:
-        if not duration_text.endswith(suffix):
-            continue
-        amount_text = duration_text[: -len(suffix)]
-        if amount_text.isascii() and amount_text.isdigit() and int(amount_text) > 0:
-            return int(amount_text) * multiplier
-    return None
+    return parse_duration_milliseconds(value)
 
 
 def _callback_schema_required(config: dict[str, Any]) -> bool:
@@ -1251,7 +1233,7 @@ def compile_graph(
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
-            elif on_generation_chunk_index is None:
+            if on_generation_chunk_index is None:
                 diagnostics.append(
                     Diagnostic(
                         "GB1046",
@@ -1259,7 +1241,7 @@ def compile_graph(
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
-            elif before_output_commit_index is None:
+            if before_output_commit_index is None:
                 diagnostics.append(
                     Diagnostic(
                         "GB1046",
@@ -2016,22 +1998,22 @@ def compile_graph(
                                 )
                             else:
                                 source_port = output_ports[port_name]
+                                source_config = source_node.get("config", {})
+                                if not isinstance(source_config, dict):
+                                    source_config = {}
+                                source_required = source_port.required_for(
+                                    source_config,
+                                    phase="initial",
+                                )
                                 if not separator:
                                     source_type = source_port.type_ref
-                                    source_config = source_node.get("config", {})
-                                    if not isinstance(source_config, dict):
-                                        source_config = {}
-                                    source_required = source_port.required_for(
-                                        source_config,
-                                        phase="initial",
-                                    )
                 if target_owner == "$output":
                     port_name, separator, _nested_path = target_path.partition(".")
-                    if interface_outputs is not None and port_name in interface_outputs and not separator:
+                    if interface_outputs is not None and port_name in interface_outputs:
+                        target_required = True
                         schema_id = interface_outputs[port_name]
-                        if isinstance(schema_id, str):
+                        if isinstance(schema_id, str) and not separator:
                             target_type = schema_id
-                            target_required = True
                 elif target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
                     target_node = normalized_nodes[target_owner]
                     if isinstance(target_node, dict):
@@ -2050,9 +2032,9 @@ def compile_graph(
                                 )
                             else:
                                 target_port = input_ports[port_name]
+                                target_required = target_port.required
                                 if not separator:
                                     target_type = target_port.type_ref
-                                    target_required = target_port.required
                 if source_type and target_type and source_type != "Any" and target_type != "Any" and source_type != target_type:
                     diagnostics.append(
                         Diagnostic(

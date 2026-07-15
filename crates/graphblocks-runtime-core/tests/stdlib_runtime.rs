@@ -1378,7 +1378,7 @@ fn rust_stdlib_async_poll_operation_accepts_explicit_infinite_wait_policy() -> R
 }
 
 #[test]
-fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), String> {
+fn rust_stdlib_async_poll_operation_accepts_extended_duration_strings() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
@@ -1398,9 +1398,9 @@ fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), Str
                 "poll": {
                     "block": "async.poll_operation@1",
                     "config": {
-                        "interval": "30s",
-                        "maxInterval": "5m",
-                        "timeout": "2h",
+                        "interval": "5e-1ms",
+                        "maxInterval": "1.5s",
+                        "timeout": "1d",
                         "idempotencyKey": "idem-op-poll",
                         "callback": {"schema": "schemas/PollResult@1"},
                         "resume": {
@@ -1420,9 +1420,9 @@ fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), Str
     let result = run_graph(&graph, &json!({}))?;
 
     assert_eq!(result["status"], "succeeded");
-    assert_eq!(result["outputs"]["poll"]["intervalMs"], 30_000);
-    assert_eq!(result["outputs"]["poll"]["maxIntervalMs"], 300_000);
-    assert_eq!(result["outputs"]["poll"]["timeoutMs"], 7_200_000);
+    assert_eq!(result["outputs"]["poll"]["intervalMs"], 1);
+    assert_eq!(result["outputs"]["poll"]["maxIntervalMs"], 1_500);
+    assert_eq!(result["outputs"]["poll"]["timeoutMs"], 86_400_000);
     Ok(())
 }
 

@@ -62,23 +62,23 @@
             "operation": "start.operation"
           },
           "outputs": {
-            "callback": "selectCallback.cases.callback",
-            "operation": "selectOperation.cases.operation"
+            "callback": "selectCallback.response",
+            "operation": "selectOperation.response"
           }
         },
         "selectCallback": {
-          "block": "control.select@1",
+          "block": "model.structured_generate@1",
           "config": {
-            "order": ["callback"]
+            "outputSchema": "schemas/CICallback@1"
           },
           "outputs": {
             "value": "$output.callback"
           }
         },
         "selectOperation": {
-          "block": "control.select@1",
+          "block": "model.structured_generate@1",
           "config": {
-            "order": ["operation"]
+            "outputSchema": "graphblocks.ai/AsyncOperation@1"
           },
           "outputs": {
             "value": "$output.operation"

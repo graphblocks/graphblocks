@@ -409,6 +409,59 @@
     }
   },
   {
+    "name": "nested_optional_output_to_required_input",
+    "block_catalog": [
+      {
+        "typeId": "test.producer",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "payload",
+            "required": false
+          }
+        ]
+      },
+      {
+        "typeId": "test.consumer",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "payload"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "nested-optional-required-edge"
+      },
+      "spec": {
+        "nodes": {
+          "producer": {
+            "block": "test.producer@1"
+          },
+          "consumer": {
+            "block": "test.consumer@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "producer.payload.value",
+            "to": "consumer.payload.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:c02e88bdefb74c07be38864c4525c9ae845dbcc0b14826d6ff9affd9f639e8a2",
+      "error_codes": [
+        "GB1015"
+      ]
+    }
+  },
+  {
     "name": "missing_resource_slot_binding",
     "block_catalog": [
       {
@@ -1044,6 +1097,7 @@
     "expected": {
       "graph_hash": "sha256:cf33f3820e0adfecf57f2b3425e9caea7c593e51f6c1fa4a3ff47425b0b9af9b",
       "error_codes": [
+        "GB1046",
         "GB1046"
       ]
     }
@@ -1512,7 +1566,7 @@
         "asyncOperations": {
           "ci": {
             "kind": "ci_job",
-            "timeout": "30m",
+            "timeout": "18446744073709551615ms",
             "idempotencyKey": "$input.request_id",
             "callback": {
               "required": true,
@@ -1523,7 +1577,7 @@
       }
     },
     "expected": {
-      "graph_hash": "sha256:1f5714317007f9d13b837867140dcd021b935e7893f899e874b140ec8b3476fd",
+      "graph_hash": "sha256:822f40015d4c7f945e3c63185ffb343ec48c501d4857db59a8b9781352447733",
       "error_codes": [
         "GB6008",
         "GB6015",
@@ -1548,7 +1602,7 @@
         "asyncOperations": {
           "ci": {
             "kind": "ci_job",
-            "timeout": "30m",
+            "timeout": "5e-1ms",
             "infiniteWaitPolicy": "operator_review_required",
             "idempotencyKey": "$input.request_id",
             "attemptFencing": true,
@@ -1567,9 +1621,50 @@
       }
     },
     "expected": {
-      "graph_hash": "sha256:5983b34a66fb0a6121da4ddcc235386c4392cf020736905e48eb7459a89e0b63",
+      "graph_hash": "sha256:1017f9c43e2a14413fed088abf28cb67d623d6439ef16e88cfd7825a58c4b9cb",
       "error_codes": [
         "GB1026"
+      ]
+    }
+  },
+  {
+    "name": "async_operation_timeout_exceeds_u64_milliseconds",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-oversized-timeout"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "18446744073709551616ms",
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:aaf21c49c66098ec83fc800007526b64602590624553221455d8d0350a9b6dfb",
+      "error_codes": [
+        "GB6001"
       ]
     }
   },

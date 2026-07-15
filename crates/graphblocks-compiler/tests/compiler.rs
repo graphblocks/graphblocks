@@ -1194,6 +1194,11 @@ fn compile_graph_rejects_invalid_callback_webhook_host_syntax() {
         "https://hooks.example.com\t/events",
         "https://hooks.example.com%2fevil.test/events",
         "https://[not-ipv6]/events",
+        "https://hooks.example.com/events#fragment",
+        "https://hooks.example.com/events with-space",
+        "https://hooks.example.com/events?token=bad\tvalue",
+        "https://hooks.example.com/events\r\nX-Injected:true",
+        "https://hooks.example.com/events\u{7f}",
     ] {
         let graph = json!({
             "apiVersion": GRAPH_API_VERSION,
@@ -2184,6 +2189,49 @@ fn compile_graph_rejects_optional_output_to_required_input() -> Result<(), Strin
 }
 
 #[test]
+fn compile_graph_rejects_nested_optional_output_to_required_input() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "test.producer",
+            "version": 1,
+            "outputs": [{"name": "payload", "required": false}]
+        },
+        {
+            "typeId": "test.consumer",
+            "version": 1,
+            "inputs": [{"name": "payload"}]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "nested-optional-required-edge"},
+        "spec": {
+            "nodes": {
+                "producer": {"block": "test.producer@1"},
+                "consumer": {"block": "test.consumer@1"}
+            },
+            "edges": [{
+                "from": "producer.payload.value",
+                "to": "consumer.payload.value"
+            }]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1015"]
+    );
+    Ok(())
+}
+
+#[test]
 fn output_requiredness_predicates_evaluate_config_and_phase() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
@@ -2628,7 +2676,14 @@ fn compile_graph_rejects_invalid_node_timeout() {
 
 #[test]
 fn compile_graph_accepts_positive_finite_node_timeout() {
-    for timeout in [json!(0.25), json!("250ms"), json!("0.5s"), json!("2")] {
+    for timeout in [
+        json!(0.25),
+        json!("250ms"),
+        json!("5e-1ms"),
+        json!("0.5s"),
+        json!("1.5e0d"),
+        json!("2"),
+    ] {
         let graph = json!({
             "apiVersion": GRAPH_API_VERSION,
             "kind": "Graph",
