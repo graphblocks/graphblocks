@@ -299,6 +299,31 @@ fn worker_selection_skips_invalid_advertisements() {
 }
 
 #[test]
+fn worker_selection_skips_incompatible_protocol_versions() {
+    let mut incompatible = WorkerAdvertisement::new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("model.generate@1")],
+    );
+    incompatible.protocol_version = WORKER_PROTOCOL_VERSION + 1;
+    let compatible = WorkerAdvertisement::new(
+        "worker-b",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-b",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let workers = [incompatible, compatible];
+
+    let selected = select_worker_for_block(workers.iter(), "model.generate@1")
+        .expect("the protocol-compatible worker should be eligible");
+
+    assert_eq!(selected.worker_id, "worker-b");
+}
+
+#[test]
 fn worker_selection_reports_when_no_ready_worker_supports_block() {
     let workers = [
         WorkerAdvertisement::new(

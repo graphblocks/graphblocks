@@ -751,16 +751,7 @@ where
         if worker.state != WorkerState::Ready {
             continue;
         }
-        if worker.worker_id.trim().is_empty()
-            || worker.target_id.trim().is_empty()
-            || worker.package_lock_hash.trim().is_empty()
-            || worker.image_digest.trim().is_empty()
-            || worker.supported_blocks.is_empty()
-            || worker
-                .supported_blocks
-                .iter()
-                .any(|capability| capability.block.trim().is_empty())
-        {
+        if admit_worker(worker).is_err() {
             continue;
         }
         if !worker
