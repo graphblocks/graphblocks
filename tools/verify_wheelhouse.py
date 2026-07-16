@@ -116,6 +116,10 @@ def _require_canonical_sha256(value: object, *, owner: str) -> str:
     return value
 
 
+def _write_utf8_lf(path: Path, value: str) -> None:
+    path.write_bytes(value.encode("utf-8"))
+
+
 def _acceptance_expectations(
     manifest_path: Path,
     *,
@@ -1020,9 +1024,9 @@ def _generate_cyclonedx_sbom(
         normalized_dependencies,
         key=lambda relationship: str(relationship["ref"]),
     )
-    output_path.write_text(
+    _write_utf8_lf(
+        output_path,
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -1406,13 +1410,13 @@ def main(argv: list[str] | None = None) -> int:
                 kind="acceptance",
                 expected_acceptance=evidence_expectations["acceptance"],
             )
-            (evidence_root / "tck.json").write_text(
+            _write_utf8_lf(
+                evidence_root / "tck.json",
                 canonical_dumps(tck_payload) + "\n",
-                encoding="utf-8",
             )
-            (evidence_root / "acceptance.json").write_text(
+            _write_utf8_lf(
+                evidence_root / "acceptance.json",
                 canonical_dumps(acceptance_payload) + "\n",
-                encoding="utf-8",
             )
         expected_runtime_distributions = dict(expected_distributions)
         for dependency_wheel in sorted(dependency_wheelhouse.glob("*.whl")):
@@ -1505,9 +1509,9 @@ def main(argv: list[str] | None = None) -> int:
                 },
             }
             platform_evidence["contentDigest"] = canonical_hash(platform_evidence)
-            (evidence_root / "platform.json").write_text(
+            _write_utf8_lf(
+                evidence_root / "platform.json",
                 json.dumps(platform_evidence, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
             )
 
     print(

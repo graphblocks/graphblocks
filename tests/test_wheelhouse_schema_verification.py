@@ -49,6 +49,30 @@ def _write_mock_sdist(module: ModuleType, *, source_root: Path, output_root: Pat
     return destination
 
 
+def test_release_json_writer_bypasses_text_newline_translation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+
+    def newline_translating_write_text(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        del errors, newline
+        return path.write_bytes(data.replace("\n", "\r\n").encode(encoding or "utf-8"))
+
+    monkeypatch.setattr(Path, "write_text", newline_translating_write_text)
+    output = tmp_path / "evidence.json"
+
+    module._write_utf8_lf(output, '{"message":"stable"}\n')
+
+    assert output.read_bytes() == b'{"message":"stable"}\n'
+
+
 def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() -> None:
     module = _load_wheelhouse_module()
     digest = "sha256:" + "a" * 64

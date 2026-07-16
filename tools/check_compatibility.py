@@ -493,7 +493,7 @@ def _display_path(path: Path) -> str:
 def _check_or_update(path: Path, actual: dict[str, object], *, update: bool) -> bool:
     rendered = _render(actual)
     if update:
-        path.write_text(rendered, encoding="utf-8")
+        path.write_bytes(rendered.encode("utf-8"))
         print(f"updated {_display_path(path)}")
         return True
     expected = path.read_text(encoding="utf-8")

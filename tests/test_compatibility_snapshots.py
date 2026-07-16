@@ -33,7 +33,11 @@ def test_stable_compatibility_snapshots_match_the_implementation() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_snapshot_writer_requires_explicit_update_for_drift(tmp_path, capsys) -> None:
+def test_snapshot_writer_requires_explicit_update_for_drift(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
     snapshot_path = tmp_path / "snapshot.json"
     snapshot_path.write_text("{}\n", encoding="utf-8")
     contract = {"snapshotVersion": 1, "values": ["stable"]}
@@ -41,7 +45,21 @@ def test_snapshot_writer_requires_explicit_update_for_drift(tmp_path, capsys) ->
     assert _check_or_update(snapshot_path, contract, update=False) is False
     assert "compatibility snapshot drifted" in capsys.readouterr().err
 
+    def newline_translating_write_text(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        del errors, newline
+        return path.write_bytes(data.replace("\n", "\r\n").encode(encoding or "utf-8"))
+
+    monkeypatch.setattr(Path, "write_text", newline_translating_write_text)
     assert _check_or_update(snapshot_path, contract, update=True) is True
+    assert snapshot_path.read_bytes() == compatibility_module._render(contract).encode(
+        "utf-8"
+    )
     capsys.readouterr()
     assert _check_or_update(snapshot_path, contract, update=False) is True
 
