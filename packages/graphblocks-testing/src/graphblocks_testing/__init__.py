@@ -581,41 +581,79 @@ class TckCase:
             "voice",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
-        object.__setattr__(self, "graph", dict(self.graph))
-        object.__setattr__(self, "inputs", dict(self.inputs))
-        object.__setattr__(self, "native_node_outputs", dict(self.native_node_outputs))
+        object.__setattr__(self, "graph", deepcopy(dict(self.graph)))
+        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
+        object.__setattr__(
+            self,
+            "native_node_outputs",
+            deepcopy(dict(self.native_node_outputs)),
+        )
         object.__setattr__(self, "expected_error_codes", tuple(self.expected_error_codes))
         object.__setattr__(self, "expected_warning_codes", tuple(self.expected_warning_codes))
-        object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
+        object.__setattr__(
+            self,
+            "block_catalog",
+            tuple(deepcopy(dict(block)) for block in self.block_catalog),
+        )
         if not isinstance(self.allow_unknown_blocks, bool):
             raise TypeError("TCK allow_unknown_blocks must be a boolean")
-        object.__setattr__(self, "policy_delivery", dict(self.policy_delivery))
-        object.__setattr__(self, "policy_operations", tuple(dict(operation) for operation in self.policy_operations))
-        object.__setattr__(self, "expected_gate_state", dict(self.expected_gate_state))
+        object.__setattr__(
+            self,
+            "policy_delivery",
+            deepcopy(dict(self.policy_delivery)),
+        )
+        object.__setattr__(
+            self,
+            "policy_operations",
+            tuple(deepcopy(dict(operation)) for operation in self.policy_operations),
+        )
+        object.__setattr__(
+            self,
+            "expected_gate_state",
+            deepcopy(dict(self.expected_gate_state)),
+        )
         object.__setattr__(
             self,
             "application_event_operations",
-            tuple(dict(operation) for operation in self.application_event_operations),
+            tuple(
+                deepcopy(dict(operation))
+                for operation in self.application_event_operations
+            ),
         )
         object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
-        object.__setattr__(self, "application_protocol_fixture", dict(self.application_protocol_fixture))
-        object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
-        object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
-        object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
-        object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
-        object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
-        object.__setattr__(self, "deployment_fixture", dict(self.deployment_fixture))
-        object.__setattr__(self, "durable_fixture", dict(self.durable_fixture))
-        object.__setattr__(self, "migration_fixture", dict(self.migration_fixture))
-        object.__setattr__(self, "orchestration_fixture", dict(self.orchestration_fixture))
-        object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
-        object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
-        object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
-        object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
-        object.__setattr__(self, "tool_result_fixture", dict(self.tool_result_fixture))
-        object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
-        object.__setattr__(self, "voice_fixture", dict(self.voice_fixture))
-        object.__setattr__(self, "approval_review_fixture", dict(self.approval_review_fixture))
+        object.__setattr__(
+            self,
+            "application_protocol_fixture",
+            deepcopy(dict(self.application_protocol_fixture)),
+        )
+        object.__setattr__(
+            self,
+            "sequence_operations",
+            tuple(deepcopy(dict(operation)) for operation in self.sequence_operations),
+        )
+        for field_name in (
+            "exhaustion_fixture",
+            "budget_race_fixture",
+            "conversation_fixture",
+            "documents_fixture",
+            "deployment_fixture",
+            "durable_fixture",
+            "migration_fixture",
+            "orchestration_fixture",
+            "rag_fixture",
+            "retry_fixture",
+            "tool_lifecycle_fixture",
+            "tool_execution_fixture",
+            "tool_result_fixture",
+            "usage_fixture",
+            "voice_fixture",
+            "approval_review_fixture",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                deepcopy(dict(object.__getattribute__(self, field_name))),
+            )
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -663,14 +701,25 @@ class TckCase:
         if self.kind == "approval-review" and not self.approval_review_fixture:
             raise ValueError("approval-review TCK case requires fixture")
         if self.expected_outputs is not None:
-            object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
+            object.__setattr__(
+                self,
+                "expected_outputs",
+                deepcopy(dict(self.expected_outputs)),
+            )
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
             raise ValueError("TCK expected_terminal_kind must not be empty")
         object.__setattr__(
             self,
             "expected_resource_errors",
-            tuple(dict(error) for error in self.expected_resource_errors),
+            tuple(deepcopy(dict(error)) for error in self.expected_resource_errors),
         )
+        object.__setattr__(self, "schema_value", deepcopy(self.schema_value))
+        if self.expected_canonical_value is not None:
+            object.__setattr__(
+                self,
+                "expected_canonical_value",
+                deepcopy(dict(self.expected_canonical_value)),
+            )
         if self.kind == "schema":
             if self.schema_case_type not in {"schema_id", "typed_value", "resource"}:
                 raise ValueError(

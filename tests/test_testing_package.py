@@ -110,6 +110,48 @@ def test_tck_result_evidence_is_deeply_immutable(monkeypatch) -> None:
     assert result.result_contract() == initial_contract
 
 
+def test_tck_case_detaches_nested_inputs_from_caller_mutation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    graph = {"spec": {"nodes": {}}}
+    inputs = {"request": {"text": "original"}}
+    outputs = {"response": {"text": "original"}}
+    runtime_case = graphblocks_testing.TckCase.runtime(
+        case_id="runtime/detached-inputs",
+        graph=graph,
+        inputs=inputs,
+        expected_outputs=outputs,
+    )
+    fixture = {"kind": "example", "expected": {"ok": True}}
+    durable_case = graphblocks_testing.TckCase.durable(
+        case_id="durable/detached-fixture",
+        fixture=fixture,
+    )
+    schema_value = {"nested": {"value": "original"}}
+    schema_case = graphblocks_testing.TckCase.schema(
+        case_id="schema/detached-value",
+        schema_id=None,
+        schema_case_type="resource",
+        schema_value=schema_value,
+        expected_ok=True,
+    )
+
+    graph["spec"]["nodes"]["injected"] = {"block": "example.injected@1"}
+    inputs["request"]["text"] = "mutated"
+    outputs["response"]["text"] = "mutated"
+    fixture["expected"]["ok"] = False
+    schema_value["nested"]["value"] = "mutated"
+
+    assert runtime_case.graph == {"spec": {"nodes": {}}}
+    assert runtime_case.inputs == {"request": {"text": "original"}}
+    assert runtime_case.expected_outputs == {"response": {"text": "original"}}
+    assert durable_case.durable_fixture == {
+        "kind": "example",
+        "expected": {"ok": True},
+    }
+    assert schema_case.schema_value == {"nested": {"value": "original"}}
+
+
 def test_tck_evidence_resists_base_dict_mutation_bypass(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
