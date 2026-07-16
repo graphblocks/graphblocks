@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Any
+from weakref import WeakValueDictionary
 
 from .documents import ArtifactRef
 
@@ -140,7 +141,7 @@ _GRAPHBLOCKS_CHECKSUM_METADATA = "graphblocks-checksum"
 _GRAPHBLOCKS_FILENAME_METADATA = "graphblocks-filename"
 _LOCAL_METADATA_DIRECTORY = ".graphblocks-metadata"
 _LOCAL_ROOT_LOCKS_GUARD = Lock()
-_LOCAL_ROOT_LOCKS: dict[Path, Any] = {}
+_LOCAL_ROOT_LOCKS: WeakValueDictionary[Path, Any] = WeakValueDictionary()
 _RESERVED_METADATA_KEYS = {
     _GRAPHBLOCKS_CHECKSUM_METADATA,
     _GRAPHBLOCKS_FILENAME_METADATA,

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import gc
 import json
 from threading import Barrier, Lock
+from weakref import ref
 
 import pytest
 
+import graphblocks.blob_store as blob_store_module
 from graphblocks.blob_store import (
     BlobKey,
     BlobListItem,
@@ -365,6 +368,20 @@ def test_local_blob_store_serializes_concurrent_same_key_puts_across_instances(
     assert first_store.get(key) == expected_body
     assert metadata.artifact.media_type == expected_media_type
     assert not any(path.exists() for path in first_store._pending_paths_for(key))
+
+
+def test_local_blob_store_does_not_retain_unused_root_locks(tmp_path) -> None:
+    root = tmp_path.resolve()
+    store = LocalBlobStore(root)
+    root_lock = ref(store._root_lock)
+
+    assert root in blob_store_module._LOCAL_ROOT_LOCKS
+
+    del store
+    gc.collect()
+
+    assert root_lock() is None
+    assert root not in blob_store_module._LOCAL_ROOT_LOCKS
 
 
 def test_local_blob_store_rejects_metadata_symlink_escape(tmp_path, symlink_or_skip) -> None:
