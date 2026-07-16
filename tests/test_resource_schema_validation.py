@@ -85,6 +85,47 @@ def test_stable_plugin_manifest_schema_requires_version() -> None:
         ("$.spec", "required")
     ]
 
+
+@pytest.mark.parametrize(
+    ("api_version", "kind"),
+    [
+        ("graphblocks.ai/v1", "Graph"),
+        ("graphblocks.ai/v1alpha3", "Graph"),
+        ("graphblocks.ai/composition/v1alpha1", "GraphFragment"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("major_version", "expected_valid"),
+    [("4294967295", True), ("4294967296", False)],
+)
+def test_resource_schemas_match_schema_id_u32_version_bounds(
+    api_version: str,
+    kind: str,
+    major_version: str,
+    expected_valid: bool,
+) -> None:
+    spec: dict[str, object] = {
+        "nodes": {"worker": {"block": f"example.worker@{major_version}"}},
+    }
+    if kind == "GraphFragment":
+        spec["interface"] = {"inputs": {}, "outputs": {}}
+    document = {
+        "apiVersion": api_version,
+        "kind": kind,
+        "metadata": {"name": "schema-id-version-bound"},
+        "spec": spec,
+    }
+
+    violations = resource_schema_errors(document, schema_root=ROOT / "schemas")
+
+    if expected_valid:
+        assert violations == ()
+    else:
+        assert [(item.path, item.keyword) for item in violations] == [
+            ("$.spec.nodes.worker.block", "pattern")
+        ]
+
+
 @pytest.mark.parametrize("api_version", ["graphblocks.ai/v1", "graphblocks.ai/v1alpha1"])
 @pytest.mark.parametrize("direction", ["inputs", "outputs"])
 def test_plugin_manifest_schema_rejects_noncanonical_endpoint_names(

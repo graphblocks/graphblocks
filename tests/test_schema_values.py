@@ -385,7 +385,7 @@ def test_checked_in_schema_manifest_digest_is_golden() -> None:
         "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha3/graph.schema.json",
     ]
-    assert manifest.content_digest() == "sha256:29e5e9221b9d413f7b69d610c91cbbe775ac05a351fcc85cb81735411b4f92dc"
+    assert manifest.content_digest() == "sha256:2a4966634df9fc043fb21d2a887b58b3d1004fa3be15bd3fe33315864ba11a40"
 
 
 def test_rust_schema_package_mirrors_canonical_resource_schemas() -> None:
