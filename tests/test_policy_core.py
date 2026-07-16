@@ -115,6 +115,52 @@ def test_policy_request_mappings_are_copied_and_read_only() -> None:
         )
 
 
+def test_policy_security_mappings_are_recursively_copied_and_read_only() -> None:
+    principal_attributes = {
+        "claims": {"can_execute": False},
+        "scopes": ["read"],
+    }
+    request_attributes = {"context": {"trusted": False}}
+    requested_usage = [{"limit": {"tokens": 128}}]
+    obligation_parameters = {"redaction": {"fields": ["secret"]}}
+    principal = PrincipalRef("user-1", attributes=principal_attributes)
+    obligation = PolicyObligation("obl-1", "redact", obligation_parameters)
+    request = PolicyRequest(
+        request_id="req-recursive-immutable",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        principal=principal,
+        resource=ResourceRef("tool:search", resource_kind="tool"),
+        requested_usage=requested_usage,
+        attributes=request_attributes,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    digest = request.with_input_digest().input_digest
+
+    principal_attributes["claims"]["can_execute"] = True
+    principal_attributes["scopes"].append("admin")
+    request_attributes["context"]["trusted"] = True
+    requested_usage[0]["limit"]["tokens"] = 999
+    obligation_parameters["redaction"]["fields"].append("credentials")
+
+    assert principal.attributes == {
+        "claims": {"can_execute": False},
+        "scopes": ["read"],
+    }
+    assert request.attributes == {"context": {"trusted": False}}
+    assert request.requested_usage == ({"limit": {"tokens": 128}},)
+    assert obligation.parameters == {"redaction": {"fields": ["secret"]}}
+    assert request.with_input_digest().input_digest == digest
+    with pytest.raises(TypeError):
+        principal.attributes["claims"]["can_execute"] = True  # type: ignore[index]
+    with pytest.raises(TypeError):
+        principal.attributes["scopes"].append("admin")  # type: ignore[union-attr]
+    with pytest.raises(TypeError):
+        request.requested_usage[0]["limit"]["tokens"] = 999  # type: ignore[index]
+    with pytest.raises(TypeError):
+        obligation.parameters["redaction"]["fields"].append("credentials")  # type: ignore[index,union-attr]
+
+
 def test_policy_models_reject_unknown_typed_values() -> None:
     with pytest.raises(ValueError, match="unknown enforcement point"):
         PolicyRequest(

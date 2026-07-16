@@ -40,6 +40,70 @@ class PolicyUnavailableError(RuntimeError):
     pass
 
 
+class _FrozenPolicyMapping(dict[str, object]):
+    def __setitem__(self, key: str, value: object) -> None:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def pop(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def popitem(self) -> tuple[str, object]:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def setdefault(self, key: str, default: object = None) -> object:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def update(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+    def __ior__(self, other: object) -> _FrozenPolicyMapping:
+        raise TypeError("frozen policy mapping cannot be mutated")
+
+
+class _FrozenPolicyList(list[object]):
+    def __setitem__(self, index: object, value: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def __delitem__(self, index: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def append(self, item: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def clear(self) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def extend(self, items: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def insert(self, index: int, item: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def pop(self, index: int = -1) -> object:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def remove(self, item: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def reverse(self) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def sort(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def __iadd__(self, items: object) -> _FrozenPolicyList:
+        raise TypeError("frozen policy list cannot be mutated")
+
+    def __imul__(self, multiplier: int) -> _FrozenPolicyList:
+        raise TypeError("frozen policy list cannot be mutated")
+
+
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
@@ -75,7 +139,24 @@ def _freeze_mapping(owner: str, field_name: str, value: object) -> MappingProxyT
     mapping = dict(value)
     if any(not isinstance(key, str) or not key.strip() for key in mapping):
         raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
-    return MappingProxyType(mapping)
+    return MappingProxyType(
+        {
+            key: _freeze_policy_value(owner, field_name, item)
+            for key, item in mapping.items()
+        }
+    )
+
+
+def _freeze_policy_value(owner: str, field_name: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        return _FrozenPolicyMapping(_freeze_mapping(owner, field_name, value))
+    if isinstance(value, list):
+        return _FrozenPolicyList(
+            _freeze_policy_value(owner, field_name, item) for item in value
+        )
+    if isinstance(value, tuple):
+        return tuple(_freeze_policy_value(owner, field_name, item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,7 +411,10 @@ class PolicyRequest:
         object.__setattr__(
             self,
             "requested_usage",
-            tuple(MappingProxyType(dict(usage)) for usage in self.requested_usage),
+            tuple(
+                _freeze_mapping("policy request", "requested_usage item", usage)
+                for usage in self.requested_usage
+            ),
         )
         object.__setattr__(self, "attributes", _freeze_mapping("policy request", "attributes", self.attributes))
 
@@ -426,7 +510,11 @@ class PolicyDecision:
         if any(not isinstance(item, Mapping) for item in advice_items):
             raise ValueError("policy decision advice must contain mappings")
         object.__setattr__(self, "obligations", obligations)
-        object.__setattr__(self, "advice", tuple(MappingProxyType(dict(item)) for item in advice_items))
+        object.__setattr__(
+            self,
+            "advice",
+            tuple(_freeze_mapping("policy decision", "advice item", item) for item in advice_items),
+        )
         object.__setattr__(
             self,
             "evaluated_at",
