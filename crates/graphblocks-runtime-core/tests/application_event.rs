@@ -2408,6 +2408,36 @@ fn protocol_log_replay_after_blank_cursor_does_not_replay_from_beginning() {
 }
 
 #[test]
+fn protocol_log_prefers_an_exact_cursor_over_an_earlier_numeric_sequence() {
+    let mut log = ApplicationProtocolLog::new();
+    for (sequence, cursor) in [(1, "cursor-1"), (2, "cursor-2"), (3, "1"), (4, "cursor-4")] {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(&format!("event-{sequence}"), sequence, cursor),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let replay = log.replay_after(Some("1"), 10);
+    let retained_replay = log
+        .replay_after_retained(Some("1"), 10, 2)
+        .expect("the exact cursor is retained");
+
+    assert_eq!(
+        replay
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-4"],
+    );
+    assert_eq!(retained_replay, replay);
+}
+
+#[test]
 fn protocol_log_rejects_duplicate_replay_cursors() {
     let mut log = ApplicationProtocolLog::new();
     let first = ApplicationProtocolEvent::new(

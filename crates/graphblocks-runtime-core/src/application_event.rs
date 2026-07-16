@@ -1764,12 +1764,7 @@ impl ApplicationProtocolLog {
             return Vec::new();
         }
         let start_index = cursor
-            .and_then(|cursor| {
-                self.events.iter().position(|event| {
-                    event.metadata.cursor.as_deref() == Some(cursor)
-                        || event.metadata.sequence.to_string() == cursor
-                })
-            })
+            .and_then(|cursor| event_index_for_cursor(&self.events, cursor))
             .map_or(0, |index| index + 1);
         self.events
             .iter()
@@ -1789,10 +1784,7 @@ impl ApplicationProtocolLog {
         let retained = &self.events[retained_start..];
 
         if let Some(cursor) = cursor {
-            let full_index = self
-                .events
-                .iter()
-                .position(|event| event_matches_cursor(event, cursor));
+            let full_index = event_index_for_cursor(&self.events, cursor);
             match full_index {
                 Some(index) if index >= retained_start => {
                     let retained_index = index - retained_start + 1;
@@ -2430,9 +2422,15 @@ fn application_protocol_storage_error(error: rusqlite::Error) -> ApplicationProt
     }
 }
 
-fn event_matches_cursor(event: &ApplicationProtocolEvent, cursor: &str) -> bool {
-    event.metadata.cursor.as_deref() == Some(cursor)
-        || event.metadata.sequence.to_string() == cursor
+fn event_index_for_cursor(events: &[ApplicationProtocolEvent], cursor: &str) -> Option<usize> {
+    events
+        .iter()
+        .position(|event| event.metadata.cursor.as_deref() == Some(cursor))
+        .or_else(|| {
+            events
+                .iter()
+                .position(|event| event.metadata.sequence.to_string() == cursor)
+        })
 }
 
 fn event_cursor(event: &ApplicationProtocolEvent) -> Option<String> {
