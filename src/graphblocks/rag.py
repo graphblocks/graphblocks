@@ -10,7 +10,7 @@ import re
 from typing import Literal, TypeAlias
 
 from .canonical import canonical_hash
-from .documents import DocumentChunk, DocumentSpan, SourceRef
+from .documents import DocumentChunk, DocumentSpan, SourceRef, sha256_digest_bytes
 from .evaluation import MetricObservation, ResultBundle
 
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
@@ -1238,7 +1238,8 @@ def fuse_search_hits(
             grouped_hits[dedupe_key].append(hit)
             if strategy == "reciprocal_rank_fusion":
                 fusion_scores[dedupe_key] = (
-                    fusion_scores.get(dedupe_key, 0.0) + weight / (k + hit.rank)
+                    fusion_scores.get(dedupe_key, 0.0)
+                    + weight / (k + max(hit.rank, 1))
                 )
             elif strategy == "weighted_rank":
                 fusion_scores[dedupe_key] = (
@@ -1282,6 +1283,10 @@ def fuse_search_hits(
         max_score = fusion_scores.get(ordered_keys[0]) if ordered_keys else None
 
     fused_hits: list[SearchHit] = []
+    item_id_counts: dict[str, int] = {}
+    for dedupe_key in ordered_keys:
+        item_id = grouped_hits[dedupe_key][0].item.item_id
+        item_id_counts[item_id] = item_id_counts.get(item_id, 0) + 1
     for rank, dedupe_key in enumerate(ordered_keys, start=1):
         source_hits = grouped_hits[dedupe_key]
         representative = source_hits[0]
@@ -1310,9 +1315,12 @@ def fuse_search_hits(
             else None
         )
         metadata["fusion_score"] = raw_score
+        fused_hit_id = f"{retriever_id}:{representative.item.item_id}"
+        if item_id_counts[representative.item.item_id] > 1:
+            fused_hit_id += f":{canonical_hash(dedupe_key)}"
         fused_hits.append(
             SearchHit(
-                hit_id=f"{retriever_id}:{representative.item.item_id}",
+                hit_id=fused_hit_id,
                 item=representative.item,
                 rank=rank,
                 retriever=retriever_id,
@@ -2176,7 +2184,10 @@ def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthConte
         if not isinstance(attributes, dict):
             raise ValueError("attributes must be an object")
         has_selector = True
-        if all(auth.attributes.get(name) == expected for name, expected in attributes.items()):
+        if attributes and all(
+            auth.attributes.get(name) == expected
+            for name, expected in attributes.items()
+        ):
             return True
 
     return not has_selector
@@ -2190,7 +2201,7 @@ def knowledge_item_from_chunk(chunk: DocumentChunk) -> KnowledgeItemRef:
             source_id=chunk.chunk_id,
             source_kind="document_chunk",
             revision=chunk.revision_id,
-            digest="",
+            digest=sha256_digest_bytes(chunk.text.encode("utf-8")),
             locator=DocumentSpan(
                 asset_id=chunk.asset_id,
                 revision_id=chunk.revision_id,

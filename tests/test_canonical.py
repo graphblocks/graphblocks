@@ -326,7 +326,7 @@ def test_node_inputs_are_normalized_to_edges() -> None:
     assert {"from": "lookup.value", "to": "render.context.current"} in normalized["spec"]["edges"]
 
 
-def test_compile_rejects_edge_duplicated_by_input_shorthand() -> None:
+def test_compile_deduplicates_edge_repeated_by_input_shorthand() -> None:
     edge = {"from": "$input.message", "to": "render.message"}
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -346,18 +346,12 @@ def test_compile_rejects_edge_duplicated_by_input_shorthand() -> None:
 
     plan = compile_graph(graph, block_catalog=DISCOVERY_CATALOG)
 
-    assert plan.normalized["spec"]["edges"] == [edge, edge]
+    assert plan.normalized["spec"]["edges"] == [edge]
     assert [
         (diagnostic.code, diagnostic.message, diagnostic.path)
         for diagnostic in plan.diagnostics.diagnostics
         if diagnostic.severity == "error"
-    ] == [
-        (
-            "GB1005",
-            "duplicate edge identity '$input.message' -> 'render.message'",
-            "$.spec.edges[1]",
-        )
-    ]
+    ] == []
 
 
 def test_compile_rejects_distinct_explicit_and_shorthand_sources_for_one_target() -> None:

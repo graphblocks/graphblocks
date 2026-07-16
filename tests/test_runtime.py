@@ -69,6 +69,37 @@ def test_runtime_rejects_competing_sources_before_overwriting_a_node_input() -> 
     assert calls == []
 
 
+def test_runtime_projects_input_to_output_passthrough_edges() -> None:
+    registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "input-output-passthrough"},
+        "spec": {
+            "interface": {
+                "inputs": {"request": "schemas/Request@1"},
+                "outputs": {"echo": "schemas/Value@1"},
+            },
+            "nodes": {},
+            "edges": [
+                {
+                    "from": "$input.request.value",
+                    "to": "$output.echo.value",
+                }
+            ],
+        },
+    }
+
+    result = InProcessRuntime(registry).run(
+        graph,
+        {"request": {"value": "preserved"}},
+    )
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"echo": {"value": "preserved"}}
+    assert result.journal.records[-1].payload["outputs"] == result.outputs
+
+
 def test_runtime_waits_for_a_true_when_guard_dependency() -> None:
     calls: list[str] = []
     registry = RuntimeRegistry(block_catalog=BlockCatalog({}), allow_untyped=True)
@@ -1049,7 +1080,18 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
         resumed_journal_kinds.index("run_resuming")
     )
     assert resumed_journal_kinds.index("run_resuming") < (
-        resumed_journal_kinds.index("node_started", resumed_journal_kinds.index("run_resuming"))
+        resumed_journal_kinds.index("node_succeeded", resumed_journal_kinds.index("run_resuming"))
+    )
+    resumed_wait_record_index = resumed_journal_kinds.index(
+        "node_succeeded",
+        resumed_journal_kinds.index("run_resuming"),
+    )
+    assert resumed.journal.records[resumed_wait_record_index].payload == {
+        "node": "wait",
+        "outputs": ("callback", "operation", "wait"),
+    }
+    assert resumed_wait_record_index < (
+        resumed_journal_kinds.index("node_started", resumed_wait_record_index)
     )
     callback_record = next(
         record

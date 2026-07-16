@@ -158,6 +158,43 @@ def test_compile_allows_one_source_to_fan_out_to_multiple_targets() -> None:
     assert _error_diagnostics(graph) == []
 
 
+@pytest.mark.parametrize(
+    ("first_target", "second_target"),
+    (("sink.value", "sink.value.deep"), ("sink.value.deep", "sink.value")),
+)
+def test_compile_rejects_overlapping_nested_edge_targets(
+    first_target: str,
+    second_target: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "overlapping-edge-targets"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "left": "schemas/Value@1",
+                    "right": "schemas/Value@1",
+                },
+            },
+            "nodes": {"sink": {"block": "test.sink@1"}},
+            "edges": [
+                {"from": "$input.left", "to": first_target},
+                {"from": "$input.right", "to": second_target},
+            ],
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1007",
+            f"overlapping edge targets {first_target!r} and {second_target!r} "
+            "cannot have independent writers",
+            "$.spec.edges[1]",
+        )
+    ]
+
+
 @pytest.mark.parametrize("pseudo_source", ["$state", "$context", "$execution"])
 def test_compile_rejects_local_runtime_unsupported_pseudo_sources(
     pseudo_source: str,
@@ -228,6 +265,39 @@ def test_compile_preserves_supported_input_to_output_pseudo_edge() -> None:
     }
 
     assert _error_diagnostics(graph) == []
+
+
+def test_compile_rejects_unenforced_holdback_duration_bound() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "duration-only-holdback"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxDuration": "250ms",
+                    "onViolation": "abort_response",
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                    ],
+                },
+            },
+            "nodes": {},
+        },
+    }
+
+    assert _error_diagnostics(graph) == [
+        (
+            "GB1051",
+            "holdback duration bounds are not supported by the local runtime",
+            "$.spec.outputPolicy.delivery",
+        )
+    ]
 
 
 def test_compile_rejects_explicit_numeric_nested_source_path() -> None:

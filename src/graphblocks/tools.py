@@ -2313,7 +2313,7 @@ def validate_tool_result_for_model(
             text = model_output[part_index].text
             if text is None:
                 raise ToolResultValidationError(f"invalid tool result redaction path '/parts/{part_index}/text'")
-            for redaction in sorted(part_redactions, key=lambda item: int(item.get("start", -1)), reverse=True):
+            for redaction in part_redactions:
                 start = redaction.get("start")
                 end = redaction.get("end")
                 replacement = redaction.get("replacement")
@@ -2330,6 +2330,14 @@ def validate_tool_result_for_model(
                     raise ToolResultValidationError(
                         f"invalid tool result redaction range for {redaction.get('path')!r}"
                     )
+            for redaction in sorted(
+                part_redactions,
+                key=lambda item: item["start"],
+                reverse=True,
+            ):
+                start = redaction["start"]
+                end = redaction["end"]
+                replacement = redaction["replacement"]
                 text = text[:start] + replacement + text[end:]
                 redaction_counts_by_part[part_index] = redaction_counts_by_part.get(part_index, 0) + 1
             model_output[part_index] = replace(model_output[part_index], text=text)

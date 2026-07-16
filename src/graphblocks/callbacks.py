@@ -188,7 +188,17 @@ class EventFilter:
         object.__setattr__(self, "visibility", normalized_visibility)
         object.__setattr__(self, "node_ids", _string_tuple("event filter", "node_ids", node_ids))
         object.__setattr__(self, "operation_ids", _string_tuple("event filter", "operation_ids", operation_ids))
-        object.__setattr__(self, "severity_min", _optional_non_empty_string("event filter", "severity_min", severity_min))
+        normalized_severity = _optional_non_empty_string(
+            "event filter",
+            "severity_min",
+            severity_min,
+        )
+        if (
+            normalized_severity is not None
+            and normalized_severity not in EVENT_SEVERITY_RANKS
+        ):
+            raise ValueError("event filter severity_min must be a valid severity")
+        object.__setattr__(self, "severity_min", normalized_severity)
         if not isinstance(include_terminal_events, bool):
             raise ValueError("event filter include_terminal_events must be a boolean")
         object.__setattr__(self, "include_terminal_events", include_terminal_events)

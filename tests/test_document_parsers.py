@@ -307,6 +307,50 @@ def test_parser_registry_falls_back_through_ordered_candidate_chain() -> None:
     assert result.failed_locks[0].reason == "candidate_primary"
 
 
+def test_parser_registry_falls_back_after_untyped_parser_exception() -> None:
+    registry = DocumentParserRegistry()
+    registry.register(plain_text_parser_descriptor())
+    registry.register(
+        ParserDescriptor(
+            "binary-fallback",
+            "1",
+            parse=lambda asset, revision, body: ParsedDocument(
+                document_id="doc-fallback",
+                asset_id=asset.asset_id,
+                revision_id=revision.revision_id,
+                parser={"processor_id": "binary-fallback", "version": "1"},
+            ),
+        )
+    )
+    asset = SourceAsset(
+        "asset-1",
+        "file:///tmp/source.txt",
+        "local",
+        current_revision_id="rev-1",
+    )
+    revision = AssetRevision(
+        "rev-1",
+        "asset-1",
+        "sha256:content",
+        "2026-07-10T00:00:00Z",
+        ArtifactRef(
+            "artifact-1",
+            "file:///tmp/source.txt",
+            checksum="sha256:content",
+        ),
+    )
+
+    result = registry.parse_with_candidates(
+        asset,
+        revision,
+        b"\xff",
+        (("plain-text", "1"), ("binary-fallback", "1")),
+    )
+
+    assert result.selected_lock.processor_id == "binary-fallback"
+    assert [lock.processor_id for lock in result.failed_locks] == ["plain-text"]
+
+
 def test_parser_registry_candidate_fallback_fails_when_every_candidate_fails() -> None:
     def fail(asset: SourceAsset, revision: AssetRevision, body: bytes) -> ParsedDocument:
         raise DocumentParserError("parser failed")

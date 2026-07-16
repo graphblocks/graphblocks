@@ -52,11 +52,14 @@ def test_runtime_stops_before_next_node_after_cancellation() -> None:
         "metadata": {"name": "mid-cancelled"},
         "spec": {
             "nodes": {
-                "cancel": {"block": "test.cancel@1"},
+                "cancel": {
+                    "block": "test.cancel@1",
+                    "outputs": {"value": "$output.value"},
+                },
                 "late": {
                     "block": "test.late@1",
                     "inputs": {"value": "cancel.value"},
-                    "outputs": {"value": "$output.value"},
+                    "outputs": {"value": "$output.lateValue"},
                 },
             }
         },
@@ -65,7 +68,7 @@ def test_runtime_stops_before_next_node_after_cancellation() -> None:
     result = InProcessRuntime(registry, cancellation_token=CancellationToken()).run(graph, {})
 
     assert result.status == "cancelled"
-    assert result.outputs == {}
+    assert result.outputs == {"value": "cancelled"}
     assert calls == ["cancel"]
     assert result.journal.terminal_kind == "run_cancelled"
 

@@ -715,16 +715,16 @@ def test_output_policy_contract_rejects_non_integer_sequences_and_bounds() -> No
         cutoff.accepts_sequence("1")  # type: ignore[arg-type]
 
 
-def test_bounded_holdback_requires_size_or_time_bound() -> None:
+def test_bounded_holdback_requires_size_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
 
     with pytest.raises(OutputDeliveryPolicyError) as error:
         policy.validate()
 
-    assert str(error.value) == "bounded_holdback output delivery requires a token, byte, or duration bound"
+    assert str(error.value) == "bounded_holdback output delivery requires a token or byte bound"
 
 
-def test_output_delivery_policy_accepts_bounded_holdback_and_rejects_unsafe_immediate_draft() -> None:
+def test_output_delivery_policy_rejects_unenforced_duration_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(
         on_violation="abort_response",
         holdback_max_tokens=48,
@@ -732,7 +732,15 @@ def test_output_delivery_policy_accepts_bounded_holdback_and_rejects_unsafe_imme
         flush_boundaries=frozenset({"sentence", "paragraph", "tool_call"}),
     )
 
-    assert policy.validate() is policy
+    with pytest.raises(OutputDeliveryPolicyError) as duration_error:
+        policy.validate()
+
+    assert str(duration_error.value) == (
+        "holdback_max_duration_ms is not supported until duration enforcement is available"
+    )
+
+
+def test_output_delivery_policy_rejects_unsafe_immediate_draft() -> None:
 
     unsafe = OutputDeliveryPolicy.immediate_draft(
         on_violation="abort_response",

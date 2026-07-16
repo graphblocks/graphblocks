@@ -53,6 +53,8 @@ def _validate_non_negative_integer(field_name: str, value: object) -> int:
 def _validate_time(field_name: str, value: object) -> LeaseTime:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise InvalidLeaseRequestError(f"lease {field_name} must be a number")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise InvalidLeaseRequestError(f"lease {field_name} must be finite")
     if value < 0:
         raise InvalidLeaseRequestError(f"lease {field_name} must be non-negative")
     return value
@@ -195,8 +197,15 @@ class InMemoryLeasePool:
             self.next_fencing_token,
         )
 
-    def available(self, resource: str) -> int:
+    def available(
+        self,
+        resource: str,
+        *,
+        now: LeaseTime | None = None,
+    ) -> int:
         capacity = self._capacity(resource)
+        if now is not None:
+            self.reap_expired(now)
         used = sum(active.units for active in self.active.values() if active.resource == resource)
         return capacity - used
 

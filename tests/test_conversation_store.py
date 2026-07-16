@@ -433,6 +433,54 @@ def test_compaction_rejects_missing_source_or_output_message() -> None:
         )
 
 
+def test_branch_and_regenerate_drop_compactions_with_excluded_messages() -> None:
+    store = InMemoryConversationStore()
+    user = Message(message_id="msg-user", role="user")
+    assistant = Message(
+        message_id="msg-assistant",
+        role="assistant",
+        parent_message_id="msg-user",
+    )
+    later = Message(message_id="msg-later", role="user")
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages(
+        "conv-1",
+        expected_revision=0,
+        messages=[user, assistant, later],
+    )
+    store.record_compaction(
+        "conv-1",
+        CompactionRecord(
+            compaction_id="compact-dangling",
+            source_message_ids=("msg-user", "msg-later"),
+            output_message_id="msg-assistant",
+            method="summary_memory",
+            token_before=20,
+            token_after=10,
+        ),
+    )
+
+    branch = store.branch(
+        BranchRequest(
+            conversation_id="conv-1",
+            from_message_id="msg-assistant",
+            new_conversation_id="conv-branch",
+            include_memory=True,
+        )
+    )
+    regenerated = store.regenerate(
+        RegenerateRequest(
+            conversation_id="conv-1",
+            assistant_message_id="msg-assistant",
+            new_conversation_id="conv-regenerated",
+            include_memory=True,
+        )
+    )
+
+    assert branch.compactions == ()
+    assert regenerated.compactions == ()
+
+
 def test_archive_prevents_later_appends() -> None:
     store = InMemoryConversationStore()
     store.create(Conversation(conversation_id="conv-1"))

@@ -653,6 +653,13 @@ def test_sqlite_run_store_fences_mutation_racing_with_terminal_status(
     assert persisted.state == {}
     assert persisted.state_revision == 0
     assert persisted.model_visible_tools == ()
+    assert stale_writer.connection.in_transaction is False
+    recovered = stale_writer.create_run(
+        "sha256:recovered",
+        {},
+        run_id=f"run-recovered-{mutation}",
+    )
+    assert recovered.status == "created"
 
 
 def _model_visible_tool(

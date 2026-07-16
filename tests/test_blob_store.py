@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+from threading import Barrier, Lock
 
 import pytest
 
@@ -252,13 +254,126 @@ def test_local_blob_store_rejects_path_traversal(tmp_path) -> None:
         BlobKey(object())  # type: ignore[arg-type]
 
 
-def test_local_blob_store_rejects_metadata_symlink_escape(tmp_path) -> None:
+@pytest.mark.parametrize(
+    "reserved_directory",
+    (".graphblocks-metadata", ".GraphBlocks-Metadata", ".GRAPHBLOCKS-METADATA"),
+)
+def test_local_blob_store_rejects_reserved_metadata_namespace(
+    tmp_path,
+    reserved_directory: str,
+) -> None:
+    store = LocalBlobStore(tmp_path)
+    victim = BlobKey("docs/policy.txt")
+    store.put(victim, b"alpha policy", PutOptions(media_type="text/plain"))
+
+    with pytest.raises(InvalidBlobKeyError, match="reserved local metadata namespace"):
+        store.put(
+            BlobKey(f"{reserved_directory}/docs/policy.txt.json"),
+            b"not metadata",
+            PutOptions(),
+        )
+
+    assert store.get(victim) == b"alpha policy"
+    assert store.head(victim).artifact.media_type == "text/plain"
+
+
+def test_local_blob_store_recovers_interrupted_metadata_commit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = LocalBlobStore(tmp_path)
+    key = BlobKey("docs/policy.txt")
+    store.put(key, b"old policy", PutOptions(media_type="text/plain"))
+    metadata_path = store._metadata_path_for(key)
+    _, pending_metadata_path = store._pending_paths_for(key)
+    original_replace = type(metadata_path).replace
+
+    def interrupt_metadata_replace(path, target):
+        if path == pending_metadata_path:
+            raise OSError("simulated interruption")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(type(metadata_path), "replace", interrupt_metadata_replace)
+    with pytest.raises(OSError, match="simulated interruption"):
+        store.put(
+            key,
+            b"new policy",
+            PutOptions(media_type="text/markdown", filename="policy.md"),
+        )
+    monkeypatch.undo()
+
+    assert store.get(key) == b"new policy"
+    metadata = store.head(key)
+    assert metadata.artifact.media_type == "text/markdown"
+    assert metadata.artifact.filename == "policy.md"
+    assert not pending_metadata_path.exists()
+
+
+def test_local_blob_store_serializes_concurrent_same_key_puts_across_instances(
+    tmp_path,
+) -> None:
+    first_store = LocalBlobStore(tmp_path)
+    second_store = LocalBlobStore(tmp_path)
+    shared_root_lock = first_store._root_lock
+    assert second_store._root_lock is shared_root_lock
+
+    class CoordinatedLock:
+        def __init__(self) -> None:
+            self.attempts = Barrier(2)
+            self.lock = Lock()
+
+        def __enter__(self):
+            self.attempts.wait()
+            self.lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            self.lock.release()
+
+    coordinated_lock = CoordinatedLock()
+    first_store._root_lock = coordinated_lock
+    second_store._root_lock = coordinated_lock
+    key = BlobKey("docs/policy.txt")
+    writes = (
+        (first_store, b"alpha policy", "text/plain"),
+        (second_store, b"beta policy", "text/markdown"),
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            artifacts = tuple(
+                executor.map(
+                    lambda write: write[0].put(
+                        key,
+                        write[1],
+                        PutOptions(media_type=write[2]),
+                    ),
+                    writes,
+                )
+            )
+    finally:
+        first_store._root_lock = shared_root_lock
+        second_store._root_lock = shared_root_lock
+
+    expected_by_checksum = {
+        artifact.checksum: (body, media_type)
+        for artifact, (_, body, media_type) in zip(artifacts, writes, strict=True)
+    }
+    metadata = first_store.head(key)
+    expected_body, expected_media_type = expected_by_checksum[
+        metadata.artifact.checksum
+    ]
+    assert first_store.get(key) == expected_body
+    assert metadata.artifact.media_type == expected_media_type
+    assert not any(path.exists() for path in first_store._pending_paths_for(key))
+
+
+def test_local_blob_store_rejects_metadata_symlink_escape(tmp_path, symlink_or_skip) -> None:
     root = tmp_path / "blob-root"
     outside = tmp_path / "outside"
     outside.mkdir()
     store = LocalBlobStore(root)
     metadata_parent = root / ".graphblocks-metadata" / "docs"
-    metadata_parent.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(metadata_parent, outside, target_is_directory=True)
 
     with pytest.raises(InvalidBlobKeyError, match="invalid blob key"):
         store.put(BlobKey("docs/policy.txt"), b"alpha policy", PutOptions())

@@ -1170,6 +1170,25 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
         completed.mark_resuming()
 
 
+def test_async_operation_created_state_requires_submission_before_terminal_state() -> None:
+    operation = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-created",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash=VALID_RESUME_TOKEN_HASH,
+        idempotency_key="idem-ci-created",
+        created_at="2026-07-02T00:00:00Z",
+    )
+
+    with raises_value_error("async operation cannot transition from created to cancelled"):
+        operation.cancel(completed_at="2026-07-02T00:01:00Z")
+    with raises_value_error("async operation cannot transition from created to expired"):
+        operation.expire(completed_at="2026-07-02T00:01:00Z")
+
+
 def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
     with raises_value_error("async operation submitted state requires submitted_at"):
         graphblocks.AsyncOperation(

@@ -561,6 +561,8 @@ class InMemoryConversationStore:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
         if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        if not turn.messages:
+            raise TurnConflictError(f"turn {turn_id!r} has no messages to commit")
         committed_messages = tuple(_copy_message(replace(message, status="committed")) for message in turn.messages)
         try:
             new_revision = self.append_messages(turn.conversation_id, turn.base_revision, list(committed_messages))
@@ -640,17 +642,21 @@ class InMemoryConversationStore:
             )
         new_revision = conversation.revision + 1
         copied_messages = tuple(_copy_message(message) for message in messages)
-        self._conversations[conversation_id] = Conversation(
-            conversation_id=conversation.conversation_id,
-            messages=(*conversation.messages, *copied_messages),
-            attachments=conversation.attachments,
-            compactions=conversation.compactions,
-            revision=new_revision,
-            archived=conversation.archived,
-            branch_of=conversation.branch_of,
-            branched_from_message_id=conversation.branched_from_message_id,
-            metadata=dict(conversation.metadata),
-        )
+        try:
+            updated = Conversation(
+                conversation_id=conversation.conversation_id,
+                messages=(*conversation.messages, *copied_messages),
+                attachments=conversation.attachments,
+                compactions=conversation.compactions,
+                revision=new_revision,
+                archived=conversation.archived,
+                branch_of=conversation.branch_of,
+                branched_from_message_id=conversation.branched_from_message_id,
+                metadata=dict(conversation.metadata),
+            )
+        except ValueError as error:
+            raise ConversationConflictError(str(error)) from error
+        self._conversations[conversation_id] = updated
         return new_revision
 
     def branch(self, request: BranchRequest) -> Conversation:
@@ -683,7 +689,16 @@ class InMemoryConversationStore:
                     or (attachment.scope == "message" and attachment.message_id in branch_message_ids)
                 )
             ),
-            compactions=tuple(_copy_compaction(record) for record in conversation.compactions) if request.include_memory else (),
+            compactions=tuple(
+                _copy_compaction(record)
+                for record in conversation.compactions
+                if request.include_memory
+                and record.output_message_id in branch_message_ids
+                and all(
+                    source_message_id in branch_message_ids
+                    for source_message_id in record.source_message_ids
+                )
+            ),
             revision=0,
             branch_of=conversation.conversation_id,
             branched_from_message_id=request.from_message_id,
@@ -760,7 +775,16 @@ class InMemoryConversationStore:
                     or (attachment.scope == "message" and attachment.message_id in branch_message_ids)
                 )
             ),
-            compactions=tuple(_copy_compaction(record) for record in conversation.compactions) if request.include_memory else (),
+            compactions=tuple(
+                _copy_compaction(record)
+                for record in conversation.compactions
+                if request.include_memory
+                and record.output_message_id in branch_message_ids
+                and all(
+                    source_message_id in branch_message_ids
+                    for source_message_id in record.source_message_ids
+                )
+            ),
             revision=0,
             branch_of=conversation.conversation_id,
             branched_from_message_id=conversation.messages[parent_index].message_id,
@@ -878,6 +902,11 @@ class InMemoryConversationStore:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         if policy == "hard":
             del self._conversations[conversation_id]
+            self._turns = {
+                turn_id: turn
+                for turn_id, turn in self._turns.items()
+                if turn.conversation_id != conversation_id
+            }
             return None
         if policy != "tombstone":
             raise ValueError("policy must be tombstone or hard")
@@ -895,4 +924,9 @@ class InMemoryConversationStore:
             branched_from_message_id=conversation.branched_from_message_id,
             metadata=metadata,
         )
+        self._turns = {
+            turn_id: turn
+            for turn_id, turn in self._turns.items()
+            if turn.conversation_id != conversation_id
+        }
         return new_revision

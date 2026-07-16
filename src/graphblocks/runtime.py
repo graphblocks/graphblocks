@@ -78,6 +78,12 @@ _LOCAL_JOURNAL_KINDS = frozenset(
 _LOCAL_TERMINAL_JOURNAL_KINDS = frozenset(
     {"run_succeeded", "run_failed", "run_cancelled"}
 )
+_JOURNAL_KINDS = _LOCAL_JOURNAL_KINDS | frozenset(
+    {"run_waiting_callback", "external_callback_received", "run_resuming"}
+)
+_TERMINAL_JOURNAL_KINDS = frozenset(
+    {"run_succeeded", "run_failed", "run_cancelled"}
+)
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
 MAX_U64 = (1 << 64) - 1
 
@@ -207,6 +213,12 @@ class ExecutionJournal:
     terminal_kind: JournalKind | None = None
 
     def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        if kind not in _JOURNAL_KINDS:
+            raise ValueError(f"unsupported journal kind {kind!r}")
+        if kind in _TERMINAL_JOURNAL_KINDS:
+            raise JournalStateError(
+                f"terminal journal kind {kind!r} must be recorded with append_terminal"
+            )
         if self.terminal_kind is not None:
             raise JournalStateError(f"cannot append {kind} after terminal {self.terminal_kind}")
         record = JournalRecord(len(self.records) + 1, kind, payload)
@@ -214,9 +226,12 @@ class ExecutionJournal:
         return record
 
     def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        if kind not in _TERMINAL_JOURNAL_KINDS:
+            raise ValueError(f"journal terminal kind is invalid: {kind!r}")
         if self.terminal_kind is not None:
             raise JournalStateError(f"terminal already recorded as {self.terminal_kind}")
-        record = self.append(kind, payload)
+        record = JournalRecord(len(self.records) + 1, kind, payload)
+        self.records.append(record)
         self.terminal_kind = kind
         return record
 
@@ -379,6 +394,14 @@ class SQLiteExecutionJournal:
         *,
         terminal: bool,
     ) -> JournalRecord:
+        if kind not in _JOURNAL_KINDS:
+            raise ValueError(f"unsupported journal kind {kind!r}")
+        if terminal and kind not in _TERMINAL_JOURNAL_KINDS:
+            raise ValueError(f"journal terminal kind is invalid: {kind!r}")
+        if not terminal and kind in _TERMINAL_JOURNAL_KINDS:
+            raise JournalStateError(
+                f"terminal journal kind {kind!r} must be recorded with append_terminal"
+            )
         terminal_kind = self.terminal_kind
         if terminal_kind is not None:
             action = "record terminal" if terminal else f"append {kind}"
@@ -909,6 +932,27 @@ class InProcessRuntime:
         node_outputs: dict[str, dict[str, Any]] = {}
         output_values: dict[str, Any] = {}
         remaining = set(nodes)
+        if checkpoint is None:
+            for edge in edges:
+                if not (
+                    isinstance(edge, dict)
+                    and isinstance(edge.get("from"), str)
+                    and isinstance(edge.get("to"), str)
+                    and edge["from"].startswith("$input.")
+                    and edge["to"].startswith("$output.")
+                ):
+                    continue
+                value: Any = inputs
+                for part in edge["from"].partition(".")[2].split("."):
+                    value = value[part]
+                current = output_values
+                parts = edge["to"].partition(".")[2].split(".")
+                for part in parts[:-1]:
+                    nested = current.setdefault(part, {})
+                    if not isinstance(nested, dict):
+                        raise RuntimeError(f"output path conflict at {edge['to']}")
+                    current = nested
+                current[parts[-1]] = value
         context = {
             "run_id": run_id,
             "turn_id": "turn-000001",
@@ -1276,6 +1320,13 @@ class InProcessRuntime:
                     "node": checkpoint.wait_node,
                 },
             )
+            journal.append(
+                "node_succeeded",
+                {
+                    "node": checkpoint.wait_node,
+                    "outputs": sorted(wait_result),
+                },
+            )
 
         while remaining:
             token = context["cancellation_token"]
@@ -1285,7 +1336,7 @@ class InProcessRuntime:
                     self.run_store.set_status(run_id, "cancelled")
                 if self.lease_pool is not None:
                     self.lease_pool.release_all(run_id)
-                return RunResult(run_id, "cancelled", {}, journal)
+                return RunResult(run_id, "cancelled", output_values, journal)
             progressed = False
             for node_name in sorted(remaining):
                 node = nodes[node_name]

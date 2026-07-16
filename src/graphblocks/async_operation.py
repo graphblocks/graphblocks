@@ -69,7 +69,7 @@ VALID_ASYNC_OPERATION_STATES = frozenset({
 })
 TERMINAL_ASYNC_OPERATION_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
 ASYNC_OPERATION_ALLOWED_TRANSITIONS = {
-    "created": frozenset({"submitted", "cancelled", "expired"}),
+    "created": frozenset({"submitted"}),
     "submitted": frozenset({"waiting_callback", "polling", "cancelled", "expired"}),
     "waiting_callback": frozenset({"callback_received", "cancelled", "expired"}),
     "callback_received": frozenset({"resuming", "failed", "cancelled", "expired"}),

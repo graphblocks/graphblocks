@@ -623,6 +623,7 @@ class SQLiteRunStore:
             ),
         )
         if cursor.rowcount != 1:
+            self.connection.rollback()
             refreshed = self.get_run(run_id)
             if refreshed.status in TERMINAL_RUN_STATUSES:
                 raise RunTerminalStateError(run_id, refreshed.status)
@@ -649,6 +650,7 @@ class SQLiteRunStore:
             (_model_visible_tools_json(tools), run_id, *_TERMINAL_RUN_STATUSES_SQL),
         )
         if cursor.rowcount != 1:
+            self.connection.rollback()
             refreshed = self.get_run(run_id)
             if refreshed.status in TERMINAL_RUN_STATUSES:
                 raise RunTerminalStateError(run_id, refreshed.status)
@@ -673,6 +675,7 @@ class SQLiteRunStore:
             (status, run_id, *_TERMINAL_RUN_STATUSES_SQL),
         )
         if cursor.rowcount != 1:
+            self.connection.rollback()
             refreshed = self.get_run(run_id)
             if refreshed.status in TERMINAL_RUN_STATUSES:
                 raise RunTerminalStateError(run_id, refreshed.status)

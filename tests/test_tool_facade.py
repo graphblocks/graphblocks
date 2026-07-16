@@ -3601,7 +3601,10 @@ def test_completed_tool_result_model_output_applies_redactions_before_model_retu
     assert output[0].metadata["capture"]["redaction_count"] == 1
 
 
-def test_completed_tool_result_model_output_rejects_bool_redaction_offsets() -> None:
+@pytest.mark.parametrize("start", (False, "abc"))
+def test_completed_tool_result_model_output_rejects_invalid_redaction_offsets(
+    start: object,
+) -> None:
     catalog = ToolCatalog(
         definitions=(
             ToolDefinition(
@@ -3639,7 +3642,14 @@ def test_completed_tool_result_model_output_rejects_bool_redaction_offsets() -> 
             result,
             resolved,
             registry,
-            redactions=({"path": "/parts/0/text", "start": False, "end": 11, "replacement": "[redacted]"},),
+            redactions=(
+                {
+                    "path": "/parts/0/text",
+                    "start": start,
+                    "end": 11,
+                    "replacement": "[redacted]",
+                },
+            ),
         )
 
     assert str(error.value) == "invalid tool result redaction range for '/parts/0/text'"

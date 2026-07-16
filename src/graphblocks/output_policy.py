@@ -653,13 +653,17 @@ class OutputDeliveryPolicy:
             if value <= 0:
                 raise OutputDeliveryPolicyError(f"{name} must be positive")
 
+        if self.holdback_max_duration_ms is not None:
+            raise OutputDeliveryPolicyError(
+                "holdback_max_duration_ms is not supported until duration enforcement is available"
+            )
+
         if self.mode == "bounded_holdback" and (
             self.holdback_max_tokens is None
             and self.holdback_max_bytes is None
-            and self.holdback_max_duration_ms is None
         ):
             raise OutputDeliveryPolicyError(
-                "bounded_holdback output delivery requires a token, byte, or duration bound"
+                "bounded_holdback output delivery requires a token or byte bound"
             )
         if self.mode == "buffer_until_commit" and (
             self.holdback_max_tokens is not None

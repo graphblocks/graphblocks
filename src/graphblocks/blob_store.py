@@ -5,7 +5,9 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+from threading import Lock, RLock
 from types import MappingProxyType
+from typing import Any
 
 from .documents import ArtifactRef
 
@@ -136,6 +138,9 @@ class ListPage:
 
 _GRAPHBLOCKS_CHECKSUM_METADATA = "graphblocks-checksum"
 _GRAPHBLOCKS_FILENAME_METADATA = "graphblocks-filename"
+_LOCAL_METADATA_DIRECTORY = ".graphblocks-metadata"
+_LOCAL_ROOT_LOCKS_GUARD = Lock()
+_LOCAL_ROOT_LOCKS: dict[Path, Any] = {}
 _RESERVED_METADATA_KEYS = {
     _GRAPHBLOCKS_CHECKSUM_METADATA,
     _GRAPHBLOCKS_FILENAME_METADATA,
@@ -193,21 +198,35 @@ def _is_not_found_error(error: BaseException) -> bool:
 class LocalBlobStore:
     root: str | Path
     _metadata_root: Path = field(init=False, repr=False)
+    _root_lock: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        metadata_root = self.root / ".graphblocks-metadata"
-        metadata_root.mkdir(parents=True, exist_ok=True)
-        self._metadata_root = metadata_root.resolve()
-        try:
-            self._metadata_root.relative_to(self.root)
-        except ValueError as error:
-            raise BlobStoreError("local blob metadata root must remain within blob root") from error
+        with _LOCAL_ROOT_LOCKS_GUARD:
+            root_lock = _LOCAL_ROOT_LOCKS.get(self.root)
+            if root_lock is None:
+                root_lock = RLock()
+                _LOCAL_ROOT_LOCKS[self.root] = root_lock
+            self._root_lock = root_lock
+        with self._root_lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            metadata_root = self.root / _LOCAL_METADATA_DIRECTORY
+            metadata_root.mkdir(parents=True, exist_ok=True)
+            self._metadata_root = metadata_root.resolve()
+            try:
+                self._metadata_root.relative_to(self.root)
+            except ValueError as error:
+                raise BlobStoreError(
+                    "local blob metadata root must remain within blob root"
+                ) from error
 
     def _path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
+        if parsed.parts[0].casefold() == _LOCAL_METADATA_DIRECTORY.casefold():
+            raise InvalidBlobKeyError(
+                f"blob key {key.key!r} uses the reserved local metadata namespace"
+            )
         path = (self.root / Path(*parsed.parts)).resolve()
         try:
             path.relative_to(self.root)
@@ -218,6 +237,10 @@ class LocalBlobStore:
     def _metadata_path_for(self, key: BlobKey) -> Path:
         _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
+        if parsed.parts[0].casefold() == _LOCAL_METADATA_DIRECTORY.casefold():
+            raise InvalidBlobKeyError(
+                f"blob key {key.key!r} uses the reserved local metadata namespace"
+            )
         path = (self._metadata_root / Path(*parsed.parts)).with_suffix(
             Path(parsed.name).suffix + ".json"
         )
@@ -228,6 +251,13 @@ class LocalBlobStore:
             raise InvalidBlobKeyError(f"invalid blob key {key.key!r}") from error
         return path
 
+    def _pending_paths_for(self, key: BlobKey) -> tuple[Path, Path]:
+        metadata_path = self._metadata_path_for(key)
+        return (
+            metadata_path.with_name(metadata_path.name + ".body.pending"),
+            metadata_path.with_name(metadata_path.name + ".pending"),
+        )
+
     def _metadata_for(self, key: BlobKey, data: bytes | None = None) -> BlobMetadata:
         path = self._path_for(key)
         if not path.exists():
@@ -235,7 +265,37 @@ class LocalBlobStore:
         if data is None:
             data = path.read_bytes()
         metadata_path = self._metadata_path_for(key)
-        if metadata_path.exists():
+        _, pending_metadata_path = self._pending_paths_for(key)
+        metadata: BlobMetadata | None = None
+        if pending_metadata_path.exists() and not pending_metadata_path.is_symlink():
+            try:
+                pending_payload = json.loads(
+                    pending_metadata_path.read_text(encoding="utf-8"),
+                    parse_constant=lambda constant: (_ for _ in ()).throw(
+                        ValueError(constant)
+                    ),
+                )
+                if not isinstance(pending_payload, Mapping):
+                    raise TypeError("pending metadata must be a mapping")
+                pending_artifact_payload = pending_payload["artifact"]
+                if not isinstance(pending_artifact_payload, Mapping):
+                    raise TypeError("pending artifact must be a mapping")
+                pending_artifact = ArtifactRef(**pending_artifact_payload)
+                pending_metadata = BlobMetadata(
+                    key=key,
+                    artifact=pending_artifact,
+                    etag=pending_payload.get("etag"),
+                )
+                checksum = "sha256:" + hashlib.sha256(data).hexdigest()
+                if (
+                    pending_artifact.checksum == checksum
+                    and pending_artifact.size_bytes == len(data)
+                ):
+                    pending_metadata_path.replace(metadata_path)
+                    metadata = pending_metadata
+            except (KeyError, OSError, TypeError, UnicodeError, ValueError):
+                pass
+        if metadata is None and metadata_path.exists():
             try:
                 payload = json.loads(
                     metadata_path.read_text(encoding="utf-8"),
@@ -259,6 +319,8 @@ class LocalBlobStore:
             if artifact.size_bytes != len(data):
                 raise BlobStoreError(f"blob {key.key!r} does not match recorded size")
             return metadata
+        if metadata is not None:
+            return metadata
         checksum = "sha256:" + hashlib.sha256(data).hexdigest()
         artifact = ArtifactRef(
             artifact_id=f"blob:{key.key}",
@@ -271,52 +333,66 @@ class LocalBlobStore:
         return BlobMetadata(key=key, artifact=artifact, etag=checksum)
 
     def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
-        path = self._path_for(key)
-        metadata_path = self._metadata_path_for(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(body)
-        checksum = "sha256:" + hashlib.sha256(body).hexdigest()
-        artifact = ArtifactRef(
-            artifact_id=f"blob:{key.key}",
-            uri=path.as_uri(),
-            media_type=options.media_type,
-            size_bytes=len(body),
-            checksum=checksum,
-            etag=checksum,
-            version=checksum,
-            filename=options.filename,
-            metadata=dict(options.metadata),
-        )
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        metadata_path.write_text(
-            json.dumps({"artifact": asdict(artifact), "etag": checksum}, sort_keys=True),
-            encoding="utf-8",
-        )
-        return artifact
+        with self._root_lock:
+            path = self._path_for(key)
+            metadata_path = self._metadata_path_for(key)
+            pending_body_path, pending_metadata_path = self._pending_paths_for(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            checksum = "sha256:" + hashlib.sha256(body).hexdigest()
+            artifact = ArtifactRef(
+                artifact_id=f"blob:{key.key}",
+                uri=path.as_uri(),
+                media_type=options.media_type,
+                size_bytes=len(body),
+                checksum=checksum,
+                etag=checksum,
+                version=checksum,
+                filename=options.filename,
+                metadata=dict(options.metadata),
+            )
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            pending_body_path.unlink(missing_ok=True)
+            pending_metadata_path.unlink(missing_ok=True)
+            pending_body_path.write_bytes(body)
+            pending_metadata_path.write_text(
+                json.dumps(
+                    {"artifact": asdict(artifact), "etag": checksum},
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            pending_body_path.replace(path)
+            pending_metadata_path.replace(metadata_path)
+            return artifact
 
     def get(self, key: BlobKey, byte_range: ByteRange | None = None) -> bytes:
-        path = self._path_for(key)
-        if not path.exists():
-            raise BlobNotFoundError(f"blob {key.key!r} does not exist")
-        data = path.read_bytes()
-        self._metadata_for(key, data)
-        if byte_range is None:
-            return data
-        if byte_range.length is None:
-            return data[byte_range.offset :]
-        return data[byte_range.offset : byte_range.offset + byte_range.length]
+        with self._root_lock:
+            path = self._path_for(key)
+            if not path.exists():
+                raise BlobNotFoundError(f"blob {key.key!r} does not exist")
+            data = path.read_bytes()
+            self._metadata_for(key, data)
+            if byte_range is None:
+                return data
+            if byte_range.length is None:
+                return data[byte_range.offset :]
+            return data[byte_range.offset : byte_range.offset + byte_range.length]
 
     def head(self, key: BlobKey) -> BlobMetadata:
-        return self._metadata_for(key)
+        with self._root_lock:
+            return self._metadata_for(key)
 
     def delete(self, key: BlobKey) -> None:
-        path = self._path_for(key)
-        if not path.exists():
-            raise BlobNotFoundError(f"blob {key.key!r} does not exist")
-        path.unlink()
-        metadata_path = self._metadata_path_for(key)
-        if metadata_path.exists():
-            metadata_path.unlink()
+        with self._root_lock:
+            path = self._path_for(key)
+            if not path.exists():
+                raise BlobNotFoundError(f"blob {key.key!r} does not exist")
+            path.unlink()
+            metadata_path = self._metadata_path_for(key)
+            if metadata_path.exists():
+                metadata_path.unlink()
+            for pending_path in self._pending_paths_for(key):
+                pending_path.unlink(missing_ok=True)
 
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
         if limit < 1:
@@ -334,23 +410,35 @@ class LocalBlobStore:
             ):
                 raise ValueError("cursor must be a canonical non-negative integer")
             start = int(cursor)
-        keys: list[str] = []
-        for path in self.root.rglob("*"):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(self.root)
-            if relative.parts and relative.parts[0] == ".graphblocks-metadata":
-                continue
-            key = relative.as_posix()
-            if key.startswith(prefix):
-                keys.append(key)
-        keys.sort()
-        page_keys = keys[start : start + limit]
-        next_cursor = str(start + limit) if start + limit < len(keys) else None
-        return ListPage(
-            items=[BlobListItem(key=BlobKey(key), metadata=self.head(BlobKey(key))) for key in page_keys],
-            next_cursor=next_cursor,
-        )
+        with self._root_lock:
+            keys: list[str] = []
+            for path in self.root.rglob("*"):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(self.root)
+                if (
+                    relative.parts
+                    and relative.parts[0] == _LOCAL_METADATA_DIRECTORY
+                ):
+                    continue
+                key = relative.as_posix()
+                if key.startswith(prefix):
+                    keys.append(key)
+            keys.sort()
+            page_keys = keys[start : start + limit]
+            next_cursor = (
+                str(start + limit) if start + limit < len(keys) else None
+            )
+            return ListPage(
+                items=[
+                    BlobListItem(
+                        key=BlobKey(key),
+                        metadata=self.head(BlobKey(key)),
+                    )
+                    for key in page_keys
+                ],
+                next_cursor=next_cursor,
+            )
 
 
 @dataclass(slots=True)

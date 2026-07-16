@@ -101,6 +101,22 @@ def test_sqlite_execution_journal_rejects_second_terminal(tmp_path) -> None:
         journal.append_terminal("run_succeeded", {"outputs": {}})
 
 
+@pytest.mark.parametrize("sqlite", (False, True))
+def test_execution_journal_enforces_terminal_kind_api(tmp_path, sqlite: bool) -> None:
+    journal = (
+        SQLiteExecutionJournal(tmp_path / "journal.sqlite3", "run-000001")
+        if sqlite
+        else ExecutionJournal("run-000001")
+    )
+
+    with pytest.raises(JournalStateError, match="must be recorded with append_terminal"):
+        journal.append("run_succeeded", {"outputs": {}})
+    with pytest.raises(ValueError, match="terminal kind is invalid"):
+        journal.append_terminal("node_started", {"node": "render"})  # type: ignore[arg-type]
+
+    assert journal.records == []
+
+
 def test_sqlite_execution_journal_rejects_append_after_terminal_on_reopen(tmp_path) -> None:
     database = tmp_path / "journal.sqlite3"
     first = SQLiteExecutionJournal(database, "run-000001")

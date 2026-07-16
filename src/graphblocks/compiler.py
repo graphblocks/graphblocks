@@ -1156,21 +1156,19 @@ def compile_graph(
                 )
                 has_token_bound = _is_positive_integer(holdback_max_tokens)
                 has_byte_bound = _is_positive_integer(holdback_max_bytes)
-                has_duration_bound = _is_positive_integer(holdback_max_duration)
-                if not has_duration_bound and isinstance(holdback_max_duration, str):
-                    duration_text = holdback_max_duration.strip()
-                    for suffix in ("ms", "s", "m", "h"):
-                        if duration_text.endswith(suffix):
-                            duration_amount = duration_text[: -len(suffix)]
-                            has_duration_bound = (
-                                duration_amount.isascii() and duration_amount.isdigit() and int(duration_amount) > 0
-                            )
-                            break
-                if not has_token_bound and not has_byte_bound and not has_duration_bound:
+                if holdback_max_duration is not None:
                     diagnostics.append(
                         Diagnostic(
                             "GB1051",
-                            "bounded_holdback output delivery requires a token, byte, or duration bound",
+                            "holdback duration bounds are not supported by the local runtime",
+                            "$.spec.outputPolicy.delivery",
+                        )
+                    )
+                elif not has_token_bound and not has_byte_bound:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1051",
+                            "bounded_holdback output delivery requires a token or byte bound",
                             "$.spec.outputPolicy.delivery",
                         )
                     )
@@ -1820,6 +1818,7 @@ def compile_graph(
     if isinstance(edges, list):
         seen_edge_identities: set[tuple[str, str]] = set()
         source_by_target: dict[str, str] = {}
+        target_parts_by_target: dict[str, tuple[str, tuple[str, ...]]] = {}
         for index, edge in enumerate(edges):
             if not isinstance(edge, dict):
                 diagnostics.append(Diagnostic("GB0010", "edge must be a mapping", f"$.spec.edges[{index}]"))
@@ -1841,6 +1840,26 @@ def compile_graph(
                 )
             else:
                 existing_source = source_by_target.get(target)
+                target_owner, _, target_path = target.partition(".")
+                target_parts = tuple(target_path.split("."))
+                overlapping_target = next(
+                    (
+                        existing_target
+                        for existing_target, (
+                            existing_owner,
+                            existing_parts,
+                        ) in target_parts_by_target.items()
+                        if (
+                            existing_owner == target_owner
+                            and (
+                                existing_parts == target_parts[: len(existing_parts)]
+                                or target_parts
+                                == existing_parts[: len(target_parts)]
+                            )
+                        )
+                    ),
+                    None,
+                )
                 if existing_source is not None and existing_source != source:
                     diagnostics.append(
                         Diagnostic(
@@ -1852,8 +1871,20 @@ def compile_graph(
                             f"$.spec.edges[{index}]",
                         )
                     )
+                elif overlapping_target is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1007",
+                            (
+                                f"overlapping edge targets {overlapping_target!r} and "
+                                f"{target!r} cannot have independent writers"
+                            ),
+                            f"$.spec.edges[{index}]",
+                        )
+                    )
                 else:
                     source_by_target[target] = source
+                    target_parts_by_target[target] = (target_owner, target_parts)
             seen_edge_identities.add(edge_identity)
             for key, endpoint in (("from", source), ("to", target)):
                 owner, separator, endpoint_path = endpoint.partition(".")

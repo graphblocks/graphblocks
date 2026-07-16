@@ -286,7 +286,14 @@ class DocumentParserRegistry:
             raise DocumentParserNotFoundError(
                 f"locked parser {lock.processor_id!r}@{lock.processor_version!r} has no local implementation"
             )
-        return descriptor.parse(asset, revision, body)
+        try:
+            return descriptor.parse(asset, revision, body)
+        except DocumentParserError:
+            raise
+        except Exception as error:
+            raise DocumentParserError(
+                f"locked parser {lock.processor_id!r}@{lock.processor_version!r} failed"
+            ) from error
 
     def parse_with_candidates(
         self,

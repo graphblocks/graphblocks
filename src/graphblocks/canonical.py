@@ -283,16 +283,13 @@ def _normalize_graph_unchecked(document: dict[str, Any]) -> dict[str, Any]:
         if connection is not None and "bindings" not in node:
             node["bindings"] = {"default": connection}
 
-    input_edge_identities = {
-        (edge["from"], edge["to"])
-        for edge in input_edges
-    }
-    edges.extend(input_edges)
-    edges.extend(
-        edge
-        for edge in output_edges
-        if (edge["from"], edge["to"]) not in input_edge_identities
-    )
+    edge_identities = {(edge["from"], edge["to"]) for edge in edges}
+    for edge in (*input_edges, *output_edges):
+        identity = (edge["from"], edge["to"])
+        if identity in edge_identities:
+            continue
+        edges.append(edge)
+        edge_identities.add(identity)
     spec["nodes"] = {name: nodes[name] for name in sorted(nodes)}
     spec["edges"] = sorted(edges, key=lambda item: (item["from"], item["to"]))
     return normalized

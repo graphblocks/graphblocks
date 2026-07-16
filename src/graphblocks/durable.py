@@ -61,6 +61,12 @@ class StaleCommitError(DurableError):
         super().__init__(f"stale source cursor commit: current={current}, attempted={attempted}")
 
 
+class ConflictingSourceOffsetError(DurableError):
+    def __init__(self, cursor: SourceCursor) -> None:
+        self.cursor = cursor
+        super().__init__(f"source offset is reused with conflicting event data: {cursor}")
+
+
 class InvalidWindowSizeError(DurableError):
     pass
 
@@ -272,9 +278,21 @@ class InMemoryDurableSource:
     paused: bool = False
     _known_streams: frozenset[str] = field(init=False, repr=False)
     _known_partitions: frozenset[tuple[str, int]] = field(init=False, repr=False)
+    _committed_cursors: dict[tuple[str, int], SourceCursor] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
+    _watermark_unix_ms: int | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         _require_delivery_guarantee(self.guarantee)
+        events_by_cursor: dict[SourceCursor, SourceEvent] = {}
+        for event in self.events:
+            existing = events_by_cursor.get(event.cursor)
+            if existing is not None and existing != event:
+                raise ConflictingSourceOffsetError(event.cursor)
+            events_by_cursor[event.cursor] = event
         self.events = sorted(self.events, key=lambda event: event.cursor)
         self._known_streams = frozenset(event.cursor.stream for event in self.events)
         self._known_partitions = frozenset(
@@ -282,6 +300,9 @@ class InMemoryDurableSource:
         )
         if self.committed_cursor is not None:
             self._validate_cursor(self.committed_cursor)
+            self._committed_cursors[
+                (self.committed_cursor.stream, self.committed_cursor.partition)
+            ] = self.committed_cursor
 
     def poll(self, cursor: SourceCursor | None, *, demand: int) -> SourceBatch:
         if self.paused:
@@ -291,20 +312,42 @@ class InMemoryDurableSource:
             raise InvalidDemandError("demand must be positive")
         if cursor is not None:
             self._validate_cursor(cursor)
-        replay_cursor = cursor if cursor is not None else self.committed_cursor
+        replay_cursors = dict(self._committed_cursors)
+        if cursor is not None:
+            replay_cursors[(cursor.stream, cursor.partition)] = cursor
         events = [
             event
             for event in self.events
-            if replay_cursor is None or event.cursor > replay_cursor
+            if (
+                (replay_cursor := replay_cursors.get(
+                    (event.cursor.stream, event.cursor.partition)
+                ))
+                is None
+                or event.cursor.offset > replay_cursor.offset
+            )
         ][:demand]
         event_times = [event.event_time_unix_ms for event in events if event.event_time_unix_ms is not None]
-        watermark = Watermark.event_time(max(event_times)) if event_times else None
+        if event_times:
+            batch_watermark = max(event_times)
+            self._watermark_unix_ms = (
+                batch_watermark
+                if self._watermark_unix_ms is None
+                else max(self._watermark_unix_ms, batch_watermark)
+            )
+        watermark = (
+            None
+            if self._watermark_unix_ms is None
+            else Watermark.event_time(self._watermark_unix_ms)
+        )
         return SourceBatch.new(self.guarantee, tuple(events), watermark, demand)
 
     def commit(self, cursor: SourceCursor) -> None:
         self._validate_cursor(cursor)
-        if self.committed_cursor is not None and cursor < self.committed_cursor:
-            raise StaleCommitError(self.committed_cursor, cursor)
+        partition_key = (cursor.stream, cursor.partition)
+        current = self._committed_cursors.get(partition_key)
+        if current is not None and cursor.offset < current.offset:
+            raise StaleCommitError(current, cursor)
+        self._committed_cursors[partition_key] = cursor
         self.committed_cursor = cursor
 
     def pause(self) -> None:
@@ -489,20 +532,25 @@ class InMemoryDurableSink:
                 idempotency_key=existing_result.idempotency_key,
                 precondition_digest=existing_result.precondition_digest,
                 sequence=existing_result.sequence,
-                metadata=existing_result.metadata,
+                metadata=deepcopy(existing_result.metadata),
                 replayed=True,
             )
+        payload_snapshot = deepcopy(request.payload)
+        stored_request = replace(request, payload=payload_snapshot)
         result = SinkCommitResult(
             sink_id=self.sink_id,
             idempotency_key=request.idempotency_key,
             precondition_digest=request.precondition_digest,
             sequence=self.next_sequence,
-            metadata=request.payload,
+            metadata=deepcopy(payload_snapshot),
             replayed=False,
         )
         self.next_sequence += 1
-        self.commits_by_idempotency_key[request.idempotency_key] = (request, result)
-        return result
+        self.commits_by_idempotency_key[request.idempotency_key] = (
+            stored_request,
+            result,
+        )
+        return replace(result, metadata=deepcopy(result.metadata))
 
     def committed_count(self) -> int:
         return len(self.commits_by_idempotency_key)
@@ -936,6 +984,7 @@ __all__ = [
     "CheckpointBarrier",
     "CheckpointBarrierError",
     "CheckpointStoreError",
+    "ConflictingSourceOffsetError",
     "DeliveryGuarantee",
     "DemandExceededError",
     "DurableResponsePolicyStopCommit",

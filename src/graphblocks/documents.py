@@ -463,7 +463,9 @@ def parse_plain_text_document(asset: SourceAsset, revision: AssetRevision, text:
     offset = 0
     order = 0
     for raw_line in text.splitlines(keepends=True):
-        line_without_newline = raw_line.rstrip("\r\n")
+        line_without_newline = raw_line.rstrip(
+            "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+        )
         line_start = offset
         line_end = line_start + len(line_without_newline)
         offset += len(raw_line)

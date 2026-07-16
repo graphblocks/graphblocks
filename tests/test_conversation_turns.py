@@ -9,6 +9,7 @@ from graphblocks.conversation import (
     InMemoryConversationStore,
     Message,
     TurnConflictError,
+    TurnNotFoundError,
 )
 
 
@@ -91,3 +92,62 @@ def test_turn_commit_conflict_marks_turn_failed() -> None:
         store.commit_turn("turn-1")
 
     assert store.get_turn("turn-1").status == "failed"
+
+
+def test_empty_turn_commit_does_not_advance_conversation_revision() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.begin_turn("conv-1", expected_revision=0, turn_id="turn-1")
+
+    with pytest.raises(TurnConflictError, match="has no messages to commit"):
+        store.commit_turn("turn-1")
+
+    assert store.get("conv-1").revision == 0
+    assert store.get_turn("turn-1").status == "created"
+
+
+def test_duplicate_message_id_commit_is_reported_as_conflict_without_mutation() -> None:
+    store = InMemoryConversationStore()
+    store.create(
+        Conversation(
+            conversation_id="conv-1",
+            messages=(Message(message_id="msg-1", role="user"),),
+            revision=1,
+        )
+    )
+    store.begin_turn("conv-1", expected_revision=1, turn_id="turn-1")
+    store.append_turn_message(
+        "turn-1",
+        Message(message_id="msg-1", role="assistant"),
+    )
+
+    with pytest.raises(ConversationConflictError, match="message_id"):
+        store.commit_turn("turn-1")
+
+    assert store.get("conv-1").revision == 1
+    assert store.get_turn("turn-1").status == "failed"
+
+
+@pytest.mark.parametrize("policy", ("hard", "tombstone"))
+def test_conversation_delete_removes_draft_turns(policy: str) -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.begin_turn("conv-1", expected_revision=0, turn_id="turn-1")
+    store.append_turn_message(
+        "turn-1",
+        Message(
+            message_id="msg-secret",
+            role="assistant",
+            parts=(ContentPart(kind="text", text="secret"),),
+        ),
+    )
+
+    store.delete("conv-1", policy=policy)  # type: ignore[arg-type]
+
+    with pytest.raises(TurnNotFoundError):
+        store.get_turn("turn-1")
+    with pytest.raises(TurnNotFoundError):
+        store.append_turn_message(
+            "turn-1",
+            Message(message_id="msg-late", role="assistant"),
+        )

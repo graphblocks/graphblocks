@@ -152,6 +152,21 @@ def test_expired_leases_are_reaped_without_reusing_fencing_tokens() -> None:
     assert second.fencing_token > first_token
 
 
+def test_available_reaps_expired_leases_at_requested_time() -> None:
+    pool = InMemoryLeasePool({"licensed-tool": 1})
+    lease = pool.acquire(
+        "licensed-tool",
+        owner="run-1",
+        expires_at=15,
+        acquired_at=10,
+    )
+
+    assert pool.available("licensed-tool", now=14) == 0
+    assert pool.available("licensed-tool", now=15) == 1
+    with pytest.raises(UnknownLeaseError):
+        pool.validate_fencing_token(lease.lease_id, lease.fencing_token)
+
+
 def test_lease_pool_rejects_invalid_capacity_units_and_expiration() -> None:
     with pytest.raises(InvalidLeaseRequestError, match="positive integer"):
         InMemoryLeasePool({"bad": 0})
@@ -173,6 +188,19 @@ def test_lease_pool_rejects_invalid_capacity_units_and_expiration() -> None:
         pool.renew("missing", 1, expires_at=10, renewed_at="now")  # type: ignore[arg-type]
     with pytest.raises(InvalidLeaseRequestError, match="after renewal"):
         pool.renew("missing", 1, expires_at=10, renewed_at=10)
+
+
+@pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
+def test_lease_pool_rejects_non_finite_times(value: float) -> None:
+    pool = InMemoryLeasePool({"licensed-tool": 1})
+    lease = pool.acquire("licensed-tool", owner="run-1")
+
+    with pytest.raises(InvalidLeaseRequestError, match="must be finite"):
+        pool.acquire("licensed-tool", owner="run-2", acquired_at=value)
+    with pytest.raises(InvalidLeaseRequestError, match="must be finite"):
+        lease.renew(expires_at=value)
+    with pytest.raises(InvalidLeaseRequestError, match="must be finite"):
+        pool.reap_expired(value)
 
 
 def test_lease_records_validate_identity_counters_times_and_attributes() -> None:

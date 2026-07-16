@@ -4,7 +4,12 @@ from dataclasses import replace
 
 import pytest
 
-from graphblocks.documents import create_local_text_revision, parse_plain_text_document, chunk_document_by_lines
+from graphblocks.documents import (
+    chunk_document_by_lines,
+    create_local_text_revision,
+    parse_plain_text_document,
+    sha256_digest_bytes,
+)
 from graphblocks.rag import (
     AuthContext,
     InMemoryChunkRetriever,
@@ -36,6 +41,26 @@ def test_knowledge_item_from_chunk_preserves_chunk_source_ref() -> None:
     assert item.source == chunk.source_refs[0]
     assert item.metadata["document_id"] == document.document_id
     assert item.metadata["asset_id"] == asset.asset_id
+
+
+def test_knowledge_item_from_chunk_builds_fallback_source_with_content_digest() -> None:
+    asset, revision = create_local_text_revision(
+        "file:///tmp/notes.txt",
+        "alpha beta\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "alpha beta\n")
+    chunk = replace(
+        chunk_document_by_lines(document, revision, max_elements=1)[0],
+        source_refs=[],
+    )
+
+    item = knowledge_item_from_chunk(chunk)
+
+    assert item.source.source_id == chunk.chunk_id
+    assert item.source.digest == sha256_digest_bytes(chunk.text.encode("utf-8"))
+    assert item.source.locator is not None
+    assert item.source.locator.chunk_id == chunk.chunk_id
 
 
 def test_in_memory_chunk_retriever_returns_ranked_hits_with_lineage() -> None:
@@ -264,3 +289,29 @@ def test_authorize_search_hits_requires_auth_context_for_protected_items() -> No
         assert str(error) == f"authorization context required for {hit.hit_id!r}"
     else:
         raise AssertionError("protected hits require an auth context")
+
+
+def test_authorize_search_hits_denies_empty_attribute_selector() -> None:
+    asset, revision = create_local_text_revision(
+        "file:///tmp/notes.txt",
+        "alpha beta\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "alpha beta\n")
+    chunk = chunk_document_by_lines(document, revision, max_elements=1)[0]
+    hit = InMemoryChunkRetriever([chunk], retriever_id="local-test").search(
+        "beta",
+        top_k=1,
+    )[0]
+    hit = replace(hit, item=replace(hit.item, acl={"attributes": {}}))
+
+    authorized = authorize_search_hits(
+        [hit],
+        AuthContext(
+            tenant_id="acme",
+            principal_id="user-1",
+            attributes={"department": "support"},
+        ),
+    )
+
+    assert authorized == []

@@ -108,6 +108,10 @@ def test_callback_schema_rejects_whitespace_wrapped_subscription_and_filter_valu
             "event filter severity_min must not contain surrounding whitespace",
         ),
         (
+            lambda: graphblocks.EventFilter(severity_min="panic"),
+            "event filter severity_min must be a valid severity",
+        ),
+        (
             lambda: graphblocks.EventFilter(visibility=["client"]).authorized_for_visibility([" operator"]),
             "event filter authorized visibility must not contain surrounding whitespace",
         ),

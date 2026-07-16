@@ -98,6 +98,47 @@ def test_fuse_search_hits_deduplicates_equivalent_source_spans() -> None:
     assert fused[0].metadata["dedupe_key"].startswith("source_span:")
 
 
+def test_fuse_search_hits_assigns_unique_ids_to_distinct_spans_of_same_item() -> None:
+    first = _hit("first", "chunk-a", 1, "keyword")
+    second = _hit("second", "chunk-a", 2, "keyword")
+    second_source = replace(
+        second.item.source,
+        locator=replace(
+            second.item.source.locator,
+            char_start=5,
+            char_end=10,
+        ),
+    )
+    second = replace(
+        second,
+        item=replace(second.item, source=second_source),
+        highlights=[second_source],
+    )
+
+    fused = fuse_search_hits(
+        [[first, second]],
+        strategy="reciprocal_rank_fusion",
+        retriever_id="fused",
+    )
+
+    assert len(fused) == 2
+    assert len({hit.hit_id for hit in fused}) == 2
+    assert all(hit.hit_id.startswith("fused:chunk-a:sha256:") for hit in fused)
+
+
+def test_fuse_search_hits_clamps_legacy_zero_rank_for_rrf_parity() -> None:
+    hit = _hit("legacy", "chunk-a", 1, "keyword")
+    object.__setattr__(hit, "rank", 0)
+
+    fused = fuse_search_hits(
+        [[hit]],
+        strategy="reciprocal_rank_fusion",
+        k=60,
+    )
+
+    assert fused[0].raw_score == 1 / 61
+
+
 def test_fuse_search_hits_rejects_unknown_strategy() -> None:
     with pytest.raises(ValueError):
         fuse_search_hits([], strategy="unknown")

@@ -29,6 +29,31 @@ def test_parse_plain_text_document_creates_paragraph_elements_with_char_spans() 
     ]
 
 
+def test_parse_plain_text_document_counts_unicode_and_all_splitline_boundaries() -> None:
+    text = "a\rb\u2028c\r\nd"
+    asset, revision = create_local_text_revision(
+        "file:///tmp/unicode-lines.txt",
+        text,
+        observed_at="2026-06-22T00:00:00Z",
+    )
+
+    document = parse_plain_text_document(asset, revision, text)
+
+    assert [
+        (
+            element.content,
+            element.location.char_start,
+            element.location.char_end,
+        )
+        for element in document.elements
+    ] == [
+        ("a", 0, 1),
+        ("b", 2, 3),
+        ("c", 4, 5),
+        ("d", 7, 8),
+    ]
+
+
 def test_chunk_document_by_lines_preserves_lineage_and_source_spans() -> None:
     asset, revision = create_local_text_revision(
         "file:///tmp/notes.txt",

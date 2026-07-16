@@ -136,6 +136,86 @@ def test_durable_source_pause_and_stale_commit(monkeypatch) -> None:
     assert error.value.attempted == graphblocks_durable.SourceCursor("orders", 0, 9)
 
 
+def test_durable_source_rejects_conflicting_offset_reuse(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    cursor = graphblocks_durable.SourceCursor("orders", 0, 10)
+
+    with pytest.raises(graphblocks_durable.ConflictingSourceOffsetError) as error:
+        graphblocks_durable.InMemoryDurableSource(
+            "at_least_once",
+            [
+                graphblocks_durable.SourceEvent(cursor, {"orderId": "ord-10"}),
+                graphblocks_durable.SourceEvent(cursor, {"orderId": "other"}),
+            ],
+        )
+
+    assert error.value.cursor == cursor
+
+
+def test_durable_source_tracks_commits_and_replay_per_partition(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    def event(partition: int, offset: int):
+        return graphblocks_durable.SourceEvent(
+            graphblocks_durable.SourceCursor("orders", partition, offset),
+            {"partition": partition, "offset": offset},
+        )
+
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        [
+            event(0, 0),
+            event(0, 1),
+            event(0, 2),
+            event(1, 0),
+            event(1, 1),
+        ],
+    )
+    source.commit(graphblocks_durable.SourceCursor("orders", 0, 1))
+    source.commit(graphblocks_durable.SourceCursor("orders", 1, 0))
+
+    after_commits = source.poll(None, demand=10)
+    replay_partition_zero = source.poll(
+        graphblocks_durable.SourceCursor("orders", 0, 0),
+        demand=10,
+    )
+
+    assert [(event.cursor.partition, event.cursor.offset) for event in after_commits.events] == [
+        (0, 2),
+        (1, 1),
+    ]
+    assert [
+        (event.cursor.partition, event.cursor.offset)
+        for event in replay_partition_zero.events
+    ] == [(0, 1), (0, 2), (1, 1)]
+
+
+def test_durable_source_watermark_never_moves_backwards(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        [
+            graphblocks_durable.SourceEvent(
+                graphblocks_durable.SourceCursor("orders", 0, 0),
+                {"orderId": "first"},
+                event_time_unix_ms=100,
+            ),
+            graphblocks_durable.SourceEvent(
+                graphblocks_durable.SourceCursor("orders", 0, 1),
+                {"orderId": "second"},
+                event_time_unix_ms=50,
+            ),
+        ],
+    )
+
+    first = source.poll(None, demand=1)
+    source.commit(first.events[0].cursor)
+    second = source.poll(None, demand=1)
+
+    assert first.watermark == graphblocks_durable.Watermark.event_time(100)
+    assert second.watermark == graphblocks_durable.Watermark.event_time(100)
+
+
 def test_durable_source_rejects_unknown_cursor_stream(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     source = graphblocks_durable.InMemoryDurableSource("at_least_once", [_order_event(graphblocks_durable, 10)])
@@ -380,6 +460,35 @@ def test_durable_sink_commit_replays_same_idempotency_key_and_rejects_conflict(m
                 precondition_digest=request.precondition_digest,
             )
         )
+
+
+def test_durable_sink_commit_snapshots_payload_for_idempotent_replay(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    sink = graphblocks_durable.InMemoryDurableSink("orders-sink")
+    payload = {"order": {"id": "ord-1"}}
+    request = graphblocks_durable.SinkCommitRequest(
+        run_id="run-1",
+        node_id="write-order",
+        node_attempt_id="write-order-attempt-1",
+        idempotency_key="idem-1",
+        payload=payload,
+    )
+
+    first = sink.commit(request)
+    payload["order"]["id"] = "mutated"
+    first.metadata["order"]["id"] = "also-mutated"
+    replay = sink.commit(
+        graphblocks_durable.SinkCommitRequest(
+            run_id="run-1",
+            node_id="write-order",
+            node_attempt_id="write-order-attempt-1",
+            idempotency_key="idem-1",
+            payload={"order": {"id": "ord-1"}},
+        )
+    )
+
+    assert replay.replayed is True
+    assert replay.metadata == {"order": {"id": "ord-1"}}
 
 
 def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypatch) -> None:
