@@ -1,12 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import wraps
+from threading import RLock
+from typing import ParamSpec, TypeVar, cast
 
 from .canonical import canonical_hash
 from .evaluation import ChangeSet, CheckResult, GateResult, ResourceSnapshotRef, ReviewRecord
 from .orchestration import LeaseGrant
 from .policy import PrincipalRef
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_workspace_lock(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        store = cast("InMemoryWorkspaceStore", args[0])
+        with store._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -530,17 +547,21 @@ def _copy_workspace_commit(commit: WorkspaceCommit) -> WorkspaceCommit:
 class InMemoryWorkspaceStore:
     _snapshots: dict[str, WorkspaceSnapshot] = field(default_factory=dict)
     _commits: list[WorkspaceCommit] = field(default_factory=list)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
+    @_with_workspace_lock
     def put_snapshot(self, snapshot: WorkspaceSnapshot) -> InMemoryWorkspaceStore:
         self._snapshots[snapshot.workspace_id] = _copy_workspace_snapshot(snapshot)
         return self
 
+    @_with_workspace_lock
     def current(self, workspace_id: str) -> WorkspaceSnapshot:
         snapshot = self._snapshots.get(workspace_id)
         if snapshot is None:
             raise WorkspaceNotFoundError(workspace_id)
         return _copy_workspace_snapshot(snapshot)
 
+    @_with_workspace_lock
     def compare_and_swap_commit(
         self,
         *,
@@ -599,6 +620,7 @@ class InMemoryWorkspaceStore:
         self._commits.append(_copy_workspace_commit(commit))
         return _copy_workspace_commit(commit)
 
+    @_with_workspace_lock
     def compare_and_swap_commit_request(
         self,
         *,

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
+from threading import Barrier
+import time
 
 import pytest
 
+import graphblocks.workspace as workspace_module
 from graphblocks.budget import BudgetPermit, UsageAmount
 from graphblocks.evaluation import (
     ChangeSet,
@@ -418,6 +422,49 @@ def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
 
     assert error.value.expected_snapshot_id == "snapshot-1"
     assert error.value.actual_snapshot_id == "snapshot-2"
+
+
+def test_workspace_store_compare_and_swap_commit_is_atomic(monkeypatch: pytest.MonkeyPatch) -> None:
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-1",
+        revision=1,
+        resources=(ResourceSnapshotRef("a.txt", "sha256:a", resource_kind="file"),),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+    original_copy = workspace_module._copy_workspace_snapshot
+
+    def delayed_base_copy(snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot:
+        if snapshot.snapshot_id == "snapshot-1":
+            time.sleep(0.02)
+        return original_copy(snapshot)
+
+    monkeypatch.setattr(workspace_module, "_copy_workspace_snapshot", delayed_base_copy)
+    start = Barrier(2)
+
+    def commit(snapshot_id: str) -> str:
+        start.wait()
+        try:
+            store.compare_and_swap_commit(
+                workspace_id="workspace-1",
+                expected_snapshot_id="snapshot-1",
+                new_snapshot_id=snapshot_id,
+                resources=(ResourceSnapshotRef("a.txt", f"sha256:{snapshot_id}", resource_kind="file"),),
+                committed_by=PrincipalRef("author-1"),
+                committed_at="2026-06-24T00:05:00Z",
+                change_set_id=f"change-{snapshot_id}",
+            )
+        except WorkspaceSnapshotConflictError:
+            return "conflict"
+        return "committed"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(commit, ("snapshot-a", "snapshot-b")))
+
+    assert sorted(outcomes) == ["committed", "conflict"]
+    assert len(store._commits) == 1
+    assert store.current("workspace-1").revision == 2
 
 
 def test_workspace_store_rejects_duplicate_resource_ids_in_commit_candidate() -> None:
