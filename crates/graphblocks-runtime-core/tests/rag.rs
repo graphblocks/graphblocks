@@ -98,6 +98,54 @@ fn in_memory_chunk_retriever_returns_ranked_hits_with_lineage() {
 }
 
 #[test]
+fn plain_text_document_spans_count_unicode_characters() {
+    let (asset, revision) = create_local_text_revision(
+        "file:///tmp/unicode.txt",
+        "é\nx",
+        "2026-06-22T00:00:00Z",
+        Some("unicode.txt"),
+    );
+
+    let document = parse_plain_text_document(&asset, &revision, "é\nx");
+
+    assert_eq!(document.elements[0].location.char_start, Some(0));
+    assert_eq!(document.elements[0].location.char_end, Some(1));
+    assert_eq!(document.elements[1].location.char_start, Some(2));
+    assert_eq!(document.elements[1].location.char_end, Some(3));
+}
+
+#[test]
+fn plain_text_document_spans_follow_unicode_line_boundaries() {
+    let text = "a\rb\u{2028}c\r\nd";
+    let (asset, revision) = create_local_text_revision(
+        "file:///tmp/unicode-lines.txt",
+        text,
+        "2026-06-22T00:00:00Z",
+        Some("unicode-lines.txt"),
+    );
+
+    let document = parse_plain_text_document(&asset, &revision, text);
+
+    assert_eq!(
+        document
+            .elements
+            .iter()
+            .map(|element| (
+                element.content.as_str(),
+                element.location.char_start,
+                element.location.char_end,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("a", Some(0), Some(1)),
+            ("b", Some(2), Some(3)),
+            ("c", Some(4), Some(5)),
+            ("d", Some(7), Some(8)),
+        ]
+    );
+}
+
+#[test]
 fn knowledge_item_from_chunk_preserves_acl_for_authorized_retrieval() {
     let (asset, mut revision) = create_local_text_revision(
         "file:///tmp/policy.txt",
@@ -756,6 +804,21 @@ fn fuse_search_hits_saturates_reciprocal_rank_denominator() {
     assert_eq!(fused.len(), 1);
     assert!(fused[0].raw_score.is_some_and(|score| score.is_finite()));
     assert_eq!(fused[0].normalized_score, Some(1.0));
+}
+
+#[test]
+fn fuse_search_hits_treats_legacy_zero_rank_as_first_rank() {
+    let fused = fuse_search_hits(
+        &[vec![hit_from(
+            "kw-a", "chunk-a", "doc-1", "chunk-a", 0, "keyword",
+        )]],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::ReciprocalRankFusion)
+            .with_k(60),
+    )
+    .expect("legacy zero rank is normalized consistently");
+
+    assert_eq!(fused[0].raw_score, Some(1.0 / 61.0));
 }
 
 #[test]

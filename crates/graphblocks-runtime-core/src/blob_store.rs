@@ -816,8 +816,11 @@ impl LocalBlobStore {
         }
         let parts = key.key.split('/').collect::<Vec<_>>();
         if parts
-            .iter()
-            .any(|part| part.trim().is_empty() || *part == "." || *part == "..")
+            .first()
+            .is_some_and(|part| part.eq_ignore_ascii_case(".graphblocks-metadata"))
+            || parts
+                .iter()
+                .any(|part| part.trim().is_empty() || *part == "." || *part == "..")
         {
             return Err(BlobStoreError::InvalidKey {
                 key: key.key.clone(),

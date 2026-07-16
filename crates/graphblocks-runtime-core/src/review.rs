@@ -302,6 +302,8 @@ impl ReviewWorkflow {
             .iter()
             .map(|credential| credential.credential_ref.clone())
             .collect();
+        self.reviews
+            .retain(|existing| existing.review_id != review.review_id);
         self.reviews.push(review.clone());
         Ok(review)
     }

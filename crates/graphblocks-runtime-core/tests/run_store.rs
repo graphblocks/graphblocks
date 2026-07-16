@@ -11,6 +11,7 @@ use graphblocks_runtime_core::{
     },
 };
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run_lease_identity(
     owner: &str,
@@ -2066,6 +2067,67 @@ fn sqlite_run_store_applies_state_patch_with_revision_cas() -> Result<(), String
             current_revision: 1,
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_serializes_state_cas_across_handles() -> Result<(), String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-run-store-concurrent-cas-{}-{unique}.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let mut initial = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let record = initial
+        .create_run_with_run_id("run-concurrent", "sha256:test", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+    drop(initial);
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut handles = Vec::new();
+    for key in ["first", "second"] {
+        let path = path.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            let mut store = SqliteRunStore::open(path)?;
+            barrier.wait();
+            store.patch_state(
+                "run-concurrent",
+                StatePatch::new(Some(0)).with(PatchOperation::set([key], json!(true))),
+            )
+        }));
+    }
+    barrier.wait();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("state writer must not panic"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(RunStoreError::StateConflict { .. })))
+            .count(),
+        1
+    );
+    let final_record = SqliteRunStore::open(&path)
+        .and_then(|store| store.get_run(&record.run_id))
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(final_record.state_revision, 1);
+    assert_eq!(
+        ["first", "second"]
+            .iter()
+            .filter(|key| final_record.state.get(**key) == Some(&json!(true)))
+            .count(),
+        1
+    );
+
+    std::fs::remove_file(path).map_err(|error| error.to_string())?;
     Ok(())
 }
 

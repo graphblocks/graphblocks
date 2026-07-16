@@ -17,6 +17,7 @@ use graphblocks_runtime_core::tool_schema::{JsonSchema, ToolSchemaRegistry};
 use graphblocks_runtime_durable::{
     CheckpointRecoveryClaim, CheckpointStoreError, SqliteCheckpointStore,
 };
+use graphblocks_schema::parse_canonical_json;
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use serde_json::{Value, json};
 
@@ -107,8 +108,8 @@ fn run_admit_worker_message(args: Vec<String>) -> Result<Value, CliError> {
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let message = serde_json::from_str::<Value>(&input)
-        .map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let message =
+        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
 
     let mut config = DaemonConfig::new(options.daemon_id, options.bind_address)
         .with_max_workers(options.max_workers);
@@ -664,8 +665,8 @@ fn run_submit_async_callback(args: Vec<String>) -> Result<Value, CliError> {
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let payload = serde_json::from_str::<Value>(&input)
-        .map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let payload =
+        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
     let registry = callback_schema_registry_from_json(schema_id, schema_json)?;
 
     let mut submission = AsyncCallbackSubmission::new(
@@ -730,7 +731,7 @@ fn callback_schema_registry_from_json(
     schema_id: String,
     schema_json: String,
 ) -> Result<ToolSchemaRegistry, CliError> {
-    let schema_value = serde_json::from_str::<Value>(&schema_json).map_err(|error| {
+    let schema_value = parse_canonical_json(&schema_json).map_err(|error| {
         CliError::Usage(format!(
             "--schema-json must be a JSON schema object: {error}"
         ))
@@ -860,8 +861,8 @@ fn run_quarantine_async_callback(args: Vec<String>) -> Result<Value, CliError> {
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| CliError::ReadStdin(error.to_string()))?;
-    let payload = serde_json::from_str::<Value>(&input)
-        .map_err(|error| CliError::ParseJson(error.to_string()))?;
+    let payload =
+        parse_canonical_json(&input).map_err(|error| CliError::ParseJson(error.to_string()))?;
 
     let mut submission = AsyncCallbackSubmission::new(
         callback_id.clone(),

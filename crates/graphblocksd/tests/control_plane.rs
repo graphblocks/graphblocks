@@ -891,6 +891,37 @@ fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn graphblocksd_rejects_duplicate_worker_message_keys() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .arg("admit-worker-message")
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?
+        .write_all(br#"{"protocolVersion":1,"protocolVersion":1}"#)?;
+
+    let output = child.wait_with_output()?;
+    assert_eq!(output.status.code(), Some(2));
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stderr)?;
+    assert_eq!(
+        payload
+            .pointer("/error/code")
+            .and_then(|value| value.as_str()),
+        Some("json.parse_failed"),
+    );
+    assert!(
+        payload
+            .pointer("/error/message")
+            .and_then(|value| value.as_str())
+            .is_some_and(|message| message.contains("duplicate JSON object key")),
+    );
+    Ok(())
+}
+
+#[test]
 fn graphblocksd_claims_sqlite_checkpoint_for_worker_recovery()
 -> Result<(), Box<dyn std::error::Error>> {
     let unique = SystemTime::now()
@@ -3167,6 +3198,29 @@ fn worker_registry_allows_admitted_worker_refresh_at_capacity() -> Result<(), Da
     assert_eq!(status.draining_workers, 0);
     assert_eq!(status.admitted_workers, 1);
     assert_eq!(status.rejected_workers, 1);
+    Ok(())
+}
+
+#[test]
+fn worker_registry_evicts_known_worker_after_rejected_unready_refresh()
+-> Result<(), DaemonConfigError> {
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))?;
+    let ready = WorkerAdvertisement::new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("document.parse@1")],
+    );
+    assert!(registry.admit_worker(ready.clone()).admitted);
+
+    let rejected = registry.admit_worker(ready.with_state(WorkerState::Unhealthy));
+
+    assert!(!rejected.admitted);
+    assert_eq!(rejected.reason_codes, vec!["worker.not_ready"]);
+    assert!(registry.ready_worker_ids().is_empty());
+    assert_eq!(registry.status().admitted_workers, 0);
+    assert_eq!(registry.status().rejected_workers, 1);
     Ok(())
 }
 

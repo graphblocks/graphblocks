@@ -809,7 +809,18 @@ impl InMemoryConversationStore {
             Vec::new()
         };
         let compactions = if request.include_memory {
-            conversation.compactions.clone()
+            conversation
+                .compactions
+                .iter()
+                .filter(|compaction| {
+                    copied_message_ids.contains(&compaction.output_message_id)
+                        && compaction
+                            .source_message_ids
+                            .iter()
+                            .all(|message_id| copied_message_ids.contains(message_id))
+                })
+                .cloned()
+                .collect()
         } else {
             Vec::new()
         };
@@ -930,7 +941,18 @@ impl InMemoryConversationStore {
             Vec::new()
         };
         let compactions = if request.include_memory {
-            conversation.compactions.clone()
+            conversation
+                .compactions
+                .iter()
+                .filter(|compaction| {
+                    copied_message_ids.contains(&compaction.output_message_id)
+                        && compaction
+                            .source_message_ids
+                            .iter()
+                            .all(|message_id| copied_message_ids.contains(message_id))
+                })
+                .cloned()
+                .collect()
         } else {
             Vec::new()
         };
@@ -1089,6 +1111,8 @@ impl InMemoryConversationStore {
                         conversation_id: conversation_id.to_owned(),
                     });
                 }
+                self.turns
+                    .retain(|_, turn| turn.conversation_id != conversation_id);
                 Ok(None)
             }
             DeletePolicy::Tombstone => {
@@ -1106,6 +1130,8 @@ impl InMemoryConversationStore {
                 conversation
                     .metadata
                     .insert("deleted".to_owned(), json!(true));
+                self.turns
+                    .retain(|_, turn| turn.conversation_id != conversation_id);
                 Ok(Some(conversation.revision))
             }
         }

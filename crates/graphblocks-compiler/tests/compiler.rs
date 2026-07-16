@@ -464,6 +464,31 @@ fn block_catalog_rejects_malformed_port_type_expressions() {
 }
 
 #[test]
+fn block_catalog_limits_port_type_expression_nesting() {
+    let allowed = format!("{}String{}", "List<".repeat(32), ">".repeat(32));
+    let rejected = format!("{}String{}", "List<".repeat(33), ">".repeat(33));
+
+    assert!(
+        BlockCatalog::from_blocks(&json!([{
+            "typeId": "test.allowed-depth",
+            "version": 1,
+            "inputs": [{"name": "value", "type": allowed}]
+        }]))
+        .is_ok()
+    );
+    let error = BlockCatalog::from_blocks(&json!([{
+        "typeId": "test.rejected-depth",
+        "version": 1,
+        "inputs": [{"name": "value", "type": rejected}]
+    }]))
+    .expect_err("excessive type nesting must be rejected");
+    assert!(
+        error.contains("must not exceed 32 constructor levels"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn block_catalog_rejects_invalid_resource_type_references() {
     for invalid_type in [
         json!("???"),

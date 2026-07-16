@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Map, Number, Value, json};
 
 use crate::application_event::ApplicationProtocolLogPosition;
@@ -2146,14 +2146,24 @@ impl SqliteRunStore {
         run_id: impl AsRef<str>,
         status: RunStatus,
     ) -> Result<RunRecord, RunStoreError> {
-        let current = self.get_run(run_id.as_ref())?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let current = sqlite_get_run(&transaction, run_id.as_ref())?;
         let updated = record_with_status(&current, status)?;
-        self.connection
+        let updated_rows = transaction
             .execute(
-                "UPDATE runs SET status = ? WHERE run_id = ?",
-                params![updated.status.as_str(), &updated.run_id],
+                "UPDATE runs SET status = ? WHERE run_id = ? AND status = ?",
+                params![
+                    updated.status.as_str(),
+                    &updated.run_id,
+                    current.status.as_str(),
+                ],
             )
             .map_err(storage_error)?;
+        require_single_run_update(updated_rows, &updated.run_id)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
 
@@ -2182,7 +2192,10 @@ impl SqliteRunStore {
         now_unix_ms: u64,
     ) -> Result<RunRecord, RunStoreError> {
         let run_id = run_id.as_ref();
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let current_lease =
             sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
                 RunStoreError::RunOwnershipLeaseMismatch {
@@ -2205,12 +2218,17 @@ impl SqliteRunStore {
         )?;
         let current = sqlite_get_run(&transaction, run_id)?;
         let updated = record_with_status(&current, status)?;
-        transaction
+        let updated_rows = transaction
             .execute(
-                "UPDATE runs SET status = ? WHERE run_id = ?",
-                params![updated.status.as_str(), &updated.run_id],
+                "UPDATE runs SET status = ? WHERE run_id = ? AND status = ?",
+                params![
+                    updated.status.as_str(),
+                    &updated.run_id,
+                    current.status.as_str(),
+                ],
             )
             .map_err(storage_error)?;
+        require_single_run_update(updated_rows, &updated.run_id)?;
         transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
@@ -2220,21 +2238,28 @@ impl SqliteRunStore {
         run_id: impl AsRef<str>,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> Result<RunRecord, RunStoreError> {
-        let current = self.get_run(run_id.as_ref())?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let current = sqlite_get_run(&transaction, run_id.as_ref())?;
         let updated = record_with_model_visible_tools(&current, model_visible_tools)?;
-        self.connection
+        let updated_rows = transaction
             .execute(
                 "
                 UPDATE runs
                 SET model_visible_tools_json = ?
-                WHERE run_id = ?
+                WHERE run_id = ? AND status = ?
                 ",
                 params![
                     storage_json(&model_visible_tools_value(&updated.model_visible_tools))?,
                     &updated.run_id,
+                    current.status.as_str(),
                 ],
             )
             .map_err(storage_error)?;
+        require_single_run_update(updated_rows, &updated.run_id)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
 
@@ -2243,22 +2268,30 @@ impl SqliteRunStore {
         run_id: impl AsRef<str>,
         patch: StatePatch,
     ) -> Result<RunRecord, RunStoreError> {
-        let current = self.get_run(run_id.as_ref())?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let current = sqlite_get_run(&transaction, run_id.as_ref())?;
         let updated = record_with_state_patch(&current, &patch)?;
-        self.connection
+        let updated_rows = transaction
             .execute(
                 "
                 UPDATE runs
                 SET state_json = ?, state_revision = ?
-                WHERE run_id = ?
+                WHERE run_id = ? AND state_revision = ? AND status = ?
                 ",
                 params![
                     storage_json(&updated.state)?,
                     sqlite_u64_to_i64(updated.state_revision, "state revision")?,
                     &updated.run_id,
+                    sqlite_u64_to_i64(current.state_revision, "state revision")?,
+                    current.status.as_str(),
                 ],
             )
             .map_err(storage_error)?;
+        require_single_run_update(updated_rows, &updated.run_id)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
 
@@ -2272,7 +2305,10 @@ impl SqliteRunStore {
         now_unix_ms: u64,
     ) -> Result<RunRecord, RunStoreError> {
         let run_id = run_id.as_ref();
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let current_lease =
             sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
                 RunStoreError::RunOwnershipLeaseMismatch {
@@ -2295,20 +2331,23 @@ impl SqliteRunStore {
         )?;
         let current = sqlite_get_run(&transaction, run_id)?;
         let updated = record_with_state_patch(&current, &patch)?;
-        transaction
+        let updated_rows = transaction
             .execute(
                 "
                 UPDATE runs
                 SET state_json = ?, state_revision = ?
-                WHERE run_id = ?
+                WHERE run_id = ? AND state_revision = ? AND status = ?
                 ",
                 params![
                     storage_json(&updated.state)?,
                     sqlite_u64_to_i64(updated.state_revision, "state revision")?,
                     &updated.run_id,
+                    sqlite_u64_to_i64(current.state_revision, "state revision")?,
+                    current.status.as_str(),
                 ],
             )
             .map_err(storage_error)?;
+        require_single_run_update(updated_rows, &updated.run_id)?;
         transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
@@ -2723,6 +2762,17 @@ fn sqlite_u64_to_i64(value: u64, label: &'static str) -> Result<i64, RunStoreErr
 fn sqlite_i64_to_u64(value: i64, label: &'static str) -> Result<u64, RunStoreError> {
     u64::try_from(value).map_err(|_| RunStoreError::Storage {
         message: format!("{label} must be non-negative"),
+    })
+}
+
+fn require_single_run_update(updated_rows: usize, run_id: &str) -> Result<(), RunStoreError> {
+    if updated_rows == 1 {
+        return Ok(());
+    }
+    Err(RunStoreError::Storage {
+        message: format!(
+            "run {run_id:?} changed while applying an atomic mutation (updated {updated_rows} rows)"
+        ),
     })
 }
 

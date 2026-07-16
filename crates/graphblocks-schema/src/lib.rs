@@ -1,7 +1,13 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
+};
 use serde_json::{Value, json};
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::rc::Rc;
 use std::str::FromStr;
 
 pub fn parse_duration_seconds(value: &Value) -> Option<f64> {
@@ -319,6 +325,151 @@ impl Display for CanonicalJsonError {
 }
 
 impl Error for CanonicalJsonError {}
+
+/// Parsing failed before a JSON value could enter the canonical identity domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalJsonParseError {
+    InvalidJson { message: String },
+    DuplicateObjectKey { key: String },
+    CanonicalJson(CanonicalJsonError),
+}
+
+impl Display for CanonicalJsonParseError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson { message } => formatter.write_str(message),
+            Self::DuplicateObjectKey { key } => {
+                write!(formatter, "duplicate JSON object key {key:?}")
+            }
+            Self::CanonicalJson(error) => Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl Error for CanonicalJsonParseError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::CanonicalJson(error) => Some(error),
+            Self::InvalidJson { .. } | Self::DuplicateObjectKey { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DuplicateKeyDetector {
+    duplicate_key: Rc<RefCell<Option<String>>>,
+}
+
+impl<'de> DeserializeSeed<'de> for DuplicateKeyDetector {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(DuplicateKeyVisitor(self))
+    }
+}
+
+struct DuplicateKeyVisitor(DuplicateKeyDetector);
+
+impl<'de> Visitor<'de> for DuplicateKeyVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(())
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        self.0.deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        while sequence.next_element_seed(self.0.clone())?.is_some() {}
+        Ok(())
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut keys = BTreeSet::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if !keys.insert(key.clone()) {
+                *self.0.duplicate_key.borrow_mut() = Some(key.clone());
+                return Err(serde::de::Error::custom(format_args!(
+                    "duplicate JSON object key {key:?}"
+                )));
+            }
+            object.next_value_seed(self.0.clone())?;
+        }
+        Ok(())
+    }
+}
+
+/// Parses a canonical-domain JSON value without silently collapsing duplicate keys.
+pub fn parse_canonical_json(text: &str) -> Result<Value, CanonicalJsonParseError> {
+    let duplicate_key = Rc::new(RefCell::new(None));
+    let detector = DuplicateKeyDetector {
+        duplicate_key: Rc::clone(&duplicate_key),
+    };
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    if let Err(error) = detector
+        .deserialize(&mut deserializer)
+        .and_then(|()| deserializer.end())
+    {
+        return Err(duplicate_key.borrow_mut().take().map_or_else(
+            || CanonicalJsonParseError::InvalidJson {
+                message: error.to_string(),
+            },
+            |key| CanonicalJsonParseError::DuplicateObjectKey { key },
+        ));
+    }
+    let value =
+        serde_json::from_str(text).map_err(|error| CanonicalJsonParseError::InvalidJson {
+            message: error.to_string(),
+        })?;
+    validate_canonical_json_depth(&value).map_err(CanonicalJsonParseError::CanonicalJson)?;
+    Ok(value)
+}
 
 /// Typed-value construction failed schema or canonical JSON admission.
 #[derive(Clone, Debug, Eq, PartialEq)]

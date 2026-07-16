@@ -1366,7 +1366,7 @@ impl WorkerDrainPlan {
                     policy.on_deadline.realtime_session,
                 ),
             };
-            let deadline_unix_ms = task.started_at_unix_ms.saturating_add(timeout_ms);
+            let deadline_unix_ms = drain_started_at_unix_ms.saturating_add(timeout_ms);
             let (disposition, reason) = if now_unix_ms >= deadline_unix_ms {
                 if deadline_disposition == WorkerDrainDisposition::Checkpoint
                     && !task.checkpointable

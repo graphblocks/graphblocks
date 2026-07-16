@@ -1,4 +1,5 @@
 use graphblocks_compiler::canonical::canonical_hash;
+use graphblocks_schema::parse_canonical_json;
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -177,8 +178,8 @@ impl ToolCallDraft {
         for fragment in self.argument_fragments {
             assembled.push_str(&fragment);
         }
-        let arguments = serde_json::from_str::<Value>(&assembled)
-            .map_err(|_| ToolCallError::InvalidArgumentsJson)?;
+        let arguments =
+            parse_canonical_json(&assembled).map_err(|_| ToolCallError::InvalidArgumentsJson)?;
         let arguments_digest = canonical_hash(&arguments);
 
         let call = ToolCall {

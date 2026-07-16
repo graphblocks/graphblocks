@@ -6,9 +6,10 @@ use std::path::PathBuf;
 
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::orchestration::{
-    ChildBudgetDelegation, LeasePool, LeasePoolError, LeaseRequest, ModelPool, ModelProfile,
-    ModelSelectionError, ModelSelectionRequest, TaskContextAccess, TaskContextAccessErrorReason,
-    TaskPlan, TaskPlanError, TaskPlanLimits, TaskPlanPatch, TaskStep, WorkerProfile,
+    ChildBudgetDelegation, ChildBudgetDelegationLedger, LeasePool, LeasePoolError, LeaseRequest,
+    ModelPool, ModelProfile, ModelSelectionError, ModelSelectionRequest, TaskContextAccess,
+    TaskContextAccessErrorReason, TaskPlan, TaskPlanError, TaskPlanLimits, TaskPlanPatch, TaskStep,
+    WorkerProfile,
 };
 use serde_json::{Map, Value, json};
 
@@ -250,7 +251,10 @@ fn orchestration_tck_cases_match_runtime_core() {
                         .expect("delegation"),
                 );
                 let permit = delegation
-                    .create_child_permit(required_str(case, &["childPermitId", "child_permit_id"]))
+                    .create_child_permit(
+                        required_str(case, &["childPermitId", "child_permit_id"]),
+                        &mut ChildBudgetDelegationLedger::new(),
+                    )
                     .expect("child permit is created");
                 json!({
                     "permitId": permit.permit_id,
@@ -534,6 +538,7 @@ fn lease_pool_error_code(error: &LeasePoolError) -> &'static str {
         LeasePoolError::LeaseAlreadyExists { .. } => "lease_already_exists",
         LeasePoolError::LeaseNotFound { .. } => "lease_not_found",
         LeasePoolError::EpochMismatch { .. } => "lease_epoch_mismatch",
+        LeasePoolError::ArithmeticOverflow { .. } => "lease_arithmetic_overflow",
     }
 }
 

@@ -318,7 +318,7 @@ fn stale_fencing_token_cannot_complete_claimed_work() {
 }
 
 #[test]
-fn ttl_expires_only_queued_work_without_releasing_running_capacity() {
+fn ttl_expires_running_and_queued_work_and_releases_capacity() {
     let started_at = time(5_000);
     let queue = AdmissionTicketQueue::new_at(config(1, 100, 60, 2, 10), started_at);
     let first = queue
@@ -339,25 +339,20 @@ fn ttl_expires_only_queued_work_without_releasing_running_capacity() {
         .into_ticket();
 
     let maintenance = queue.refresh_at(time(5_011));
-    assert_eq!(maintenance.expired, 1);
-    assert_eq!(maintenance.promoted, 0);
+    assert_eq!(maintenance.expired, 2);
+    assert_eq!(maintenance.promoted, 1);
     assert_eq!(
-        queue
-            .ticket_at(first.ticket_id(), time(5_011))
-            .expect("running ticket retained")
-            .state(),
-        AdmissionTicketState::Running,
+        queue.ticket_at(first.ticket_id(), time(5_011)),
+        Err(AdmissionTicketError::UnknownTicket {
+            ticket_id: first.ticket_id().to_owned(),
+        }),
     );
     assert_eq!(
-        queue
-            .ticket_at(second.ticket_id(), time(5_011))
-            .expect("expired queued ticket retained")
-            .state(),
-        AdmissionTicketState::Expired,
+        queue.ticket_at(second.ticket_id(), time(5_011)),
+        Err(AdmissionTicketError::UnknownTicket {
+            ticket_id: second.ticket_id().to_owned(),
+        }),
     );
-    queue
-        .complete_at(first.ticket_id(), first_claim.fencing_token(), time(5_011))
-        .expect("running ticket completion releases capacity");
     assert_eq!(
         queue
             .claim_next_at(time(5_011))
@@ -365,6 +360,45 @@ fn ttl_expires_only_queued_work_without_releasing_running_capacity() {
             .expect("live queued successor is promoted")
             .ticket_id(),
         third.ticket_id(),
+    );
+    assert_eq!(
+        queue.complete_at(first.ticket_id(), first_claim.fencing_token(), time(5_011)),
+        Err(AdmissionTicketError::UnknownTicket {
+            ticket_id: first.ticket_id().to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn ttl_expires_unclaimed_admission_and_promotes_live_successor() {
+    let started_at = time(5_200);
+    let queue = AdmissionTicketQueue::new_at(config(1, 100, 60, 1, 10), started_at);
+    let abandoned = queue
+        .admit_at("request-abandoned", "tenant-a", started_at)
+        .expect("first request admitted")
+        .into_ticket();
+    let successor = queue
+        .admit_at("request-successor", "tenant-a", time(5_201))
+        .expect("successor queues")
+        .into_ticket();
+
+    let maintenance = queue.refresh_at(time(5_210));
+
+    assert_eq!(maintenance.expired, 1);
+    assert_eq!(maintenance.promoted, 1);
+    assert_eq!(
+        queue.ticket_at(abandoned.ticket_id(), time(5_210)),
+        Err(AdmissionTicketError::UnknownTicket {
+            ticket_id: abandoned.ticket_id().to_owned(),
+        })
+    );
+    assert_eq!(
+        queue
+            .claim_next_at(time(5_210))
+            .expect("claim succeeds")
+            .expect("successor was promoted")
+            .ticket_id(),
+        successor.ticket_id()
     );
 }
 
@@ -489,6 +523,12 @@ fn request_identity_is_scoped_by_owner_and_survives_terminal_state() {
     assert!(duplicate.duplicate());
     assert_eq!(duplicate.ticket().ticket_id(), tenant_a.ticket_id());
     assert_eq!(duplicate.ticket().state(), AdmissionTicketState::Completed);
+
+    let retried = queue
+        .admit_at("request-shared", "tenant-a", time(7_300))
+        .expect("request identity may be reused after its idempotency TTL");
+    assert!(!retried.duplicate());
+    assert_ne!(retried.ticket().ticket_id(), tenant_a.ticket_id());
 }
 
 #[test]

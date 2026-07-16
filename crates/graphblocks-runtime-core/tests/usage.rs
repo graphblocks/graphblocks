@@ -274,6 +274,45 @@ fn usage_ledger_replays_identical_records_without_double_counting() -> Result<()
 }
 
 #[test]
+fn usage_ledgers_reject_records_that_would_overflow_totals() -> Result<(), UsageLedgerError> {
+    let records = [
+        UsageRecord::new(
+            "usage-max",
+            UsageSource::RuntimeMeasured,
+            UsageConfidence::Exact,
+            [tokens(i64::MAX)],
+            1_000,
+        )
+        .with_run_id("run-1"),
+        UsageRecord::new(
+            "usage-one",
+            UsageSource::RuntimeMeasured,
+            UsageConfidence::Exact,
+            [tokens(1)],
+            1_001,
+        )
+        .with_run_id("run-1"),
+    ];
+    let expected = UsageLedgerError::TotalOverflow {
+        kind: "model_output_tokens".to_owned(),
+        unit: "tokens".to_owned(),
+        dimensions: Default::default(),
+    };
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    memory.append(records[0].clone())?;
+    sqlite.append(records[0].clone())?;
+
+    assert_eq!(memory.append(records[1].clone()), Err(expected.clone()));
+    assert_eq!(sqlite.append(records[1].clone()), Err(expected));
+    assert_eq!(memory.totals_for_run("run-1"), vec![tokens(i64::MAX)]);
+    assert_eq!(sqlite.totals_for_run("run-1")?, vec![tokens(i64::MAX)]);
+    assert_eq!(memory.records_for_run("run-1"), vec![records[0].clone()]);
+    assert_eq!(sqlite.records_for_run("run-1")?, vec![records[0].clone()]);
+    Ok(())
+}
+
+#[test]
 fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), UsageLedgerError> {
     let mut ledger = InMemoryUsageLedger::new();
     let first = UsageRecord::new(

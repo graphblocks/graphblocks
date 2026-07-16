@@ -64,6 +64,34 @@ fn local_blob_store_put_head_and_get_round_trip() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn local_blob_store_rejects_reserved_metadata_namespace() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_root("reserved-metadata-namespace");
+    let store = LocalBlobStore::new(&root)?;
+    for raw_key in [
+        ".graphblocks-metadata/docs/policy.txt.json",
+        ".GraphBlocks-Metadata/docs/policy.txt.json",
+    ] {
+        let key = BlobKey::new(raw_key);
+        assert_eq!(
+            store.put(&key, b"not metadata", PutOptions::new()),
+            Err(BlobStoreError::InvalidKey {
+                key: key.key.clone(),
+            })
+        );
+        assert_eq!(
+            store.get(&key, None),
+            Err(BlobStoreError::InvalidKey {
+                key: key.key.clone(),
+            })
+        );
+    }
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn local_blob_store_rejects_content_that_does_not_match_metadata()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_root("content-integrity");

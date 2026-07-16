@@ -668,14 +668,23 @@ impl Inner {
         }
 
         let mut expired = 0;
+        let mut released_capacity = 0;
         for ticket in self.tickets.values_mut() {
-            if ticket.state == AdmissionTicketState::Queued && ticket.expires_at <= now {
+            if !ticket.state.is_terminal() && ticket.expires_at <= now {
+                if matches!(
+                    ticket.state,
+                    AdmissionTicketState::Admitted | AdmissionTicketState::Running
+                ) {
+                    released_capacity += 1;
+                }
                 ticket.state = AdmissionTicketState::Expired;
                 ticket.terminal_at = Some(now);
                 expired += 1;
             }
         }
+        self.concurrent = self.concurrent.saturating_sub(released_capacity);
         self.remove_terminal_from_dispatch_queues();
+        self.prune_expired_terminal_tickets(now);
         let promoted = self.promote_at(now);
         AdmissionTicketMaintenance { expired, promoted }
     }
@@ -721,6 +730,28 @@ impl Inner {
                 .get(ticket_id)
                 .is_some_and(|ticket| ticket.state == AdmissionTicketState::Admitted)
         });
+    }
+
+    fn prune_expired_terminal_tickets(&mut self, now: SystemTime) {
+        let ticket_ids = self
+            .tickets
+            .iter()
+            .filter(|(_, ticket)| ticket.state.is_terminal() && ticket.expires_at <= now)
+            .map(|(ticket_id, _)| ticket_id.clone())
+            .collect::<Vec<_>>();
+        for ticket_id in ticket_ids {
+            let Some(ticket) = self.tickets.remove(&ticket_id) else {
+                continue;
+            };
+            let request_key = (ticket.request_id, ticket.owner);
+            if self
+                .tickets_by_request
+                .get(&request_key)
+                .is_some_and(|current_ticket_id| current_ticket_id == &ticket_id)
+            {
+                self.tickets_by_request.remove(&request_key);
+            }
+        }
     }
 
     fn counts(&self) -> AdmissionTicketQueueCounts {

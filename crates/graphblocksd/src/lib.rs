@@ -133,6 +133,10 @@ impl WorkerRegistry {
             self.admitted_advertisements
                 .insert(decision.worker_id.clone(), advertisement);
         } else {
+            if is_known_worker {
+                self.admitted_workers.remove(&decision.worker_id);
+                self.admitted_advertisements.remove(&decision.worker_id);
+            }
             self.rejected_workers += 1;
         }
         decision

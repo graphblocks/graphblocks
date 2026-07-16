@@ -422,11 +422,37 @@ pub fn parse_plain_text_document(
     .with_plain_text(text);
     let mut offset = 0;
     let mut order = 0;
-    for raw_line in text.split_inclusive('\n') {
-        let line_without_newline = raw_line.trim_end_matches(['\r', '\n']);
+    for raw_line in text.split_inclusive(|character| {
+        matches!(
+            character,
+            '\n' | '\r'
+                | '\u{000b}'
+                | '\u{000c}'
+                | '\u{001c}'
+                | '\u{001d}'
+                | '\u{001e}'
+                | '\u{0085}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    }) {
+        let line_without_newline = raw_line.trim_end_matches(|character| {
+            matches!(
+                character,
+                '\n' | '\r'
+                    | '\u{000b}'
+                    | '\u{000c}'
+                    | '\u{001c}'
+                    | '\u{001d}'
+                    | '\u{001e}'
+                    | '\u{0085}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+            )
+        });
         let line_start = offset;
-        let line_end = line_start + line_without_newline.len();
-        offset += raw_line.len();
+        let line_end = line_start + line_without_newline.chars().count();
+        offset += raw_line.chars().count();
         if line_without_newline.trim().is_empty() {
             continue;
         }

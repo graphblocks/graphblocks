@@ -1110,7 +1110,9 @@ impl ModelPool {
         }
         if let (Some(requested), Some(ceiling)) =
             (&request.sensitivity, &request.worker.sensitivity_ceiling)
-            && sensitivity_rank(requested) > sensitivity_rank(ceiling)
+            && (sensitivity_rank(ceiling).is_none()
+                || sensitivity_rank(requested).is_none()
+                || sensitivity_rank(requested) > sensitivity_rank(ceiling))
         {
             return Err(ModelSelectionError::SensitivityAboveCeiling {
                 requested: requested.clone(),
@@ -1160,13 +1162,13 @@ impl ModelPool {
     }
 }
 
-fn sensitivity_rank(sensitivity: &str) -> u8 {
+fn sensitivity_rank(sensitivity: &str) -> Option<u8> {
     match sensitivity {
-        "public" => 0,
-        "internal" => 1,
-        "confidential" => 2,
-        "restricted" => 3,
-        _ => 4,
+        "public" => Some(0),
+        "internal" => Some(1),
+        "confidential" => Some(2),
+        "restricted" => Some(3),
+        _ => None,
     }
 }
 
@@ -1203,6 +1205,9 @@ pub enum LeasePoolError {
         lease_id: String,
         expected_epoch: u64,
         actual_epoch: u64,
+    },
+    ArithmeticOverflow {
+        field_name: &'static str,
     },
 }
 
@@ -1253,6 +1258,12 @@ impl fmt::Display for LeasePoolError {
                 formatter,
                 "lease {lease_id:?} fencing epoch mismatch: expected {expected_epoch}, got {actual_epoch}"
             ),
+            Self::ArithmeticOverflow { field_name } => {
+                write!(
+                    formatter,
+                    "lease pool {field_name} exceeds the supported range"
+                )
+            }
         }
     }
 }
@@ -1364,8 +1375,8 @@ impl LeasePool {
                 .cmp(&(right.expires_at.as_str(), right.lease_id.as_str()))
         });
         let mut seen = BTreeSet::new();
-        let mut used_units = 0;
-        let mut highest_epoch = 0;
+        let mut used_units = 0_u64;
+        let mut highest_epoch = 0_u64;
         for lease in &self.active_leases {
             if lease.pool_id != self.pool_id {
                 return Err(LeasePoolError::ResourceKindMismatch {
@@ -1390,7 +1401,12 @@ impl LeasePool {
                     lease_id: lease.lease_id.clone(),
                 });
             }
-            used_units += lease.units;
+            used_units =
+                used_units
+                    .checked_add(lease.units)
+                    .ok_or(LeasePoolError::ArithmeticOverflow {
+                        field_name: "used_units",
+                    })?;
             highest_epoch = highest_epoch.max(lease.fencing_epoch);
         }
         if used_units > self.capacity_units {
@@ -1400,16 +1416,24 @@ impl LeasePool {
                 available_units: self.capacity_units,
             });
         }
-        self.next_fencing_epoch = self.next_fencing_epoch.max(highest_epoch + 1);
+        let next_after_highest =
+            highest_epoch
+                .checked_add(1)
+                .ok_or(LeasePoolError::ArithmeticOverflow {
+                    field_name: "next_fencing_epoch",
+                })?;
+        self.next_fencing_epoch = self.next_fencing_epoch.max(next_after_highest);
         Ok(self)
     }
 
     pub fn used_units(&self) -> u64 {
-        self.active_leases.iter().map(|lease| lease.units).sum()
+        self.active_leases
+            .iter()
+            .fold(0_u64, |total, lease| total.saturating_add(lease.units))
     }
 
     pub fn available_units(&self) -> u64 {
-        self.capacity_units - self.used_units()
+        self.capacity_units.saturating_sub(self.used_units())
     }
 
     pub fn reap_expired(&self, now: impl AsRef<str>) -> Result<Self, LeasePoolError> {
@@ -1476,6 +1500,11 @@ impl LeasePool {
             });
         }
 
+        let next_fencing_epoch = current.next_fencing_epoch.checked_add(1).ok_or(
+            LeasePoolError::ArithmeticOverflow {
+                field_name: "next_fencing_epoch",
+            },
+        )?;
         let grant = LeaseGrant {
             lease_id,
             request_id: request.request_id.clone(),
@@ -1488,7 +1517,7 @@ impl LeasePool {
             expires_at,
             metadata: request.metadata.clone(),
         };
-        current.next_fencing_epoch += 1;
+        current.next_fencing_epoch = next_fencing_epoch;
         current.active_leases.push(grant.clone());
         Ok((current.normalized()?, grant))
     }
@@ -1523,7 +1552,22 @@ impl LeasePool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChildBudgetDelegationError {
-    ParentPermitDoesNotCoverDelegation { permit_id: String },
+    ParentPermitDoesNotCoverDelegation {
+        permit_id: String,
+    },
+    ParentPermitConflict {
+        permit_id: String,
+    },
+    DelegationConflict {
+        delegation_id: String,
+    },
+    DelegationOutlivesParent {
+        delegation_id: String,
+        permit_id: String,
+    },
+    DelegatedAmountOverflow {
+        permit_id: String,
+    },
 }
 
 impl fmt::Display for ChildBudgetDelegationError {
@@ -1535,11 +1579,47 @@ impl fmt::Display for ChildBudgetDelegationError {
                     "parent permit {permit_id:?} does not cover delegation"
                 )
             }
+            Self::ParentPermitConflict { permit_id } => {
+                write!(
+                    formatter,
+                    "parent permit {permit_id:?} changed during delegation"
+                )
+            }
+            Self::DelegationConflict { delegation_id } => {
+                write!(
+                    formatter,
+                    "delegation {delegation_id:?} conflicts with an existing delegation"
+                )
+            }
+            Self::DelegationOutlivesParent {
+                delegation_id,
+                permit_id,
+            } => write!(
+                formatter,
+                "delegation {delegation_id:?} outlives parent permit {permit_id:?}"
+            ),
+            Self::DelegatedAmountOverflow { permit_id } => write!(
+                formatter,
+                "delegated amounts overflow for parent permit {permit_id:?}"
+            ),
         }
     }
 }
 
 impl Error for ChildBudgetDelegationError {}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChildBudgetDelegationLedger {
+    parent_permits: BTreeMap<String, BudgetPermit>,
+    delegated_amounts: BTreeMap<String, Vec<UsageAmount>>,
+    child_permits: BTreeMap<String, BudgetPermit>,
+}
+
+impl ChildBudgetDelegationLedger {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChildBudgetDelegation {
@@ -1577,16 +1657,41 @@ impl ChildBudgetDelegation {
     pub fn create_child_permit(
         &self,
         permit_id: impl Into<String>,
+        ledger: &mut ChildBudgetDelegationLedger,
     ) -> Result<BudgetPermit, ChildBudgetDelegationError> {
+        let permit_id = permit_id.into();
+        let parent_permit_id = self.parent_permit.permit_id.clone();
+        let (Some(parent_expiry), Some(child_expiry)) = (
+            parse_policy_datetime_millis(&self.parent_permit.expires_at),
+            parse_policy_datetime_millis(&self.expires_at),
+        ) else {
+            return Err(ChildBudgetDelegationError::DelegationOutlivesParent {
+                delegation_id: self.delegation_id.clone(),
+                permit_id: parent_permit_id,
+            });
+        };
+        if child_expiry > parent_expiry {
+            return Err(ChildBudgetDelegationError::DelegationOutlivesParent {
+                delegation_id: self.delegation_id.clone(),
+                permit_id: parent_permit_id,
+            });
+        }
         if !self.parent_permit.allows(self.amounts.clone()) {
             return Err(
                 ChildBudgetDelegationError::ParentPermitDoesNotCoverDelegation {
-                    permit_id: self.parent_permit.permit_id.clone(),
+                    permit_id: parent_permit_id,
                 },
             );
         }
-        Ok(BudgetPermit {
-            permit_id: permit_id.into(),
+        if let Some(existing_parent) = ledger.parent_permits.get(&parent_permit_id)
+            && existing_parent != &self.parent_permit
+        {
+            return Err(ChildBudgetDelegationError::ParentPermitConflict {
+                permit_id: parent_permit_id,
+            });
+        }
+        let child_permit = BudgetPermit {
+            permit_id,
             reservation_refs: self.parent_permit.reservation_refs.clone(),
             owner: self.child_owner.clone(),
             atomic_unit: self.parent_permit.atomic_unit.clone(),
@@ -1600,6 +1705,69 @@ impl ChildBudgetDelegation {
             expires_at: self.expires_at.clone(),
             low_watermark: Vec::new(),
             fencing_tokens: self.parent_permit.fencing_tokens.clone(),
-        })
+        };
+        if let Some(existing) = ledger.child_permits.get(&self.delegation_id) {
+            if existing == &child_permit {
+                return Ok(existing.clone());
+            }
+            return Err(ChildBudgetDelegationError::DelegationConflict {
+                delegation_id: self.delegation_id.clone(),
+            });
+        }
+        let mut cumulative_amounts = ledger
+            .delegated_amounts
+            .get(&parent_permit_id)
+            .cloned()
+            .unwrap_or_default();
+        cumulative_amounts.extend(self.amounts.clone());
+        cumulative_amounts = aggregate_delegated_amounts(cumulative_amounts).ok_or_else(|| {
+            ChildBudgetDelegationError::DelegatedAmountOverflow {
+                permit_id: parent_permit_id.clone(),
+            }
+        })?;
+        if !self.parent_permit.allows(cumulative_amounts.clone()) {
+            return Err(
+                ChildBudgetDelegationError::ParentPermitDoesNotCoverDelegation {
+                    permit_id: parent_permit_id,
+                },
+            );
+        }
+        ledger
+            .parent_permits
+            .entry(parent_permit_id.clone())
+            .or_insert_with(|| self.parent_permit.clone());
+        ledger
+            .delegated_amounts
+            .insert(parent_permit_id, cumulative_amounts);
+        ledger
+            .child_permits
+            .insert(self.delegation_id.clone(), child_permit.clone());
+        Ok(child_permit)
     }
+}
+
+fn aggregate_delegated_amounts(amounts: Vec<UsageAmount>) -> Option<Vec<UsageAmount>> {
+    let mut totals = BTreeMap::new();
+    for amount in amounts {
+        let key = (
+            amount.kind,
+            amount.unit,
+            amount.dimensions.into_iter().collect::<Vec<_>>(),
+        );
+        let total = totals.entry(key).or_insert(0_i64);
+        *total = total.checked_add(amount.amount)?;
+    }
+    Some(
+        totals
+            .into_iter()
+            .filter_map(|((kind, unit, dimensions), amount)| {
+                (amount != 0).then(|| UsageAmount {
+                    kind,
+                    amount,
+                    unit,
+                    dimensions: dimensions.into_iter().collect(),
+                })
+            })
+            .collect(),
+    )
 }

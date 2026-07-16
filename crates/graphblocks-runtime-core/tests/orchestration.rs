@@ -3,10 +3,11 @@ use std::error::Error;
 
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::orchestration::{
-    ChildBudgetDelegation, LeasePool, LeasePoolError, LeaseRequest, ModelPool, ModelProfile,
-    ModelSelectionError, ModelSelectionRequest, TaskContextAccess, TaskContextAccessEdge,
-    TaskContextAccessErrorReason, TaskContextConflictKind, TaskPlan, TaskPlanError, TaskPlanLimits,
-    TaskPlanPatch, TaskStep, WorkerProfile,
+    ChildBudgetDelegation, ChildBudgetDelegationError, ChildBudgetDelegationLedger, LeasePool,
+    LeasePoolError, LeaseRequest, ModelPool, ModelProfile, ModelSelectionError,
+    ModelSelectionRequest, TaskContextAccess, TaskContextAccessEdge, TaskContextAccessErrorReason,
+    TaskContextConflictKind, TaskPlan, TaskPlanError, TaskPlanLimits, TaskPlanPatch, TaskStep,
+    WorkerProfile,
 };
 use serde_json::json;
 
@@ -267,6 +268,23 @@ fn model_pool_selects_first_eligible_model_and_rejects_disallowed_tool() {
 }
 
 #[test]
+fn orchestration_model_pool_rejects_unknown_sensitivity_ceiling() {
+    let pool = ModelPool::new("support-pool", "policy-1");
+    let worker = WorkerProfile::new("support-worker")
+        .with_model_pool_ref("support-pool")
+        .with_sensitivity_ceiling("internl");
+    let request = ModelSelectionRequest::new(worker).with_sensitivity("public");
+
+    assert_eq!(
+        pool.select_model(&request),
+        Err(ModelSelectionError::SensitivityAboveCeiling {
+            requested: "public".to_owned(),
+            ceiling: "internl".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn lease_pool_enforces_capacity_and_fencing_epoch() -> Result<(), Box<dyn Error>> {
     let pool = LeasePool::new("formal-license", "eda.formal", 1)?;
     let (leased, grant) = pool.acquire(
@@ -313,6 +331,73 @@ fn lease_pool_enforces_capacity_and_fencing_epoch() -> Result<(), Box<dyn Error>
         1
     );
     Ok(())
+}
+
+#[test]
+fn lease_pool_public_state_cannot_overflow_capacity_or_fencing_arithmetic() {
+    let malformed = LeasePool {
+        pool_id: "pool".to_owned(),
+        resource_kind: "licensed".to_owned(),
+        capacity_units: 1,
+        active_leases: vec![
+            graphblocks_runtime_core::orchestration::LeaseGrant {
+                lease_id: "lease-max".to_owned(),
+                request_id: "request-max".to_owned(),
+                pool_id: "pool".to_owned(),
+                holder: "holder".to_owned(),
+                resource_kind: "licensed".to_owned(),
+                units: u64::MAX,
+                fencing_epoch: u64::MAX - 1,
+                acquired_at: "2026-06-26T00:00:00Z".to_owned(),
+                expires_at: "2026-06-26T01:00:00Z".to_owned(),
+                metadata: BTreeMap::new(),
+            },
+            graphblocks_runtime_core::orchestration::LeaseGrant {
+                lease_id: "lease-one".to_owned(),
+                request_id: "request-one".to_owned(),
+                pool_id: "pool".to_owned(),
+                holder: "holder".to_owned(),
+                resource_kind: "licensed".to_owned(),
+                units: 1,
+                fencing_epoch: u64::MAX,
+                acquired_at: "2026-06-26T00:00:00Z".to_owned(),
+                expires_at: "2026-06-26T01:00:00Z".to_owned(),
+                metadata: BTreeMap::new(),
+            },
+        ],
+        next_fencing_epoch: u64::MAX,
+        policy_ref: None,
+        metadata: BTreeMap::new(),
+    };
+
+    assert_eq!(malformed.used_units(), u64::MAX);
+    assert_eq!(malformed.available_units(), 0);
+    assert_eq!(
+        malformed.reap_expired("2026-06-26T00:30:00Z"),
+        Err(LeasePoolError::ArithmeticOverflow {
+            field_name: "used_units",
+        })
+    );
+
+    let exhausted_epoch = LeasePool {
+        active_leases: Vec::new(),
+        ..LeasePool::new("pool", "licensed", 1).expect("valid pool")
+    };
+    let exhausted_epoch = LeasePool {
+        next_fencing_epoch: u64::MAX,
+        ..exhausted_epoch
+    };
+    assert_eq!(
+        exhausted_epoch.acquire(
+            &LeaseRequest::new("request", "holder", "licensed"),
+            "lease",
+            "2026-06-26T00:00:00Z",
+            "2026-06-26T01:00:00Z",
+        ),
+        Err(LeasePoolError::ArithmeticOverflow {
+            field_name: "next_fencing_epoch",
+        })
+    );
 }
 
 #[test]
@@ -397,7 +482,8 @@ fn child_budget_delegation_creates_scoped_permit() -> Result<(), Box<dyn Error>>
     )
     .with_continuation_profile("child");
 
-    let permit = delegation.create_child_permit("permit-child")?;
+    let permit =
+        delegation.create_child_permit("permit-child", &mut ChildBudgetDelegationLedger::new())?;
 
     assert_eq!(permit.permit_id, "permit-child");
     assert_eq!(permit.owner, "task:child");
@@ -408,6 +494,63 @@ fn child_budget_delegation_creates_scoped_permit() -> Result<(), Box<dyn Error>>
     assert_eq!(
         permit.fencing_tokens,
         BTreeMap::from([("reservation-parent".to_string(), 11)])
+    );
+    Ok(())
+}
+
+#[test]
+fn child_budget_delegations_share_parent_authority_and_expiry() -> Result<(), Box<dyn Error>> {
+    let parent = BudgetPermit {
+        permit_id: "permit-parent".to_string(),
+        reservation_refs: vec!["reservation-parent".to_string()],
+        owner: "task:parent".to_string(),
+        atomic_unit: "turn:1".to_string(),
+        admission_epoch: 3,
+        authorized_amounts: vec![tokens(100)],
+        continuation_profile: "default".to_string(),
+        policy_snapshot_digest: "sha256:policy".to_string(),
+        expires_at: "2026-06-26T01:00:00Z".to_string(),
+        low_watermark: Vec::new(),
+        fencing_tokens: BTreeMap::from([("reservation-parent".to_string(), 11)]),
+    };
+    let mut ledger = ChildBudgetDelegationLedger::new();
+    ChildBudgetDelegation::new(
+        "delegation-1",
+        parent.clone(),
+        "task:child-1",
+        [tokens(60)],
+        "2026-06-26T00:30:00Z",
+    )
+    .create_child_permit("permit-child-1", &mut ledger)?;
+
+    assert_eq!(
+        ChildBudgetDelegation::new(
+            "delegation-2",
+            parent.clone(),
+            "task:child-2",
+            [tokens(50)],
+            "2026-06-26T00:30:00Z",
+        )
+        .create_child_permit("permit-child-2", &mut ledger),
+        Err(
+            ChildBudgetDelegationError::ParentPermitDoesNotCoverDelegation {
+                permit_id: parent.permit_id.clone(),
+            }
+        )
+    );
+    assert_eq!(
+        ChildBudgetDelegation::new(
+            "delegation-late",
+            parent.clone(),
+            "task:child-late",
+            [tokens(1)],
+            "2026-06-26T01:00:00.001Z",
+        )
+        .create_child_permit("permit-child-late", &mut ledger),
+        Err(ChildBudgetDelegationError::DelegationOutlivesParent {
+            delegation_id: "delegation-late".to_owned(),
+            permit_id: parent.permit_id,
+        })
     );
     Ok(())
 }

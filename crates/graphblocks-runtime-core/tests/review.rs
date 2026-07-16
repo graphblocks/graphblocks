@@ -75,6 +75,47 @@ fn review_workflow_records_review_with_credential_reference() {
 }
 
 #[test]
+fn review_workflow_replay_replaces_matching_review_identity() {
+    let request = ReviewRequest::new(
+        "request-1",
+        ResourceSnapshotRef::new("candidate-1", "sha256:subject"),
+        PrincipalRef::new("author-1"),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    );
+    let reviewer = PrincipalRef::new("reviewer-1");
+    let provider = InMemoryReviewerCredentialProvider::new([ReviewerCredential::new(
+        "cred-quality",
+        reviewer.clone(),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    )]);
+    let mut workflow = ReviewWorkflow::new(request, provider);
+    workflow
+        .record_review(ReviewSubmission::new(
+            "review-1",
+            reviewer.clone(),
+            "quality",
+            ReviewDecision::Reject,
+            "2026-06-24T00:05:00Z",
+        ))
+        .expect("initial review is accepted");
+
+    workflow
+        .record_review(ReviewSubmission::new(
+            "review-1",
+            reviewer,
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:06:00Z",
+        ))
+        .expect("review replay replaces the prior identity");
+
+    assert_eq!(workflow.reviews.len(), 1);
+    assert_eq!(workflow.reviews[0].decision, ReviewDecision::Accept);
+}
+
+#[test]
 fn review_workflow_rejects_changed_subject_and_ignores_invalidated_reviews() {
     let request = ReviewRequest::new(
         "request-1",

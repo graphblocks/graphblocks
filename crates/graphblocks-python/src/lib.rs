@@ -105,6 +105,7 @@ use graphblocks_runtime_durable::{
     DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
 use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
+use graphblocks_schema::parse_canonical_json;
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -205,13 +206,10 @@ fn compile_graph_json(
     block_catalog_json: Option<&str>,
     allow_unknown_blocks: bool,
 ) -> PyResult<String> {
-    let document = serde_json::from_str::<Value>(document_json)
-        .map_err(|error| PyValueError::new_err(format!("invalid graph document JSON: {error}")))?;
+    let document = parse_json_argument(document_json, "graph document")?;
     let mut block_catalog = match block_catalog_json {
         Some(catalog_json) => {
-            let catalog = serde_json::from_str::<Value>(catalog_json).map_err(|error| {
-                PyValueError::new_err(format!("invalid block catalog JSON: {error}"))
-            })?;
+            let catalog = parse_json_argument(catalog_json, "block catalog")?;
             BlockCatalog::from_blocks(&catalog).map_err(PyValueError::new_err)
         }
         None => stdlib_block_catalog().map_err(|error| {
@@ -256,8 +254,9 @@ fn validate_worker_advertisement_json(
     advertisement_json: &str,
     expected_package_lock_hash: Option<&str>,
 ) -> PyResult<String> {
-    let advertisement =
-        serde_json::from_str::<WorkerAdvertisement>(advertisement_json).map_err(|error| {
+    let advertisement_value = parse_json_argument(advertisement_json, "worker advertisement")?;
+    let advertisement = serde_json::from_value::<WorkerAdvertisement>(advertisement_value)
+        .map_err(|error| {
             PyValueError::new_err(format!("invalid worker advertisement JSON: {error}"))
         })?;
     let mut policy = WorkerAdmissionPolicy::current();
@@ -310,8 +309,7 @@ fn validate_worker_advertisement_json(
 
 #[pyfunction]
 fn validate_worker_protocol_message_json(message_json: &str) -> PyResult<String> {
-    let message_value = serde_json::from_str::<Value>(message_json)
-        .map_err(|error| PyValueError::new_err(format!("invalid worker message JSON: {error}")))?;
+    let message_value = parse_json_argument(message_json, "worker message")?;
     let message = match serde_json::from_value::<WorkerProtocolMessage>(message_value) {
         Ok(message) => message,
         Err(error) => {
@@ -401,7 +399,8 @@ fn admit_worker_message_json(
 
 #[pyfunction]
 fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> PyResult<String> {
-    let payload = serde_json::from_str::<RemotePayload>(payload_json)
+    let payload_value = parse_json_argument(payload_json, "remote payload")?;
+    let payload = serde_json::from_value::<RemotePayload>(payload_value)
         .map_err(|error| PyValueError::new_err(format!("invalid remote payload JSON: {error}")))?;
     let limits = RemotePayloadLimits { max_inline_bytes };
     let result_payload = match validate_remote_payload(&payload, &limits) {
@@ -2375,7 +2374,7 @@ struct RuntimeBridgePlan {
 }
 
 fn parse_json_argument(text: &str, label: &str) -> PyResult<Value> {
-    serde_json::from_str::<Value>(text)
+    parse_canonical_json(text)
         .map_err(|error| PyValueError::new_err(format!("invalid {label} JSON: {error}")))
 }
 
@@ -8360,6 +8359,10 @@ fn evaluate_usage_ledger_json(operations_json: &str, run_id: Option<&str>) -> Py
                 format!("usage record {record_id:?} conflicts with an existing record"),
             ),
             UsageLedgerError::InvalidRecord { message } => ("invalid_record", message.clone()),
+            UsageLedgerError::TotalOverflow { .. } => (
+                "total_overflow",
+                "usage total exceeds the signed 64-bit integer range".to_owned(),
+            ),
             UsageLedgerError::Storage { message } => ("storage", message.clone()),
         };
         json!({
@@ -9323,13 +9326,43 @@ mod tests {
         evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_application_protocol_event_kind,
-        parse_resolved_tool, parse_tool_call, prepare_tool_result_for_model_json,
-        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
-        run_stdlib_graph_json, run_stdlib_graph_with_options_json, run_test_graph_json,
-        run_test_graph_with_options_json, serialize_application_protocol_log_error,
-        validate_remote_payload_json, validate_worker_advertisement_json,
-        validate_worker_protocol_message_json,
+        parse_json_argument, parse_resolved_tool, parse_tool_call,
+        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json, run_stdlib_graph_json,
+        run_stdlib_graph_with_options_json, run_test_graph_json, run_test_graph_with_options_json,
+        serialize_application_protocol_log_error, validate_remote_payload_json,
+        validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
+
+    #[test]
+    fn json_argument_admission_rejects_duplicate_object_keys() {
+        let error = parse_json_argument(r#"{"value":1,"value":2}"#, "test value")
+            .expect_err("duplicate JSON keys must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate JSON object key \"value\"")
+        );
+    }
+
+    #[test]
+    fn typed_json_admission_rejects_duplicate_object_keys() {
+        assert!(
+            validate_worker_advertisement_json(
+                r#"{"protocolVersion":1,"protocolVersion":1}"#,
+                None,
+            )
+            .is_err(),
+        );
+        assert!(
+            validate_remote_payload_json(
+                r#"{"schema":"graphblocks.remote_payload.v1","schema":"graphblocks.remote_payload.v1"}"#,
+                1_024,
+            )
+            .is_err(),
+        );
+    }
 
     #[test]
     fn serialize_application_protocol_log_error_reports_storage_failures() {

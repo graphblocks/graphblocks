@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -32,6 +33,9 @@ pub enum DurableError {
         attempted: SourceCursor,
     },
     UnknownSourceCursor {
+        cursor: SourceCursor,
+    },
+    ConflictingSourceOffset {
         cursor: SourceCursor,
     },
     InvalidWindowSize,
@@ -166,6 +170,8 @@ pub struct InMemoryDurableSource {
     known_streams: BTreeSet<String>,
     known_partitions: BTreeSet<(String, u32)>,
     committed_cursors: BTreeMap<(String, u32), SourceCursor>,
+    conflicting_cursor: Option<SourceCursor>,
+    emitted_watermark_unix_ms: Cell<Option<u64>>,
     paused: bool,
 }
 
@@ -176,6 +182,9 @@ impl InMemoryDurableSource {
     {
         let mut events = events.into_iter().collect::<Vec<_>>();
         events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
+        let conflicting_cursor = events.windows(2).find_map(|pair| {
+            (pair[0].cursor == pair[1].cursor && pair[0] != pair[1]).then(|| pair[0].cursor.clone())
+        });
         let known_streams = events
             .iter()
             .map(|event| event.cursor.stream.clone())
@@ -190,6 +199,8 @@ impl InMemoryDurableSource {
             known_streams,
             known_partitions,
             committed_cursors: BTreeMap::new(),
+            conflicting_cursor,
+            emitted_watermark_unix_ms: Cell::new(None),
             paused: false,
         }
     }
@@ -201,6 +212,11 @@ impl InMemoryDurableSource {
     ) -> Result<SourceBatch, DurableError> {
         if self.paused {
             return Err(DurableError::SourcePaused);
+        }
+        if let Some(cursor) = &self.conflicting_cursor {
+            return Err(DurableError::ConflictingSourceOffset {
+                cursor: cursor.clone(),
+            });
         }
         if let Some(cursor) = cursor.as_ref() {
             self.validate_cursor(cursor)?;
@@ -224,11 +240,20 @@ impl InMemoryDurableSource {
             .take(demand)
             .cloned()
             .collect::<Vec<_>>();
-        let watermark = events
+        let batch_watermark_unix_ms = events
             .iter()
             .filter_map(|event| event.event_time_unix_ms)
-            .max()
-            .map(Watermark::event_time);
+            .max();
+        let watermark_unix_ms = match (
+            self.emitted_watermark_unix_ms.get(),
+            batch_watermark_unix_ms,
+        ) {
+            (Some(previous), Some(current)) => Some(previous.max(current)),
+            (previous, None) => previous,
+            (None, current) => current,
+        };
+        self.emitted_watermark_unix_ms.set(watermark_unix_ms);
+        let watermark = watermark_unix_ms.map(Watermark::event_time);
         SourceBatch::new(self.guarantee, events, watermark, demand)
     }
 

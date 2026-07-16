@@ -889,7 +889,7 @@ fn admission_denies_tool_no_longer_allowed_for_principal() {
 #[test]
 fn admission_denies_expired_resolved_tool() {
     let mut resolved_tool = resolved_process_tool();
-    resolved_tool.valid_until_unix_ms = Some(1_199);
+    resolved_tool.valid_until_unix_ms = Some(1_200);
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
     let policy_decision = allow_tool_policy_decision();
@@ -909,7 +909,7 @@ fn admission_denies_expired_resolved_tool() {
         }),
         Err(ToolAdmissionError::ResolvedToolExpired {
             resolved_tool_id: resolved_tool.resolved_tool_id,
-            valid_until_unix_ms: 1_199,
+            valid_until_unix_ms: 1_200,
             admitted_at_unix_ms: 1_200
         }),
     );

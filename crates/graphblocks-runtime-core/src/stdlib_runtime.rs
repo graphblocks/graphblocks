@@ -10,7 +10,7 @@ use graphblocks_compiler::compiler::{
     BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
 };
 use graphblocks_compiler::diagnostics::Severity;
-use graphblocks_schema::parse_duration_milliseconds;
+use graphblocks_schema::{parse_canonical_json, parse_duration_milliseconds};
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -3059,7 +3059,7 @@ fn append_native_journal_records(
 }
 
 fn parse_json_argument(text: &str, label: &str) -> Result<Value, StdlibRuntimeError> {
-    serde_json::from_str::<Value>(text)
+    parse_canonical_json(text)
         .map_err(|error| StdlibRuntimeError::invalid(format!("invalid {label} JSON: {error}")))
 }
 

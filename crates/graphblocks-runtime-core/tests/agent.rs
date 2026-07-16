@@ -215,6 +215,23 @@ fn model_pool_rejects_sensitivity_above_worker_ceiling() {
 }
 
 #[test]
+fn model_pool_rejects_unknown_worker_sensitivity_ceiling() {
+    let pool = ModelPool::new("support-pool", "policy-1");
+    let worker = WorkerProfile::new("support-worker")
+        .with_model_pool_ref("support-pool")
+        .with_sensitivity_ceiling("internl");
+    let request = ModelSelectionRequest::new(worker).with_sensitivity("public");
+
+    assert_eq!(
+        pool.select_model(&request),
+        Err(ModelSelectionError::SensitivityAboveCeiling {
+            requested: "public".to_owned(),
+            ceiling: "internl".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn model_pool_rejects_mismatched_worker_pool_ref() {
     let pool = ModelPool::new("support-pool", "policy-1");
     let worker = WorkerProfile::new("support-worker").with_model_pool_ref("other-pool");

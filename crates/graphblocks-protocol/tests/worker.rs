@@ -919,6 +919,49 @@ fn worker_drain_plan_cancels_uncheckpointable_tasks_after_checkpoint_deadline() 
 }
 
 #[test]
+fn worker_drain_deadline_is_relative_to_drain_start_not_task_start() {
+    let worker = WorkerAdvertisement::new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-online".to_owned(),
+        run_id: "run-online".to_owned(),
+        node_id: "model".to_owned(),
+        node_attempt_id: "model-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "model.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-old"),
+        inputs: json!({"prompt": "hello"}),
+        config: json!({}),
+    };
+
+    let plan = WorkerDrainPlan::for_worker(
+        &worker,
+        &WorkerDrainPolicy::default(),
+        [WorkerDrainTask {
+            workload: WorkerDrainWorkloadKind::OnlineRequest,
+            request,
+            started_at_unix_ms: 1_000,
+            checkpointable: false,
+        }],
+        600_000,
+        610_000,
+    )
+    .expect("old task remains within its drain grace period");
+
+    assert_eq!(plan.decisions[0].deadline_unix_ms, 630_000);
+    assert_eq!(
+        plan.decisions[0].disposition,
+        WorkerDrainDisposition::FinishInPlace
+    );
+    assert_eq!(plan.decisions[0].reason, "within_drain_deadline");
+}
+
+#[test]
 fn worker_drain_validation_rejects_invalid_wire_shapes() {
     let policy = WorkerDrainPolicy {
         online_request_timeout_ms: 0,

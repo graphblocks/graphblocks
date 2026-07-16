@@ -1924,7 +1924,7 @@ pub fn fuse_search_hits(
                 .push(hit.clone());
             let score = match options.strategy {
                 FusionStrategy::ReciprocalRankFusion => {
-                    Some(weight / options.k.saturating_add(hit.rank) as f64)
+                    Some(weight / options.k.saturating_add(hit.rank.max(1)) as f64)
                 }
                 FusionStrategy::WeightedRank => Some(weight / hit.rank.max(1) as f64),
                 FusionStrategy::NormalizedScore => {

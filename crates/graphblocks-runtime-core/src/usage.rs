@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde_json::{Map, Number, Value};
 
 type UsageTotalsKey = (String, String, Vec<(String, String)>);
@@ -173,10 +173,23 @@ impl UsageRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UsageLedgerError {
-    RecordNotFound { record_id: String },
-    RecordConflict { record_id: String },
-    InvalidRecord { message: String },
-    Storage { message: String },
+    RecordNotFound {
+        record_id: String,
+    },
+    RecordConflict {
+        record_id: String,
+    },
+    InvalidRecord {
+        message: String,
+    },
+    TotalOverflow {
+        kind: String,
+        unit: String,
+        dimensions: BTreeMap<String, String>,
+    },
+    Storage {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -234,6 +247,8 @@ impl InMemoryUsageLedger {
             }
         }
 
+        self.validate_totals_with(&record)?;
+
         if record.reconciliation_of.is_none()
             && let Some(provider_response_id) = &record.provider_response_id
         {
@@ -271,6 +286,7 @@ impl InMemoryUsageLedger {
 
     pub fn totals_for_run(&self, run_id: impl AsRef<str>) -> Vec<UsageAmount> {
         usage_totals(&self.records_for_run(run_id))
+            .expect("accepted in-memory usage records must have representable totals")
     }
 
     pub fn reconcile(
@@ -313,6 +329,15 @@ impl InMemoryUsageLedger {
             .filter_map(|record_id| self.records.get(record_id))
             .find(|record| record.reconciliation_of.as_deref() == Some(source_record_id))
             .cloned()
+    }
+
+    fn validate_totals_with(&self, record: &UsageRecord) -> Result<(), UsageLedgerError> {
+        let Some(run_id) = record.run_id.as_deref() else {
+            return Ok(());
+        };
+        let mut records = self.records_for_run(run_id);
+        records.push(record.clone());
+        usage_totals(&records).map(|_| ())
     }
 }
 
@@ -448,7 +473,15 @@ impl SqliteUsageLedger {
             return Ok(existing);
         }
 
-        let transaction = self.connection.transaction().map_err(usage_storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(usage_storage_error)?;
+        if let Some(run_id) = record.run_id.as_deref() {
+            let mut records = sqlite_usage_records_for_run(&transaction, run_id)?;
+            records.push(record.clone());
+            usage_totals(&records)?;
+        }
         let next_sequence = transaction
             .query_row(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 FROM usage_records",
@@ -537,47 +570,14 @@ impl SqliteUsageLedger {
         &self,
         run_id: impl AsRef<str>,
     ) -> Result<Vec<UsageRecord>, UsageLedgerError> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "
-                SELECT
-                    record_id,
-                    source,
-                    confidence,
-                    amounts_json,
-                    occurred_at_unix_ms,
-                    run_id,
-                    attempt_id,
-                    provider_response_id,
-                    pricing_ref,
-                    quota_window_id,
-                    execution_scope,
-                    reconciliation_of,
-                    metadata_json
-                FROM usage_records
-                WHERE run_id = ?
-                ORDER BY sequence
-                ",
-            )
-            .map_err(usage_storage_error)?;
-        let rows = statement
-            .query_map(params![run_id.as_ref()], stored_usage_record_from_row)
-            .map_err(usage_storage_error)?;
-        let mut records = Vec::new();
-        for row in rows {
-            records.push(usage_record_from_storage(
-                row.map_err(usage_storage_error)?,
-            )?);
-        }
-        Ok(records)
+        sqlite_usage_records_for_run(&self.connection, run_id.as_ref())
     }
 
     pub fn totals_for_run(
         &self,
         run_id: impl AsRef<str>,
     ) -> Result<Vec<UsageAmount>, UsageLedgerError> {
-        Ok(usage_totals(&self.records_for_run(run_id)?))
+        usage_totals(&self.records_for_run(run_id)?)
     }
 
     pub fn reconcile(
@@ -791,7 +791,7 @@ fn usage_provider_duplicate_conflict(existing: &UsageRecord, incoming: &UsageRec
         || existing.metadata != incoming.metadata
 }
 
-fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
+fn usage_totals(records: &[UsageRecord]) -> Result<Vec<UsageAmount>, UsageLedgerError> {
     let superseded_record_ids = records
         .iter()
         .filter_map(|record| record.reconciliation_of.clone())
@@ -811,10 +811,18 @@ fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
                     .map(|(key, value)| (key.clone(), value.clone()))
                     .collect::<Vec<_>>(),
             );
-            *totals.entry(key).or_insert(0) += amount.amount;
+            let total = totals.entry(key.clone()).or_insert(0);
+            *total = total.checked_add(amount.amount).ok_or_else(|| {
+                let (kind, unit, dimensions) = key;
+                UsageLedgerError::TotalOverflow {
+                    kind,
+                    unit,
+                    dimensions: dimensions.into_iter().collect(),
+                }
+            })?;
         }
     }
-    totals
+    Ok(totals
         .into_iter()
         .filter_map(|((kind, unit, dimensions), amount)| {
             if amount == 0 {
@@ -827,7 +835,46 @@ fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
                 dimensions: dimensions.into_iter().collect(),
             })
         })
-        .collect()
+        .collect())
+}
+
+fn sqlite_usage_records_for_run(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+                record_id,
+                source,
+                confidence,
+                amounts_json,
+                occurred_at_unix_ms,
+                run_id,
+                attempt_id,
+                provider_response_id,
+                pricing_ref,
+                quota_window_id,
+                execution_scope,
+                reconciliation_of,
+                metadata_json
+            FROM usage_records
+            WHERE run_id = ?
+            ORDER BY sequence
+            ",
+        )
+        .map_err(usage_storage_error)?;
+    let rows = statement
+        .query_map(params![run_id], stored_usage_record_from_row)
+        .map_err(usage_storage_error)?;
+    let mut records = Vec::new();
+    for row in rows {
+        records.push(usage_record_from_storage(
+            row.map_err(usage_storage_error)?,
+        )?);
+    }
+    Ok(records)
 }
 
 struct StoredUsageRecord {

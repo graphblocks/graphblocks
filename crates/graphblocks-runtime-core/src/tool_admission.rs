@@ -298,7 +298,7 @@ impl ToolAdmission {
         }
 
         if let Some(valid_until_unix_ms) = request.resolved_tool.valid_until_unix_ms
-            && request.admitted_at_unix_ms > valid_until_unix_ms
+            && request.admitted_at_unix_ms >= valid_until_unix_ms
         {
             return Err(ToolAdmissionError::ResolvedToolExpired {
                 resolved_tool_id: request.resolved_tool.resolved_tool_id.clone(),

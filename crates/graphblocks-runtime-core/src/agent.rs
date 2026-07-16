@@ -206,20 +206,20 @@ impl ModelPool {
             (&request.sensitivity, &request.worker.sensitivity_ceiling)
         {
             let requested_rank = match requested.as_str() {
-                "public" => 0,
-                "internal" => 1,
-                "confidential" => 2,
-                "restricted" => 3,
-                _ => 4,
+                "public" => Some(0),
+                "internal" => Some(1),
+                "confidential" => Some(2),
+                "restricted" => Some(3),
+                _ => None,
             };
             let ceiling_rank = match ceiling.as_str() {
-                "public" => 0,
-                "internal" => 1,
-                "confidential" => 2,
-                "restricted" => 3,
-                _ => 4,
+                "public" => Some(0),
+                "internal" => Some(1),
+                "confidential" => Some(2),
+                "restricted" => Some(3),
+                _ => None,
             };
-            if requested_rank > ceiling_rank {
+            if requested_rank.is_none() || ceiling_rank.is_none() || requested_rank > ceiling_rank {
                 return Err(ModelSelectionError::SensitivityAboveCeiling {
                     requested: requested.clone(),
                     ceiling: ceiling.clone(),

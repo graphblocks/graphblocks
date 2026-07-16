@@ -485,6 +485,40 @@ fn compaction_record_preserves_source_messages_and_records_token_delta()
 }
 
 #[test]
+fn branches_only_copy_compactions_with_available_messages() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages(
+        "conv-1",
+        0,
+        [
+            Message::new("msg-1", MessageRole::User),
+            assistant_message("msg-2", "answer"),
+            assistant_message("msg-summary", "summary"),
+        ],
+    )?;
+    store.record_compaction(
+        "conv-1",
+        CompactionRecord::new(
+            "compact-1",
+            ["msg-1", "msg-2"],
+            "msg-summary",
+            "summary_memory",
+            100,
+            10,
+        ),
+    )?;
+    let mut request = BranchRequest::new("conv-1", "msg-1").with_new_conversation_id("conv-branch");
+    request.include_memory = true;
+
+    let branch = store.branch(request)?;
+
+    assert!(branch.compactions.is_empty());
+    Ok(())
+}
+
+#[test]
 fn archive_prevents_later_appends() -> Result<(), Box<dyn std::error::Error>> {
     let mut store = InMemoryConversationStore::new();
     store.create(Conversation::new("conv-1"))?;
@@ -512,6 +546,32 @@ fn delete_hard_removes_conversation() -> Result<(), Box<dyn std::error::Error>> 
             conversation_id: "conv-1".to_owned(),
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn deleting_conversation_removes_its_draft_turns() -> Result<(), Box<dyn std::error::Error>> {
+    for policy in [DeletePolicy::Hard, DeletePolicy::Tombstone] {
+        let mut store = InMemoryConversationStore::new();
+        store.create(Conversation::new("conv-1"))?;
+        store.begin_turn("conv-1", 0, "turn-1")?;
+        store.append_turn_message("turn-1", assistant_message("msg-draft", "secret"))?;
+
+        store.delete("conv-1", policy)?;
+
+        assert_eq!(
+            store.get_turn("turn-1"),
+            Err(TurnError::NotFound {
+                turn_id: "turn-1".to_owned(),
+            })
+        );
+        assert_eq!(
+            store.append_turn_message("turn-1", assistant_message("msg-late", "late")),
+            Err(TurnError::NotFound {
+                turn_id: "turn-1".to_owned(),
+            })
+        );
+    }
     Ok(())
 }
 

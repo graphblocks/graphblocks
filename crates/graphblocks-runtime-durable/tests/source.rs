@@ -77,6 +77,54 @@ fn in_memory_source_replays_from_committed_or_explicit_cursor() {
 }
 
 #[test]
+fn in_memory_source_rejects_conflicting_offset_reuse() {
+    let cursor = SourceCursor::new("orders", 0, 10);
+    let source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [
+            SourceEvent::new(cursor.clone(), json!({"orderId": "ord-a"}), Some(100)),
+            SourceEvent::new(cursor.clone(), json!({"orderId": "ord-b"}), Some(100)),
+        ],
+    );
+
+    assert_eq!(
+        source.poll(None, 1),
+        Err(DurableError::ConflictingSourceOffset { cursor })
+    );
+}
+
+#[test]
+fn in_memory_source_watermark_never_regresses_between_polls() {
+    let source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [
+            SourceEvent::new(
+                SourceCursor::new("orders", 0, 10),
+                json!({"orderId": "ord-10"}),
+                Some(100),
+            ),
+            SourceEvent::new(
+                SourceCursor::new("orders", 0, 11),
+                json!({"orderId": "ord-11"}),
+                Some(50),
+            ),
+        ],
+    );
+
+    assert_eq!(
+        source.poll(None, 1).expect("first poll").watermark,
+        Some(Watermark::event_time(100))
+    );
+    assert_eq!(
+        source
+            .poll(Some(SourceCursor::new("orders", 0, 10)), 1)
+            .expect("second poll")
+            .watermark,
+        Some(Watermark::event_time(100))
+    );
+}
+
+#[test]
 fn in_memory_source_commits_are_partition_scoped() {
     let mut source = InMemoryDurableSource::new(
         DeliveryGuarantee::AtLeastOnce,

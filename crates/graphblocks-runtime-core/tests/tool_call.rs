@@ -61,6 +61,21 @@ fn invalid_arguments_are_rejected_before_validated_call_exists() -> Result<(), T
 }
 
 #[test]
+fn duplicate_argument_keys_are_rejected_before_validated_call_exists() -> Result<(), ToolCallError>
+{
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+
+    draft.append_argument_fragment(r#"{"value":1,"value":2}"#)?;
+    draft.complete_arguments()?;
+
+    assert_eq!(
+        draft.into_tool_call("resolved-tool-1", 1_000),
+        Err(ToolCallError::InvalidArgumentsJson),
+    );
+    Ok(())
+}
+
+#[test]
 fn non_finite_argument_constants_are_rejected() -> Result<(), ToolCallError> {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
 

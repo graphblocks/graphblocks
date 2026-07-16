@@ -126,6 +126,7 @@ const ORDER_CAPABLE_CALLBACK_TARGETS: [&str; 3] = ["webhook", "websocket", "sse"
 const PRIMITIVE_TYPE_REFS: [&str; 7] = [
     "Any", "Boolean", "Bytes", "Integer", "Number", "Null", "String",
 ];
+const MAX_TYPE_REF_DEPTH: usize = 32;
 
 /// Returns whether a JSON integer is greater than an unsigned bound, including
 /// arbitrary-precision integer tokens that do not fit in `u64`.
@@ -147,6 +148,10 @@ pub fn json_integer_exceeds_u64(value: &Value, maximum: u64) -> bool {
 }
 
 fn validate_port_type_ref(type_ref: &str) -> Result<(), String> {
+    validate_port_type_ref_at_depth(type_ref, 0)
+}
+
+fn validate_port_type_ref_at_depth(type_ref: &str, nesting_depth: usize) -> Result<(), String> {
     if type_ref.is_empty()
         || type_ref.trim() != type_ref
         || type_ref.chars().any(char::is_whitespace)
@@ -174,6 +179,11 @@ fn validate_port_type_ref(type_ref: &str) -> Result<(), String> {
         "Map" => 2,
         _ => return Err(format!("unsupported type constructor {constructor:?}")),
     };
+    if nesting_depth >= MAX_TYPE_REF_DEPTH {
+        return Err(format!(
+            "type reference nesting must not exceed {MAX_TYPE_REF_DEPTH} constructor levels"
+        ));
+    }
     let body = &type_ref[opening + 1..type_ref.len() - 1];
     let mut arguments = Vec::new();
     let mut depth = 0_i64;
@@ -202,7 +212,7 @@ fn validate_port_type_ref(type_ref: &str) -> Result<(), String> {
         return Err(format!("invalid type reference {type_ref:?}"));
     }
     for argument in arguments {
-        validate_port_type_ref(argument)?;
+        validate_port_type_ref_at_depth(argument, nesting_depth + 1)?;
     }
     Ok(())
 }

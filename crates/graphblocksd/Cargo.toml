@@ -10,6 +10,7 @@ rust-version.workspace = true
 graphblocks-protocol = { version = "0.1.0", path = "../graphblocks-protocol" }
 graphblocks-runtime-core = { version = "0.1.0", path = "../graphblocks-runtime-core" }
 graphblocks-runtime-durable = { version = "0.1.0", path = "../graphblocks-runtime-durable" }
+graphblocks-schema = { version = "0.1.0", path = "../graphblocks-schema" }
 httpdate = "1.0.3"
 rustls = { version = "0.23.37", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "1.0"
