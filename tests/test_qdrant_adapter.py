@@ -66,6 +66,17 @@ def test_qdrant_search_request_rejects_invalid_inputs(monkeypatch) -> None:
             vector=(),
         )
 
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="must not override its key"):
+        graphblocks_qdrant.qdrant_search_request(
+            SearchRequest(
+                query_text="refund",
+                top_k=1,
+                filters={"tenant_id": {"key": "public", "match": {"value": "acme"}}},
+            ),
+            collection=graphblocks_qdrant.QdrantCollectionRef(collection="support_chunks"),
+            vector=(0.1,),
+        )
+
 
 def test_qdrant_points_map_to_search_hits_with_source_acl_and_preview(monkeypatch) -> None:
     graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")

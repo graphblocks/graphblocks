@@ -93,6 +93,10 @@ def qdrant_search_request(
         if value is None:
             continue
         if isinstance(value, Mapping):
+            if "key" in value:
+                raise QdrantAdapterError(
+                    f"filter {key.strip()!r} mapping must not override its key"
+                )
             condition = {"key": key.strip()}
             condition.update(deepcopy(dict(value)))
             filter_terms.append(condition)

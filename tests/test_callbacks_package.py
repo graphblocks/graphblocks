@@ -1447,6 +1447,19 @@ def test_webhook_response_classification_maps_receiver_statuses() -> None:
     assert duplicate.terminal is True
     assert duplicate.reason == "duplicate_already_processed"
 
+    for status_code in (408, 425):
+        transient = classify_webhook_response(status_code)
+        assert transient.status == "retry"
+        assert transient.retry is True
+        assert transient.terminal is False
+        assert transient.reason == "receiver_not_ready"
+
+    redirect = classify_webhook_response(302)
+    assert redirect.status == "failed"
+    assert redirect.retry is False
+    assert redirect.terminal is True
+    assert redirect.reason == "redirect_not_allowed"
+
 
 def test_webhook_response_classification_parses_retry_after() -> None:
     decision = classify_webhook_response(

@@ -88,6 +88,22 @@ def test_terraform_bridge_digest_is_stable_across_input_order(monkeypatch) -> No
     assert left.content_digest() == right.content_digest()
 
 
+def test_terraform_bridge_rejects_duplicate_graphblocks_output_keys(monkeypatch) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+
+    with pytest.raises(
+        graphblocks_terraform.TerraformBridgeError,
+        match="graphblocks_key values must be unique",
+    ):
+        graphblocks_terraform.TerraformBridgeSpec(
+            workspace="support-prod",
+            output_bindings=(
+                graphblocks_terraform.TerraformOutputBinding("primary_url", "service.url"),
+                graphblocks_terraform.TerraformOutputBinding("fallback_url", "service.url"),
+            ),
+        )
+
+
 def test_terraform_bridge_rejects_missing_required_output(monkeypatch) -> None:
     graphblocks_terraform = _import_terraform(monkeypatch)
     bridge = graphblocks_terraform.TerraformBridgeSpec(

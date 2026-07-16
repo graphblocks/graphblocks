@@ -358,7 +358,7 @@ def _main(argv: list[str] | None = None) -> int:
             print(rendered, end="")
         else:
             try:
-                args.output.write_text(rendered, encoding="utf-8")
+                args.output.write_bytes(rendered.encode("utf-8"))
             except OSError as error:
                 raise CompositionError(
                     "CompositionOutputError",
@@ -366,9 +366,11 @@ def _main(argv: list[str] | None = None) -> int:
                 ) from error
         if args.report is not None:
             try:
-                args.report.write_text(
-                    json.dumps(result.report.canonical_value(), indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
+                args.report.write_bytes(
+                    (
+                        json.dumps(result.report.canonical_value(), indent=2, sort_keys=True)
+                        + "\n"
+                    ).encode("utf-8")
                 )
             except OSError as error:
                 raise CompositionError(
@@ -475,7 +477,14 @@ def _main(argv: list[str] | None = None) -> int:
         payload: dict[str, object] = {
             "target": args.target,
             "hash": plan.graph_hash,
-            "ok": registry.ok and not plugin_diagnostics and plan.ok,
+            "ok": (
+                registry.ok
+                and not any(
+                    diagnostic.get("severity") == "error"
+                    for diagnostic in plugin_diagnostics
+                )
+                and plan.ok
+            ),
             "diagnostics": [*plugin_diagnostics, *plan.diagnostics.to_list()],
         }
         if args.expand:
@@ -721,38 +730,46 @@ def _main(argv: list[str] | None = None) -> int:
             return 0 if result_payload.get("status") == "succeeded" else 1
 
         run_store = SQLiteRunStore(args.run_store) if args.run_store is not None else None
-        journal_factory = (
-            (lambda run_id: SQLiteExecutionJournal(args.journal_store, run_id))
-            if args.journal_store is not None
-            else None
-        )
-        result = InProcessRuntime(
-            stdlib_registry(),
-            run_store=run_store,
-            journal_factory=journal_factory,
-        ).run(
-            graph_documents[0],
-            inputs,
-            run_id=args.run_id or "run-000001",
-            deployment_provenance=deployment_provenance,
-        )
-        print(
-            json.dumps(
-                {
-                    "runId": result.run_id,
-                    "status": result.status,
-                    "outputs": result.outputs,
-                    "journal": [record.to_dict() for record in result.journal.records],
-                },
-                indent=2,
-                sort_keys=True,
+        journals: list[SQLiteExecutionJournal] = []
+
+        def journal_factory(run_id: str) -> SQLiteExecutionJournal:
+            assert args.journal_store is not None
+            journal = SQLiteExecutionJournal(args.journal_store, run_id)
+            journals.append(journal)
+            return journal
+
+        try:
+            result = InProcessRuntime(
+                stdlib_registry(),
+                run_store=run_store,
+                journal_factory=(journal_factory if args.journal_store is not None else None),
+            ).run(
+                graph_documents[0],
+                inputs,
+                run_id=args.run_id or "run-000001",
+                deployment_provenance=deployment_provenance,
             )
-        )
-        if hasattr(result.journal, "close"):
-            result.journal.close()
-        if run_store is not None:
-            run_store.close()
-        return 0 if result.status == "succeeded" else 1
+            print(
+                json.dumps(
+                    {
+                        "runId": result.run_id,
+                        "status": result.status,
+                        "outputs": result.outputs,
+                        "journal": [record.to_dict() for record in result.journal.records],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0 if result.status == "succeeded" else 1
+        except (RuntimeError, TypeError, ValueError) as error:
+            print(f"runtime execution failed: {error}")
+            return 1
+        finally:
+            for journal in journals:
+                journal.close()
+            if run_store is not None:
+                run_store.close()
     if args.command == "migrate":
         try:
             documents = [migrate_document(document) for document in load_documents(args.path)]
@@ -814,7 +831,7 @@ def _main(argv: list[str] | None = None) -> int:
         }
         text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
         if args.output is not None:
-            args.output.write_text(text, encoding="utf-8")
+            args.output.write_bytes(text.encode("utf-8"))
         else:
             print(text, end="")
         return 0 if plan.ok else 1
@@ -1007,7 +1024,7 @@ def _main(argv: list[str] | None = None) -> int:
                     "sha256:" + hashlib.sha256(archive_bytes).hexdigest()
                 )
                 with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
-                    if archive.getnames() != ["manifest.json", "release.json"]:
+                    if sorted(archive.getnames()) != ["manifest.json", "release.json"]:
                         raise ValueError(
                             "GraphRelease bundle must contain manifest.json and release.json"
                         )

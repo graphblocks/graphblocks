@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -18,6 +19,8 @@ from graphblocks.canonical import (
     normalize_graph,
 )
 from graphblocks.compiler import compile_graph
+from graphblocks.diagnostics import Diagnostic, DiagnosticSet
+from graphblocks.plugins import PluginRegistry
 from graphblocks.runtime import SQLiteExecutionJournal
 from graphblocks.run_store import SQLiteRunStore
 
@@ -417,7 +420,7 @@ def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["manifestVersion"] == 1
-    assert payload["contentDigest"] == "sha256:f3f12cfefc92869ed83e0da2d1779528484b603293759ad9c653f090f60a985f"
+    assert payload["contentDigest"] == "sha256:29e5e9221b9d413f7b69d610c91cbbe775ac05a351fcc85cb81735411b4f92dc"
     assert [entry["schemaId"] for entry in payload["schemas"]] == [
         "graphblocks.ai/composition/v1alpha1/graph-fragment.schema.json",
         "graphblocks.ai/v1/graph.schema.json",
@@ -503,6 +506,44 @@ def test_lock_cli_writes_output_file(tmp_path, capsys) -> None:
     assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
 
 
+def test_cli_materialized_text_artifacts_use_exact_utf8_bytes(
+    tmp_path,
+    capsys,
+    monkeypatch,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "exact-output-bytes"},
+        "spec": {"nodes": {}},
+    }
+    source = tmp_path / "graph.yaml"
+    source.write_bytes(yaml.safe_dump(graph).encode("utf-8"))
+    composition_output = tmp_path / "composition.yaml"
+    report_output = tmp_path / "composition-report.json"
+    lock_output = tmp_path / "graphblocks.lock.json"
+
+    def reject_platform_text_translation(*args, **kwargs):
+        raise AssertionError("deterministic CLI artifacts must not use Path.write_text")
+
+    monkeypatch.setattr(Path, "write_text", reject_platform_text_translation)
+
+    assert main(
+        [
+            "compose",
+            str(source),
+            "--output",
+            str(composition_output),
+            "--report",
+            str(report_output),
+        ]
+    ) == 0
+    assert main(["lock", str(source), "--output", str(lock_output)]) == 0
+    assert capsys.readouterr().out == ""
+    for output in (composition_output, report_output, lock_output):
+        assert b"\r\n" not in output.read_bytes()
+
+
 def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -524,6 +565,67 @@ def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
 
     assert main(["run", str(path), "--input-json", '{"message":{"text":"hi"}}']) == 0
     assert '"prompt": "Echo hi"' in capsys.readouterr().out
+
+
+def test_run_cli_reports_compile_errors_and_closes_sqlite_resources(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-run"},
+        "spec": {"nodes": {"missing": {"block": "missing.block@1"}}},
+    }
+    source = tmp_path / "graph.yaml"
+    source.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    run_store = tmp_path / "runs.sqlite3"
+    journal_store = tmp_path / "journal.sqlite3"
+
+    assert main(
+        [
+            "run",
+            str(source),
+            "--run-store",
+            str(run_store),
+            "--journal-store",
+            str(journal_store),
+        ]
+    ) == 1
+
+    output = capsys.readouterr().out
+    assert output.startswith("runtime execution failed:")
+    assert "Traceback" not in output
+    for database in (run_store, journal_store):
+        if database.exists():
+            database.unlink()
+
+
+def test_plan_cli_does_not_fail_for_plugin_warning(tmp_path, capsys, monkeypatch) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "plugin-warning"},
+        "spec": {"nodes": {}},
+    }
+    source = tmp_path / "graph.yaml"
+    source.write_text(yaml.safe_dump(graph), encoding="utf-8")
+    registry = PluginRegistry(
+        (),
+        DiagnosticSet(
+            (
+                Diagnostic(
+                    "GB2999",
+                    "optional plugin metadata was ignored",
+                    "$.plugins",
+                    "warning",
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(cli_module, "discover_plugins", lambda *args, **kwargs: registry)
+
+    assert main(["plan", str(source)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["diagnostics"][0]["severity"] == "warning"
 
 
 def test_run_cli_rejects_non_standard_input_json_constants(tmp_path, capsys) -> None:
@@ -1952,6 +2054,21 @@ def test_release_build_cli_creates_deterministic_verifiable_bundle(tmp_path, cap
     assert verify_payload["ok"] is True
     assert verify_payload["bundleDigest"] == first_payload["bundleDigest"]
     assert verify_payload["releaseDigest"] == first_payload["releaseDigest"]
+
+    reordered = tmp_path / "reordered.gbr"
+    with tarfile.open(first, "r:") as source_archive:
+        members = {}
+        for name in ("manifest.json", "release.json"):
+            extracted = source_archive.extractfile(name)
+            assert extracted is not None
+            members[name] = (source_archive.getmember(name), extracted.read())
+    with tarfile.open(reordered, "w:") as reordered_archive:
+        for name in ("release.json", "manifest.json"):
+            member, contents = members[name]
+            reordered_archive.addfile(member, io.BytesIO(contents))
+
+    assert main(["release", "verify", str(reordered), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
 def test_release_build_cli_rejects_non_finite_release_numbers(tmp_path, capsys) -> None:

@@ -1001,7 +1001,6 @@ class MetricCardinalityLinter:
     def lint_samples(self, samples: Iterable[Mapping[str, object]]) -> MetricCardinalityLintResult:
         label_values: dict[tuple[str, str], set[str]] = {}
         blocked_label_values: dict[tuple[str, str], set[str]] = {}
-        blocked_labels = set(self.blocked_labels)
         for sample in samples:
             metric_name = sample.get("name")
             if not isinstance(metric_name, str) or not metric_name.strip():
@@ -1013,7 +1012,7 @@ class MetricCardinalityLinter:
                 label = str(raw_label)
                 value = str(raw_value)
                 key = (metric_name, label)
-                if label in blocked_labels:
+                if _attribute_key_matches(label, self.blocked_labels):
                     blocked_label_values.setdefault(key, set()).add(value)
                 else:
                     label_values.setdefault(key, set()).add(value)

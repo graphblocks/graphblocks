@@ -360,8 +360,24 @@ def classify_webhook_response(
             reason="rate_limited",
             retry_after=_retry_after_timestamp(normalized_headers, received_at),
         )
+    if status_code in {408, 425}:
+        return WebhookResponseDecision(
+            status_code,
+            "retry",
+            retry=True,
+            terminal=False,
+            reason="receiver_not_ready",
+        )
     if 500 <= status_code <= 599:
         return WebhookResponseDecision(status_code, "retry", retry=True, terminal=False, reason="receiver_error")
+    if 300 <= status_code <= 399:
+        return WebhookResponseDecision(
+            status_code,
+            "failed",
+            retry=False,
+            terminal=True,
+            reason="redirect_not_allowed",
+        )
     return WebhookResponseDecision(status_code, "failed", retry=False, terminal=True, reason="non_retryable")
 
 

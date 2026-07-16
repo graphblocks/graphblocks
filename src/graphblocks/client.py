@@ -138,9 +138,16 @@ class RunStreamSnapshot:
 
 
 class GraphBlocksHttpError(RuntimeError):
-    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        payload: dict[str, object],
+        *,
+        raw_body: bytes | None = None,
+    ) -> None:
         self.status_code = status_code
         self.payload = deepcopy(payload)
+        self.raw_body = bytes(raw_body) if raw_body is not None else None
         super().__init__(f"GraphBlocks HTTP request failed with status {status_code}")
 
 
@@ -1721,23 +1728,30 @@ def _canonical_json_mapping(label: str, field_name: str, value: object) -> dict[
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:
     try:
-        try:
-            payload = json.loads(
-                response.read().decode("utf-8"),
-                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
-            )
-        except ValueError as error:
-            raise ValueError(f"{label} must be valid JSON") from error
-        if not isinstance(payload, dict):
-            raise ValueError(f"{label} must be a JSON object")
         status_code = getattr(response, "status", getattr(response, "status_code", None))
         if status_code is not None:
             if isinstance(status_code, bool) or not isinstance(status_code, int):
                 raise ValueError(f"{label} status code must be an integer")
             if status_code < 100 or status_code > 599:
                 raise ValueError(f"{label} status code must be a valid HTTP status")
-            if status_code >= 400:
-                raise GraphBlocksHttpError(status_code, payload)
+        raw_body = response.read()
+        if not isinstance(raw_body, bytes):
+            raise ValueError(f"{label} body must be bytes")
+        try:
+            payload = json.loads(
+                raw_body.decode("utf-8"),
+                parse_constant=lambda constant: (_ for _ in ()).throw(ValueError(constant)),
+            )
+        except ValueError as error:
+            if status_code is not None and status_code >= 400:
+                raise GraphBlocksHttpError(status_code, {}, raw_body=raw_body) from error
+            raise ValueError(f"{label} must be valid JSON") from error
+        if not isinstance(payload, dict):
+            if status_code is not None and status_code >= 400:
+                raise GraphBlocksHttpError(status_code, {}, raw_body=raw_body)
+            raise ValueError(f"{label} must be a JSON object")
+        if status_code is not None and status_code >= 400:
+            raise GraphBlocksHttpError(status_code, payload, raw_body=raw_body)
         return payload
     finally:
         close_response = getattr(response, "close", None)

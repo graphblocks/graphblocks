@@ -156,6 +156,9 @@ class TerraformBridgeSpec:
         output_names = [binding.output_name for binding in output_bindings]
         if len(output_names) != len(set(output_names)):
             raise TerraformBridgeError("output binding names must be unique")
+        graphblocks_keys = [binding.graphblocks_key for binding in output_bindings]
+        if len(graphblocks_keys) != len(set(graphblocks_keys)):
+            raise TerraformBridgeError("output binding graphblocks_key values must be unique")
         object.__setattr__(self, "output_bindings", output_bindings)
 
         object.__setattr__(

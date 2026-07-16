@@ -180,6 +180,7 @@ def discover_mcp_tool_definitions(
 
     discovered: list[ToolDefinition] = []
     seen: set[str] = set()
+    generated_schema_owners: dict[str, str] = {}
     base_tags = _string_set(tags, owner="MCP discovery tags")
     for index, raw_tool in enumerate(raw_tools):
         if not isinstance(raw_tool, Mapping):
@@ -189,18 +190,33 @@ def discover_mcp_tool_definitions(
             raise McpToolAdapterError(f"MCP capabilities contain duplicate tool {name!r}")
         seen.add(name)
 
+        generated_input_schema = _generated_schema_ref(schema_prefix, name, "input")
         input_schema = _schema_ref(
             raw_tool.get("inputSchema", raw_tool.get("input_schema")),
-            fallback=_generated_schema_ref(schema_prefix, name, "input"),
+            fallback=generated_input_schema,
             owner=f"MCP capabilities tool {name}",
         )
         output_schema = None
+        generated_output_schema = _generated_schema_ref(schema_prefix, name, "output")
         if "outputSchema" in raw_tool or "output_schema" in raw_tool:
             output_schema = _schema_ref(
                 raw_tool.get("outputSchema", raw_tool.get("output_schema")),
-                fallback=_generated_schema_ref(schema_prefix, name, "output"),
+                fallback=generated_output_schema,
                 owner=f"MCP capabilities tool {name}",
             )
+        for schema_ref, generated_ref in (
+            (input_schema, generated_input_schema),
+            (output_schema, generated_output_schema),
+        ):
+            if schema_ref != generated_ref:
+                continue
+            previous_owner = generated_schema_owners.get(generated_ref)
+            if previous_owner is not None:
+                raise McpToolAdapterError(
+                    "MCP generated schema reference collision "
+                    f"{generated_ref!r} between {previous_owner!r} and {name!r}"
+                )
+            generated_schema_owners[generated_ref] = name
         raw_tags = raw_tool.get("tags", ())
         discovered.append(
             define_mcp_tool(

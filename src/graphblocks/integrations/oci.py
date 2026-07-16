@@ -467,6 +467,14 @@ def build_release_manifest(
     config_descriptor: OciDescriptor | None = None,
     annotations: Mapping[str, str] | None = None,
 ) -> OciManifest:
+    if release.bundle_digest is not None and bundle_descriptor.digest != release.bundle_digest:
+        raise OciContractError(
+            "bundle descriptor digest must match the digest bound to the release"
+        )
+    if release.bundle_media_type is not None and bundle_descriptor.media_type != release.bundle_media_type:
+        raise OciContractError(
+            "bundle descriptor media_type must match the media type bound to the release"
+        )
     release_annotations = {
         **_sorted_annotations(annotations or {}),
         "graphblocks.ai/release-name": release.name,

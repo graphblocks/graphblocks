@@ -20,7 +20,7 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
     )
     bundle = graphblocks_oci.OciDescriptor(
@@ -50,12 +50,51 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
     assert manifest.manifest_digest().startswith("sha256:")
 
 
+@pytest.mark.parametrize(
+    ("descriptor", "message"),
+    (
+        (
+            {"digest": _digest("different")},
+            "digest must match",
+        ),
+        (
+            {"media_type": "application/vnd.example.wrong+tar"},
+            "media_type must match",
+        ),
+    ),
+)
+def test_oci_release_manifest_rejects_descriptor_that_contradicts_release_bundle(
+    monkeypatch,
+    descriptor: dict[str, str],
+    message: str,
+) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    media_type = "application/vnd.graphblocks.release.bundle.v1+tar"
+    release = graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1").with_bundle(
+        _digest("bundle"),
+        media_type,
+    )
+    values = {
+        "media_type": media_type,
+        "digest": _digest("bundle"),
+        "size": 4096,
+        **descriptor,
+    }
+
+    with pytest.raises(graphblocks_oci.OciContractError, match=message):
+        graphblocks_oci.build_release_manifest(
+            release,
+            bundle_descriptor=graphblocks_oci.OciDescriptor(**values),
+        )
+
+
 def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
     )
     bundle = graphblocks_oci.OciDescriptor(
@@ -101,7 +140,7 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
     )
     bundle = graphblocks_oci.OciDescriptor(
@@ -143,7 +182,7 @@ def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) 
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
     )
     bundle = graphblocks_oci.OciDescriptor(
@@ -206,7 +245,7 @@ def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
         .with_lock(
             "python",
@@ -325,7 +364,7 @@ def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monk
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")
     release = (
         graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
-        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_bundle(_digest("bundle"), "application/vnd.graphblocks.release.bundle.v1+tar")
         .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
     )
 

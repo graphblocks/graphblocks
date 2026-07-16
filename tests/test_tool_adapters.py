@@ -231,6 +231,20 @@ def test_mcp_adapter_discovery_rejects_blank_tool_metadata(monkeypatch) -> None:
     assert definitions[0].tags == frozenset({"global", "support"})
 
 
+def test_mcp_adapter_rejects_generated_schema_reference_collisions(monkeypatch) -> None:
+    graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="schema reference collision"):
+        graphblocks_mcp.discover_mcp_tool_definitions(
+            {
+                "tools": [
+                    {"name": "get_user", "inputSchema": {"type": "object"}},
+                    {"name": "get-user", "inputSchema": {"type": "string"}},
+                ]
+            }
+        )
+
+
 def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     graphblocks_mcp = importlib.import_module("graphblocks.integrations.mcp")
     arguments = {"query": "billing", "limit": 5}
@@ -931,6 +945,46 @@ def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch)
     assert definitions[0].name == "createTicket"
     assert definitions[0].description == "Create a support ticket."
     assert definitions[0].tags == frozenset({"support", "tickets"})
+
+
+def test_openapi_adapter_supports_patterned_success_response_codes(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    definitions = graphblocks_openapi.define_openapi_tools_from_spec(
+        {
+            "paths": {
+                "/tickets": {
+                    "get": {
+                        "operationId": "listTickets",
+                        "responses": {
+                            "2XX": {
+                                "description": "Successful response.",
+                                "content": {
+                                    "application/json": {"schema": {"type": "array"}}
+                                },
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    assert definitions[0].output_schema == "schemas/openapi/listtickets/output@1"
+
+
+def test_openapi_adapter_rejects_generated_schema_reference_collisions(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="schema reference collision"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {
+                "paths": {
+                    "/underscore": {"get": {"operationId": "get_user"}},
+                    "/hyphen": {"get": {"operationId": "get-user"}},
+                }
+            }
+        )
 
 
 def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:

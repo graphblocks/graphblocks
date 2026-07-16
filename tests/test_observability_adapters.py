@@ -864,6 +864,26 @@ def test_metric_cardinality_linter_flags_unbounded_labels(monkeypatch) -> None:
     ]
 
 
+def test_metric_cardinality_linter_normalizes_blocked_label_spelling(monkeypatch) -> None:
+    graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
+    linter = graphblocks_telemetry.MetricCardinalityLinter()
+
+    result = linter.lint_samples(
+        (
+            {
+                "name": "graphblocks_generation_total",
+                "labels": {"runId": "run-1", "traceId": "trace-1"},
+                "value": 1,
+            },
+        )
+    )
+
+    assert [(issue.label, issue.reason) for issue in result.issues] == [
+        ("runId", "blocked_label"),
+        ("traceId", "blocked_label"),
+    ]
+
+
 def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch) -> None:
     graphblocks_telemetry = importlib.import_module("graphblocks.telemetry")
     graphblocks_otel = importlib.import_module("graphblocks.integrations.otel")

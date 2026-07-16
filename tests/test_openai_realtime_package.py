@@ -143,6 +143,16 @@ def test_openai_realtime_validates_contracts(monkeypatch) -> None:
         instructions="Answer using audio.",
     )
 
+    with pytest.raises(
+        graphblocks_openai_realtime.OpenAIRealtimeAdapterError,
+        match="reserved envelope fields",
+    ):
+        graphblocks_openai_realtime.OpenAIRealtimeEvent(
+            "session.update",
+            {"type": "response.cancel", "event_id": "spoofed"},
+            event_id="evt-authoritative",
+        )
+
     with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError):
         graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(model=" ", instructions="ok")
     with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError):

@@ -19,6 +19,7 @@ from graphblocks.server import (
     MAX_SERVER_REQUEST_JSON_DEPTH,
     ServerAsyncCallbackRejection,
     ServerAsyncCallbackSubmission,
+    ServerAuthDecision,
     ServerAuthRequest,
     ServerCallbackRegistration,
     ServerEndpoint,
@@ -63,6 +64,53 @@ def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     assert left.lookup("POST", "/runs").operation == "invoke_graph"
     assert left.lookup("GET", "/health").auth_required is False
     assert left.content_digest() == right.content_digest()
+
+
+def test_server_route_manifest_matching_is_order_independent_and_static_first() -> None:
+    endpoints = (
+        ServerEndpoint("GET", "/files/{file_id}", "http", "protected_file", auth_required=True),
+        ServerEndpoint("GET", "/files/public", "http", "public_file", auth_required=False),
+    )
+    left = ServerRouteManifest(endpoints)
+    right = ServerRouteManifest(tuple(reversed(endpoints)))
+
+    assert left.content_digest() == right.content_digest()
+    assert left.match("GET", "/files/public") == right.match("GET", "/files/public")
+    assert left.lookup("GET", "/files/public").operation == "public_file"
+    assert left.lookup("GET", "/files/secret").operation == "protected_file"
+
+
+def test_server_route_manifest_disambiguates_transport_without_breaking_default_lookup() -> None:
+    manifest = ServerRouteManifest(
+        (
+            ServerEndpoint("GET", "/events", "http", "poll_events"),
+            ServerEndpoint("GET", "/events", "sse", "stream_events"),
+            ServerEndpoint("GET", "/health", "http", "health", auth_required=False),
+        )
+    )
+
+    assert manifest.lookup("GET", "/health").operation == "health"
+    assert manifest.lookup("GET", "/events", transport="http").operation == "poll_events"
+    assert manifest.match("GET", "/events", transport="sse").endpoint.operation == "stream_events"
+    with pytest.raises(ValueError, match="ambiguous across transports"):
+        manifest.lookup("GET", "/events")
+
+
+def test_server_app_matches_requests_as_http_when_manifest_has_multiple_transports() -> None:
+    app = GraphBlocksServerApp(
+        route_manifest=ServerRouteManifest(
+            (
+                ServerEndpoint("GET", "/health", "http", "health", auth_required=False),
+                ServerEndpoint("GET", "/health", "sse", "stream_health", auth_required=False),
+            )
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={})
+    )
+
+    assert response.status_code == 200
 
 
 def test_server_route_manifest_validates_endpoint_contracts() -> None:
@@ -229,6 +277,15 @@ def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
             requested_at="2026-06-24T00:00:00Z",
         )
     )
+    lowercase_scheme = hook.authorize(
+        ServerAuthRequest(
+            route=route,
+            headers={"authorization": "bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:00:00Z",
+        )
+    )
     denied = hook.authorize(
         ServerAuthRequest(
             route=route,
@@ -250,6 +307,7 @@ def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
 
     assert allowed.allowed
     assert allowed.principal == PrincipalRef("user-1", roles=("operator",))
+    assert lowercase_scheme == allowed
     assert not denied.allowed
     assert denied.reason_codes == ("auth.invalid_bearer_token",)
     assert public.allowed
@@ -2640,16 +2698,13 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
                         "kind": "Graph",
                         "metadata": {"name": f"runtime-exception-{response_mode}"},
                         "spec": {
-                            "nodes": {
-                                "first": {
-                                    "block": "model.generate@1",
-                                    "outputs": {"response": "$output.x"},
-                                },
-                                "second": {
-                                    "block": "model.generate@1",
-                                    "outputs": {"response": "$output.x.y"},
-                                },
-                            }
+                            "nodes": {},
+                            "edges": [
+                                {
+                                    "from": "$input.missing.value",
+                                    "to": "$output.x",
+                                }
+                            ],
                         },
                     },
                     "runId": run_id,
@@ -2668,7 +2723,7 @@ def test_server_app_records_runtime_exception_as_terminal_failure(
     ]
     assert (
         app._events_by_run_id[run_id][-1]["payload"]["error"]
-        == "output path conflict at $output.x.y"
+        == "'missing'"
     )
 
 
@@ -4319,6 +4374,63 @@ def test_server_app_rejects_async_callback_when_required_authentication_is_uncon
         "reasonCodes": ["auth.callback_authentication_required"],
     }
     assert app.callback_submissions("op-ci-auth-required") == ()
+
+
+def test_server_app_required_callback_authentication_rejects_principalless_allow() -> None:
+    class PrincipallessAuthHook:
+        def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
+            del request
+            return ServerAuthDecision(True)
+
+    app = GraphBlocksServerApp(
+        auth_hook=PrincipallessAuthHook(),
+        require_async_callback_authentication=True,
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-principalless",
+            headers={"GraphBlocks-Idempotency-Key": "idem-principalless"},
+            query={},
+            cookies={},
+            body=b'{"callback_id":"cb-principalless","payload":{"ok":true}}',
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body) == {
+        "ok": False,
+        "reasonCodes": ["auth.callback_authentication_required"],
+    }
+    assert app.callback_submissions("op-principalless") == ()
+    assert app.async_callback_rejections("op-principalless") == ()
+
+
+def test_server_app_bounds_async_callback_rejection_history() -> None:
+    app = GraphBlocksServerApp()
+    history = app._async_callback_rejections_by_operation_id
+
+    for index in range(1_025):
+        operation_id = f"op-{index}"
+        history[operation_id] = (
+            ServerAsyncCallbackRejection(
+                operation_id=operation_id,
+                callback_id=f"cb-{index}",
+                idempotency_key=f"idem-{index}",
+                reason="authentication_failed",
+                received_at="2026-07-03T00:00:00Z",
+                payload_digest=f"sha256:{index:064x}",
+            ),
+        )
+
+    assert len(history) == 1_024
+    assert app.async_callback_rejections("op-0") == ()
+    assert len(app.async_callback_rejections("op-1024")) == 1
+
+    latest = history["op-1024"][0]
+    history["op-1024"] = (latest,) * 33
+    assert len(app.async_callback_rejections("op-1024")) == 32
 
 
 def test_server_app_records_async_callback_authentication_failure_rejection() -> None:
@@ -11310,7 +11422,15 @@ def test_server_app_rejects_whitespace_wrapped_webhook_callback_registration_lit
         assert app.callback_registrations() == ()
 
 
-def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> None:
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://relay.example/events",
+        "http://127.0.0.1:9000/events",
+        "secret://relay-target",
+    ),
+)
+def test_server_app_rejects_unsafe_webhook_callback_registration_target(url: str) -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
     response = app.handle(
@@ -11328,7 +11448,7 @@ def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> Non
                     "eventFilter": {"types": ["RunSucceeded"]},
                     "delivery": {
                         "kind": "webhook",
-                        "url": "http://127.0.0.1:9000/events",
+                        "url": url,
                         "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
                     },
                 }

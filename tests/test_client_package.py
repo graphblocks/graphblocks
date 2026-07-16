@@ -2704,6 +2704,36 @@ def test_http_client_closes_responses_on_success_invalid_json_and_application_er
     assert responses == []
 
 
+def test_http_client_preserves_status_and_raw_body_for_non_json_error_response() -> None:
+    graphblocks_client = importlib.import_module("graphblocks.client")
+
+    class FakeResponse:
+        status = 503
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def read(self) -> bytes:
+            return b"<html>temporarily unavailable</html>"
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = FakeResponse()
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: response,
+    )
+
+    with pytest.raises(graphblocks_client.GraphBlocksHttpError) as captured:
+        client.health()
+
+    assert captured.value.status_code == 503
+    assert captured.value.payload == {}
+    assert captured.value.raw_body == b"<html>temporarily unavailable</html>"
+    assert response.closed
+
+
 def test_client_package_attaches_to_run_over_http_transport(monkeypatch) -> None:
     graphblocks_client = importlib.import_module("graphblocks.client")
     from graphblocks.policy import PrincipalRef

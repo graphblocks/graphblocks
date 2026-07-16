@@ -181,6 +181,7 @@ def define_openapi_tools_from_spec(
 
     discovered: list[ToolDefinition] = []
     seen: set[str] = set()
+    generated_schema_owners: dict[str, str] = {}
     base_tags = _string_set(tags, owner="OpenAPI discovery tags")
     for path in sorted(raw_paths):
         path_item = raw_paths[path]
@@ -207,6 +208,8 @@ def define_openapi_tools_from_spec(
                 raise OpenApiToolAdapterError(f"OpenAPI spec produces duplicate tool {tool_name!r}")
             seen.add(tool_name)
 
+            generated_input_schema = _generated_schema_ref(schema_prefix, operation_id, "input")
+            generated_output_schema = _generated_schema_ref(schema_prefix, operation_id, "output")
             input_schema = _operation_schema_ref(
                 operation.get("x-graphblocks-input-schema"),
                 fallback=_request_schema_ref(operation, schema_prefix, operation_id),
@@ -219,6 +222,20 @@ def define_openapi_tools_from_spec(
                 owner=f"OpenAPI operation {operation_id} output schema",
                 schema_prefix=schema_prefix,
             )
+            operation_owner = f"{method.upper()} {path} ({operation_id})"
+            for schema_ref, generated_ref in (
+                (input_schema, generated_input_schema),
+                (output_schema, generated_output_schema),
+            ):
+                if schema_ref != generated_ref:
+                    continue
+                previous_owner = generated_schema_owners.get(generated_ref)
+                if previous_owner is not None:
+                    raise OpenApiToolAdapterError(
+                        "OpenAPI generated schema reference collision "
+                        f"{generated_ref!r} between {previous_owner} and {operation_owner}"
+                    )
+                generated_schema_owners[generated_ref] = operation_owner
             discovered.append(
                 define_openapi_tool(
                     name=tool_name,
@@ -784,6 +801,8 @@ def _schema_ref_from_openapi_schema(
 def _is_success_status_code(status_code: str) -> bool:
     if status_code.lower() == "default":
         return False
+    if status_code.upper() == "2XX":
+        return True
     return len(status_code) == 3 and status_code[0] == "2" and status_code[1:].isdigit()
 
 

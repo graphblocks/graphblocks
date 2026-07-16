@@ -10,7 +10,7 @@ from threading import Condition, get_ident
 from time import monotonic, time
 from types import MappingProxyType
 from typing import Literal, Protocol
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote
 
 from .admission import (
     AdmissionError,
@@ -338,17 +338,10 @@ def _validate_callback_not_authoritative(owner: str, config: Mapping[str, object
 
 
 def _webhook_url_is_unsafe(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return True
-    if parsed.scheme in {"file", "unix"}:
-        return True
-    if parsed.scheme not in {"http", "https", "secret"}:
-        return True
-    if parsed.scheme == "secret":
-        return False
-    return not validate_webhook_url(url).allowed
+    return not validate_webhook_url(
+        url,
+        allowed_schemes=frozenset({"https"}),
+    ).allowed
 
 
 def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object]) -> None:
@@ -654,7 +647,27 @@ class ServerRouteManifest:
             if key in seen:
                 raise ValueError(f"duplicate server endpoint {endpoint.method} {endpoint.path} {endpoint.transport}")
             seen.add(key)
-        object.__setattr__(self, "endpoints", endpoints)
+        object.__setattr__(
+            self,
+            "endpoints",
+            tuple(
+                sorted(
+                    endpoints,
+                    key=lambda endpoint: (
+                        endpoint.method,
+                        sum(
+                            part.startswith("{") and part.endswith("}")
+                            for part in endpoint.path.strip("/").split("/")
+                            if part
+                        ),
+                        endpoint.path,
+                        endpoint.transport,
+                        endpoint.operation,
+                        endpoint.auth_required,
+                    ),
+                )
+            ),
+        )
 
     def with_endpoint(
         self,
@@ -674,16 +687,27 @@ class ServerRouteManifest:
         transport = _validate_transport(transport)
         return tuple(endpoint for endpoint in self.endpoints if endpoint.transport == transport)
 
-    def match(self, method: str, path: str) -> ServerRouteMatch:
+    def match(
+        self,
+        method: str,
+        path: str,
+        *,
+        transport: ServerTransport | None = None,
+    ) -> ServerRouteMatch:
         normalized_method = _validate_non_empty_string("server route lookup", "method", method).upper()
         path = _validate_route_path("server route lookup", path)
+        normalized_transport = _validate_transport(transport) if transport is not None else None
         path_parts = [part for part in path.strip("/").split("/") if part]
+        matches: list[ServerRouteMatch] = []
         for endpoint in self.endpoints:
             if endpoint.method != normalized_method:
                 continue
+            if normalized_transport is not None and endpoint.transport != normalized_transport:
+                continue
             endpoint_parts = [part for part in endpoint.path.strip("/").split("/") if part]
             if endpoint.path == path:
-                return ServerRouteMatch(endpoint)
+                matches.append(ServerRouteMatch(endpoint))
+                continue
             if len(endpoint_parts) != len(path_parts):
                 continue
             path_params: dict[str, str] = {}
@@ -694,11 +718,39 @@ class ServerRouteManifest:
                 if template_part != path_part:
                     break
             else:
-                return ServerRouteMatch(endpoint, path_params)
+                matches.append(ServerRouteMatch(endpoint, path_params))
+        if matches:
+            if normalized_transport is None:
+                matching_transports = {match.endpoint.transport for match in matches}
+                if len(matching_transports) > 1:
+                    raise ValueError(
+                        f"server route {normalized_method} {path!r} is ambiguous across transports; "
+                        "specify transport"
+                    )
+            return min(
+                matches,
+                key=lambda match: (
+                    match.endpoint.path != path,
+                    sum(
+                        part.startswith("{") and part.endswith("}")
+                        for part in match.endpoint.path.strip("/").split("/")
+                        if part
+                    ),
+                    match.endpoint.path,
+                    match.endpoint.transport,
+                    match.endpoint.operation,
+                ),
+            )
         raise ServerRouteNotFoundError(method, path)
 
-    def lookup(self, method: str, path: str) -> ServerEndpoint:
-        return self.match(method, path).endpoint
+    def lookup(
+        self,
+        method: str,
+        path: str,
+        *,
+        transport: ServerTransport | None = None,
+    ) -> ServerEndpoint:
+        return self.match(method, path, transport=transport).endpoint
 
     def content_digest(self) -> str:
         return canonical_hash(
@@ -1427,6 +1479,27 @@ class ServerAsyncCallbackRejection:
         return value
 
 
+class _BoundedAsyncCallbackRejectionHistory(
+    dict[str, tuple[ServerAsyncCallbackRejection, ...]]
+):
+    """Keep diagnostic callback receipts useful without accepting unbounded input."""
+
+    _MAX_OPERATION_IDS = 1_024
+    _MAX_REJECTIONS_PER_OPERATION = 32
+
+    def __setitem__(
+        self,
+        operation_id: str,
+        rejections: tuple[ServerAsyncCallbackRejection, ...],
+    ) -> None:
+        if operation_id not in self and len(self) >= self._MAX_OPERATION_IDS:
+            del self[next(iter(self))]
+        super().__setitem__(
+            operation_id,
+            tuple(rejections[-self._MAX_REJECTIONS_PER_OPERATION :]),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ServerEventSubscription:
     subscription_id: str
@@ -1918,9 +1991,10 @@ class StaticBearerAuthHook:
         if not request.route.auth_required:
             return ServerAuthDecision(True)
         authorization = request.headers.get("authorization", "")
-        if not authorization.startswith("Bearer "):
+        scheme, separator, token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not separator:
             return ServerAuthDecision(False, reason_codes=("auth.missing_bearer_token",))
-        token = authorization.removeprefix("Bearer ").strip()
+        token = token.strip()
         principal = self.principals_by_token.get(token)
         if principal is None:
             return ServerAuthDecision(False, reason_codes=("auth.invalid_bearer_token",))
@@ -2044,7 +2118,7 @@ class GraphBlocksServerApp:
         repr=False,
     )
     _async_callback_rejections_by_operation_id: dict[str, tuple[ServerAsyncCallbackRejection, ...]] = field(
-        default_factory=dict,
+        default_factory=_BoundedAsyncCallbackRejectionHistory,
         init=False,
         repr=False,
     )
@@ -2150,7 +2224,20 @@ class GraphBlocksServerApp:
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
-            route_match = self.route_manifest.match(request.method, request.path)
+            requested_transport: ServerTransport = "http"
+            if request.headers.get("upgrade", "").casefold() == "websocket":
+                requested_transport = "websocket"
+            elif "text/event-stream" in request.headers.get("accept", "").casefold():
+                requested_transport = "sse"
+            try:
+                route_match = self.route_manifest.match(
+                    request.method,
+                    request.path,
+                    transport=requested_transport,
+                )
+            except ServerRouteNotFoundError:
+                # SSE endpoints are also commonly polled over a plain HTTP GET.
+                route_match = self.route_manifest.match(request.method, request.path)
             route = route_match.endpoint
         except ServerRouteNotFoundError as error:
             return ServerResponse.json(
@@ -2193,6 +2280,18 @@ class GraphBlocksServerApp:
                         "reasonCodes": list(auth_decision.reason_codes),
                     },
                 )
+        if (
+            route.operation == "submit_async_callback"
+            and self.require_async_callback_authentication
+            and auth_decision.principal is None
+        ):
+            return ServerResponse.json(
+                401,
+                {
+                    "ok": False,
+                    "reasonCodes": ["auth.callback_authentication_required"],
+                },
+            )
 
         if route.operation == "health":
             return ServerResponse.json(200, self.health.to_payload())
@@ -2658,14 +2757,6 @@ class GraphBlocksServerApp:
                     },
                 )
         if route.operation == "submit_async_callback":
-            if self.require_async_callback_authentication and self.auth_hook is None:
-                return ServerResponse.json(
-                    401,
-                    {
-                        "ok": False,
-                        "reasonCodes": ["auth.callback_authentication_required"],
-                    },
-                )
             callback_state_locked = False
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(

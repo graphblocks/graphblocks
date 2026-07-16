@@ -173,6 +173,12 @@ class OpenAIRealtimeEvent:
         _require_non_empty("event_type", self.event_type)
         if self.event_id is not None:
             _require_non_empty("event_id", self.event_id)
+        reserved_fields = {"type", "event_id"}.intersection(self.payload)
+        if reserved_fields:
+            fields = ", ".join(sorted(reserved_fields))
+            raise OpenAIRealtimeAdapterError(
+                f"event payload must not contain reserved envelope fields: {fields}"
+            )
         object.__setattr__(self, "payload", dict(self.payload))
 
     @classmethod
