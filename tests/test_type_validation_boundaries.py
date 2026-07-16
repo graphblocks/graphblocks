@@ -81,6 +81,7 @@ def test_cli_reports_cross_plugin_block_catalog_conflicts_without_traceback(
                     "metadata": {"name": f"com.example.plugin{index}"},
                     "spec": {
                         "pluginId": f"com.example.plugin{index}",
+                        "version": "1.0.0",
                         "blocks": [{"typeId": "test.echo", "version": 1}],
                     },
                 }

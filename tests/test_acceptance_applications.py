@@ -1267,6 +1267,76 @@ def test_conformance_profile_set_rejects_malformed_profile_lists(monkeypatch) ->
         graphblocks_testing.ConformanceProfileSet.from_document(document)
 
 
+def test_conformance_profile_set_rejects_inheritance_cycles(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        {
+            "kind": "ConformanceProfileSet",
+            "spec": {
+                "profiles": [
+                    {"id": "A", "status": "preview", "extends": ["B"]},
+                    {"id": "B", "status": "preview", "extends": ["A"]},
+                ]
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match=r"inheritance cycle: A -> B -> A"):
+        profile_set.claim_requirements(("A",))
+
+
+def test_acceptance_application_rejects_non_repository_local_scenario_paths(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+
+    for scenario_path in ("../outside.yaml", str((tmp_path / "outside.yaml").resolve())):
+        with pytest.raises(ValueError, match="scenario_path must be repository-local"):
+            graphblocks_testing.AcceptanceApplication(
+                application_id="escaped",
+                profiles=("GB-C0-SCHEMA",),
+                scenario_path=scenario_path,
+            )
+
+
+def test_acceptance_coverage_rejects_scenario_symlink_outside_root(
+    monkeypatch,
+    tmp_path,
+    symlink_or_skip,
+) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("apiVersion: graphblocks.ai/v1alpha1\nkind: Graph\n", encoding="utf-8")
+    symlink_or_skip(root / "scenario.yaml", outside)
+    application = graphblocks_testing.AcceptanceApplication(
+        application_id="escaped",
+        profiles=("GB-C0-SCHEMA",),
+        scenario_path="scenario.yaml",
+    )
+    manifest = graphblocks_testing.AcceptanceManifest((application,))
+
+    coverage = manifest.coverage_for_conformance(
+        {
+            "spec": {
+                "profiles": [
+                    {
+                        "id": "GB-C0-SCHEMA",
+                        "acceptanceApplications": ["escaped"],
+                    }
+                ]
+            }
+        },
+        root=root,
+    )
+
+    assert "AcceptanceFixtureOutsideRoot" in {issue.code for issue in coverage.issues}
+    with pytest.raises(ValueError, match="must remain beneath root"):
+        graphblocks_testing.AcceptanceGateRunner().run_application(application, root=root)
+
+
 def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     profile_set = graphblocks_testing.ConformanceProfileSet.from_document(

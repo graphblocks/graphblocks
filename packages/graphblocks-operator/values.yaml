@@ -11,10 +11,11 @@ controller:
 
 serviceAccount:
   create: true
-  name: graphblocks-operator
+  name: ""
 
 rbac:
   create: true
+  clusterWide: false
 
 podAnnotations: {}
 podLabels: {}

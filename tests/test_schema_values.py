@@ -280,12 +280,12 @@ def test_schema_manifest_rejects_non_standard_json_constants(tmp_path: Path) -> 
         SchemaManifest.from_directory(tmp_path)
 
 
-def test_schema_manifest_rejects_symlinked_schema_documents(tmp_path: Path) -> None:
+def test_schema_manifest_rejects_symlinked_schema_documents(tmp_path: Path, symlink_or_skip) -> None:
     root = tmp_path / "schemas"
     root.mkdir()
     outside = tmp_path / "outside.json"
     outside.write_text('{"$id":"example.com/Outside.schema.json"}', encoding="utf-8")
-    (root / "inside.json").symlink_to(outside)
+    symlink_or_skip(root / "inside.json", outside)
 
     with pytest.raises(SchemaManifestError, match="regular non-symlinked files"):
         SchemaManifest.from_directory(root)
@@ -385,4 +385,18 @@ def test_checked_in_schema_manifest_digest_is_golden() -> None:
         "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
         "graphblocks.ai/v1alpha3/graph.schema.json",
     ]
-    assert manifest.content_digest() == "sha256:f3f12cfefc92869ed83e0da2d1779528484b603293759ad9c653f090f60a985f"
+    assert manifest.content_digest() == "sha256:29e5e9221b9d413f7b69d610c91cbbe775ac05a351fcc85cb81735411b4f92dc"
+
+
+def test_rust_schema_package_mirrors_canonical_resource_schemas() -> None:
+    root = Path(__file__).resolve().parents[1]
+    canonical_root = root / "schemas"
+    rust_root = root / "crates" / "graphblocks-schema" / "schemas"
+
+    assert {
+        path.relative_to(canonical_root).as_posix(): path.read_bytes()
+        for path in canonical_root.rglob("*.json")
+    } == {
+        path.relative_to(rust_root).as_posix(): path.read_bytes()
+        for path in rust_root.rglob("*.json")
+    }

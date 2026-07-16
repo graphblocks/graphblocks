@@ -1049,6 +1049,37 @@ def build_wheel_matrix(
                     )
                 )
                 continue
+            resolved_root = root_path.resolve()
+            maturin_paths = (
+                ("python-source", str(python_source)),
+                ("manifest-path", str(manifest_ref)),
+            )
+            outside_root = False
+            for field_name, path_value in maturin_paths:
+                reference = Path(path_value)
+                try:
+                    candidate = (manifest_path.parent / reference).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    diagnostics.append(
+                        Diagnostic(
+                            "WheelBuildTargetInvalid",
+                            f"maturin wheel target {distribution!r} declares an invalid {field_name}",
+                            f"{path_prefix}.tool.maturin.{field_name}",
+                        )
+                    )
+                    outside_root = True
+                    continue
+                if reference.is_absolute() or not candidate.is_relative_to(resolved_root):
+                    diagnostics.append(
+                        Diagnostic(
+                            "WheelBuildTargetOutsideRoot",
+                            f"maturin wheel target {distribution!r} {field_name} must remain beneath root",
+                            f"{path_prefix}.tool.maturin.{field_name}",
+                        )
+                    )
+                    outside_root = True
+            if outside_root:
+                continue
             targets.append(
                 WheelBuildTarget(
                     distribution=distribution,
@@ -1208,6 +1239,7 @@ def audit_package_manifests(
                         )
 
     workspace_license: str | None = None
+    workspace_dependencies: dict[str, object] = {}
     workspace_manifest_path = root_path / "Cargo.toml"
     if workspace_manifest_path.exists():
         try:
@@ -1221,10 +1253,14 @@ def audit_package_manifests(
                 )
             )
             workspace_manifest = {}
-        workspace_package = workspace_manifest.get("workspace", {}).get("package")
+        workspace = workspace_manifest.get("workspace", {})
+        workspace_package = workspace.get("package") if isinstance(workspace, dict) else None
         if isinstance(workspace_package, dict):
             raw_workspace_license = workspace_package.get("license")
             workspace_license = raw_workspace_license if isinstance(raw_workspace_license, str) else None
+        raw_workspace_dependencies = workspace.get("dependencies") if isinstance(workspace, dict) else None
+        if isinstance(raw_workspace_dependencies, dict):
+            workspace_dependencies = dict(raw_workspace_dependencies)
 
     for manifest_path in sorted(root_path.glob("crates/*/Cargo.toml")):
         relative_path = manifest_path.relative_to(root_path).as_posix()
@@ -1272,22 +1308,38 @@ def audit_package_manifests(
                     f"$.{relative_path}.package.license",
                 )
             )
+        dependency_tables: list[tuple[str, dict[str, object]]] = []
         for table_name in ("dependencies", "dev-dependencies", "build-dependencies"):
-            dependencies = manifest.get(table_name, {})
-            if not isinstance(dependencies, dict):
-                continue
+            dependencies = manifest.get(table_name)
+            if isinstance(dependencies, dict):
+                dependency_tables.append((table_name, dependencies))
+        target_tables = manifest.get("target")
+        if isinstance(target_tables, dict):
+            for target_name, target_config in sorted(target_tables.items()):
+                if not isinstance(target_config, dict):
+                    continue
+                for table_name in ("dependencies", "dev-dependencies", "build-dependencies"):
+                    dependencies = target_config.get(table_name)
+                    if isinstance(dependencies, dict):
+                        dependency_tables.append(
+                            (f"target.{target_name}.{table_name}", dependencies)
+                        )
+        for table_path, dependencies in dependency_tables:
             for dependency, dependency_spec in sorted(dependencies.items()):
-                dependency_name = str(dependency).strip().lower().replace("_", "-")
-                if isinstance(dependency_spec, dict):
-                    package_name = dependency_spec.get("package")
+                dependency_name = canonicalize_name(str(dependency).strip())
+                resolved_spec = dependency_spec
+                if isinstance(dependency_spec, dict) and dependency_spec.get("workspace") is True:
+                    resolved_spec = workspace_dependencies.get(str(dependency), dependency_spec)
+                if isinstance(resolved_spec, dict):
+                    package_name = resolved_spec.get("package")
                     if isinstance(package_name, str) and package_name.strip():
-                        dependency_name = package_name.strip().lower().replace("_", "-")
+                        dependency_name = canonicalize_name(package_name.strip())
                 if dependency_name in blocked_dependencies:
                     diagnostics.append(
                         Diagnostic(
                             "PackageBlockedDependency",
                             f"dependency {dependency_name!r} is blocked by vulnerability policy",
-                            f"$.{relative_path}.{table_name}.{dependency}",
+                            f"$.{relative_path}.{table_path}.{dependency}",
                         )
                     )
 

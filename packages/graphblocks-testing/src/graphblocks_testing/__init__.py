@@ -2743,13 +2743,33 @@ def load_schema_resource_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
-def _tck_fixture_digest(path: Path) -> str:
+def _tck_fixture_paths(suite: str, path: Path) -> tuple[Path, ...]:
+    paths = [path]
+    if suite == "schema":
+        paths.extend(
+            candidate
+            for candidate in (
+                path.with_name("resources.json"),
+                path.with_name("typed-values.json"),
+            )
+            if candidate.is_file()
+        )
+    return tuple(paths)
+
+
+def _tck_fixture_digest(suite: str, path: Path) -> str:
     return canonical_hash(
         {
             fixture.name: "sha256:" + hashlib.sha256(fixture.read_bytes()).hexdigest()
-            for fixture in sorted(path.parent.glob("*.json"))
+            for fixture in _tck_fixture_paths(suite, path)
         }
     )
+
+
+def _tck_registry(suite: str) -> RuntimeRegistry:
+    if suite == "runtime":
+        return stdlib_registry()
+    return core_stdlib_registry()
 
 
 def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
@@ -2774,11 +2794,7 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
                 raise ValueError(f"TCK suite {suite_id} has duplicate case id {case_id!r}")
             seen.add(case_id)
             case_ids.append(case_id)
-        auxiliary_files = tuple(
-            auxiliary_path
-            for auxiliary_path in sorted(path.parent.glob("*.json"))
-            if auxiliary_path.name != "cases.json"
-        )
+        auxiliary_files = _tck_fixture_paths(suite_id, path)[1:]
         if suite_id == "schema":
             auxiliary_schema_loaders = (
                 (path.parent / "resources.json", load_schema_resource_tck_cases),
@@ -2799,7 +2815,7 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
                 suite_id=suite_id,
                 path=path.relative_to(root_path).as_posix(),
                 case_ids=tuple(case_ids),
-                fixture_digest=_tck_fixture_digest(path),
+                fixture_digest=_tck_fixture_digest(suite_id, path),
                 auxiliary_paths=tuple(
                     auxiliary_path.relative_to(root_path).as_posix()
                     for auxiliary_path in auxiliary_files
@@ -2918,7 +2934,7 @@ def run_bundled_tck_suite(
     if profile == "native" and suite != "runtime":
         raise ValueError("native TCK profile is supported only for the runtime suite")
     return TckRunner(
-        core_stdlib_registry(),
+        _tck_registry(suite),
         profile=profile,
         evidence_dir=Path(evidence_dir) if evidence_dir is not None else None,
         suite=suite,
@@ -3067,6 +3083,19 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(payload["error"])
             return 1
+        if args.path is None and args.suite not in _BUNDLED_TCK_SUITES:
+            payload = {
+                "ok": False,
+                "error": (
+                    f"TCK suite {args.suite!r} is not bundled with graphblocks-testing; "
+                    "provide an explicit cases.json path"
+                ),
+            }
+            if args.json:
+                print(canonical_dumps(payload))
+            else:
+                print(payload["error"])
+            return 1
         if args.path is None:
             report = run_bundled_tck_suite(
                 args.suite,
@@ -3076,11 +3105,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             cases = load_tck_cases_for_suite(args.suite, args.path)
             report = TckRunner(
-                stdlib_registry(),
+                _tck_registry(args.suite),
                 profile=args.profile,
                 evidence_dir=args.evidence_dir,
                 suite=args.suite,
-                fixture_digest=_tck_fixture_digest(args.path),
+                fixture_digest=_tck_fixture_digest(args.suite, args.path),
             ).run_cases(cases)
         payload = report.report_contract()
         payload["contentDigest"] = report.content_digest()
@@ -3113,12 +3142,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         reports: dict[str, dict[str, object]] = {}
         ok = True
-        registry = core_stdlib_registry() if args.root is None else stdlib_registry()
         for manifest in manifests:
             evidence_dir = args.evidence_dir / manifest.suite_id if args.evidence_dir is not None else None
             fixture_path = tck_root / manifest.path
             report = TckRunner(
-                registry,
+                _tck_registry(manifest.suite_id),
                 profile=args.profile,
                 evidence_dir=evidence_dir,
                 suite=manifest.suite_id,
@@ -3146,6 +3174,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _acceptance_scenario_path_beneath_root(root: Path, scenario_path: str) -> Path:
+    resolved_root = root.resolve()
+    reference = Path(scenario_path)
+    if reference.is_absolute():
+        raise ValueError("acceptance application scenario_path must be repository-local")
+    resolved_path = (resolved_root / reference).resolve()
+    if not resolved_path.is_relative_to(resolved_root):
+        raise ValueError("acceptance application scenario_path must remain beneath root")
+    return resolved_path
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceApplication:
     application_id: str
@@ -3162,6 +3201,9 @@ class AcceptanceApplication:
             raise ValueError("acceptance application profiles must not be empty")
         if not self.scenario_path.strip():
             raise ValueError("acceptance application scenario_path must not be empty")
+        scenario_reference = Path(self.scenario_path)
+        if scenario_reference.is_absolute() or ".." in scenario_reference.parts:
+            raise ValueError("acceptance application scenario_path must be repository-local")
         for profile in self.profiles:
             if not profile.strip():
                 raise ValueError("acceptance application profile ids must not be empty")
@@ -3688,13 +3730,24 @@ class ConformanceProfileSet:
 
     def claim_requirements(self, profile_ids: tuple[str, ...]) -> ConformanceClaimRequirements:
         included: set[str] = set()
+        visiting: list[str] = []
 
         def include(profile_id: str) -> None:
             if profile_id in included:
                 return
+            if profile_id in visiting:
+                cycle_start = visiting.index(profile_id)
+                cycle = (*visiting[cycle_start:], profile_id)
+                raise ValueError(
+                    "conformance profile inheritance cycle: " + " -> ".join(cycle)
+                )
             profile = self.by_id(profile_id)
-            for parent_id in profile.extends:
-                include(parent_id)
+            visiting.append(profile_id)
+            try:
+                for parent_id in profile.extends:
+                    include(parent_id)
+            finally:
+                visiting.pop()
             included.add(profile.profile_id)
 
         for profile_id in profile_ids:
@@ -4061,8 +4114,29 @@ class AcceptanceManifest:
                     )
         for application in self.applications:
             scenario_digest: str | None = None
-            scenario_path = root / application.scenario_path if root is not None else None
-            if scenario_path is None:
+            scenario_path: Path | None = None
+            scenario_outside_root = False
+            if root is not None:
+                try:
+                    scenario_path = _acceptance_scenario_path_beneath_root(
+                        root,
+                        application.scenario_path,
+                    )
+                except ValueError:
+                    scenario_outside_root = True
+                    issues.append(
+                        AcceptanceCoverageIssue(
+                            code="AcceptanceFixtureOutsideRoot",
+                            application_id=application.application_id,
+                            profile_id="",
+                            path=(
+                                f"$.spec.applications[{application.application_id}]."
+                                "scenarioPath"
+                            ),
+                            message="acceptance application scenario path must remain beneath root",
+                        )
+                    )
+            if root is None:
                 issues.append(
                     AcceptanceCoverageIssue(
                         code="AcceptanceScenarioDigestMissing",
@@ -4075,7 +4149,9 @@ class AcceptanceManifest:
                         message="acceptance evidence requires a root to digest the scenario",
                     )
                 )
-            elif not scenario_path.exists():
+            elif scenario_outside_root:
+                pass
+            elif scenario_path is not None and not scenario_path.exists():
                 issues.append(
                     AcceptanceCoverageIssue(
                         code="AcceptanceFixtureMissing",
@@ -7262,7 +7338,7 @@ class AcceptanceGateRunner:
         *,
         root: Path,
     ) -> AcceptanceApplicationReport:
-        scenario_path = root / application.scenario_path
+        scenario_path = _acceptance_scenario_path_beneath_root(root, application.scenario_path)
         try:
             scenario_digest = canonical_hash(load_documents(scenario_path))
         except (OSError, TypeError, ValueError, yaml.YAMLError) as error:

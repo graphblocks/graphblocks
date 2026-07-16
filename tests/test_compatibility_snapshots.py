@@ -9,6 +9,7 @@ import sys
 import yaml
 
 import graphblocks
+import tools.check_compatibility as compatibility_module
 from tools.check_compatibility import (
     _check_or_update,
     _dataclass_contract,
@@ -43,6 +44,26 @@ def test_snapshot_writer_requires_explicit_update_for_drift(tmp_path, capsys) ->
     assert _check_or_update(snapshot_path, contract, update=True) is True
     capsys.readouterr()
     assert _check_or_update(snapshot_path, contract, update=False) is True
+
+
+def test_compatibility_cli_reports_missing_snapshot_without_traceback(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        compatibility_module,
+        "PYTHON_SNAPSHOT_PATH",
+        tmp_path / "missing-snapshot.json",
+    )
+
+    assert compatibility_module.main([]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "compatibility snapshot error:" in captured.err
+    assert "missing-snapshot.json" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_dataclass_snapshot_captures_behavioral_contracts() -> None:

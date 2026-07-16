@@ -49,6 +49,42 @@ def test_checked_in_resource_schemas_are_valid_draft_2020_12() -> None:
     }
 
 
+def test_v1alpha3_graph_schema_rejects_dotted_composition_import_alias() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "dotted-import"},
+        "spec": {
+            "nodes": {},
+            "composition": {
+                "apiVersion": "graphblocks.ai/composition/v1alpha1",
+                "imports": {"lib.v2": {"path": "fragment.yaml"}},
+                "slots": {},
+            },
+        },
+    }
+
+    violations = resource_schema_errors(document, schema_root=ROOT / "schemas")
+
+    assert [(item.path, item.keyword) for item in violations] == [
+        ("$.spec.composition.imports", "pattern")
+    ]
+
+
+def test_stable_plugin_manifest_schema_requires_version() -> None:
+    document = {
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "missing-version"},
+        "spec": {"pluginId": "missing-version", "blocks": []},
+    }
+
+    violations = resource_schema_errors(document, schema_root=ROOT / "schemas")
+
+    assert [(item.path, item.keyword) for item in violations] == [
+        ("$.spec", "required")
+    ]
+
 @pytest.mark.parametrize("api_version", ["graphblocks.ai/v1", "graphblocks.ai/v1alpha1"])
 @pytest.mark.parametrize("direction", ["inputs", "outputs"])
 def test_plugin_manifest_schema_rejects_noncanonical_endpoint_names(

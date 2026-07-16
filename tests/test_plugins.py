@@ -320,7 +320,7 @@ def test_plugin_manifest_validation_requires_plugin_id() -> None:
             "apiVersion": "graphblocks.ai/v1alpha1",
             "kind": "PluginManifest",
             "metadata": {},
-            "spec": {"blocks": []},
+            "spec": {"version": "1.0.0", "blocks": []},
         }
     )
 
@@ -337,6 +337,7 @@ def test_plugin_manifest_validation_rejects_non_canonical_block_versions(version
             "metadata": {"name": "com.example.bad_version"},
             "spec": {
                 "pluginId": "com.example.bad_version",
+                "version": "1.0.0",
                 "blocks": [{"typeId": "bad.version", "version": version}],
             },
         }
@@ -355,6 +356,7 @@ def test_plugin_manifest_validation_rejects_non_canonical_inline_block_version()
             "metadata": {"name": "com.example.bad_inline_version"},
             "spec": {
                 "pluginId": "com.example.bad_inline_version",
+                "version": "1.0.0",
                 "blocks": [{"typeId": "bad.version@01"}],
             },
         }
@@ -373,6 +375,7 @@ def test_plugin_manifest_rejects_duplicate_block_id_with_different_implementatio
             "metadata": {"name": "com.example.duplicate_blocks"},
             "spec": {
                 "pluginId": "com.example.duplicate_blocks",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "test.echo",
@@ -401,6 +404,7 @@ def test_plugin_manifest_validation_rejects_duplicate_port_names() -> None:
             "metadata": {"name": "com.example.duplicate_ports"},
             "spec": {
                 "pluginId": "com.example.duplicate_ports",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "test.echo",
@@ -426,6 +430,7 @@ def test_plugin_manifest_validates_output_requiredness_predicates() -> None:
         "metadata": {"name": "com.example.conditional_outputs"},
         "spec": {
             "pluginId": "com.example.conditional_outputs",
+            "version": "1.0.0",
             "blocks": [
                 {
                     "typeId": "branch.conditional",
@@ -472,6 +477,7 @@ def test_plugin_manifest_rejects_required_when_on_input() -> None:
             "metadata": {"name": "com.example.invalid_input_predicate"},
             "spec": {
                 "pluginId": "com.example.invalid_input_predicate",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "branch.invalid_input",
@@ -499,7 +505,11 @@ def test_duplicate_plugin_id_is_registry_error(tmp_path) -> None:
         "apiVersion": "graphblocks.ai/v1alpha1",
         "kind": "PluginManifest",
         "metadata": {"name": "com.example.duplicate", "version": "1.0.0"},
-        "spec": {"pluginId": "com.example.duplicate", "blocks": []},
+        "spec": {
+            "pluginId": "com.example.duplicate",
+            "version": "1.0.0",
+            "blocks": [],
+        },
     }
     (tmp_path / "one.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
     (tmp_path / "two.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
@@ -721,6 +731,7 @@ def test_plugin_manifest_validation_rejects_port_without_name() -> None:
             "metadata": {"name": "com.example.bad_ports"},
             "spec": {
                 "pluginId": "com.example.bad_ports",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.block",
@@ -777,6 +788,7 @@ def test_plugin_manifest_validation_rejects_invalid_descriptor_schema_ids() -> N
             "metadata": {"name": "com.example.bad_schema_refs"},
             "spec": {
                 "pluginId": "com.example.bad_schema_refs",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.block",
@@ -807,6 +819,7 @@ def test_plugin_manifest_validation_allows_descriptor_type_expressions() -> None
             "metadata": {"name": "com.example.type_expressions"},
             "spec": {
                 "pluginId": "com.example.type_expressions",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "control.map",
@@ -831,6 +844,7 @@ def test_plugin_manifest_validation_reports_excessive_type_expression_depth() ->
             "metadata": {"name": "com.example.deep_type_expression"},
             "spec": {
                 "pluginId": "com.example.deep_type_expression",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "deep.block",
@@ -893,6 +907,7 @@ def test_plugin_manifest_validation_rejects_malformed_type_expressions(type_ref:
             "metadata": {"name": "com.example.bad_type_expression"},
             "spec": {
                 "pluginId": "com.example.bad_type_expression",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.block",
@@ -986,6 +1001,7 @@ def test_plugin_manifest_validation_rejects_invalid_dict_resource_slot_schema_id
             "metadata": {"name": "com.example.bad_resource_slot_schema_ref"},
             "spec": {
                 "pluginId": "com.example.bad_resource_slot_schema_ref",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.block",
@@ -1015,6 +1031,7 @@ def test_plugin_manifest_validation_rejects_malformed_opaque_resource_types(
             "metadata": {"name": "com.example.bad_opaque_resource"},
             "spec": {
                 "pluginId": "com.example.bad_opaque_resource",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.resource",
@@ -1038,6 +1055,7 @@ def test_plugin_manifest_validation_rejects_non_boolean_contract_flags() -> None
             "metadata": {"name": "com.example.bad_flags"},
             "spec": {
                 "pluginId": "com.example.bad_flags",
+                "version": "1.0.0",
                 "blocks": [
                     {
                         "typeId": "bad.flags",

@@ -8260,6 +8260,26 @@ def test_tck_suite_manifest_digest_binds_auxiliary_fixtures(tmp_path, monkeypatc
     assert first.fixture_digest != second.fixture_digest
 
 
+def test_tck_suite_manifest_digest_ignores_unexecuted_json_siblings(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    suite = tmp_path / "policy"
+    suite.mkdir()
+    (suite / "cases.json").write_text('[{"name":"only-case"}]', encoding="utf-8")
+    scratch = suite / "scratch.json"
+    scratch.write_text('{"draft":1}', encoding="utf-8")
+
+    first = graphblocks_testing.load_tck_suite_manifests(tmp_path)[0]
+    scratch.write_text('{"draft":2}', encoding="utf-8")
+    second = graphblocks_testing.load_tck_suite_manifests(tmp_path)[0]
+
+    assert first.fixture_digest == second.fixture_digest
+    assert first.auxiliary_paths == ()
+
+
 def test_tck_suite_discovery_rejects_empty_roots_and_suites(tmp_path, monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -8363,6 +8383,48 @@ def test_testing_package_bundled_c0_c1_helpers_and_cli_need_no_external_path(
     run = json.loads(capsys.readouterr().out)
     assert run["evidence"]["suite"] == "schema"
     assert run["ok"] is True
+
+
+def test_testing_package_cli_reports_advertised_unbundled_suite_without_traceback(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    assert graphblocks_testing.main(["run", "policy", "--json"]) == 1
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": (
+            "TCK suite 'policy' is not bundled with graphblocks-testing; "
+            "provide an explicit cases.json path"
+        ),
+    }
+
+
+@pytest.mark.parametrize("suite", ["runtime", "schema"])
+def test_testing_package_cli_uses_same_registry_for_bundled_and_explicit_fixture(
+    monkeypatch,
+    capsys,
+    suite: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    assert graphblocks_testing.main(["run", suite, "--json"]) == 0
+    bundled = json.loads(capsys.readouterr().out)
+    assert graphblocks_testing.main(
+        [
+            "run",
+            suite,
+            str(graphblocks_testing.bundled_tck_root() / suite / "cases.json"),
+            "--json",
+        ]
+    ) == 0
+    explicit = json.loads(capsys.readouterr().out)
+
+    assert explicit == bundled
 
 
 def test_graphblocks_testing_wheel_and_sdist_ship_runnable_c0_c1_fixtures(

@@ -531,23 +531,23 @@ def main(argv: list[str] | None = None) -> int:
         cli_snapshot = build_cli_snapshot()
         testing_api_snapshot = build_testing_snapshot()
         testing_cli_snapshot = build_testing_cli_snapshot()
+        results = [
+            _check_or_update(PYTHON_SNAPSHOT_PATH, api_snapshot, update=args.update),
+            _check_or_update(CLI_SNAPSHOT_PATH, cli_snapshot, update=args.update),
+            _check_or_update(
+                TESTING_SNAPSHOT_PATH,
+                testing_api_snapshot,
+                update=args.update,
+            ),
+            _check_or_update(
+                TESTING_CLI_SNAPSHOT_PATH,
+                testing_cli_snapshot,
+                update=args.update,
+            ),
+        ]
     except (ImportError, OSError, TypeError, ValueError) as error:
         print(f"compatibility snapshot error: {error}", file=sys.stderr)
         return 2
-    results = [
-        _check_or_update(PYTHON_SNAPSHOT_PATH, api_snapshot, update=args.update),
-        _check_or_update(CLI_SNAPSHOT_PATH, cli_snapshot, update=args.update),
-        _check_or_update(
-            TESTING_SNAPSHOT_PATH,
-            testing_api_snapshot,
-            update=args.update,
-        ),
-        _check_or_update(
-            TESTING_CLI_SNAPSHOT_PATH,
-            testing_cli_snapshot,
-            update=args.update,
-        ),
-    ]
     return 0 if all(results) else 1
 
 

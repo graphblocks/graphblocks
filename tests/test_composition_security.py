@@ -108,6 +108,7 @@ def _write_yaml(path: Path, document: dict[str, object]) -> None:
 def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    symlink_or_skip,
     source_kind: str,
     descriptor_relative: bool,
 ) -> None:
@@ -135,7 +136,7 @@ def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
         if path == swapped_path and not swapped:
             swapped = True
             path.unlink()
-            path.symlink_to(outside_path)
+            symlink_or_skip(path, outside_path)
         return result
 
     def track_outside_read(path: Path) -> bytes:
@@ -162,6 +163,7 @@ def test_composition_rejects_source_swapped_to_outside_symlink_after_validation(
 def test_composition_fails_closed_when_source_is_swapped_during_secure_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    symlink_or_skip,
     source_kind: str,
     descriptor_relative: bool,
 ) -> None:
@@ -192,7 +194,7 @@ def test_composition_fails_closed_when_source_is_swapped_during_secure_open(
         if should_swap and not swapped:
             swapped = True
             swapped_path.unlink()
-            swapped_path.symlink_to(outside_path)
+            symlink_or_skip(swapped_path, outside_path)
         return original_open(path, flags, mode, dir_fd=dir_fd)
 
     def track_outside_read(fd, *args, **kwargs):

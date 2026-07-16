@@ -875,6 +875,7 @@ def test_release_ref_rejects_noncanonical_or_mismatched_stable_versions(
 
 def test_final_release_requires_regular_explicit_promotion_evidence(
     tmp_path: Path,
+    symlink_or_skip,
 ) -> None:
     module = _load_module()
     inputs = _inputs(module, tmp_path, stable_version="1.0.0")
@@ -890,7 +891,7 @@ def test_final_release_requires_regular_explicit_promotion_evidence(
 
     target = _write_promotion_evidence(module, tmp_path / "promotion-target.json")
     link = tmp_path / "promotion-link.json"
-    link.symlink_to(target)
+    symlink_or_skip(link, target)
     with pytest.raises(module.ReleaseBundleError, match="regular non-symlink"):
         module.assemble_release_bundle(
             platform_inputs_dir=inputs,
@@ -2272,6 +2273,7 @@ def test_release_bundle_rejects_cross_platform_sdist_nondeterminism(
 def test_release_bundle_verification_uses_one_snapshot_and_rejects_symlinks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    symlink_or_skip,
 ) -> None:
     module = _load_module()
     bundle = _assemble(module, tmp_path)
@@ -2294,7 +2296,7 @@ def test_release_bundle_verification_uses_one_snapshot_and_rejects_symlinks(
     manifest.unlink()
     target = tmp_path / "manifest-target.json"
     target.write_bytes(manifest_bytes)
-    manifest.symlink_to(target)
+    symlink_or_skip(manifest, target)
     with pytest.raises(module.ReleaseBundleError, match="non-symlink"):
         module.verify_release_bundle(bundle_dir=bundle)
 
@@ -2302,6 +2304,7 @@ def test_release_bundle_verification_uses_one_snapshot_and_rejects_symlinks(
 def test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_ref(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    symlink_or_skip,
 ) -> None:
     module = _load_module()
     observe_cosign = module._observe_cosign_identity
@@ -2362,7 +2365,7 @@ def test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_r
     signature.unlink()
     outside = tmp_path / "outside.sigstore.json"
     outside.write_text("{}", encoding="utf-8")
-    signature.symlink_to(outside)
+    symlink_or_skip(signature, outside)
     with pytest.raises(module.ReleaseBundleError, match="symlink"):
         module.verify_release_bundle(
             bundle_dir=bundle,

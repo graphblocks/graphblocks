@@ -118,7 +118,7 @@
         "apiVersion": { "const": "graphblocks.ai/composition/v1alpha1" },
         "imports": {
           "type": "object",
-          "propertyNames": { "$ref": "#/$defs/name" },
+          "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
           "additionalProperties": {
             "type": "object",
             "required": ["path"],

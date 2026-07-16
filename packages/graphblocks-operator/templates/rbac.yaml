@@ -1,44 +1,75 @@
 {{- if .Values.rbac.create }}
+{{- if .Values.rbac.clusterWide }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: graphblocks-operator
+  name: {{ include "graphblocks-operator.clusterFullname" . }}
   labels:
     app.kubernetes.io/name: graphblocks-operator
     app.kubernetes.io/component: controller
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
 rules:
-  - apiGroups: ["graphblocks.ai"]
-    resources:
-      - graphreleases
-      - graphdeployments
-      - deploymentrevisions
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources:
-      - deployments
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources:
-      - services
-      - configmaps
-      - events
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- include "graphblocks-operator.rbacRules" . | nindent 2 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: graphblocks-operator
+  name: {{ include "graphblocks-operator.clusterFullname" . }}
   labels:
     app.kubernetes.io/name: graphblocks-operator
     app.kubernetes.io/component: controller
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: graphblocks-operator
+  name: {{ include "graphblocks-operator.clusterFullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.serviceAccount.name | quote }}
+    name: {{ include "graphblocks-operator.serviceAccountName" . | quote }}
     namespace: {{ .Release.Namespace | quote }}
+{{- else }}
+{{- $root := . }}
+{{- $namespaces := .Values.controller.watchNamespaces }}
+{{- if not $namespaces }}
+{{- $namespaces = list .Release.Namespace }}
+{{- end }}
+{{- range $index, $namespace := uniq $namespaces }}
+{{- if $index }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "graphblocks-operator.fullname" $root }}
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: graphblocks-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: {{ $root.Release.Name | quote }}
+rules:
+  {{- include "graphblocks-operator.rbacRules" $root | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "graphblocks-operator.fullname" $root }}
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: graphblocks-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: {{ $root.Release.Name | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "graphblocks-operator.fullname" $root }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "graphblocks-operator.serviceAccountName" $root | quote }}
+    namespace: {{ $root.Release.Namespace | quote }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -109,12 +109,120 @@ def test_package_manifest_audit_policy_deduplicates_canonical_dependency_names()
     assert policy.blocked_dependencies == ("vulnerable-sdk",)
 
 
-def test_wheel_matrix_rejects_manifest_outside_root(tmp_path) -> None:
+def test_package_manifest_audit_checks_target_and_workspace_dependencies(tmp_path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        """
+[workspace]
+members = ["crates/app"]
+
+[workspace.package]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+safe-alias = { package = "blocked-workspace", version = "1" }
+""".strip(),
+        encoding="utf-8",
+    )
+    crate = tmp_path / "crates" / "app"
+    crate.mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        """
+[package]
+name = "app"
+version = "0.1.0"
+license.workspace = true
+
+[dependencies]
+safe-alias.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+blocked-target = "1"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(
+            blocked_dependencies=("blocked-workspace", "blocked-target"),
+        ),
+    )
+
+    assert {(item.code, item.path) for item in diagnostics.diagnostics} == {
+        ("PackageBlockedDependency", "$.crates/app/Cargo.toml.dependencies.safe-alias"),
+        (
+            "PackageBlockedDependency",
+            "$.crates/app/Cargo.toml.target.cfg(unix).dependencies.blocked-target",
+        ),
+    }
+
+
+@pytest.mark.parametrize("field_name", ("python-source", "manifest-path"))
+def test_wheel_matrix_rejects_maturin_paths_outside_root(tmp_path, field_name: str) -> None:
+    root = tmp_path / "repo"
+    package = root / "packages" / "native"
+    package.mkdir(parents=True)
+    values = {
+        "python-source": "src",
+        "manifest-path": "../../../outside/Cargo.toml",
+    }
+    if field_name == "python-source":
+        values = {
+            "python-source": "../../../outside-python",
+            "manifest-path": "../../crates/native/Cargo.toml",
+        }
+    (package / "pyproject.toml").write_text(
+        f"""
+[build-system]
+requires = ["maturin>=1"]
+build-backend = "maturin"
+
+[project]
+name = "native"
+version = "0.1.0"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+
+[tool.maturin]
+python-source = "{values['python-source']}"
+module-name = "native._native"
+manifest-path = "{values['manifest-path']}"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    matrix = build_wheel_matrix(
+        root,
+        catalog={
+            "artifacts": [
+                {
+                    "distribution": "native",
+                    "kind": "native_wheel",
+                    "manifest": "packages/native/pyproject.toml",
+                }
+            ]
+        },
+    )
+
+    assert matrix.targets == ()
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        (
+            "WheelBuildTargetOutsideRoot",
+            f"$.packages/native/pyproject.toml.tool.maturin.{field_name}",
+        )
+    ]
+
+
+def test_wheel_matrix_rejects_manifest_outside_root(tmp_path, symlink_or_skip) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     outside_manifest = tmp_path / "outside" / "pyproject.toml"
     _write_valid_wheel_manifest(outside_manifest)
-    (root / "linked-outside").symlink_to(outside_manifest.parent, target_is_directory=True)
+    symlink_or_skip(
+        root / "linked-outside",
+        outside_manifest.parent,
+        target_is_directory=True,
+    )
 
     for manifest_ref in (
         "../outside/pyproject.toml",
@@ -228,6 +336,7 @@ def test_wheel_matrix_rejects_duplicate_canonical_manifest_aliases(tmp_path) -> 
 def test_wheel_matrix_does_not_follow_manifest_swapped_after_resolution(
     tmp_path,
     monkeypatch,
+    symlink_or_skip,
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -240,7 +349,7 @@ def test_wheel_matrix_does_not_follow_manifest_swapped_after_resolution(
     def swap_before_read(path, *args, **kwargs):
         if path == manifest_path:
             path.unlink()
-            path.symlink_to(outside_manifest)
+            symlink_or_skip(path, outside_manifest)
         return original_read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(type(manifest_path), "read_text", swap_before_read)
@@ -334,6 +443,7 @@ def test_wheel_matrix_reads_manifest_without_no_follow_flag(
 def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
     tmp_path,
     monkeypatch,
+    symlink_or_skip,
 ) -> None:
     root = tmp_path / "repo"
     manifest_path = root / "package" / "pyproject.toml"
@@ -354,7 +464,11 @@ def test_wheel_matrix_fallback_rejects_parent_swapped_to_outside_symlink(
             fallback_opened = True
             manifest_path.unlink()
             manifest_path.parent.rmdir()
-            manifest_path.parent.symlink_to(outside_directory, target_is_directory=True)
+            symlink_or_skip(
+                manifest_path.parent,
+                outside_directory,
+                target_is_directory=True,
+            )
         return original_open(path, flags, mode)
 
     def track_outside_manifest_read(fd, *args, **kwargs):
@@ -444,12 +558,19 @@ def test_wheel_matrix_rejects_manifest_swapped_to_fifo_without_blocking(
     ]
 
 
-def test_package_catalog_doctor_rejects_manifest_outside_root(tmp_path) -> None:
+def test_package_catalog_doctor_rejects_manifest_outside_root(
+    tmp_path,
+    symlink_or_skip,
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     outside_manifest = tmp_path / "outside" / "pyproject.toml"
     _write_valid_wheel_manifest(outside_manifest)
-    (root / "linked-outside").symlink_to(outside_manifest.parent, target_is_directory=True)
+    symlink_or_skip(
+        root / "linked-outside",
+        outside_manifest.parent,
+        target_is_directory=True,
+    )
 
     for manifest_ref in (
         "../outside/pyproject.toml",

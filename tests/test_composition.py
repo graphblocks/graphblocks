@@ -402,11 +402,11 @@ def test_composition_rejects_parent_directory_escape(tmp_path: Path) -> None:
     assert captured.value.code == "CompositionInvalidImport"
 
 
-def test_composition_rejects_symlink_escape(tmp_path: Path) -> None:
+def test_composition_rejects_symlink_escape(tmp_path: Path, symlink_or_skip) -> None:
     project = tmp_path / "project"
     project.mkdir()
     _write_yaml(tmp_path / "outside.yaml", _fragment())
-    (project / "fragment.yaml").symlink_to(tmp_path / "outside.yaml")
+    symlink_or_skip(project / "fragment.yaml", tmp_path / "outside.yaml")
     graph_path = project / "graph.yaml"
     _write_yaml(graph_path, _composed_graph())
 
@@ -415,14 +415,14 @@ def test_composition_rejects_symlink_escape(tmp_path: Path) -> None:
     assert captured.value.code == "CompositionSymlinkRejected"
 
 
-def test_composition_rejects_symlink_in_root_ancestor(tmp_path: Path) -> None:
+def test_composition_rejects_symlink_in_root_ancestor(tmp_path: Path, symlink_or_skip) -> None:
     real_root = tmp_path / "real"
     project = real_root / "project"
     project.mkdir(parents=True)
     _write_yaml(project / "fragment.yaml", _fragment())
     _write_yaml(project / "graph.yaml", _composed_graph())
     linked_root = tmp_path / "linked"
-    linked_root.symlink_to(real_root, target_is_directory=True)
+    symlink_or_skip(linked_root, real_root, target_is_directory=True)
 
     with pytest.raises(CompositionError) as captured:
         compose_documents(
