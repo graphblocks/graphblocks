@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 import sys
 
@@ -98,6 +99,55 @@ def test_example_integration_evidence_is_deterministic() -> None:
 def test_network_blocker_fails_closed() -> None:
     with pytest.raises(RuntimeError, match="real network access"):
         NetworkAccessBlocked()(None, ("example.com", 443))
+
+
+def test_example_rust_subprocesses_are_forced_offline() -> None:
+    integration_source = (ROOT / "examples" / "_integration.py").read_text(
+        encoding="utf-8"
+    )
+    variant_source = (
+        ROOT / "examples" / "01-enterprise-federated-rag" / "variants.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"--offline"' in integration_source
+    assert '"--offline"' in variant_source
+
+
+def test_enterprise_rag_runtime_evidence_uses_actual_grounding_result() -> None:
+    runtime_contract_path = (
+        ROOT / "examples" / "01-enterprise-federated-rag" / "runtime_contract.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "graphblocks_example_runtime_contract_test",
+        runtime_contract_path,
+    )
+    assert spec is not None and spec.loader is not None
+    runtime_contract = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime_contract)
+
+    result = runtime_contract.normalize_runtime_result(
+        {
+            "status": "succeeded",
+            "outputs": {
+                "candidate": {
+                    "answerId": "answer-1",
+                    "citations": [],
+                    "text": "insufficient evidence",
+                },
+                "validation": {
+                    "ok": False,
+                    "issues": [{"code": "missing-citation"}],
+                },
+            },
+            "journal": [],
+        },
+        runtime="test-runtime",
+        graph={"kind": "Graph"},
+    )
+
+    assert result["grounding"] == {"issueCount": 1, "ok": False}
+    assert result["semanticResult"]["status"] == "ungrounded"
+    assert result["status"] == "succeeded"
 
 
 def test_worker_block_adapter_rejects_stale_lease_result() -> None:

@@ -139,7 +139,10 @@ ANSWER = {
 
 
 def build_graph() -> dict[str, object]:
-    graph = GraphBuilder("enterprise-rag-runtime-parity")
+    graph = GraphBuilder(
+        "enterprise-rag-runtime-parity",
+        api_version="graphblocks.ai/v1alpha3",
+    )
     query = graph.input("query", SEARCH_REQUEST)
     sources = graph.input("sources", FEDERATED_SOURCES)
     candidate = graph.output("candidate", ANSWER_TYPE)

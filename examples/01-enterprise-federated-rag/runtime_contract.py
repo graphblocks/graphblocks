@@ -27,12 +27,12 @@ def normalize_runtime_result(
     validation = outputs.get("validation")
     if not isinstance(candidate, Mapping):
         raise RuntimeError(f"{runtime} runtime did not produce a candidate")
-    if (
-        not isinstance(validation, Mapping)
-        or validation.get("ok") is not True
-        or validation.get("issues") != []
-    ):
-        raise RuntimeError(f"{runtime} runtime did not produce valid grounding evidence")
+    if not isinstance(validation, Mapping):
+        raise RuntimeError(f"{runtime} runtime did not produce grounding evidence")
+    grounding_ok = validation.get("ok")
+    grounding_issues = validation.get("issues")
+    if not isinstance(grounding_ok, bool) or not isinstance(grounding_issues, list):
+        raise RuntimeError(f"{runtime} grounding evidence is invalid")
     citations = candidate.get("citations")
     if not isinstance(citations, list):
         raise RuntimeError(f"{runtime} candidate citations must be a list")
@@ -46,11 +46,9 @@ def normalize_runtime_result(
     semantic_result = {
         "answerId": candidate.get("answerId"),
         "citations": citation_ids,
-        "status": "grounded",
+        "status": "grounded" if grounding_ok and not grounding_issues else "ungrounded",
         "text": candidate.get("text"),
     }
-    if semantic_result != EXPECTED_SEMANTIC_RESULT:
-        raise RuntimeError(f"{runtime} semantic result does not match the example contract")
     succeeded_nodes: list[str] = []
     graph_hash = payload.get("graphHash")
     if isinstance(journal, list):
@@ -72,10 +70,10 @@ def normalize_runtime_result(
                 succeeded_nodes.append(record_payload["node"])
     evidence: dict[str, object] = {
         "graphHash": graph_hash or canonical_hash(dict(graph)),
-        "grounding": {"issueCount": 0, "ok": True},
+        "grounding": {"issueCount": len(grounding_issues), "ok": grounding_ok},
         "runtime": runtime,
         "semanticResult": semantic_result,
-        "status": "succeeded",
+        "status": payload.get("status"),
         "succeededNodes": succeeded_nodes,
     }
     return {**evidence, "evidenceDigest": canonical_hash(evidence)}

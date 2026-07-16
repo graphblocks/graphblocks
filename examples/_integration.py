@@ -574,6 +574,7 @@ def run_integration(
                             "build",
                             "--quiet",
                             "--locked",
+                            "--offline",
                             "--manifest-path",
                             str(rust_manifest_path),
                             "--target-dir",

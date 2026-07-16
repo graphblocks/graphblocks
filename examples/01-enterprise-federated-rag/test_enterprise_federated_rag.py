@@ -26,6 +26,7 @@ def test_enterprise_federated_rag_example() -> None:
         "graphHash": True,
         "grounding": True,
         "semanticResult": True,
+        "status": True,
         "succeededNodeOrder": True,
     }
     variants = runtimes["variants"]

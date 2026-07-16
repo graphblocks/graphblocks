@@ -9,6 +9,8 @@ import tempfile
 
 from graphblocks.canonical import canonical_hash
 
+from runtime_contract import EXPECTED_SEMANTIC_RESULT
+
 
 def run_variants(example_root: Path) -> dict[str, object]:
     rust_target_dir = Path(
@@ -31,6 +33,7 @@ def run_variants(example_root: Path) -> dict[str, object]:
             "run",
             "--quiet",
             "--locked",
+            "--offline",
             "--manifest-path",
             str(example_root / "1-3-rust-runtime" / "Cargo.toml"),
             "--target-dir",
@@ -65,13 +68,27 @@ def run_variants(example_root: Path) -> dict[str, object]:
     node_orders = {
         canonical_hash(payload.get("succeededNodes")) for payload in variants.values()
     }
+    statuses = {payload.get("status") for payload in variants.values()}
     parity = {
         "graphHash": len(graph_hashes) == 1,
         "grounding": len(grounding_results) == 1,
         "semanticResult": len(semantic_results) == 1,
+        "status": len(statuses) == 1,
         "succeededNodeOrder": len(node_orders) == 1,
     }
     if not all(parity.values()):
         raise RuntimeError(f"runtime variants diverged: {parity}")
+    if any(
+        payload.get("semanticResult") != EXPECTED_SEMANTIC_RESULT
+        for payload in variants.values()
+    ):
+        raise RuntimeError("runtime semantic result does not match the example contract")
+    if any(
+        payload.get("grounding") != {"issueCount": 0, "ok": True}
+        for payload in variants.values()
+    ):
+        raise RuntimeError("runtime grounding result does not match the example contract")
+    if statuses != {"succeeded"}:
+        raise RuntimeError("runtime status does not match the example contract")
     evidence: dict[str, object] = {"parity": parity, "variants": variants}
     return {**evidence, "evidenceDigest": canonical_hash(evidence)}

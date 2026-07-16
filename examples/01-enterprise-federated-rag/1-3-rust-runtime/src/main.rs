@@ -172,14 +172,14 @@ fn execute() -> Result<Value, Box<dyn Error>> {
         .outputs
         .get("validation")
         .ok_or("Rust runtime did not produce grounding validation")?;
-    if validation.get("ok").and_then(Value::as_bool) != Some(true)
-        || validation
-            .get("issues")
-            .and_then(Value::as_array)
-            .is_none_or(|issues| !issues.is_empty())
-    {
-        return Err("Rust runtime did not produce valid grounding evidence".into());
-    }
+    let grounding_ok = validation
+        .get("ok")
+        .and_then(Value::as_bool)
+        .ok_or("Rust grounding validation ok must be a boolean")?;
+    let grounding_issues = validation
+        .get("issues")
+        .and_then(Value::as_array)
+        .ok_or("Rust grounding validation issues must be an array")?;
     let citation_ids = candidate
         .get("citations")
         .and_then(Value::as_array)
@@ -196,18 +196,13 @@ fn execute() -> Result<Value, Box<dyn Error>> {
     let semantic_result = json!({
         "answerId": candidate.get("answerId"),
         "citations": citation_ids,
-        "status": "grounded",
+        "status": if grounding_ok && grounding_issues.is_empty() {
+            "grounded"
+        } else {
+            "ungrounded"
+        },
         "text": candidate.get("text")
     });
-    let expected = json!({
-        "answerId": "answer-key-rotation",
-        "citations": ["citation-rotation", "citation-ticket"],
-        "status": "grounded",
-        "text": "Use the security console and obtain two approvals."
-    });
-    if semantic_result != expected {
-        return Err("Rust semantic result does not match the example contract".into());
-    }
     let succeeded_nodes = result
         .journal
         .iter()
@@ -221,10 +216,10 @@ fn execute() -> Result<Value, Box<dyn Error>> {
         .collect::<Vec<_>>();
     let evidence = json!({
         "graphHash": result.graph_hash,
-        "grounding": {"issueCount": 0, "ok": true},
+        "grounding": {"issueCount": grounding_issues.len(), "ok": grounding_ok},
         "runtime": "rust-api",
         "semanticResult": semantic_result,
-        "status": "succeeded",
+        "status": result.status.as_str(),
         "succeededNodes": succeeded_nodes
     });
     let mut report = evidence.clone();
