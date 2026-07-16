@@ -229,7 +229,17 @@ impl LeasePool {
         lease_id: &str,
         fencing_token: u64,
     ) -> Result<(), LeaseError> {
-        let inner = self.lock();
+        self.validate_fencing_token_at(lease_id, fencing_token, SystemTime::now())
+    }
+
+    pub fn validate_fencing_token_at(
+        &self,
+        lease_id: &str,
+        fencing_token: u64,
+        validated_at: SystemTime,
+    ) -> Result<(), LeaseError> {
+        let mut inner = self.lock();
+        Self::reap_expired_locked(&mut inner, validated_at);
         let Some(active) = inner.active.get(lease_id) else {
             return Err(LeaseError::UnknownLease {
                 pool_id: inner.id.clone(),

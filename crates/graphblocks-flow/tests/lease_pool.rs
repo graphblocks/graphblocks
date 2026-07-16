@@ -81,7 +81,11 @@ fn lease_renewal_extends_expiration_and_rotates_fencing_token() -> Result<(), Le
     assert_eq!(lease.fencing_token(), renewed_token);
     assert_eq!(lease.expires_at(), Some(renewed_expires_at));
     assert_eq!(
-        pool.validate_fencing_token(lease.lease_id(), stale_token),
+        pool.validate_fencing_token_at(
+            lease.lease_id(),
+            stale_token,
+            acquired_at + Duration::from_secs(4),
+        ),
         Err(LeaseError::StaleFencingToken {
             pool_id: "licensed-tool".to_owned(),
             lease_id: lease.lease_id().to_owned(),
@@ -100,9 +104,45 @@ fn lease_renewal_extends_expiration_and_rotates_fencing_token() -> Result<(), Le
         }),
     );
     assert!(
-        pool.validate_fencing_token(lease.lease_id(), renewed_token)
-            .is_ok()
+        pool.validate_fencing_token_at(
+            lease.lease_id(),
+            renewed_token,
+            acquired_at + Duration::from_secs(4),
+        )
+        .is_ok()
     );
+    Ok(())
+}
+
+#[test]
+fn expired_lease_fencing_token_is_not_valid_authority() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let expires_at = acquired_at + Duration::from_secs(5);
+    let lease = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+    let lease_id = lease.lease_id().to_owned();
+    let fencing_token = lease.fencing_token();
+
+    assert!(
+        pool.validate_fencing_token_at(
+            &lease_id,
+            fencing_token,
+            expires_at - Duration::from_millis(1),
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        pool.validate_fencing_token_at(&lease_id, fencing_token, expires_at),
+        Err(LeaseError::UnknownLease {
+            pool_id: "licensed-tool".to_owned(),
+            lease_id,
+        }),
+    );
+    assert_eq!(pool.available_units(), 1);
+    assert!(!lease.release());
     Ok(())
 }
 
