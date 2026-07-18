@@ -868,6 +868,30 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.replay_after(limit=-1)
 
 
+def test_application_protocol_log_prefers_exact_numeric_cursor_over_sequence() -> None:
+    def protocol_event(event_id: str, sequence: int, cursor: str) -> ApplicationProtocolEvent:
+        return ApplicationProtocolEvent.new(
+            "JobProgress",
+            ApplicationProtocolEventMetadata(
+                event_id=event_id,
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                turn_id="turn-1",
+                sequence=sequence,
+                cursor=cursor,
+                occurred_at_unix_ms=1_765_843_200_000 + sequence,
+            ),
+            payload={"done": sequence, "total": 10},
+        )
+
+    sequence_alias = protocol_event("event-1", 5, "cursor-5")
+    exact_cursor = protocol_event("event-2", 6, "5")
+    following = protocol_event("event-3", 7, "cursor-7")
+    log = ApplicationProtocolLog([sequence_alias, exact_cursor, following])
+
+    assert log.replay_after("5") == (following,)
+
+
 def test_application_protocol_log_rejects_blank_or_wrapped_replay_cursor() -> None:
     log = ApplicationProtocolLog()
 

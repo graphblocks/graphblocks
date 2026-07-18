@@ -783,22 +783,34 @@ def evaluate_gate(
 ) -> GateResult:
     check_list = list(checks or [])
     metric_list = list(metrics or [])
-    required = list(required_check_ids or [check.check_id for check in check_list])
+    required = list(
+        required_check_ids
+        if required_check_ids is not None
+        else [check.check_id for check in check_list]
+    )
     violated: list[str] = []
 
     checks_by_id = {check.check_id: check for check in check_list}
+    if len(checks_by_id) != len(check_list):
+        raise ValueError("gate checks must not contain duplicate check_id values")
     for check_id in required:
         check = checks_by_id.get(check_id)
         if check is None or check.status != "passed":
             violated.append(f"check:{check_id}")
 
     metrics_by_name = {metric.name: metric for metric in metric_list}
+    if len(metrics_by_name) != len(metric_list):
+        raise ValueError("gate metrics must not contain duplicate names")
     for constraint in constraints or []:
         metric = metrics_by_name.get(constraint.metric_name)
         if metric is None or not _metric_satisfies(metric.value, constraint.operator, constraint.threshold):
             violated.append(f"metric:{constraint.metric_name}")
 
-    inconclusive = any(check.status in {"error", "timeout", "inconclusive"} for check in check_list)
+    inconclusive = any(
+        checks_by_id[check_id].status in {"error", "timeout", "inconclusive"}
+        for check_id in required
+        if check_id in checks_by_id
+    )
     decision: GateDecision
     if violated:
         decision = "fail"

@@ -55,6 +55,56 @@ def test_evaluate_gate_fails_when_required_check_failed() -> None:
     assert gate.violated_constraints == ["check:formal"]
 
 
+def test_evaluate_gate_preserves_explicit_empty_required_checks() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    informational = CheckResult(
+        "informational",
+        subject,
+        "inconclusive",
+        tool={"processor_id": "advisory", "version": "1"},
+    )
+
+    gate = evaluate_gate(
+        "constraints-only",
+        subject,
+        checks=[informational],
+        required_check_ids=[],
+    )
+
+    assert gate.decision == "pass"
+    assert gate.check_ids == []
+    assert gate.violated_constraints == []
+
+
+def test_evaluate_gate_rejects_duplicate_check_and_metric_identities() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    duplicate_check = CheckResult(
+        "duplicate",
+        subject,
+        "passed",
+        tool={"processor_id": "advisory", "version": "1"},
+    )
+    with pytest.raises(ValueError, match="duplicate check_id"):
+        evaluate_gate(
+            "duplicate-checks",
+            subject,
+            checks=[duplicate_check, duplicate_check],
+        )
+
+    duplicate_metric = MetricObservation("latency", Decimal("10"))
+    with pytest.raises(ValueError, match="duplicate names"):
+        evaluate_gate(
+            "duplicate-metrics",
+            subject,
+            metrics=[duplicate_metric, duplicate_metric],
+        )
+
+
+def test_diagnostic_rejects_unknown_severity() -> None:
+    with pytest.raises(ValueError, match="diagnostic severity has invalid value"):
+        Diagnostic("GBE1001", "invalid", severity="fatal")  # type: ignore[arg-type]
+
+
 def test_evaluate_gate_uses_metric_thresholds() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
     metrics = [

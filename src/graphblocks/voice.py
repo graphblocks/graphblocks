@@ -93,6 +93,7 @@ class DuplexSession:
     closed_at_ms: int | None = None
     interruption_reason: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    interrupted_at_ms: int | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("session_id", self.session_id)
@@ -100,8 +101,21 @@ class DuplexSession:
             raise VoiceContractError(f"unsupported voice session state {self.state!r}")
         object.__setattr__(self, "started_at_ms", _non_negative_int("started_at_ms", self.started_at_ms))
         object.__setattr__(self, "closed_at_ms", _optional_non_negative_int("closed_at_ms", self.closed_at_ms))
+        object.__setattr__(
+            self,
+            "interrupted_at_ms",
+            _optional_non_negative_int("interrupted_at_ms", self.interrupted_at_ms),
+        )
         if self.closed_at_ms is not None and self.closed_at_ms < self.started_at_ms:
             raise VoiceContractError("closed_at_ms must be greater than or equal to started_at_ms")
+        if self.interrupted_at_ms is not None and self.interrupted_at_ms < self.started_at_ms:
+            raise VoiceContractError("interrupted_at_ms must be greater than or equal to started_at_ms")
+        if (
+            self.closed_at_ms is not None
+            and self.interrupted_at_ms is not None
+            and self.closed_at_ms < self.interrupted_at_ms
+        ):
+            raise VoiceContractError("closed_at_ms must be greater than or equal to interrupted_at_ms")
         object.__setattr__(
             self,
             "metadata",
@@ -109,20 +123,39 @@ class DuplexSession:
         )
 
     def begin_turn(self, turn_id: str) -> DuplexSession:
+        if self.state == "closed":
+            raise VoiceContractError("closed voice session cannot begin a turn")
         _require_non_empty("turn_id", turn_id)
-        return replace(self, current_turn_id=turn_id, state="open")
+        return replace(
+            self,
+            current_turn_id=turn_id,
+            state="open",
+            interrupted_at_ms=None,
+            interruption_reason=None,
+        )
 
     def interrupt(self, *, occurred_at_ms: int, reason: str) -> DuplexSession:
+        if self.state == "closed":
+            raise VoiceContractError("closed voice session cannot be interrupted")
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         if occurred_at_ms < self.started_at_ms:
             raise VoiceContractError("interruption occurred before session start")
         _require_non_empty("interruption reason", reason)
-        return replace(self, state="interrupted", closed_at_ms=None, interruption_reason=reason)
+        return replace(
+            self,
+            state="interrupted",
+            interrupted_at_ms=occurred_at_ms,
+            interruption_reason=reason,
+        )
 
     def close(self, *, occurred_at_ms: int) -> DuplexSession:
+        if self.state == "closed":
+            raise VoiceContractError("voice session is already closed")
         occurred_at_ms = _non_negative_int("occurred_at_ms", occurred_at_ms)
         if occurred_at_ms < self.started_at_ms:
             raise VoiceContractError("close occurred before session start")
+        if self.interrupted_at_ms is not None and occurred_at_ms < self.interrupted_at_ms:
+            raise VoiceContractError("close occurred before session interruption")
         return replace(self, state="closed", closed_at_ms=occurred_at_ms)
 
     def contract(self) -> dict[str, object]:
@@ -132,6 +165,7 @@ class DuplexSession:
             "currentTurnId": self.current_turn_id,
             "startedAtMs": self.started_at_ms,
             "closedAtMs": self.closed_at_ms,
+            "interruptedAtMs": self.interrupted_at_ms,
             "interruptionReason": self.interruption_reason,
             "transport": self.transport.contract(),
             "metadata": dict(self.metadata),

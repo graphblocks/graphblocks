@@ -74,7 +74,7 @@ class BlockCapability:
 
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> BlockCapability:
-        return cls(block=payload["block"])
+        return cls(block=_require_worker_wire_field(payload, "block", "block capability"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,10 +175,14 @@ class WorkerAdvertisement:
             if not isinstance(item, dict):
                 raise WorkerProtocolError("worker advertisement supportedBlocks entries must be mappings")
         return cls(
-            worker_id=payload["workerId"],
-            target_id=payload["targetId"],
-            package_lock_hash=payload["packageLockHash"],
-            image_digest=payload["imageDigest"],
+            worker_id=_require_worker_wire_field(payload, "workerId", "worker advertisement"),
+            target_id=_require_worker_wire_field(payload, "targetId", "worker advertisement"),
+            package_lock_hash=_require_worker_wire_field(
+                payload,
+                "packageLockHash",
+                "worker advertisement",
+            ),
+            image_digest=_require_worker_wire_field(payload, "imageDigest", "worker advertisement"),
             supported_blocks=tuple(
                 BlockCapability.from_wire(item)
                 for item in supported_blocks
@@ -300,12 +304,20 @@ class WorkerAdmissionDecision:
         if not isinstance(reason_codes, list):
             raise WorkerProtocolError("worker admission decision reasonCodes must be a list")
         return cls(
-            admitted=payload["admitted"],
-            worker_id=payload["workerId"],
-            target_id=payload["targetId"],
-            protocol_version=payload["protocolVersion"],
-            package_lock_hash=payload["packageLockHash"],
-            state=payload["state"],
+            admitted=_require_worker_wire_field(payload, "admitted", "worker admission decision"),
+            worker_id=_require_worker_wire_field(payload, "workerId", "worker admission decision"),
+            target_id=_require_worker_wire_field(payload, "targetId", "worker admission decision"),
+            protocol_version=_require_worker_wire_field(
+                payload,
+                "protocolVersion",
+                "worker admission decision",
+            ),
+            package_lock_hash=_require_worker_wire_field(
+                payload,
+                "packageLockHash",
+                "worker admission decision",
+            ),
+            state=_require_worker_wire_field(payload, "state", "worker admission decision"),
             reason_codes=tuple(reason_codes),
             required_block=payload.get("requiredBlock"),
         )
@@ -533,9 +545,9 @@ class WorkerProtocolMessage:
         else:
             message_payload = _validate_worker_error_payload(raw_payload)
         return cls(
-            message_id=payload["messageId"],
+            message_id=_require_worker_wire_field(payload, "messageId", "worker protocol message"),
             kind=kind,
-            sequence=payload["sequence"],
+            sequence=_require_worker_wire_field(payload, "sequence", "worker protocol message"),
             payload=message_payload,
             protocol_version=payload.get("protocolVersion", WORKER_PROTOCOL_VERSION),
             correlation_id=payload.get("correlationId"),
@@ -543,7 +555,18 @@ class WorkerProtocolMessage:
         )
 
     def content_digest(self) -> str:
-        encoded = json.dumps(self.to_wire(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        try:
+            encoded = json.dumps(
+                self.to_wire(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as error:
+            raise RemotePayloadInlineJsonEncodingError(
+                "worker protocol message payload is not JSON serializable"
+            ) from error
         return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _payload_to_wire(self) -> object:
@@ -622,6 +645,17 @@ def _validate_worker_optional_non_empty_string(
     return _validate_worker_non_empty_string(owner, field_name, value)
 
 
+def _require_worker_wire_field(
+    payload: Mapping[str, object],
+    field_name: str,
+    owner: str,
+) -> object:
+    try:
+        return payload[field_name]
+    except KeyError as error:
+        raise WorkerProtocolError(f"{owner} is missing required field {field_name!r}") from error
+
+
 def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, str]:
     if not isinstance(value, Mapping):
         raise WorkerProtocolError(f"{owner} attributes must be a mapping")
@@ -687,6 +721,8 @@ def admit_worker_with_policy(policy: WorkerAdmissionPolicy, advertisement: Worke
         raise WorkerProtocolError("worker admission advertisement must be WorkerAdvertisement")
     if advertisement.protocol_version != policy.protocol_version:
         raise WorkerIncompatibleVersionError(policy.protocol_version, advertisement.protocol_version)
+    if advertisement.state != "ready":
+        raise WorkerProtocolError(f"worker is not ready for admission: state is {advertisement.state!r}")
     if advertisement.worker_id == "":
         raise WorkerEmptyWorkerIdError("worker_id must not be empty")
     if advertisement.target_id == "":
@@ -850,10 +886,18 @@ class RunOwnershipLease:
     def from_wire(cls, payload: dict[str, object]) -> RunOwnershipLease:
         last_checkpoint = payload.get("lastCheckpoint")
         return cls(
-            run_id=payload["runId"],
-            owner_instance_id=payload["ownerInstanceId"],
-            lease_epoch=payload["leaseEpoch"],
-            expires_at_unix_ms=payload["expiresAtUnixMs"],
+            run_id=_require_worker_wire_field(payload, "runId", "run ownership lease"),
+            owner_instance_id=_require_worker_wire_field(
+                payload,
+                "ownerInstanceId",
+                "run ownership lease",
+            ),
+            lease_epoch=_require_worker_wire_field(payload, "leaseEpoch", "run ownership lease"),
+            expires_at_unix_ms=_require_worker_wire_field(
+                payload,
+                "expiresAtUnixMs",
+                "run ownership lease",
+            ),
             last_checkpoint=last_checkpoint,
         )
 
@@ -916,6 +960,7 @@ def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayload
                     sort_keys=True,
                     separators=(",", ":"),
                     ensure_ascii=False,
+                    allow_nan=False,
                 ).encode("utf-8")
             )
         except (TypeError, ValueError) as error:
@@ -957,6 +1002,7 @@ class RemoteEdgePayload:
                     sort_keys=True,
                     separators=(",", ":"),
                     ensure_ascii=False,
+                    allow_nan=False,
                 )
             except (TypeError, ValueError) as error:
                 raise RemotePayloadInlineJsonEncodingError("remote inline payload is not JSON serializable") from error
@@ -1041,7 +1087,7 @@ class RemoteEdgePayload:
         if mode == "inline":
             return cls(
                 mode="inline",
-                schema=payload["schema"],
+                schema=_require_worker_wire_field(payload, "schema", "remote edge payload"),
                 value=payload.get("value"),
                 value_digest=payload.get("valueDigest"),
             )
@@ -1049,11 +1095,26 @@ class RemoteEdgePayload:
             artifact = payload.get("artifact")
             if not isinstance(artifact, Mapping):
                 raise RemotePayloadInvalidArtifactRefError("artifact")
-            return cls(mode="artifact_ref", schema=payload["schema"], artifact=artifact)
+            return cls(
+                mode="artifact_ref",
+                schema=_require_worker_wire_field(payload, "schema", "remote edge payload"),
+                artifact=artifact,
+            )
         raise RemotePayloadInvalidModeError(mode)
 
     def content_digest(self) -> str:
-        encoded = json.dumps(self.to_wire(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        try:
+            encoded = json.dumps(
+                self.to_wire(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as error:
+            raise RemotePayloadInlineJsonEncodingError(
+                "remote edge payload is not JSON serializable"
+            ) from error
         return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -1219,16 +1280,20 @@ class WorkerInvokeRequest:
 
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerInvokeRequest:
-        context = payload["context"]
+        context = _require_worker_wire_field(payload, "context", "worker invoke request")
         if not isinstance(context, Mapping):
             raise WorkerProtocolError("worker invoke request context must be a mapping")
         return cls(
-            invocation_id=payload["invocationId"],
-            run_id=payload["runId"],
-            node_id=payload["nodeId"],
-            node_attempt_id=payload["nodeAttemptId"],
-            lease_epoch=payload["leaseEpoch"],
-            block=payload["block"],
+            invocation_id=_require_worker_wire_field(payload, "invocationId", "worker invoke request"),
+            run_id=_require_worker_wire_field(payload, "runId", "worker invoke request"),
+            node_id=_require_worker_wire_field(payload, "nodeId", "worker invoke request"),
+            node_attempt_id=_require_worker_wire_field(
+                payload,
+                "nodeAttemptId",
+                "worker invoke request",
+            ),
+            lease_epoch=_require_worker_wire_field(payload, "leaseEpoch", "worker invoke request"),
+            block=_require_worker_wire_field(payload, "block", "worker invoke request"),
             context=WorkerInvocationContext.from_wire(dict(context)),
             inputs=payload.get("inputs"),
             config=payload.get("config"),
@@ -1330,9 +1395,13 @@ class WorkerDrainTask:
         if not isinstance(request, dict):
             raise WorkerProtocolError("worker drain task request must be a mapping")
         return cls(
-            workload=payload["workload"],
+            workload=_require_worker_wire_field(payload, "workload", "worker drain task"),
             request=WorkerInvokeRequest.from_wire(request),
-            started_at_unix_ms=payload["startedAtUnixMs"],
+            started_at_unix_ms=_require_worker_wire_field(
+                payload,
+                "startedAtUnixMs",
+                "worker drain task",
+            ),
             checkpointable=payload.get("checkpointable", False),
         )
 
@@ -1411,16 +1480,28 @@ class WorkerDrainDecision:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerDrainDecision:
         return cls(
-            workload=payload["workload"],
-            run_id=payload["runId"],
-            invocation_id=payload["invocationId"],
-            node_attempt_id=payload["nodeAttemptId"],
-            lease_epoch=payload["leaseEpoch"],
-            release_id=payload["releaseId"],
-            deployment_revision_id=payload["deploymentRevisionId"],
-            disposition=payload["disposition"],
-            deadline_unix_ms=payload["deadlineUnixMs"],
-            reason=payload["reason"],
+            workload=_require_worker_wire_field(payload, "workload", "worker drain decision"),
+            run_id=_require_worker_wire_field(payload, "runId", "worker drain decision"),
+            invocation_id=_require_worker_wire_field(payload, "invocationId", "worker drain decision"),
+            node_attempt_id=_require_worker_wire_field(
+                payload,
+                "nodeAttemptId",
+                "worker drain decision",
+            ),
+            lease_epoch=_require_worker_wire_field(payload, "leaseEpoch", "worker drain decision"),
+            release_id=_require_worker_wire_field(payload, "releaseId", "worker drain decision"),
+            deployment_revision_id=_require_worker_wire_field(
+                payload,
+                "deploymentRevisionId",
+                "worker drain decision",
+            ),
+            disposition=_require_worker_wire_field(payload, "disposition", "worker drain decision"),
+            deadline_unix_ms=_require_worker_wire_field(
+                payload,
+                "deadlineUnixMs",
+                "worker drain decision",
+            ),
+            reason=_require_worker_wire_field(payload, "reason", "worker drain decision"),
         )
 
 
@@ -1488,7 +1569,7 @@ class WorkerDrainPlan:
                 deadline_disposition = policy.on_deadline_realtime_session
             else:
                 raise WorkerProtocolError(f"invalid drain workload {task.workload!r}")
-            deadline_unix_ms = task.started_at_unix_ms + timeout_ms
+            deadline_unix_ms = drain_started_at_unix_ms + timeout_ms
             if now_unix_ms >= deadline_unix_ms:
                 disposition = deadline_disposition
                 reason = "deadline_reached"
@@ -1538,11 +1619,15 @@ class WorkerDrainPlan:
             if not isinstance(decision, dict):
                 raise WorkerProtocolError("worker drain plan decisions must be mappings")
         return cls(
-            worker_id=payload["workerId"],
-            target_id=payload["targetId"],
+            worker_id=_require_worker_wire_field(payload, "workerId", "worker drain plan"),
+            target_id=_require_worker_wire_field(payload, "targetId", "worker drain plan"),
             worker_state=payload.get("workerState", "draining"),
             admission_closed=payload.get("admissionClosed", True),
-            drain_started_at_unix_ms=payload["drainStartedAtUnixMs"],
+            drain_started_at_unix_ms=_require_worker_wire_field(
+                payload,
+                "drainStartedAtUnixMs",
+                "worker drain plan",
+            ),
             decisions=tuple(
                 WorkerDrainDecision.from_wire(decision)
                 for decision in decisions
@@ -1604,9 +1689,13 @@ class WorkerInvokeResult:
         if not isinstance(outputs, Mapping):
             raise WorkerProtocolError("worker invoke result outputs must be a mapping")
         return cls(
-            invocation_id=payload["invocationId"],
-            node_attempt_id=payload["nodeAttemptId"],
-            lease_epoch=payload["leaseEpoch"],
+            invocation_id=_require_worker_wire_field(payload, "invocationId", "worker invoke result"),
+            node_attempt_id=_require_worker_wire_field(
+                payload,
+                "nodeAttemptId",
+                "worker invoke result",
+            ),
+            lease_epoch=_require_worker_wire_field(payload, "leaseEpoch", "worker invoke result"),
             outputs=dict(outputs),
         )
 

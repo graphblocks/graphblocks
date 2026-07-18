@@ -455,7 +455,13 @@ def rank_documents(
         query_record = dict(query)
         query_terms = _value(query_record, "queryTerms", "query_terms")
         if query_terms is None:
-            query_text = query_record.get("original", query_record.get("queryText", query_record.get("text", "")))
+            query_text = query_record.get(
+                "original",
+                query_record.get(
+                    "queryText",
+                    query_record.get("query_text", query_record.get("text", "")),
+                ),
+            )
             query_terms = str(query_text).split()
     else:
         query_terms = str(query).split()

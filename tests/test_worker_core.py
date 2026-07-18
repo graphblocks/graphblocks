@@ -9,6 +9,7 @@ from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
     RemoteEdgePayload,
+    RemotePayloadInlineJsonEncodingError,
     RemotePayloadInvalidArtifactRefError,
     RemotePayloadInvalidLimitError,
     RemotePayloadInvalidModeError,
@@ -128,6 +129,34 @@ def test_worker_advertisement_rejects_invalid_wire_payloads() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "parse",
+    [
+        lambda: BlockCapability.from_wire({}),
+        lambda: WorkerAdvertisement.from_wire({}),
+        lambda: WorkerAdmissionDecision.from_wire({}),
+        lambda: WorkerProtocolMessage.from_wire(
+            {
+                "kind": "error",
+                "sequence": 1,
+                "payload": {"code": "worker.failed", "message": "failed"},
+            }
+        ),
+        lambda: RunOwnershipLease.from_wire({}),
+        lambda: RemoteEdgePayload.from_wire({"mode": "inline"}),
+        lambda: WorkerInvocationContext.from_wire({}),
+        lambda: WorkerInvokeRequest.from_wire({}),
+        lambda: WorkerDrainTask.from_wire({}),
+        lambda: WorkerDrainDecision.from_wire({}),
+        lambda: WorkerDrainPlan.from_wire({}),
+        lambda: WorkerInvokeResult.from_wire({}),
+    ],
+)
+def test_worker_wire_parsers_map_missing_fields_to_protocol_errors(parse) -> None:
+    with pytest.raises(WorkerProtocolError):
+        parse()
+
+
 def test_worker_admission_rejects_version_and_package_lock_mismatch() -> None:
     advertisement = WorkerAdvertisement.new(
         "worker-local-1",
@@ -198,6 +227,9 @@ def test_worker_admission_decision_reports_drain_and_missing_capability() -> Non
     )
 
     decision = evaluate_worker_admission(policy, advertisement)
+
+    with pytest.raises(WorkerProtocolError, match="worker is not ready for admission"):
+        admit_worker_with_policy(policy, advertisement)
 
     assert decision.admitted is False
     assert decision.worker_id == "worker-local-1"
@@ -843,9 +875,11 @@ def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() ->
     assert plan.decisions[0].lease_epoch == 7
     assert plan.decisions[0].deployment_revision_id == "rev-old"
     assert plan.decisions[0].disposition == "cancel"
+    assert plan.decisions[0].deadline_unix_ms == 32_000
     assert plan.decisions[1].run_id == "run-durable"
     assert plan.decisions[1].lease_epoch == 13
     assert plan.decisions[1].disposition == "checkpoint"
+    assert plan.decisions[1].deadline_unix_ms == 302_000
     assert WorkerDrainPlan.from_wire(plan.to_wire()) == plan
 
 
@@ -1039,6 +1073,31 @@ def test_remote_payload_validator_rejects_oversized_inline_payload() -> None:
 
     assert error.value.max_inline_bytes == 8
     assert error.value.actual_inline_bytes > 8
+
+
+def test_worker_wire_serializers_reject_non_finite_numbers() -> None:
+    value = {"score": float("nan")}
+
+    with pytest.raises(RemotePayloadInlineJsonEncodingError):
+        validate_remote_payload(
+            {"mode": "inline", "value": value},
+            RemotePayloadLimits(max_inline_bytes=128),
+        )
+    with pytest.raises(RemotePayloadInlineJsonEncodingError):
+        RemoteEdgePayload.inline("graphblocks.ai/Score@1", value, RemotePayloadLimits(128))
+
+    message = WorkerProtocolMessage(
+        "message-1",
+        "error",
+        1,
+        {
+            "code": "worker.failed",
+            "message": "worker failed",
+            "details": value,
+        },
+    )
+    with pytest.raises(RemotePayloadInlineJsonEncodingError):
+        message.content_digest()
 
 
 def test_remote_payload_validator_allows_artifact_reference_payload() -> None:

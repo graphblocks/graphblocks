@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from decimal import Decimal
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -483,6 +484,48 @@ def test_audit_package_rejects_duplicate_outbox_record_ids(monkeypatch) -> None:
         raise AssertionError("duplicate audit outbox record should be rejected")
     finally:
         outbox.close()
+
+
+def test_audit_outbox_treats_identical_append_as_idempotent(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    payload = {"event_id": "event-1", "kind": "OutputPolicyAllowed"}
+
+    first = outbox.append(
+        "application_event",
+        payload,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    replayed = outbox.append(
+        "application_event",
+        payload,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    assert replayed == first
+    assert outbox.pending() == [first]
+    outbox.close()
+
+
+def test_audit_outbox_compares_replays_by_canonical_payload_identity(monkeypatch) -> None:
+    graphblocks_audit = importlib.import_module("graphblocks.audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    payload = {"items": ("a",), "score": Decimal("0.1")}
+
+    first = outbox.append(
+        "application_event",
+        payload,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    replayed = outbox.append(
+        "application_event",
+        payload,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    assert replayed == first
+    assert outbox.pending() == [first]
+    outbox.close()
 
 
 def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:

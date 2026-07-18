@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.runtime import InProcessRuntime, stdlib_registry
-from graphblocks.stdlib_rag import answer_validate_grounding, retrieve_execute_plan
+from graphblocks.stdlib_rag import answer_validate_grounding, rank_documents, retrieve_execute_plan
 
 
 def _hit(hit_id: str, item_id: str, rank: int, retriever: str, preview: str) -> dict[str, object]:
@@ -52,6 +52,19 @@ def _hit(hit_id: str, item_id: str, rank: int, retriever: str, preview: str) -> 
         "highlights": [source],
         "metadata": {},
     }
+
+
+def test_rank_documents_reads_snake_case_query_text() -> None:
+    irrelevant = _hit("irrelevant", "chunk-a", 1, "local", "Release checklist")
+    relevant = _hit("relevant", "chunk-b", 2, "local", "Audit logs are required")
+
+    result = rank_documents(
+        {"query": {"query_text": "audit logs"}, "hits": [irrelevant, relevant]},
+        {},
+        {},
+    )
+
+    assert [hit["hitId"] for hit in result["hits"]] == ["relevant", "irrelevant"]
 
 
 def test_rag_blocks_execute_as_one_runtime_graph_with_injected_sources() -> None:

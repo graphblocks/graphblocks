@@ -299,7 +299,10 @@ class ReviewWorkflow:
             credential_refs=[credential.credential_ref for credential in credentials],
             created_at=created_at,
         )
-        self.reviews = (*self.reviews, review)
+        self.reviews = (
+            *(existing for existing in self.reviews if existing.review_id != review.review_id),
+            review,
+        )
         return review
 
     def completed_scopes(self) -> tuple[str, ...]:

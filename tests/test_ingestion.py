@@ -218,20 +218,42 @@ def test_ingestion_manifest_store_commit_is_idempotent_for_ready_manifest() -> N
     store = InMemoryIngestionManifestStore()
     store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
     parsed_ref = ArtifactRef("parsed-rev-1", "blob://parsed/rev-1.json")
+    index_records = (_index_record("rev-1"),)
     store.commit(
         "manifest-1",
         parsed_document_ref=parsed_ref,
         chunk_set_ref=None,
-        index_records=(_index_record("rev-1"),),
+        index_records=index_records,
         updated_at="2026-06-22T00:02:00Z",
     )
 
-    committed = store.commit("manifest-1", None, None, (), "2026-06-22T00:03:00Z")
+    committed = store.commit(
+        "manifest-1",
+        parsed_ref,
+        None,
+        index_records,
+        "2026-06-22T00:03:00Z",
+    )
 
     assert committed.status == "ready"
     assert committed.parsed_document_ref == parsed_ref
     assert committed.index_records == (_index_record("rev-1"),)
     assert committed.updated_at == "2026-06-22T00:02:00Z"
+
+
+def test_ingestion_manifest_store_rejects_divergent_ready_commit_replay() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+    store.commit(
+        "manifest-1",
+        parsed_document_ref=ArtifactRef("parsed-rev-1", "blob://parsed/rev-1.json"),
+        chunk_set_ref=None,
+        index_records=(_index_record("rev-1"),),
+        updated_at="2026-06-22T00:02:00Z",
+    )
+
+    with pytest.raises(IngestionError, match="commit replay does not match stored outputs"):
+        store.commit("manifest-1", None, None, (), "2026-06-22T00:03:00Z")
 
 
 def test_ingestion_manifest_store_rejects_index_records_for_different_asset_or_revision() -> None:

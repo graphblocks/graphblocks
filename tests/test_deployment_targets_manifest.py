@@ -90,6 +90,25 @@ def test_deployment_target_profile_rejects_invalid_string_fields() -> None:
         )
 
 
+@pytest.mark.parametrize("default_replicas", [True, False])
+def test_deployment_target_profile_rejects_boolean_default_replicas(
+    default_replicas: bool,
+) -> None:
+    with pytest.raises(
+        GraphDeploymentError,
+        match="deployment target profile defaultReplicas must be an integer",
+    ):
+        DeploymentTargetProfile.from_mapping(
+            {
+                "id": "control",
+                "imageRole": "control-plane",
+                "kind": "service",
+                "executionHost": "rust",
+                "defaultReplicas": default_replicas,
+            }
+        )
+
+
 def test_deployment_target_coverage_reports_missing_image_role() -> None:
     target_set = DeploymentTargetProfileSet(())
 

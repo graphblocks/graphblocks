@@ -1249,11 +1249,23 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
 def discover_plugins(paths: list[str | Path] | None = None, include_installed: bool = True) -> PluginRegistry:
     diagnostics: list[Diagnostic] = []
     manifests: list[PluginManifest] = []
-    with resources.files("graphblocks").joinpath("data/builtin-plugin.yaml").open("r", encoding="utf-8") as stream:
-        document = yaml.safe_load(stream)
-    builtin_diagnostics = validate_plugin_manifest(document)
-    diagnostics.extend(builtin_diagnostics.diagnostics)
-    manifests.append(plugin_manifest_from_document(document, "graphblocks:data/builtin-plugin.yaml"))
+    builtin_source = "graphblocks:data/builtin-plugin.yaml"
+    try:
+        with resources.files("graphblocks").joinpath("data/builtin-plugin.yaml").open(
+            "r",
+            encoding="utf-8",
+        ) as stream:
+            document = yaml.load(stream, Loader=_DuplicateKeySafeLoader)
+    except Exception as exc:
+        diagnostics.append(Diagnostic("GB2012", str(exc), builtin_source))
+    else:
+        builtin_diagnostics = validate_plugin_manifest(document)
+        diagnostics.extend(builtin_diagnostics.diagnostics)
+        if builtin_diagnostics.ok:
+            try:
+                manifests.append(plugin_manifest_from_document(document, builtin_source))
+            except Exception as exc:
+                diagnostics.append(Diagnostic("GB2012", str(exc), builtin_source))
 
     for search_path in paths or []:
         candidate = Path(search_path)

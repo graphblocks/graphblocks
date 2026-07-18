@@ -313,6 +313,14 @@ class InMemoryIngestionManifestStore:
     ) -> IngestionManifest:
         manifest = self._require_manifest(manifest_id)
         if manifest.status == "ready":
+            if (
+                manifest.parsed_document_ref != parsed_document_ref
+                or manifest.chunk_set_ref != chunk_set_ref
+                or manifest.index_records != tuple(index_records)
+            ):
+                raise IngestionError(
+                    f"ingestion manifest {manifest_id!r} commit replay does not match stored outputs"
+                )
             return _copy_ingestion_manifest(manifest)
         if manifest.status not in {"discovered", "processing"}:
             raise IngestionError(

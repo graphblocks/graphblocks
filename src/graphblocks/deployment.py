@@ -203,6 +203,7 @@ class GraphRelease:
     def content_digest(self) -> str:
         return canonical_hash(
             {
+                "name": self.name,
                 "version": self.version,
                 "bundle": {
                     "digest": self.bundle_digest,
@@ -1325,6 +1326,8 @@ class DeploymentTargetProfile:
             "deployment target execution_host must not be empty",
             GraphDeploymentError,
         )
+        if isinstance(self.default_replicas, bool) or not isinstance(self.default_replicas, int):
+            raise GraphDeploymentError("deployment target default_replicas must be an integer")
         if self.default_replicas <= 0:
             raise GraphDeploymentError("deployment target default_replicas must be positive")
         object.__setattr__(self, "capabilities", tuple(sorted({str(item) for item in self.capabilities})))
@@ -1358,7 +1361,7 @@ class DeploymentTargetProfile:
         default_replicas = mapping.get("defaultReplicas", mapping.get("default_replicas", 1))
         if package_lock is not None and not isinstance(package_lock, str):
             raise GraphDeploymentError("deployment target profile packageLock must be a string")
-        if not isinstance(default_replicas, int):
+        if isinstance(default_replicas, bool) or not isinstance(default_replicas, int):
             raise GraphDeploymentError("deployment target profile defaultReplicas must be an integer")
         return cls(
             target_id=target_id,
@@ -1508,6 +1511,8 @@ class PlacementSelector:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", tuple(sorted(set(self.values))))
+        if not self.values:
+            raise GraphDeploymentError("placement selector values must not be empty")
 
     @classmethod
     def nodes(cls, nodes: list[str] | tuple[str, ...]) -> PlacementSelector:

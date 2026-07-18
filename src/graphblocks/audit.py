@@ -200,6 +200,15 @@ class SQLiteAuditOutbox:
             )
             self._connection.commit()
         except sqlite3.IntegrityError as error:
+            self._connection.rollback()
+            existing = self.get(actual_record_id)
+            if (
+                existing.record_type == record_type
+                and canonical_dumps(dict(existing.payload)) == payload_json
+                and existing.payload_digest == payload_digest
+                and existing.occurred_at == occurred_at
+            ):
+                return existing
             raise AuditOutboxConflictError(f"audit outbox record {actual_record_id!r} already exists") from error
         return self.get(actual_record_id)
 
@@ -222,36 +231,34 @@ class SQLiteAuditOutbox:
         return [self._record_from_row(row) for row in rows]
 
     def mark_published(self, record_id: str, *, published_at: str) -> AuditOutboxRecord:
-        current = self.get(record_id)
-        if current.status == "published":
-            if current.published_at == published_at:
-                return current
-            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
             SET status = ?, published_at = ?, last_error = NULL
-            WHERE record_id = ?
+            WHERE record_id = ? AND status IN ('pending', 'failed')
             """,
             ("published", published_at, record_id),
         ).rowcount == 0:
-            raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
+            self._connection.rollback()
+            current = self.get(record_id)
+            if current.status == "published" and current.published_at == published_at:
+                return current
+            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         self._connection.commit()
         return self.get(record_id)
 
     def mark_failed(self, record_id: str, *, error: str) -> AuditOutboxRecord:
-        current = self.get(record_id)
-        if current.status == "published":
-            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
             SET status = ?, attempts = attempts + 1, last_error = ?
-            WHERE record_id = ?
+            WHERE record_id = ? AND status IN ('pending', 'failed')
             """,
             ("failed", error, record_id),
         ).rowcount == 0:
-            raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
+            self._connection.rollback()
+            self.get(record_id)
+            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         self._connection.commit()
         return self.get(record_id)
 

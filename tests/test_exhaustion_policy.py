@@ -64,6 +64,7 @@ def test_finish_current_turn_allows_only_declared_continuation_work() -> None:
     finalization = controller.admit("declared_finalization", work_epoch=8, permit=_permit())
     optional_task = controller.admit("optional_task", work_epoch=8, permit=_permit())
     second_finalization = controller.admit("declared_finalization", work_epoch=8, permit=_permit())
+    current_epoch_cleanup = controller.admit("cleanup", work_epoch=7)
 
     assert already_admitted.allowed is True
     assert finalization.allowed is True
@@ -71,6 +72,7 @@ def test_finish_current_turn_allows_only_declared_continuation_work() -> None:
     assert optional_task.reason == "forbidden_work"
     assert second_finalization.allowed is False
     assert second_finalization.reason == "max_additional_steps_exceeded"
+    assert current_epoch_cleanup.allowed is True
 
 
 def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:

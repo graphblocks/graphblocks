@@ -45,6 +45,48 @@ def test_voice_package_tracks_duplex_session_and_realtime_request(monkeypatch) -
     assert "DuplexSession" in graphblocks_voice.__all__
 
 
+def test_duplex_session_rejects_closed_transitions_and_records_interrupt_time(monkeypatch) -> None:
+    graphblocks_voice = _import_voice(monkeypatch)
+    transport = graphblocks_voice.VoiceTransport.websocket("wss://voice.example.com/session")
+    session = graphblocks_voice.DuplexSession(
+        "session-1",
+        transport,
+        started_at_ms=100,
+    )
+
+    interrupted = session.interrupt(occurred_at_ms=125, reason="barge_in")
+
+    assert interrupted.state == "interrupted"
+    assert interrupted.interrupted_at_ms == 125
+    assert interrupted.contract()["interruptedAtMs"] == 125
+    resumed = interrupted.begin_turn("turn-2")
+    assert resumed.interrupted_at_ms is None
+    assert resumed.interruption_reason is None
+
+    closed = interrupted.close(occurred_at_ms=150)
+    for transition in (
+        lambda: closed.begin_turn("turn-3"),
+        lambda: closed.interrupt(occurred_at_ms=175, reason="late_barge_in"),
+        lambda: closed.close(occurred_at_ms=200),
+    ):
+        try:
+            transition()
+        except graphblocks_voice.VoiceContractError:
+            continue
+        raise AssertionError("closed duplex sessions must be terminal")
+
+    assert closed.state == "closed"
+    assert closed.closed_at_ms == 150
+    assert closed.interrupted_at_ms == 125
+
+    try:
+        interrupted.close(occurred_at_ms=124)
+    except graphblocks_voice.VoiceContractError as error:
+        assert "before session interruption" in str(error)
+    else:
+        raise AssertionError("session close cannot precede its interruption")
+
+
 def test_voice_vad_authority_and_interruption_classifier(monkeypatch) -> None:
     graphblocks_voice = _import_voice(monkeypatch)
 

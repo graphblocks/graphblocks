@@ -233,9 +233,21 @@ class WorkspaceMutationPolicy:
             operation_name = operation.get("op")
             resource_kind = operation.get("resource_kind")
             resource_id = operation.get("resource_id")
-            if isinstance(operation_name, str) and operation_name in self.denied_operations:
+            if (
+                not isinstance(operation_name, str)
+                or not operation_name.strip()
+                or operation_name != operation_name.strip()
+            ):
                 reasons.append("workspace.operation_denied")
-            if isinstance(resource_kind, str) and resource_kind not in self.allowed_resource_kinds:
+            elif operation_name in self.denied_operations:
+                reasons.append("workspace.operation_denied")
+            if (
+                not isinstance(resource_kind, str)
+                or not resource_kind.strip()
+                or resource_kind != resource_kind.strip()
+            ):
+                reasons.append("workspace.resource_kind_denied")
+            elif resource_kind not in self.allowed_resource_kinds:
                 reasons.append("workspace.resource_kind_denied")
             operation_action = operation_name.rsplit(".", 1)[-1].lower() if isinstance(operation_name, str) else ""
             if operation_action not in read_only_operations:

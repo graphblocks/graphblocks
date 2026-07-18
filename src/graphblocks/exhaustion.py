@@ -292,7 +292,11 @@ class ExhaustionController:
                     projected_usage[key] = projected_usage.get(key, Decimal("0")) + amount.amount
                 if any(amount > allowed_usage.get(key, Decimal("0")) for key, amount in projected_usage.items()):
                     return AdmissionDecision(False, "max_additional_usage_exceeded")
-        if envelope.max_additional_steps is not None and self.used_additional_steps >= envelope.max_additional_steps:
+        if (
+            work_epoch > self.admission_epoch
+            and envelope.max_additional_steps is not None
+            and self.used_additional_steps >= envelope.max_additional_steps
+        ):
             return AdmissionDecision(False, "max_additional_steps_exceeded")
         if work_epoch > self.admission_epoch:
             self.used_additional_steps += 1

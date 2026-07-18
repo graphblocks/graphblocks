@@ -167,6 +167,48 @@ def test_review_workflow_records_review_with_credential_reference() -> None:
     assert workflow.is_complete()
 
 
+def test_review_workflow_replaces_replayed_review_id() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider(
+            [
+                ReviewerCredential(
+                    "cred-quality",
+                    reviewer,
+                    scopes=("quality",),
+                    issued_at="2026-06-24T00:00:00Z",
+                )
+            ]
+        ),
+    )
+    workflow.record_review(
+        review_id="review-1",
+        reviewer=reviewer,
+        scope="quality",
+        decision="reject",
+        created_at="2026-06-24T00:05:00Z",
+    )
+
+    replayed = workflow.record_review(
+        review_id="review-1",
+        reviewer=reviewer,
+        scope="quality",
+        decision="accept",
+        created_at="2026-06-24T00:06:00Z",
+    )
+
+    assert workflow.reviews == (replayed,)
+    assert workflow.completed_scopes() == ("quality",)
+
+
 def test_reviewer_credential_rejects_invalid_timestamps() -> None:
     reviewer = PrincipalRef("reviewer-1")
 

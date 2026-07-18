@@ -78,7 +78,7 @@ def test_graph_release_digest_is_stable_for_artifact_order() -> None:
         .with_prompt_lock("answer", PromptLock.versioned("support.answer", "2026-06-23"))
     )
     right = (
-        GraphRelease(name="enterprise-rag-copy", version="2026.06.23.1")
+        GraphRelease(name="enterprise-rag", version="2026.06.23.1")
         .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.v1")
         .with_application_hash("sha256:app")
         .with_graph("ingest", GraphReleaseGraph("sha256:graph-ingest", "sha256:plan-ingest"))
@@ -88,6 +88,13 @@ def test_graph_release_digest_is_stable_for_artifact_order() -> None:
     )
 
     assert left.content_digest() == right.content_digest()
+
+
+def test_graph_release_digest_is_bound_to_release_name() -> None:
+    left = GraphRelease(name="enterprise-rag", version="2026.06.23.1")
+    right = GraphRelease(name="enterprise-rag-copy", version="2026.06.23.1")
+
+    assert left.content_digest() != right.content_digest()
 
 
 def test_graph_release_validation_rejects_mutable_production_references() -> None:
@@ -519,6 +526,22 @@ def test_placement_resolution_rejects_same_priority_conflicts() -> None:
     assert error.value.node_id == "generate"
     assert error.value.priority == "node"
     assert error.value.target_ids == ("control", "doc-cpu")
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        PlacementSelector.nodes,
+        PlacementSelector.execution_groups,
+        PlacementSelector.blocks,
+        PlacementSelector.capabilities,
+        PlacementSelector.effects,
+        PlacementSelector.execution_classes,
+    ],
+)
+def test_placement_selector_rejects_empty_values(selector) -> None:
+    with pytest.raises(GraphDeploymentError, match="placement selector values must not be empty"):
+        selector([])
 
 
 def test_deployment_event_exports_release_revision_and_cohort_attributes() -> None:

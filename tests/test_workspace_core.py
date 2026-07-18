@@ -315,6 +315,30 @@ def test_workspace_mutation_policy_requires_allowed_kind_and_reviewer() -> None:
     assert allowed.allowed
 
 
+@pytest.mark.parametrize(
+    ("operation", "reason_code"),
+    [
+        ({"resource_kind": "file"}, "workspace.operation_denied"),
+        ({"op": 7, "resource_kind": "file"}, "workspace.operation_denied"),
+        ({"op": "file.write"}, "workspace.resource_kind_denied"),
+        ({"op": "file.write", "resource_kind": 7}, "workspace.resource_kind_denied"),
+    ],
+)
+def test_workspace_mutation_policy_fails_closed_for_malformed_operations(
+    operation: dict[str, object],
+    reason_code: str,
+) -> None:
+    policy = WorkspaceMutationPolicy("policy-1", ("file",))
+    subject = ResourceSnapshotRef("workspace", "sha256:base", resource_kind="workspace")
+    decision = policy.evaluate(
+        ChangeSet("change-1", subject, subject, operations=[operation]),
+        PrincipalRef("author-1"),
+    )
+
+    assert not decision.allowed
+    assert reason_code in decision.reason_codes
+
+
 def test_workspace_mutation_policy_protects_declared_read_only_inputs() -> None:
     policy = WorkspaceMutationPolicy(
         policy_id="policy-1",

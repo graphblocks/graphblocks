@@ -13,6 +13,10 @@ class Diagnostic:
     path: str = "$"
     severity: Severity = "error"
 
+    def __post_init__(self) -> None:
+        if self.severity not in ("error", "warning", "info"):
+            raise ValueError(f"diagnostic severity has invalid value {self.severity!r}")
+
     def to_dict(self) -> dict[str, str]:
         return {
             "code": self.code,
@@ -32,4 +36,3 @@ class DiagnosticSet:
 
     def to_list(self) -> list[dict[str, str]]:
         return [item.to_dict() for item in self.diagnostics]
-

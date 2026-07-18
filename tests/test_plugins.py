@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
+import graphblocks.plugins as plugins_module
 from graphblocks import BlockCatalog, compile_graph, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from graphblocks.cli import main
 from graphblocks.plugins import builtin_block_catalog, plugin_manifest_from_document
@@ -54,6 +55,44 @@ def test_builtin_plugin_discovery_does_not_need_installed_scan() -> None:
     assert registry.ok
     assert [manifest.plugin_id for manifest in registry.manifests] == ["io.graphblocks.stdlib"]
 
+
+@pytest.mark.parametrize(
+    ("manifest", "expected_code"),
+    [
+        (
+            "apiVersion: graphblocks.ai/v1\n"
+            "kind: PluginManifest\n"
+            "metadata: {}\n"
+            "spec: {version: 1.0.0, blocks: []}\n",
+            "GB2006",
+        ),
+        (
+            "apiVersion: graphblocks.ai/v1\n"
+            "kind: PluginManifest\n"
+            "metadata: {name: first}\n"
+            "metadata: {name: replaced}\n"
+            "spec: {pluginId: example.builtin, version: 1.0.0, blocks: []}\n",
+            "GB2012",
+        ),
+    ],
+    ids=["invalid", "duplicate-key"],
+)
+def test_builtin_plugin_discovery_surfaces_broken_manifest_diagnostics(
+    monkeypatch,
+    tmp_path,
+    manifest: str,
+    expected_code: str,
+) -> None:
+    builtin = tmp_path / "data" / "builtin-plugin.yaml"
+    builtin.parent.mkdir()
+    builtin.write_text(manifest, encoding="utf-8")
+    monkeypatch.setattr(plugins_module.resources, "files", lambda _package: tmp_path)
+
+    registry = discover_plugins(include_installed=False)
+
+    assert registry.manifests == ()
+    assert not registry.ok
+    assert expected_code in {item.code for item in registry.diagnostics.diagnostics}
 
 
 def test_alpha_plugin_manifest_is_migrated_to_auditable_v1() -> None:
