@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import importlib
+from importlib import resources
 import hashlib
 import io
 import json
@@ -195,7 +196,13 @@ from graphblocks.run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
-from graphblocks.schema import SchemaId, SchemaIdError, TypedValue, resource_schema_errors
+from graphblocks.schema import (
+    SchemaId,
+    SchemaIdError,
+    SchemaManifest,
+    TypedValue,
+    resource_schema_errors,
+)
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
@@ -339,6 +346,7 @@ _BUNDLED_TCK_SUITES = (
     "tool-lifecycle",
     "tool-result",
 )
+_STABLE_RELEASE_PROFILES = ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME")
 
 
 def _first_mapping_value(mapping: Mapping[str, object], *keys: str, default: object = None) -> object:
@@ -3203,13 +3211,58 @@ def main(argv: list[str] | None = None) -> int:
             ).run_cases(
                 load_tck_cases_for_suite(manifest.suite_id, fixture_path)
             )
-            reports[manifest.suite_id] = report.report_contract()
+            report_contract = report.report_contract()
+            evidence = dict(report_contract["evidence"])
+            evidence["case_ids_digest"] = canonical_hash(
+                {"case_ids": list(manifest.case_ids)}
+            )
+            evidence["suite_manifest_digest"] = manifest.content_digest()
+            report_contract["evidence"] = evidence
+            reports[manifest.suite_id] = report_contract
             ok = ok and report.ok
         payload = {
             "profile": args.profile,
             "ok": ok,
             "reports": reports,
         }
+        if args.root is None and args.profile == "local":
+            profile_resource = resources.files("graphblocks").joinpath(
+                "data", "conformance-profiles.yaml"
+            )
+            with resources.as_file(profile_resource) as profile_path:
+                profile_documents = load_documents(profile_path)
+            if len(profile_documents) != 1:
+                raise ValueError(
+                    "installed conformance profile catalog must contain one document"
+                )
+            schema_resource = resources.files("graphblocks").joinpath("schemas")
+            if schema_resource.is_dir():
+                with resources.as_file(schema_resource) as schema_root:
+                    schema_manifest_digest = SchemaManifest.from_directory(
+                        schema_root
+                    ).content_digest()
+            else:
+                checkout_schema_root = Path(__file__).resolve().parents[4] / "schemas"
+                schema_manifest_digest = SchemaManifest.from_directory(
+                    checkout_schema_root
+                ).content_digest()
+            payload.update(
+                {
+                    "suite_manifest_digest": canonical_hash(
+                        {
+                            "suites": [
+                                manifest.manifest_contract()
+                                for manifest in manifests
+                            ]
+                        }
+                    ),
+                    "claimed_profiles": list(_STABLE_RELEASE_PROFILES),
+                    "profile_catalog_digest": canonical_hash(
+                        profile_documents[0]
+                    ),
+                    "schema_manifest_digest": schema_manifest_digest,
+                }
+            )
         payload["contentDigest"] = canonical_hash(payload)
         if args.json:
             print(canonical_dumps(payload))

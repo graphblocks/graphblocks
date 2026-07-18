@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
+import importlib
 import importlib.util
 import io
 import json
@@ -98,6 +99,126 @@ def test_release_evidence_gate_requires_nonempty_identity_bound_tck_reports() ->
     invalid["reports"] = {"schema": {"ok": True, "evidence": {}, "results": []}}
     with pytest.raises(RuntimeError, match="contains no executed cases"):
         module._require_release_evidence(invalid, kind="TCK")
+
+
+def test_release_tck_expectations_validate_observed_suite_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_wheelhouse_module()
+    expected_digest = "sha256:" + "a" * 64
+    expected = {
+        "manifest_digest": expected_digest,
+        "claimed_profiles": ("GB-C0-SCHEMA",),
+        "profile_catalog_digest": expected_digest,
+        "schema_manifest_digest": expected_digest,
+        "suites": {
+            "schema": {
+                "case_ids": ("schema-1",),
+                "case_ids_digest": module.canonical_hash(
+                    {"case_ids": ["schema-1"]}
+                ),
+                "fixture_digest": expected_digest,
+                "implementation": "graphblocks-python",
+                "implementation_version": "1.0.0rc1",
+                "suite_manifest_digest": expected_digest,
+            }
+        },
+    }
+
+    def observed_payload(fixture_digest: str) -> dict[str, object]:
+        return _with_content_digest(
+            module,
+            {
+                "profile": "local",
+                "ok": True,
+                "suite_manifest_digest": expected_digest,
+                "claimed_profiles": ["GB-C0-SCHEMA"],
+                "profile_catalog_digest": expected_digest,
+                "schema_manifest_digest": expected_digest,
+                "reports": {
+                    "schema": {
+                        "ok": True,
+                        "evidence": {
+                            "case_ids_digest": expected["suites"]["schema"][
+                                "case_ids_digest"
+                            ],
+                            "fixture_digest": fixture_digest,
+                            "implementation": "graphblocks-python",
+                            "implementation_version": "1.0.0rc1",
+                            "suite": "schema",
+                            "suite_manifest_digest": expected_digest,
+                        },
+                        "results": [
+                            {"case_id": "schema-1", "status": "passed"}
+                        ],
+                    }
+                },
+            },
+        )
+
+    valid = observed_payload(expected_digest)
+    assert module._require_release_evidence(
+        valid,
+        kind="TCK",
+        expected_tck=expected,
+    ) == valid
+
+    with pytest.raises(RuntimeError, match="fixture_digest"):
+        module._require_release_evidence(
+            observed_payload("sha256:" + "b" * 64),
+            kind="TCK",
+            expected_tck=expected,
+        )
+
+    conflicting = observed_payload(expected_digest)
+    conflicting["reports"]["schema"]["evidence"]["case_ids_digest"] = (
+        "sha256:" + "b" * 64
+    )
+    conflicting["contentDigest"] = module.canonical_hash(
+        {key: value for key, value in conflicting.items() if key != "contentDigest"}
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=module.canonical_dumps(conflicting),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="case_ids_digest"):
+        module._run_json_command(
+            ["graphblocks-tck", "run-all"],
+            cwd=tmp_path,
+            env={},
+            kind="TCK",
+            expected_tck=expected,
+        )
+
+
+def test_default_tck_output_matches_source_derived_release_expectations(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(
+        str(root / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    module = _load_wheelhouse_module()
+
+    exit_code = graphblocks_testing.main(["run-all", "--json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out, parse_float=Decimal)
+    expected = module.release_evidence_expectations(root)["TCK"]
+    assert module._require_release_evidence(
+        payload,
+        kind="TCK",
+        expected_tck=expected,
+    ) == payload
 
 
 def test_release_evidence_gate_requires_executed_acceptance_applications() -> None:

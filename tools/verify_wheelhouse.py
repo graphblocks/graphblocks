@@ -415,40 +415,6 @@ def _tck_expectations(
     }
 
 
-def _bind_tck_expectations(
-    payload: dict[str, object],
-    *,
-    expected_tck: Mapping[str, object],
-) -> dict[str, object]:
-    reports = payload.get("reports")
-    raw_suites = expected_tck.get("suites")
-    if not isinstance(reports, dict) or not isinstance(raw_suites, Mapping):
-        return payload
-    bound = dict(payload)
-    bound_reports: dict[str, object] = {}
-    for suite, report in reports.items():
-        if not isinstance(report, dict):
-            bound_reports[suite] = report
-            continue
-        expectation = raw_suites.get(suite)
-        bound_report = dict(report)
-        raw_evidence = report.get("evidence")
-        if isinstance(expectation, Mapping) and isinstance(raw_evidence, dict):
-            evidence = dict(raw_evidence)
-            evidence["case_ids_digest"] = expectation.get("case_ids_digest")
-            evidence["suite_manifest_digest"] = expectation.get("suite_manifest_digest")
-            bound_report["evidence"] = evidence
-        bound_reports[suite] = bound_report
-    bound["reports"] = bound_reports
-    bound["suite_manifest_digest"] = expected_tck.get("manifest_digest")
-    bound["claimed_profiles"] = list(expected_tck.get("claimed_profiles", ()))
-    bound["profile_catalog_digest"] = expected_tck.get("profile_catalog_digest")
-    bound["schema_manifest_digest"] = expected_tck.get("schema_manifest_digest")
-    bound.pop("contentDigest", None)
-    bound["contentDigest"] = canonical_hash(bound)
-    return bound
-
-
 def _require_release_evidence(
     payload: object,
     *,
@@ -546,6 +512,13 @@ def _require_release_evidence(
                     evidence.get("case_ids_digest"),
                     owner=f"installed TCK suite {suite!r} case id digest",
                 )
+                if evidence.get("case_ids_digest") != canonical_hash(
+                    {"case_ids": list(observed_case_ids)}
+                ):
+                    raise RuntimeError(
+                        f"installed TCK suite {suite!r} case id digest does not "
+                        "match executed cases"
+                    )
                 _require_canonical_sha256(
                     evidence.get("suite_manifest_digest"),
                     owner=f"installed TCK suite {suite!r} manifest digest",
@@ -667,10 +640,6 @@ def _run_json_command(
         payload = json.loads(completed.stdout, parse_float=Decimal)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"installed {kind} evidence is not valid JSON") from error
-    if kind == "TCK" and expected_tck is not None:
-        if not isinstance(payload, dict):
-            raise RuntimeError("installed TCK evidence is not a JSON object")
-        payload = _bind_tck_expectations(payload, expected_tck=expected_tck)
     return _require_release_evidence(
         payload,
         kind=kind,

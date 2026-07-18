@@ -7752,9 +7752,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "deployment",
         "documents",
         "durable",
-            "exhaustion",
-            "migration",
-            "orchestration",
+        "exhaustion",
+        "migration",
+        "orchestration",
         "policy",
         "rag",
         "retry",
@@ -9275,6 +9275,40 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
     )
     assert all(report["ok"] for report in payload["reports"].values())
     assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_emits_observed_release_tck_identity(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.syspath_prepend(
+        str(ROOT / "packages" / "graphblocks-testing" / "src")
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    manifests = graphblocks_testing.load_bundled_tck_suite_manifests()
+
+    exit_code = graphblocks_testing.main(["run-all", "--json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out, parse_float=Decimal)
+    assert payload["claimed_profiles"] == [
+        "GB-C0-SCHEMA",
+        "GB-C1-LOCAL-RUNTIME",
+    ]
+    assert payload["suite_manifest_digest"] == graphblocks_testing.canonical_hash(
+        {"suites": [manifest.manifest_contract() for manifest in manifests]}
+    )
+    assert payload["schema_manifest_digest"].startswith("sha256:")
+    assert payload["profile_catalog_digest"].startswith("sha256:")
+    for manifest in manifests:
+        evidence = payload["reports"][manifest.suite_id]["evidence"]
+        assert evidence["case_ids_digest"] == graphblocks_testing.canonical_hash(
+            {"case_ids": list(manifest.case_ids)}
+        )
+        assert evidence["suite_manifest_digest"] == manifest.content_digest()
+    assert payload["contentDigest"] == graphblocks_testing.canonical_hash(
+        {key: value for key, value in payload.items() if key != "contentDigest"}
+    )
 
 
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
