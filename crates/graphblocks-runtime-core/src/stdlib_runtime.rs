@@ -5,12 +5,14 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use graphblocks_compiler::canonical::canonical_hash;
+use graphblocks_compiler::canonical::{canonical_hash, canonical_json, try_canonical_hash};
 use graphblocks_compiler::compiler::{
     BlockCatalog, BlockDescriptor, ExecutionPhase, compile_graph_with_catalog,
 };
 use graphblocks_compiler::diagnostics::Severity;
-use graphblocks_schema::{parse_canonical_json, parse_duration_milliseconds};
+use graphblocks_schema::{
+    parse_canonical_json, parse_duration_milliseconds, validate_canonical_json_depth,
+};
 use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -291,6 +293,7 @@ struct RuntimeBridgePlan {
 
 const INTERNAL_WHEN_INPUT: &str = "\0graphblocks.when";
 const INTERNAL_SKIPPED_OUTPUT: &str = "\0graphblocks.skipped";
+const CHECKPOINT_SKIPPED_MARKER: &str = "\0graphblocks.checkpoint_skipped";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OutputProjection {
@@ -374,6 +377,30 @@ impl NodeExecutor for StdlibExecutor {
                 })
                 .collect());
         }
+        if let Some(skipped) = self
+            .replay_node_outputs
+            .get(&node.node_id)
+            .and_then(|value| value.get(CHECKPOINT_SKIPPED_MARKER))
+        {
+            let reason = checkpoint_skip_reason(skipped);
+            return Ok(skipped_node_outputs(
+                &node.node_id,
+                self.output_ports_by_node.get(&node.node_id),
+                reason,
+            ));
+        }
+        if let Some(reason) = resolved_inputs.values().find_map(|input| match input {
+            ResolvedInput::Outcome(Outcome::Skipped(reason)) => Some(reason.clone()),
+            ResolvedInput::Value(_) | ResolvedInput::Outcome(_) => None,
+        }) {
+            self.executed_node_outputs
+                .insert(node.node_id.clone(), checkpoint_skipped_value(&reason));
+            return Ok(skipped_node_outputs(
+                &node.node_id,
+                self.output_ports_by_node.get(&node.node_id),
+                reason,
+            ));
+        }
         if let Some(when) = node_spec.get("when") {
             let when = when
                 .as_str()
@@ -408,23 +435,13 @@ impl NodeExecutor for StdlibExecutor {
                 Value::Bool(true) => {}
                 Value::Bool(false) => {
                     let reason = SkipReason::new("condition_false");
-                    let mut skipped_outputs = self
-                        .output_ports_by_node
-                        .get(&node.node_id)
-                        .into_iter()
-                        .flatten()
-                        .map(|port| {
-                            (
-                                PortRef::new(node.node_id.clone(), port),
-                                Outcome::Skipped(reason.clone()),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    skipped_outputs.push((
-                        PortRef::new(node.node_id, INTERNAL_SKIPPED_OUTPUT),
-                        Outcome::Skipped(reason),
+                    self.executed_node_outputs
+                        .insert(node.node_id.clone(), checkpoint_skipped_value(&reason));
+                    return Ok(skipped_node_outputs(
+                        &node.node_id,
+                        self.output_ports_by_node.get(&node.node_id),
+                        reason,
                     ));
-                    return Ok(skipped_outputs);
                 }
                 _ => {
                     return Err(BlockError::new(
@@ -545,6 +562,49 @@ impl NodeExecutor for StdlibExecutor {
             .collect();
         Ok(port_outputs)
     }
+}
+
+fn skipped_node_outputs(
+    node_id: &str,
+    output_ports: Option<&Vec<String>>,
+    reason: SkipReason,
+) -> Vec<(PortRef, Outcome<Value>)> {
+    let mut outputs = output_ports
+        .into_iter()
+        .flatten()
+        .map(|port| {
+            (
+                PortRef::new(node_id, port),
+                Outcome::Skipped(reason.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
+    outputs.push((
+        PortRef::new(node_id, INTERNAL_SKIPPED_OUTPUT),
+        Outcome::Skipped(reason),
+    ));
+    outputs
+}
+
+fn checkpoint_skipped_value(reason: &SkipReason) -> Value {
+    json!({
+        CHECKPOINT_SKIPPED_MARKER: {
+            "code": reason.code,
+            "message": reason.message,
+        }
+    })
+}
+
+fn checkpoint_skip_reason(value: &Value) -> SkipReason {
+    let code = value
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("upstream_skipped");
+    let mut reason = SkipReason::new(code);
+    if let Some(message) = value.get("message").and_then(Value::as_str) {
+        reason.message = Some(message.to_owned());
+    }
+    reason
 }
 
 fn validate_stdlib_output_contract(
@@ -693,6 +753,9 @@ fn run_stdlib_graph_values(
     options: &serde_json::Map<String, Value>,
     block_catalog: &BlockCatalog,
 ) -> Result<StdlibRunResult, StdlibRuntimeError> {
+    validate_runtime_value_depth(graph, "graph document")?;
+    validate_runtime_value_depth(inputs, "runtime inputs")?;
+    validate_runtime_value_depth(&Value::Object(options.clone()), "runtime options")?;
     let run_id = options
         .get("runId")
         .or_else(|| options.get("run_id"))
@@ -810,6 +873,28 @@ fn run_stdlib_graph_values(
         output_values,
         deployment_provenance.as_ref(),
     ))
+}
+
+fn validate_runtime_value_depth(value: &Value, label: &str) -> Result<(), StdlibRuntimeError> {
+    validate_canonical_json_depth(value)
+        .map_err(|error| StdlibRuntimeError::invalid(format!("invalid {label} JSON: {error}")))
+}
+
+fn runtime_canonical_hash(value: &Value, label: &str) -> Result<String, StdlibRuntimeError> {
+    try_canonical_hash(value).map_err(|error| {
+        StdlibRuntimeError::invalid(format!("invalid {label} canonical JSON: {error}"))
+    })
+}
+
+fn block_canonical_hash(value: &Value, label: &str) -> Result<String, BlockError> {
+    try_canonical_hash(value).map_err(|error| {
+        BlockError::new(
+            "stdlib.canonical_json_depth",
+            ErrorCategory::Validation,
+            format!("{label} exceeds canonical JSON limits: {error}"),
+            false,
+        )
+    })
 }
 
 struct NativeCallbackRunRequest<'a> {
@@ -1051,7 +1136,7 @@ fn start_native_callback_run(
         output_values: &executor.output_values,
         journal_prefix: &journal_prefix,
         deployment_provenance: request.deployment_provenance,
-    });
+    })?;
     validate_native_checkpoint_identity(
         &checkpoint,
         request.run_id,
@@ -1544,6 +1629,10 @@ fn load_native_callback_run(
                     && terminal_journal_position.is_none()
                     && terminal_journal_digest.is_none()
             } else {
+                let expected_terminal_journal_digest = runtime_canonical_hash(
+                    &Value::Array(result.journal.clone()),
+                    "native callback terminal journal",
+                )?;
                 result.status != StdlibRunStatus::WaitingCallback
                     && result.checkpoint.is_none()
                     && callback_idempotency_key.is_some()
@@ -1551,7 +1640,7 @@ fn load_native_callback_run(
                     && callback_receipt.is_some()
                     && terminal_journal_position == Some(result.journal.len())
                     && terminal_journal_digest.as_deref()
-                        == Some(canonical_hash(&Value::Array(result.journal.clone())).as_str())
+                        == Some(expected_terminal_journal_digest.as_str())
             };
             if !valid_state
                 || result.run_id != run_id
@@ -1615,7 +1704,10 @@ fn persist_native_callback_run(
             Some(i64::try_from(result.journal.len()).map_err(|_| {
                 StdlibRuntimeError::runtime("native callback journal position exceeds i64")
             })?),
-            Some(canonical_hash(&Value::Array(result.journal.clone()))),
+            Some(runtime_canonical_hash(
+                &Value::Array(result.journal.clone()),
+                "native callback terminal journal",
+            )?),
         )
     } else {
         (None, None)
@@ -2030,7 +2122,9 @@ fn native_journal_record_value(record: &JournalRecord) -> Value {
     })
 }
 
-fn build_native_callback_checkpoint(request: NativeCheckpointBuildRequest<'_>) -> Value {
+fn build_native_callback_checkpoint(
+    request: NativeCheckpointBuildRequest<'_>,
+) -> Result<Value, StdlibRuntimeError> {
     let completed_nodes = request
         .node_outputs
         .keys()
@@ -2044,7 +2138,10 @@ fn build_native_callback_checkpoint(request: NativeCheckpointBuildRequest<'_>) -
         .collect::<Vec<_>>();
     let journal_binding = json!({
         "prefix_position": request.journal_prefix.len(),
-        "prefix_digest": canonical_hash(&Value::Array(request.journal_prefix.to_vec())),
+        "prefix_digest": runtime_canonical_hash(
+            &Value::Array(request.journal_prefix.to_vec()),
+            "native callback journal prefix",
+        )?,
         "waiting_position": request.journal_prefix.len() + 1,
         "terminal_position": Value::Null,
     });
@@ -2060,7 +2157,10 @@ fn build_native_callback_checkpoint(request: NativeCheckpointBuildRequest<'_>) -
         "journal_binding": journal_binding,
         "deployment_provenance": request.deployment_provenance.map(RunDeploymentProvenance::canonical_value),
     });
-    let checkpoint_id = format!("checkpoint-{}", canonical_hash(&checkpoint_seed));
+    let checkpoint_id = format!(
+        "checkpoint-{}",
+        runtime_canonical_hash(&checkpoint_seed, "native callback checkpoint seed")?
+    );
     let mut checkpoint = json!({
         "checkpoint_id": checkpoint_id,
         "run_id": request.run_id,
@@ -2074,9 +2174,9 @@ fn build_native_callback_checkpoint(request: NativeCheckpointBuildRequest<'_>) -
         "journal_binding": journal_binding,
         "deployment_provenance": request.deployment_provenance.map(RunDeploymentProvenance::canonical_value),
     });
-    let state_digest = canonical_hash(&checkpoint);
+    let state_digest = runtime_canonical_hash(&checkpoint, "native callback checkpoint")?;
     checkpoint["state_digest"] = json!(state_digest);
-    checkpoint
+    Ok(checkpoint)
 }
 
 fn native_checkpoint_state_digest(checkpoint: &Value) -> Result<String, StdlibRuntimeError> {
@@ -2087,7 +2187,7 @@ fn native_checkpoint_state_digest(checkpoint: &Value) -> Result<String, StdlibRu
     };
     let mut content = object.clone();
     content.remove("state_digest");
-    Ok(canonical_hash(&Value::Object(content)))
+    runtime_canonical_hash(&Value::Object(content), "native callback checkpoint state")
 }
 
 fn native_checkpoint_id(checkpoint: &Value) -> Result<String, StdlibRuntimeError> {
@@ -2101,7 +2201,10 @@ fn native_checkpoint_id(checkpoint: &Value) -> Result<String, StdlibRuntimeError
     content.remove("state_digest");
     Ok(format!(
         "checkpoint-{}",
-        canonical_hash(&Value::Object(content))
+        runtime_canonical_hash(
+            &Value::Object(content),
+            "native callback checkpoint identity",
+        )?
     ))
 }
 
@@ -2248,7 +2351,10 @@ fn validate_native_checkpoint_journal_binding(
             "native callback checkpoint journal prefix position mismatch",
         ));
     }
-    let expected_prefix_digest = canonical_hash(&Value::Array(journal[..prefix_position].to_vec()));
+    let expected_prefix_digest = runtime_canonical_hash(
+        &Value::Array(journal[..prefix_position].to_vec()),
+        "native callback journal prefix",
+    )?;
     if binding.get("prefix_digest").and_then(Value::as_str) != Some(expected_prefix_digest.as_str())
     {
         return Err(StdlibRuntimeError::runtime(
@@ -2384,9 +2490,8 @@ fn validate_native_callback_receipt_shape(
         .get("payload")
         .filter(|value| value.is_object())
         .ok_or_else(|| StdlibRuntimeError::invalid("native async callback rejected"))?;
-    if receipt.get("payload_digest").and_then(Value::as_str)
-        != Some(canonical_hash(payload).as_str())
-    {
+    let payload_digest = try_canonical_hash(payload).map_err(|_| native_callback_rejected())?;
+    if receipt.get("payload_digest").and_then(Value::as_str) != Some(payload_digest.as_str()) {
         return Err(StdlibRuntimeError::invalid(
             "native async callback rejected",
         ));
@@ -2480,7 +2585,8 @@ fn verify_trusted_native_callback_admission(
 
     let mut unsigned_admission = admission.clone();
     unsigned_admission.remove("signature");
-    let admission_digest = canonical_hash(&Value::Object(unsigned_admission));
+    let admission_digest = try_canonical_hash(&Value::Object(unsigned_admission))
+        .map_err(|_| trusted_native_callback_admission_rejected())?;
     let message = format!("graphblocks.trusted-callback-resume-admission.v1\n{admission_digest}");
     let mut mac = HmacSha256::new_from_slice(key.as_bytes())
         .map_err(|_| trusted_native_callback_admission_rejected())?;
@@ -3173,6 +3279,9 @@ fn build_runtime_bridge_plan(
                 "native stdlib runtime does not support {source_owner} references"
             )));
         }
+        if let Some(output_ports) = output_ports_by_node.get_mut(source_owner) {
+            output_ports.insert(source_port.to_owned());
+        }
         conditions_by_node.insert(
             node_id.clone(),
             ScheduledCondition::new(
@@ -3256,10 +3365,14 @@ fn build_runtime_bridge_plan(
                 "edge target references unknown node {target_owner:?}"
             )));
         };
-        dependencies.push(
+        let dependency = if source_owner == "$input" {
             InputDependency::value(target_path, PortRef::new(source_owner, source_port))
-                .with_source_path(source_path.split('.').skip(1)),
-        );
+        } else {
+            // Outcome mode lets the stdlib bridge turn a skipped upstream value
+            // into a deterministic cascade skip instead of parking forever.
+            InputDependency::outcome(target_path, PortRef::new(source_owner, source_port))
+        };
+        dependencies.push(dependency.with_source_path(source_path.split('.').skip(1)));
     }
 
     let mut scheduled_nodes = Vec::with_capacity(dependencies_by_node.len());
@@ -3533,14 +3646,65 @@ fn resolved_inputs_to_json(inputs: &BTreeMap<String, ResolvedInput>) -> Result<V
             ResolvedInput::Value(value) => {
                 insert_resolved_input_path(&mut object, name, value.clone())?;
             }
-            ResolvedInput::Outcome(_) => {
+            ResolvedInput::Outcome(Outcome::Value(value)) => {
+                insert_resolved_input_path(&mut object, name, value.clone())?;
+            }
+            ResolvedInput::Outcome(Outcome::Failed(error)) => return Err(error.clone()),
+            ResolvedInput::Outcome(Outcome::Absent) => {
                 return Err(BlockError::new(
-                    "stdlib.outcome_input",
-                    ErrorCategory::Configuration,
-                    "stdlib executor does not accept outcome-mode inputs",
+                    "stdlib.upstream_absent",
+                    ErrorCategory::Validation,
+                    "required upstream value is absent",
                     false,
                 ));
             }
+            ResolvedInput::Outcome(Outcome::Denied(decision)) => {
+                return Err(BlockError::new(
+                    "stdlib.upstream_denied",
+                    ErrorCategory::Policy,
+                    format!(
+                        "upstream value was denied by policy decision {}",
+                        decision.decision_id
+                    ),
+                    false,
+                ));
+            }
+            ResolvedInput::Outcome(Outcome::BudgetExhausted(exhaustion)) => {
+                return Err(BlockError::new(
+                    "stdlib.upstream_budget_exhausted",
+                    ErrorCategory::Budget,
+                    exhaustion
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| exhaustion.code.clone()),
+                    false,
+                ));
+            }
+            ResolvedInput::Outcome(Outcome::Paused(reason)) => {
+                return Err(BlockError::new(
+                    "stdlib.upstream_paused",
+                    ErrorCategory::Permanent,
+                    reason
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| format!("{:?}", reason.code)),
+                    false,
+                ));
+            }
+            ResolvedInput::Outcome(Outcome::Cancelled(reason)) => {
+                return Err(BlockError::new(
+                    "stdlib.upstream_cancelled",
+                    ErrorCategory::Cancelled,
+                    reason
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| format!("{:?}", reason.code)),
+                    false,
+                ));
+            }
+            ResolvedInput::Outcome(Outcome::Skipped(_)) => unreachable!(
+                "skipped outcome inputs are handled before stdlib input materialization"
+            ),
         }
     }
     Ok(Value::Object(object))
@@ -3754,7 +3918,7 @@ fn execute_structured_generate(inputs: &Value, config: &Value) -> Result<Value, 
         .cloned()
         .or_else(|| response.as_array().map(|items| Value::Array(items.clone())))
         .unwrap_or_else(|| json!([response.clone()]));
-    let content_digest = canonical_hash(&response);
+    let content_digest = block_canonical_hash(&response, "structured generation response")?;
     Ok(json!({
         "value": response.clone(),
         "response": response,
@@ -3778,11 +3942,72 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
                 false,
             )
         })?;
+    let mut request = match &query {
+        Value::String(query_text) => json!({
+            "queryText": query_text,
+            "topK": 10,
+            "filters": {},
+            "metadata": {},
+        }),
+        Value::Object(query) => {
+            let query_text = query
+                .get("queryText")
+                .or_else(|| query.get("query_text"))
+                .or_else(|| query.get("original"))
+                .or_else(|| query.get("text"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "retrieve.execute_plan.invalid_query",
+                        ErrorCategory::Validation,
+                        "retrieve.execute_plan@1 query requires string queryText",
+                        false,
+                    )
+                })?;
+            let top_k = query
+                .get("topK")
+                .or_else(|| query.get("top_k"))
+                .and_then(Value::as_u64)
+                .unwrap_or(10);
+            json!({
+                "queryText": query_text,
+                "topK": top_k,
+                "filters": query.get("filters").cloned().unwrap_or_else(|| json!({})),
+                "metadata": query.get("metadata").cloned().unwrap_or_else(|| json!({})),
+            })
+        }
+        _ => {
+            return Err(BlockError::new(
+                "retrieve.execute_plan.invalid_query",
+                ErrorCategory::Validation,
+                "retrieve.execute_plan@1 query must be a string or object",
+                false,
+            ));
+        }
+    };
+    if let Some(top_k) = config.get("topK").or_else(|| config.get("top_k")) {
+        let top_k = top_k.as_u64().ok_or_else(|| {
+            BlockError::new(
+                "retrieve.execute_plan.invalid_top_k",
+                ErrorCategory::Configuration,
+                "retrieve.execute_plan@1 topK must be a non-negative integer",
+                false,
+            )
+        })?;
+        request["topK"] = json!(top_k);
+    }
     let raw_sources = inputs
         .get("sources")
         .or_else(|| config.get("sources"))
         .cloned()
-        .unwrap_or_else(|| json!([]));
+        .ok_or_else(|| {
+            BlockError::new(
+                "retrieve.execute_plan.missing_sources",
+                ErrorCategory::Configuration,
+                "retrieve.execute_plan@1 requires sources input or config",
+                false,
+            )
+        })?;
     let sources = normalize_named_values(&raw_sources, "sourceId").map_err(|message| {
         BlockError::new(
             "retrieve.execute_plan.invalid_sources",
@@ -3796,9 +4021,35 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
         .or_else(|| config.get("minimum_successful_sources"))
         .and_then(Value::as_u64)
         .unwrap_or(1) as usize;
-    let mut normalized = Vec::new();
+    let failure_mode = config
+        .get("failureMode")
+        .or_else(|| config.get("failure_mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("partial");
+    if !matches!(failure_mode, "fail" | "partial") {
+        return Err(BlockError::new(
+            "retrieve.execute_plan.invalid_failure_mode",
+            ErrorCategory::Configuration,
+            "retrieve.execute_plan@1 failureMode must be fail or partial",
+            false,
+        ));
+    }
+    let algorithm = config
+        .get("algorithm")
+        .and_then(Value::as_str)
+        .unwrap_or("reciprocal_rank_fusion");
+    let k = config.get("k").and_then(Value::as_u64).unwrap_or(60);
+    let retriever_id = config
+        .get("retrieverId")
+        .or_else(|| config.get("retriever_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("federated");
+    let mut source_contracts = Vec::new();
+    let mut successful_contracts = Vec::new();
     let mut successful = Vec::new();
     let mut failed = Vec::new();
+    let mut warnings = Vec::new();
+    let mut total_candidates = 0usize;
     for (index, source) in sources.into_iter().enumerate() {
         let source_id = source
             .get("sourceId")
@@ -3811,38 +4062,52 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
             .get("error")
             .filter(|error| !error.is_null())
             .cloned();
-        let hits = source
-            .get("hits")
-            .or_else(|| source.pointer("/result/hits"))
+        let result = source
+            .get("result")
+            .filter(|result| !result.is_null())
             .cloned()
-            .unwrap_or_else(|| json!([]));
+            .or_else(|| source.get("hits").map(|_| source.clone()));
         let weight = source.get("weight").cloned().unwrap_or_else(|| json!(1.0));
-        if !hits.is_array() {
-            return Err(BlockError::new(
-                "retrieve.execute_plan.invalid_source_hits",
-                ErrorCategory::Validation,
-                format!("retrieve source {source_id:?} hits must be an array"),
-                false,
-            ));
-        }
-        if let Some(error) = error {
-            failed.push(json!({"sourceId": source_id, "error": error}));
-            normalized.push(json!({
-                "sourceId": source_id,
-                "status": "failed",
-                "hits": hits,
-                "error": error,
-                "weight": weight,
-            }));
-        } else {
+        let metadata = source.get("metadata").cloned().unwrap_or_else(|| json!({}));
+        let contract = json!({
+            "sourceId": source_id,
+            "result": result,
+            "error": error,
+            "weight": weight,
+            "metadata": metadata,
+        });
+        if let Some(result) = result.as_ref().filter(|_| error.is_none()) {
+            let hits = result
+                .get("hits")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "retrieve.execute_plan.invalid_source_hits",
+                        ErrorCategory::Validation,
+                        format!("retrieve source {source_id:?} result.hits must be an array"),
+                        false,
+                    )
+                })?;
+            total_candidates = total_candidates.saturating_add(hits.len());
             successful.push(Value::String(source_id.clone()));
-            normalized.push(json!({
-                "sourceId": source_id,
-                "status": "succeeded",
-                "hits": hits,
-                "weight": weight,
-            }));
+            successful_contracts.push(contract.clone());
+        } else {
+            let message = error
+                .as_ref()
+                .map(json_display)
+                .unwrap_or_else(|| "missing retrieval result".to_owned());
+            if failure_mode == "fail" || (error.is_some() && result.is_some()) {
+                return Err(BlockError::new(
+                    "retrieve.execute_plan.source_failed",
+                    ErrorCategory::Provider,
+                    format!("federated source {source_id} failed: {message}"),
+                    true,
+                ));
+            }
+            failed.push(json!({"source_id": source_id, "error": message}));
+            warnings.push(format!("federated source {source_id} failed: {message}"));
         }
+        source_contracts.push(contract);
     }
     if successful.len() < minimum_successful {
         return Err(BlockError::new(
@@ -3855,10 +4120,39 @@ fn execute_retrieval_plan(inputs: &Value, config: &Value) -> Result<Value, Block
             true,
         ));
     }
+    let fusion = execute_retrieval_fusion(
+        &json!({"sources": successful_contracts}),
+        &json!({"algorithm": algorithm, "k": k}),
+    )?;
+    let mut hits = fusion["hits"].as_array().cloned().unwrap_or_default();
+    let top_k = request["topK"].as_u64().unwrap_or(10) as usize;
+    hits.truncate(top_k);
+    let retrieval_digest = block_canonical_hash(
+        &json!({
+            "query_text": request["queryText"],
+            "top_k": request["topK"],
+            "filters": request["filters"],
+            "successful_sources": successful,
+            "failed_sources": failed,
+            "fusion_strategy": algorithm,
+        }),
+        "retrieval result identity",
+    )?;
     let result = json!({
-        "retrievalId": format!("retrieval-{}", canonical_hash(&json!({"query": query, "sources": normalized}))),
+        "retrievalId": format!("{retriever_id}:{retrieval_digest}"),
         "query": query,
-        "sources": normalized,
+        "request": request,
+        "hits": hits,
+        "totalCandidates": total_candidates,
+        "latencyMs": Value::Null,
+        "warnings": warnings,
+        "metadata": {
+            "successful_sources": successful,
+            "failed_sources": failed,
+            "fusion_strategy": algorithm,
+            "retriever_id": retriever_id,
+        },
+        "sources": source_contracts,
         "successfulSources": successful,
         "failedSources": failed,
     });
@@ -3983,18 +4277,7 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
                 .get("rank")
                 .and_then(Value::as_u64)
                 .unwrap_or((index + 1) as u64);
-            let dedupe_key = hit
-                .get("canonicalSource")
-                .or_else(|| hit.get("canonical_source"))
-                .or_else(|| hit.pointer("/item/source/sourceId"))
-                .or_else(|| hit.pointer("/item/source/source_id"))
-                .or_else(|| hit.pointer("/item/itemId"))
-                .or_else(|| hit.pointer("/item/item_id"))
-                .or_else(|| hit.get("hitId"))
-                .or_else(|| hit.get("hit_id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| canonical_hash(hit));
+            let dedupe_key = stdlib_fusion_dedupe_key(hit);
             let normalized_score = hit
                 .get("normalizedScore")
                 .or_else(|| hit.get("normalized_score"))
@@ -4164,6 +4447,49 @@ fn execute_retrieval_fusion(inputs: &Value, config: &Value) -> Result<Value, Blo
     }))
 }
 
+fn stdlib_fusion_dedupe_key(hit: &Value) -> String {
+    let source_locator = hit.pointer("/item/source/locator");
+    let highlight_locator = hit
+        .get("highlights")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|source| source.get("locator").filter(|locator| !locator.is_null()));
+    if let Some(locator) = source_locator
+        .filter(|value| !value.is_null())
+        .or_else(|| highlight_locator.filter(|value| !value.is_null()))
+    {
+        let normalized = json!({
+            "asset_id": alias_json_value(locator, "assetId", "asset_id"),
+            "revision_id": alias_json_value(locator, "revisionId", "revision_id"),
+            "document_id": alias_json_value(locator, "documentId", "document_id"),
+            "element_id": alias_json_value(locator, "elementId", "element_id"),
+            "chunk_id": alias_json_value(locator, "chunkId", "chunk_id"),
+            "page": locator.get("page").cloned().unwrap_or(Value::Null),
+            "bbox": locator.get("bbox").cloned().unwrap_or(Value::Null),
+            "char_start": alias_json_value(locator, "charStart", "char_start"),
+            "char_end": alias_json_value(locator, "charEnd", "char_end"),
+            "sheet": locator.get("sheet").cloned().unwrap_or(Value::Null),
+            "cell_range": alias_json_value(locator, "cellRange", "cell_range"),
+            "slide": locator.get("slide").cloned().unwrap_or(Value::Null),
+        });
+        return format!("source_span:{}", canonical_json(&normalized));
+    }
+    hit.pointer("/item/itemId")
+        .or_else(|| hit.pointer("/item/item_id"))
+        .and_then(Value::as_str)
+        .map(|item_id| format!("item:{item_id}"))
+        .unwrap_or_else(|| format!("item:unknown:{}", canonical_hash(hit)))
+}
+
+fn alias_json_value(value: &Value, primary: &str, alternate: &str) -> Value {
+    value
+        .get(primary)
+        .or_else(|| value.get(alternate))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let configured_terms = config
         .get("queryTerms")
@@ -4200,23 +4526,20 @@ fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, Blo
             .and_then(Value::as_object)
             .and_then(|query| {
                 query
-                    .get("queryText")
+                    .get("original")
+                    .or_else(|| query.get("queryText"))
                     .or_else(|| query.get("query_text"))
-                    .or_else(|| query.get("original"))
                     .or_else(|| query.get("text"))
             })
             .or_else(|| query.filter(|value| value.is_string()))
             .map(json_display)
             .unwrap_or_default();
-        vec![query_text]
+        query_text.split_whitespace().map(str::to_owned).collect()
     };
     let terms = raw_terms
         .iter()
-        .flat_map(|term| {
-            term.split(|character: char| !character.is_alphanumeric() && character != '_')
-                .filter(|term| !term.is_empty())
-                .map(str::to_ascii_lowercase)
-        })
+        .filter(|term| !term.is_empty())
+        .map(|term| term.to_lowercase())
         .collect::<Vec<_>>();
     let hits = inputs
         .get("hits")
@@ -4248,7 +4571,7 @@ fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, Blo
         .or_else(|| config.get("reranker_id"))
         .or_else(|| config.get("reranker"))
     {
-        None => "deterministic-term-reranker",
+        None => "lexical",
         Some(value) => value
             .as_str()
             .filter(|value| !value.trim().is_empty())
@@ -4261,46 +4584,115 @@ fn execute_document_ranking(inputs: &Value, config: &Value) -> Result<Value, Blo
                 )
             })?,
     };
-    let mut ranked = hits
+    let mut ordered = hits.iter().cloned().enumerate().collect::<Vec<_>>();
+    ordered.sort_by(|(left_index, left), (right_index, right)| {
+        stdlib_hit_rank(left, *left_index)
+            .cmp(&stdlib_hit_rank(right, *right_index))
+            .then_with(|| stdlib_hit_id(left, *left_index).cmp(&stdlib_hit_id(right, *right_index)))
+    });
+    let truncated_hit_ids = ordered
         .iter()
+        .skip(input_limit)
+        .map(|(index, hit)| stdlib_hit_id(hit, *index))
+        .collect::<Vec<_>>();
+    let mut ranked = ordered
+        .into_iter()
         .take(input_limit)
-        .enumerate()
-        .map(|(index, hit)| {
-            let text = hit
-                .pointer("/item/preview")
-                .or_else(|| hit.pointer("/item/text"))
-                .or_else(|| hit.get("text"))
-                .map(json_display)
-                .unwrap_or_default()
-                .to_ascii_lowercase();
+        .map(|(original_index, hit)| {
+            let text = stdlib_hit_preview_text(&hit).to_lowercase();
             let score = terms
                 .iter()
                 .map(|term| text.matches(term).count())
                 .sum::<usize>();
-            (score, index, hit.clone())
+            let original_rank = stdlib_hit_rank(&hit, original_index);
+            let hit_id = stdlib_hit_id(&hit, original_index);
+            (score, original_rank, hit_id, hit)
         })
         .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    let hits = ranked
+    ranked.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    let ranked_hits = ranked
         .into_iter()
         .enumerate()
-        .map(|(index, (score, _original_index, mut hit))| {
+        .map(|(index, (score, original_rank, hit_id, mut hit))| {
             if !hit.is_object() {
                 hit = json!({"value": hit});
             }
             hit["rank"] = json!(index + 1);
             hit["rerankScore"] = json!(score);
             hit["reranker"] = json!(reranker);
-            hit
+            let detail = json!({
+                "hit": hit,
+                "rerankScore": score as f64,
+                "reranker": reranker,
+                "explanation": format!("matched {score} query term occurrence(s)"),
+                "metadata": {
+                    "original_rank": original_rank,
+                    "source_hit_id": hit_id,
+                    "query_terms": terms,
+                },
+            });
+            (hit, detail)
         })
         .collect::<Vec<_>>();
+    let hits = ranked_hits
+        .iter()
+        .map(|(hit, _)| hit.clone())
+        .collect::<Vec<_>>();
+    let details = ranked_hits
+        .into_iter()
+        .map(|(_, detail)| detail)
+        .collect::<Vec<_>>();
     let result = json!({
-        "hits": hits,
+        "rankedHits": details,
         "reranker": reranker,
         "inputCount": inputs["hits"].as_array().map_or(0, Vec::len),
         "evaluatedCount": hits.len(),
+        "truncatedHitIds": truncated_hit_ids,
+        "metadata": {
+            "query_terms": terms,
+            "truncated_hit_ids": truncated_hit_ids,
+        },
     });
-    Ok(json!({"hits": result["hits"], "result": result}))
+    Ok(json!({"hits": hits, "result": result}))
+}
+
+fn stdlib_hit_rank(hit: &Value, fallback_index: usize) -> u64 {
+    hit.get("rank")
+        .and_then(Value::as_u64)
+        .unwrap_or((fallback_index + 1) as u64)
+}
+
+fn stdlib_hit_id(hit: &Value, fallback_index: usize) -> String {
+    hit.get("hitId")
+        .or_else(|| hit.get("hit_id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("hit-{}", fallback_index + 1))
+}
+
+fn stdlib_hit_preview_text(hit: &Value) -> String {
+    hit.pointer("/item/preview")
+        .map(|preview| {
+            preview.as_array().map_or_else(
+                || json_display(preview),
+                |parts| {
+                    parts
+                        .iter()
+                        .map(json_display)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                },
+            )
+        })
+        .or_else(|| hit.pointer("/item/text").map(json_display))
+        .or_else(|| hit.get("text").map(json_display))
+        .unwrap_or_default()
 }
 
 fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
@@ -4320,7 +4712,7 @@ fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockE
         .get("maxTokens")
         .or_else(|| config.get("max_tokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(8_192) as usize;
+        .unwrap_or(4_096) as usize;
     let reserve_tokens = config
         .get("reserveOutputTokens")
         .or_else(|| config.get("reserve_output_tokens"))
@@ -4351,24 +4743,213 @@ fn execute_context_build(inputs: &Value, config: &Value) -> Result<Value, BlockE
             Some(context_id)
         }
     };
+    let optional_limit = |primary: &str, alternate: &str| -> Result<Option<usize>, BlockError> {
+        let Some(value) = config.get(primary).or_else(|| config.get(alternate)) else {
+            return Ok(None);
+        };
+        let value = value.as_u64().filter(|value| *value > 0).ok_or_else(|| {
+            BlockError::new(
+                "context.build.invalid_limit",
+                ErrorCategory::Configuration,
+                format!("context.build@1 {primary} must be a positive integer"),
+                false,
+            )
+        })?;
+        Ok(Some(value as usize))
+    };
+    let per_document_max_chunks =
+        optional_limit("perDocumentMaxChunks", "per_document_max_chunks")?;
+    let per_section_max_chunks = optional_limit("perSectionMaxChunks", "per_section_max_chunks")?;
+    let per_source_max_chunks = optional_limit("perSourceMaxChunks", "per_source_max_chunks")?;
+    let deduplicate = match config.get("deduplicate") {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            BlockError::new(
+                "context.build.invalid_deduplicate",
+                ErrorCategory::Configuration,
+                "context.build@1 deduplicate must be a boolean",
+                false,
+            )
+        })?,
+    };
+    let minimum_source_modified_at = config
+        .get("minimumSourceModifiedAt")
+        .or_else(|| config.get("minimum_source_modified_at"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                BlockError::new(
+                    "context.build.invalid_minimum_source_modified_at",
+                    ErrorCategory::Configuration,
+                    "context.build@1 minimumSourceModifiedAt must be an ISO timestamp",
+                    false,
+                )
+            })
+        })
+        .transpose()?;
+    if minimum_source_modified_at
+        .is_some_and(|minimum| !crate::rag::valid_source_modified_at(minimum))
+    {
+        return Err(BlockError::new(
+            "context.build.invalid_minimum_source_modified_at",
+            ErrorCategory::Configuration,
+            "context.build@1 minimumSourceModifiedAt must be a valid ISO timestamp",
+            false,
+        ));
+    }
     let available = max_tokens - reserve_tokens;
     let mut selected = Vec::new();
+    let mut selected_item_ids = BTreeSet::new();
+    let mut chunks_per_document = BTreeMap::<String, usize>::new();
+    let mut chunks_per_section = BTreeMap::<String, usize>::new();
+    let mut chunks_per_source = BTreeMap::<String, usize>::new();
+    let mut selected_hit_ids = Vec::new();
+    let mut dropped_hit_ids = Vec::new();
+    let mut drop_reasons = serde_json::Map::new();
     let mut token_count = 0usize;
-    for hit in evidence {
-        let tokens = json_display(hit).split_whitespace().count().max(1);
-        if token_count.saturating_add(tokens) <= available {
-            selected.push(hit.clone());
-            token_count += tokens;
+    let mut ordered = evidence.iter().cloned().enumerate().collect::<Vec<_>>();
+    ordered.sort_by(|(left_index, left), (right_index, right)| {
+        stdlib_hit_rank(left, *left_index)
+            .cmp(&stdlib_hit_rank(right, *right_index))
+            .then_with(|| stdlib_hit_id(left, *left_index).cmp(&stdlib_hit_id(right, *right_index)))
+    });
+    for (original_index, hit) in ordered {
+        let hit_id = stdlib_hit_id(&hit, original_index);
+        let item_id = hit
+            .pointer("/item/itemId")
+            .or_else(|| hit.pointer("/item/item_id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| hit_id.clone());
+        let document_id = hit
+            .pointer("/item/metadata/document_id")
+            .or_else(|| hit.pointer("/item/metadata/documentId"))
+            .or_else(|| hit.pointer("/item/source/locator/document_id"))
+            .or_else(|| hit.pointer("/item/source/locator/documentId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| item_id.clone());
+        let section_id = hit
+            .pointer("/metadata/section_id")
+            .or_else(|| hit.pointer("/metadata/sectionId"))
+            .or_else(|| hit.pointer("/item/metadata/section_id"))
+            .or_else(|| hit.pointer("/item/metadata/sectionId"))
+            .or_else(|| hit.pointer("/item/source/locator/element_id"))
+            .or_else(|| hit.pointer("/item/source/locator/elementId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                hit.get("highlights")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find_map(|source| {
+                        source
+                            .pointer("/locator/element_id")
+                            .or_else(|| source.pointer("/locator/elementId"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+            });
+        let source_id = hit
+            .pointer("/metadata/source_id")
+            .or_else(|| hit.pointer("/metadata/sourceId"))
+            .or_else(|| hit.get("retriever"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let source_modified_at = hit
+            .pointer("/metadata/source_modified_at")
+            .or_else(|| hit.pointer("/metadata/sourceModifiedAt"))
+            .or_else(|| hit.pointer("/item/metadata/source_modified_at"))
+            .or_else(|| hit.pointer("/item/metadata/sourceModifiedAt"))
+            .and_then(Value::as_str);
+        let drop_reason = if deduplicate && selected_item_ids.contains(&item_id) {
+            Some("duplicate")
+        } else if per_document_max_chunks.is_some_and(|limit| {
+            chunks_per_document.get(&document_id).copied().unwrap_or(0) >= limit
+        }) {
+            Some("per_document_max_chunks")
+        } else if section_id.as_ref().is_some_and(|section_id| {
+            per_section_max_chunks.is_some_and(|limit| {
+                chunks_per_section.get(section_id).copied().unwrap_or(0) >= limit
+            })
+        }) {
+            Some("per_section_max_chunks")
+        } else if per_source_max_chunks
+            .is_some_and(|limit| chunks_per_source.get(&source_id).copied().unwrap_or(0) >= limit)
+        {
+            Some("per_source_max_chunks")
+        } else if minimum_source_modified_at.is_some_and(|minimum| {
+            !crate::rag::source_modified_at_satisfies(source_modified_at, minimum)
+        }) {
+            Some("freshness")
+        } else {
+            let tokens = stdlib_hit_preview_text(&hit).split_whitespace().count();
+            (token_count.saturating_add(tokens) > available).then_some("token_budget")
+        };
+        if let Some(reason) = drop_reason {
+            dropped_hit_ids.push(hit_id.clone());
+            drop_reasons.insert(hit_id, json!(reason));
+            continue;
         }
+        let tokens = stdlib_hit_preview_text(&hit).split_whitespace().count();
+        token_count += tokens;
+        selected_item_ids.insert(item_id);
+        *chunks_per_document.entry(document_id).or_default() += 1;
+        if let Some(section_id) = section_id {
+            *chunks_per_section.entry(section_id).or_default() += 1;
+        }
+        *chunks_per_source.entry(source_id).or_default() += 1;
+        selected_hit_ids.push(hit_id);
+        selected.push(hit);
     }
+    let mut metadata = config
+        .get("metadata")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    metadata.insert("selected_hit_ids".to_owned(), json!(selected_hit_ids));
+    metadata.insert("dropped_hit_ids".to_owned(), json!(dropped_hit_ids));
+    metadata.insert("drop_reasons".to_owned(), Value::Object(drop_reasons));
+    if let Some(minimum) = minimum_source_modified_at {
+        metadata.insert("minimum_source_modified_at".to_owned(), json!(minimum));
+    }
+    if let Some(limit) = per_section_max_chunks {
+        metadata.insert("per_section_max_chunks".to_owned(), json!(limit));
+    }
+    if let Some(limit) = per_source_max_chunks {
+        metadata.insert("per_source_max_chunks".to_owned(), json!(limit));
+    }
+    if reserve_tokens > 0 {
+        metadata.insert("reserve_output_tokens".to_owned(), json!(reserve_tokens));
+        metadata.insert(
+            "effective_context_token_budget".to_owned(),
+            json!(available),
+        );
+    }
+    let resolved_context_id = if let Some(context_id) = context_id {
+        context_id.to_owned()
+    } else {
+        let identity = json!({
+            "evidence": &selected,
+            "history": inputs.get("history"),
+            "currentMessage": inputs.get("currentMessage"),
+        });
+        format!(
+            "context-{}",
+            block_canonical_hash(&identity, "context pack identity")?
+        )
+    };
     let pack = json!({
-        "contextId": context_id.map(str::to_owned).unwrap_or_else(|| format!("context-{}", canonical_hash(&json!({"evidence": selected, "history": inputs.get("history"), "currentMessage": inputs.get("currentMessage")})))),
+        "contextId": resolved_context_id,
         "hits": selected,
         "history": inputs.get("history").cloned().unwrap_or_else(|| json!([])),
         "currentMessage": inputs.get("currentMessage").cloned().unwrap_or(Value::Null),
-        "tokenBudget": available,
+        "tokenBudget": max_tokens,
         "tokenCount": token_count,
         "droppedCount": evidence.len().saturating_sub(selected.len()),
+        "metadata": metadata,
     });
     Ok(json!({"pack": pack}))
 }
@@ -4398,12 +4979,12 @@ fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value,
         .get("requireCitation")
         .or_else(|| config.get("require_citation"))
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(true);
     let policy = match config
         .get("onInsufficientEvidence")
         .or_else(|| config.get("on_insufficient_evidence"))
     {
-        None => "fail",
+        None => "abstain",
         Some(value) => value.as_str().ok_or_else(|| {
             BlockError::new(
                 "answer.validate_grounding.invalid_failure_policy",
@@ -4480,40 +5061,72 @@ fn execute_grounding_validation(inputs: &Value, config: &Value) -> Result<Value,
 }
 
 fn execute_check_suite(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
-    let checks = config
-        .get("checks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
+    let checks = match config.get("checks") {
+        None => &[][..],
+        Some(value) => value.as_array().map(Vec::as_slice).ok_or_else(|| {
             BlockError::new(
                 "check.run_suite.invalid_checks",
                 ErrorCategory::Configuration,
                 "check.run_suite@1 requires config.checks array",
                 false,
             )
-        })?;
+        })?,
+    };
     let supplied = inputs
         .get("checkResults")
         .or_else(|| inputs.get("check_results"))
+        .or_else(|| config.get("outcomes"))
         .or_else(|| config.get("results"));
     let mut results = Vec::new();
-    for check in checks {
-        let check_id = check.as_str().ok_or_else(|| {
-            BlockError::new(
+    for (index, check) in checks.iter().enumerate() {
+        let (check_id, configured_result) = if let Some(check_id) = check.as_str() {
+            if check_id.trim().is_empty() || check_id != check_id.trim() {
+                return Err(BlockError::new(
+                    "check.run_suite.invalid_check",
+                    ErrorCategory::Configuration,
+                    format!(
+                        "check.run_suite@1 config.checks[{index}] requires an exact non-empty checkId"
+                    ),
+                    false,
+                ));
+            }
+            (check_id, None)
+        } else if let Some(check_record) = check.as_object() {
+            let check_id = check_record
+                .get("checkId")
+                .or_else(|| check_record.get("check_id"))
+                .and_then(Value::as_str)
+                .filter(|check_id| !check_id.trim().is_empty() && *check_id == check_id.trim())
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "check.run_suite.invalid_check",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "check.run_suite@1 config.checks[{index}] requires a non-empty checkId"
+                        ),
+                        false,
+                    )
+                })?;
+            (check_id, Some(check))
+        } else {
+            return Err(BlockError::new(
                 "check.run_suite.invalid_check",
                 ErrorCategory::Configuration,
-                "check.run_suite@1 check names must be strings",
+                "check.run_suite@1 checks must be strings or objects",
                 false,
-            )
-        })?;
-        let supplied_result = supplied.and_then(|results| {
-            results.get(check_id).or_else(|| {
-                results.as_array().and_then(|results| {
-                    results.iter().find(|result| {
-                        result
-                            .get("checkId")
-                            .or_else(|| result.get("check_id"))
-                            .and_then(Value::as_str)
-                            == Some(check_id)
+            ));
+        };
+        let supplied_result = configured_result.or_else(|| {
+            supplied.and_then(|results| {
+                results.get(check_id).or_else(|| {
+                    results.as_array().and_then(|results| {
+                        results.iter().find(|result| {
+                            result
+                                .get("checkId")
+                                .or_else(|| result.get("check_id"))
+                                .and_then(Value::as_str)
+                                == Some(check_id)
+                        })
                     })
                 })
             })
@@ -4541,16 +5154,18 @@ fn execute_check_suite(inputs: &Value, config: &Value) -> Result<Value, BlockErr
         }));
         if config
             .get("stopOnFailure")
+            .or_else(|| config.get("stop_on_failure"))
             .and_then(Value::as_bool)
             .unwrap_or(false)
-            && status == "failed"
+            && status != "passed"
         {
             break;
         }
     }
-    let passed = results
-        .iter()
-        .all(|result| result.get("status") == Some(&json!("passed")));
+    let passed = !results.is_empty()
+        && results
+            .iter()
+            .all(|result| result.get("status") == Some(&json!("passed")));
     let diagnostics = results
         .iter()
         .flat_map(|result| {
@@ -4591,8 +5206,53 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
                 .map_or_else(|| vec![value.clone()], Clone::clone)
         })
         .collect::<Vec<_>>();
+    let mut seen_check_ids = BTreeSet::new();
+    for check in &flattened {
+        let Some(check_record) = check.as_object() else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_check",
+                ErrorCategory::Validation,
+                "gate.evaluate@1 checks must be objects",
+                false,
+            ));
+        };
+        let Some(check_id) = check_record
+            .get("checkId")
+            .or_else(|| check_record.get("check_id"))
+            .and_then(Value::as_str)
+            .filter(|check_id| !check_id.trim().is_empty() && *check_id == check_id.trim())
+        else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_check",
+                ErrorCategory::Validation,
+                "gate.evaluate@1 checks require an exact non-empty checkId",
+                false,
+            ));
+        };
+        if !matches!(
+            check_record.get("status").and_then(Value::as_str),
+            Some("passed" | "failed" | "error" | "timeout" | "inconclusive" | "skipped")
+        ) {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_check",
+                ErrorCategory::Validation,
+                format!("gate.evaluate@1 check {check_id:?} has an invalid status"),
+                false,
+            ));
+        }
+        if !seen_check_ids.insert(check_id) {
+            return Err(BlockError::new(
+                "gate.evaluate.duplicate_check_id",
+                ErrorCategory::Validation,
+                format!("gate.evaluate@1 check id {check_id:?} is duplicated"),
+                false,
+            ));
+        }
+    }
     let hard_constraints = config
-        .get("hardConstraints")
+        .get("requiredChecks")
+        .or_else(|| config.get("required_check_ids"))
+        .or_else(|| config.get("hardConstraints"))
         .or_else(|| config.get("hard_constraints"))
         .and_then(Value::as_array)
         .cloned()
@@ -4630,12 +5290,22 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
             violated.push(format!("check:{required}"));
         }
     }
-    let has_inconclusive = flattened.iter().any(|check| {
-        matches!(
-            check.get("status").and_then(Value::as_str),
-            Some("inconclusive" | "error" | "timeout")
-        )
-    });
+    let has_inconclusive = hard_constraints
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|required| {
+            flattened.iter().any(|check| {
+                check
+                    .get("checkId")
+                    .or_else(|| check.get("check_id"))
+                    .and_then(Value::as_str)
+                    == Some(required)
+                    && matches!(
+                        check.get("status").and_then(Value::as_str),
+                        Some("inconclusive" | "error" | "timeout")
+                    )
+            })
+        });
     let metrics = match inputs.get("metrics") {
         None => Vec::new(),
         Some(metrics) => metrics.as_array().cloned().ok_or_else(|| {
@@ -4647,6 +5317,37 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
             )
         })?,
     };
+    let mut seen_metric_names = BTreeSet::new();
+    for metric in &metrics {
+        let Some(metric_record) = metric.as_object() else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_metric",
+                ErrorCategory::Validation,
+                "gate.evaluate@1 metrics must be objects",
+                false,
+            ));
+        };
+        let Some(metric_name) = metric_record
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty() && *name == name.trim())
+        else {
+            return Err(BlockError::new(
+                "gate.evaluate.invalid_metric",
+                ErrorCategory::Validation,
+                "gate.evaluate@1 metrics require an exact non-empty name",
+                false,
+            ));
+        };
+        if !seen_metric_names.insert(metric_name) {
+            return Err(BlockError::new(
+                "gate.evaluate.duplicate_metric_name",
+                ErrorCategory::Validation,
+                format!("gate.evaluate@1 metric name {metric_name:?} is duplicated"),
+                false,
+            ));
+        }
+    }
     let constraints = match config.get("constraints") {
         None => Vec::new(),
         Some(constraints) => constraints.as_array().cloned().ok_or_else(|| {
@@ -4743,31 +5444,33 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
     } else {
         "pass"
     };
-    let subject = inputs
-        .get("subject")
-        .cloned()
-        .or_else(|| {
-            flattened
-                .iter()
-                .find_map(|check| check.get("subject").cloned())
+    let subject = inputs.get("subject").cloned().or_else(|| {
+        flattened
+            .iter()
+            .find_map(|check| check.get("subject").cloned())
+    });
+    let subject = if let Some(subject) = subject {
+        subject
+    } else {
+        json!({
+            "resourceId": "gate-subject",
+            "digest": block_canonical_hash(
+                &Value::Array(flattened.clone()),
+                "gate subject identity",
+            )?,
         })
-        .unwrap_or_else(|| {
-            json!({
-                "resourceId": "gate-subject",
-                "digest": canonical_hash(&Value::Array(flattened.clone())),
-            })
-        });
+    };
     let gate_id = config
         .get("gateId")
         .or_else(|| config.get("gate_id"))
         .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            format!(
-                "gate-{}",
-                canonical_hash(&json!({"checks": flattened, "constraints": hard_constraints}))
-            )
-        });
+        .map(str::to_owned);
+    let gate_id = if let Some(gate_id) = gate_id {
+        gate_id
+    } else {
+        let identity = json!({"checks": flattened, "constraints": hard_constraints});
+        format!("gate-{}", block_canonical_hash(&identity, "gate identity")?)
+    };
     let result = json!({
         "gateId": gate_id,
         "subject": subject,
@@ -4794,7 +5497,7 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
             false,
         )
     })?;
-    let subject_digest = canonical_hash(&subject);
+    let subject_digest = block_canonical_hash(&subject, "review subject")?;
     let supplied_review = inputs.get("review");
     if let Some(expected) = supplied_review
         .and_then(|review| {
@@ -4867,11 +5570,20 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
         .or_else(|| config.get("requested_by"))
         .cloned()
         .unwrap_or_else(|| json!({"principalId": "graphblocks-runtime"}));
+    let review_id = supplied_review
+        .and_then(|review| review.get("reviewId").or_else(|| review.get("review_id")))
+        .cloned();
+    let review_id = if let Some(review_id) = review_id {
+        review_id
+    } else {
+        let identity = json!({"subjectDigest": subject_digest, "scope": config.get("scope")});
+        json!(format!(
+            "review-{}",
+            block_canonical_hash(&identity, "review request identity")?
+        ))
+    };
     let mut record = json!({
-        "reviewId": supplied_review
-            .and_then(|review| review.get("reviewId").or_else(|| review.get("review_id")))
-            .cloned()
-            .unwrap_or_else(|| json!(format!("review-{}", canonical_hash(&json!({"subjectDigest": subject_digest, "scope": config.get("scope")}))))),
+        "reviewId": review_id,
         "subject": subject,
         "subjectDigest": subject_digest,
         "scope": config.get("scope").cloned().unwrap_or_else(|| json!("general")),
@@ -4888,7 +5600,7 @@ fn execute_review_request(inputs: &Value, config: &Value) -> Result<Value, Block
     if let Some(gate) = inputs.get("gate") {
         record["gate"] = gate.clone();
     }
-    let request_digest = canonical_hash(&record);
+    let request_digest = block_canonical_hash(&record, "review request")?;
     Ok(json!({
         "request": record.clone(),
         "record": record,
@@ -4932,7 +5644,7 @@ fn execute_result_bundle(inputs: &Value, config: &Value) -> Result<Value, BlockE
         );
     }
     let content = Value::Object(content);
-    let digest = canonical_hash(&content);
+    let digest = block_canonical_hash(&content, "result bundle")?;
     let result = json!({
         "bundleId": config.get("bundleId").or_else(|| config.get("bundle_id")).cloned().unwrap_or_else(|| json!(format!("bundle-{digest}"))),
         "runId": config.get("runId").or_else(|| config.get("run_id")).cloned().unwrap_or_else(|| json!("run-unknown")),
@@ -7156,9 +7868,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        ExecutionPhase, StdlibRunOptions, StdlibRunStatus, optional_alias_duration_ms,
-        run_stdlib_graph_with_options, run_stdlib_graph_with_options_json, stdlib_block_catalog,
-        validate_stdlib_output_contract,
+        ExecutionPhase, StdlibRunOptions, StdlibRunStatus, execute_document_ranking,
+        optional_alias_duration_ms, run_stdlib_graph_with_options,
+        run_stdlib_graph_with_options_json, stdlib_block_catalog, validate_stdlib_output_contract,
     };
 
     #[test]
@@ -7193,6 +7905,28 @@ mod tests {
                 "duration must be positive and fit in milliseconds",
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn document_ranking_result_reports_ranked_and_truncated_hits() {
+        let outputs = execute_document_ranking(
+            &json!({
+                "query": {"queryTerms": ["foo bar"]},
+                "hits": [
+                    {"hitId": "later", "rank": 2, "item": {"preview": ["foo-bar"]}},
+                    {"hitId": "first", "rank": 1, "item": {"preview": ["foo bar"]}}
+                ]
+            }),
+            &json!({"inputLimit": 1}),
+        )
+        .expect("ranking succeeds");
+
+        assert_eq!(outputs["result"]["reranker"], "lexical");
+        assert_eq!(outputs["result"]["truncatedHitIds"], json!(["later"]));
+        assert_eq!(
+            outputs["result"]["rankedHits"].as_array().map(Vec::len),
+            Some(1)
         );
     }
 
@@ -7265,6 +7999,37 @@ mod tests {
         assert_eq!(result.status, StdlibRunStatus::Succeeded);
         assert_eq!(result.outputs, json!({"response": "typed response"}));
         assert!(result.graph_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn typed_runtime_rejects_overdeep_inputs_without_panicking() {
+        let mut graph = GraphBuilder::new("typed-runtime-depth").expect("graph name is valid");
+        let prompt = graph
+            .input::<PromptValue>("prompt")
+            .expect("input is unique");
+        let generated = graph
+            .add(
+                "generate",
+                ModelGenerate::new(ModelGenerateConfig::new(json!("unused"))),
+                ModelGenerateInputs { prompt },
+            )
+            .expect("node is unique");
+        graph
+            .bind_output::<ModelResponseValue>("response", &generated.response)
+            .expect("output is unique");
+        let mut nested = Value::Null;
+        for _ in 0..70 {
+            nested = json!({"nested": nested});
+        }
+
+        let error = run_stdlib_graph_with_options(
+            &graph.build(),
+            &json!({"prompt": nested}),
+            &StdlibRunOptions::default(),
+        )
+        .expect_err("overdeep typed inputs must be rejected at admission");
+
+        assert!(error.to_string().contains("nesting must not exceed"));
     }
 
     #[test]

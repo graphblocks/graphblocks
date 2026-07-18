@@ -285,6 +285,10 @@ impl LocalScheduler {
                             )]))
                         }
                     }
+                    Some(Outcome::Skipped(reason)) => Readiness::Ready(BTreeMap::from([(
+                        condition.input.clone(),
+                        ResolvedInput::Outcome(Outcome::Skipped(reason.clone())),
+                    )])),
                     Some(outcome) => Readiness::Blocked {
                         input: condition.input.clone(),
                         source: condition.source.clone(),

@@ -111,7 +111,7 @@ impl ReadinessTracker {
             };
 
             match (dependency.mode, outcome) {
-                (InputMode::Value, Outcome::Value(value)) => {
+                (mode, Outcome::Value(value)) => {
                     let mut resolved_value = value;
                     for segment in &dependency.source_path {
                         let nested = match resolved_value {
@@ -147,9 +147,15 @@ impl ReadinessTracker {
                         };
                         resolved_value = nested;
                     }
+                    let resolved_value = resolved_value.clone();
                     resolved.insert(
                         dependency.input.clone(),
-                        ResolvedInput::Value(resolved_value.clone()),
+                        match mode {
+                            InputMode::Value => ResolvedInput::Value(resolved_value),
+                            InputMode::Outcome => {
+                                ResolvedInput::Outcome(Outcome::Value(resolved_value))
+                            }
+                        },
                     );
                 }
                 (InputMode::Value, outcome) => {

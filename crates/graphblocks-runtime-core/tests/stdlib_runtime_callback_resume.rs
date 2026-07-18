@@ -270,6 +270,35 @@ fn native_callback_run_suspends_and_returns_a_canonical_checkpoint() -> Result<(
 }
 
 #[test]
+fn native_callback_checkpoint_reports_accepted_depth_overflow_without_panicking() {
+    let path = sqlite_path("accepted-depth");
+    let mut graph = callback_graph();
+    graph["spec"]["interface"]["inputs"] = json!({"deep": "graphblocks.ai/JsonValue@1"});
+    let mut nested = Value::Null;
+    for _ in 0..63 {
+        nested = json!({"nested": nested});
+    }
+    let inputs = json!({"deep": nested});
+
+    let error = run_stdlib_graph_with_options_json(
+        &graph.to_string(),
+        &inputs.to_string(),
+        &options(&path, None).to_string(),
+    )
+    .expect_err("checkpoint wrapping beyond canonical depth must return an error");
+
+    assert!(
+        error.to_string().contains("native callback checkpoint"),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("nesting must not exceed"),
+        "{error}"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn native_callback_suspension_requires_checkpoint_persistence() {
     let error = run_stdlib_graph_with_options_json(
         &callback_graph().to_string(),
@@ -376,6 +405,43 @@ fn admitted_native_callback_resumes_with_callback_and_operation_outputs() -> Res
     );
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(repeat_path);
+    Ok(())
+}
+
+#[test]
+fn native_callback_resume_does_not_duplicate_guard_skip_journal_records() -> Result<(), String> {
+    let path = sqlite_path("guard-skip-resume");
+    let mut graph = callback_graph();
+    graph["spec"]["nodes"]["aCondition"] = json!({
+        "block": "check.run_suite@1",
+        "config": {"checks": [{"checkId": "disabled", "status": "failed"}]}
+    });
+    graph["spec"]["nodes"]["bGuarded"] = json!({
+        "block": "model.generate@1",
+        "config": {"response": "must not execute"},
+        "when": "aCondition.passed"
+    });
+
+    let waiting = run_graph(&path, &graph, None)?;
+    assert_eq!(waiting["status"], "waiting_callback", "{waiting:#}");
+    assert!(
+        waiting["checkpoint"]["node_outputs"]["bGuarded"]
+            .as_object()
+            .is_some_and(|outputs| outputs.keys().any(|key| key.contains("checkpoint_skipped")))
+    );
+
+    let resumed = run_graph(&path, &graph, Some(callback_receipt(&waiting, true)))?;
+    assert_eq!(resumed["status"], "succeeded", "{resumed:#}");
+    for kind in ["node_started", "node_completed"] {
+        let count = resumed["journal"]
+            .as_array()
+            .expect("journal is an array")
+            .iter()
+            .filter(|record| record["kind"] == kind && record["nodeId"] == "bGuarded")
+            .count();
+        assert_eq!(count, 1, "{kind} should appear once: {resumed:#}");
+    }
+    let _ = std::fs::remove_file(path);
     Ok(())
 }
 

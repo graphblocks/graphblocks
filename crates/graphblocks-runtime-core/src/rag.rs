@@ -21,13 +21,17 @@ fn source_modified_at_satisfies_seconds(
     source_time >= minimum_source_modified_at
 }
 
-fn source_modified_at_satisfies(
+pub(crate) fn source_modified_at_satisfies(
     source_modified_at: Option<&str>,
     minimum_source_modified_at: &str,
 ) -> bool {
     parse_iso_datetime_seconds(minimum_source_modified_at).is_some_and(|minimum_time| {
         source_modified_at_satisfies_seconds(source_modified_at, minimum_time)
     })
+}
+
+pub(crate) fn valid_source_modified_at(value: &str) -> bool {
+    parse_iso_datetime_seconds(value).is_some()
 }
 
 fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
@@ -622,7 +626,7 @@ impl RerankOptions {
     {
         self.query_terms = query_terms
             .into_iter()
-            .map(|term| term.into().to_ascii_lowercase())
+            .map(|term| term.into().to_lowercase())
             .filter(|term| !term.is_empty())
             .collect();
         self
@@ -1249,13 +1253,15 @@ impl Error for RagError {}
 
 pub fn knowledge_item_from_chunk(chunk: &DocumentChunk) -> KnowledgeItemRef {
     let source = chunk.source_refs.first().cloned().unwrap_or_else(|| {
-        SourceRef::document_chunk(
+        let mut source = SourceRef::document_chunk(
             &chunk.chunk_id,
             &chunk.revision_id,
-            "",
+            "unavailable",
             DocumentSpan::new(&chunk.asset_id, &chunk.revision_id, &chunk.document_id)
                 .with_chunk_id(&chunk.chunk_id),
-        )
+        );
+        source.digest = None;
+        source
     });
     let mut metadata = chunk.metadata.clone();
     metadata.insert("document_id".to_owned(), json!(chunk.document_id));
@@ -2116,7 +2122,7 @@ pub fn rerank_search_hits(
         .collect::<Vec<_>>();
     let mut ranked_hits = Vec::new();
     for hit in hits.into_iter().take(evaluated_count) {
-        let preview_text = hit.item.preview.join("\n").to_ascii_lowercase();
+        let preview_text = hit.item.preview.join("\n").to_lowercase();
         let score = options
             .query_terms
             .iter()
@@ -3156,9 +3162,10 @@ fn acl_allows(
             });
         };
         has_selector = true;
-        if attributes
-            .iter()
-            .all(|(name, expected)| auth.attributes.get(name) == Some(expected))
+        if !attributes.is_empty()
+            && attributes
+                .iter()
+                .all(|(name, expected)| auth.attributes.get(name) == Some(expected))
         {
             return Ok(true);
         }

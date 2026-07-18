@@ -136,6 +136,97 @@ fn false_guard_skips_without_waiting_for_unrelated_inputs_and_omits_outputs() ->
 }
 
 #[test]
+fn consumers_of_condition_skipped_values_cascade_skip_without_failing() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-cascade-skip"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "checks": "graphblocks.ai/Any@1",
+                    "message": "graphblocks.ai/Message@1"
+                }
+            },
+            "nodes": {
+                "branch": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "must not run"},
+                    "when": "condition.passed",
+                    "inputs": {"message": "$input.message"}
+                },
+                "consumer": {
+                    "block": "model.generate@1",
+                    "config": {"response": "must not run"},
+                    "inputs": {"prompt": "branch.prompt"}
+                },
+                "condition": {
+                    "block": "gate.evaluate@1",
+                    "inputs": {"checks": "$input.checks"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(
+        &graph,
+        &json!({
+            "checks": [{"checkId": "required", "status": "failed"}],
+            "message": {"text": "ignored"}
+        }),
+    )?;
+
+    assert_eq!(result["status"], "succeeded", "{result:#}");
+    for node_id in ["branch", "consumer"] {
+        let completion = journal_node_record(&result, "node_completed", node_id)
+            .ok_or_else(|| format!("missing {node_id} completion"))?;
+        assert_eq!(completion.pointer("/payload/skipped"), Some(&json!(true)));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_skipped_condition_source_cascades_to_the_guarded_node() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-skipped-guard-source"},
+        "spec": {
+            "interface": {"inputs": {"checks": "graphblocks.ai/Any@1"}},
+            "nodes": {
+                "aCondition": {
+                    "block": "gate.evaluate@1",
+                    "inputs": {"checks": "$input.checks"}
+                },
+                "bSkipped": {
+                    "block": "gate.evaluate@1",
+                    "when": "aCondition.passed",
+                    "inputs": {"checks": "$input.checks"}
+                },
+                "cGuarded": {
+                    "block": "gate.evaluate@1",
+                    "when": "bSkipped.passed",
+                    "inputs": {"checks": "$input.checks"}
+                }
+            }
+        }
+    });
+
+    let result = run_graph(
+        &graph,
+        &json!({"checks": [{"checkId": "required", "status": "failed"}]}),
+    )?;
+
+    assert_eq!(result["status"], "succeeded", "{result:#}");
+    for node_id in ["bSkipped", "cGuarded"] {
+        let completion = journal_node_record(&result, "node_completed", node_id)
+            .ok_or_else(|| format!("missing {node_id} completion"))?;
+        assert_eq!(completion.pointer("/payload/skipped"), Some(&json!(true)));
+    }
+    Ok(())
+}
+
+#[test]
 fn output_projection_error_is_a_terminal_run_failure() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

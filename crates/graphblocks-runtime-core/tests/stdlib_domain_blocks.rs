@@ -1,3 +1,4 @@
+use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::stdlib_blocks::stdlib_block_catalog;
 use graphblocks_runtime_core::stdlib_runtime::run_stdlib_graph_json;
 use serde_json::{Map, Value, json};
@@ -104,14 +105,14 @@ fn retrieval_adapters_execute_fuse_rank_and_build_context() -> Result<(), String
     let source_a = json!({
         "sourceId": "dense",
         "hits": [
-            {"hitId": "a", "canonicalSource": "document-a", "rank": 1, "item": {"preview": ["rust graph runtime"]}},
-            {"hitId": "b", "canonicalSource": "document-b", "rank": 2, "item": {"preview": ["unrelated"]}}
+            {"hitId": "a", "canonicalSource": "document-a", "rank": 1, "item": {"itemId": "document-a", "preview": ["rust graph runtime"]}},
+            {"hitId": "b", "canonicalSource": "document-b", "rank": 2, "item": {"itemId": "document-b", "preview": ["unrelated"]}}
         ]
     });
     let source_b = json!({
         "sourceId": "keyword",
         "hits": [
-            {"hitId": "a-copy", "canonicalSource": "document-a", "rank": 1, "item": {"preview": ["rust graph runtime"]}}
+            {"hitId": "a-copy", "canonicalSource": "document-a", "rank": 1, "item": {"itemId": "document-a", "preview": ["rust graph runtime"]}}
         ]
     });
     let retrieval = run_block(
@@ -154,7 +155,355 @@ fn retrieval_adapters_execute_fuse_rank_and_build_context() -> Result<(), String
         &["pack"],
     )?;
     assert_eq!(context["pack"]["hits"].as_array().map(Vec::len), Some(2));
-    assert_eq!(context["pack"]["tokenBudget"], 180);
+    assert_eq!(context["pack"]["tokenBudget"], 200);
+    assert_eq!(
+        context["pack"]["metadata"]["effective_context_token_budget"],
+        180
+    );
+    Ok(())
+}
+
+#[test]
+fn grounding_defaults_require_citations_and_abstain() -> Result<(), String> {
+    let grounded = run_block(
+        "answer.validate_grounding@1",
+        json!({
+            "response": {"text": "unsupported", "citations": []},
+            "context": {"hits": [{"hitId": "support"}]}
+        }),
+        json!({}),
+        &["result", "response"],
+    )?;
+
+    assert_eq!(grounded["result"]["policy"], "abstain");
+    assert_eq!(grounded["result"]["abstained"], true);
+    assert_eq!(
+        grounded["result"]["issues"],
+        json!(["grounding.citation_required"])
+    );
+    Ok(())
+}
+
+#[test]
+fn check_suite_and_gate_accept_the_python_contract_vocabulary() -> Result<(), String> {
+    let empty = run_block(
+        "check.run_suite@1",
+        json!({}),
+        json!({"checks": []}),
+        &["results", "passed", "hardGatePassed", "diagnostics"],
+    )?;
+    assert_eq!(empty["passed"], false);
+
+    let configured = run_block(
+        "check.run_suite@1",
+        json!({}),
+        json!({
+            "checks": [
+                {"checkId": "inline", "status": "inconclusive"},
+                "unreached"
+            ],
+            "outcomes": {"unreached": "passed"},
+            "stopOnFailure": true
+        }),
+        &["results", "passed", "hardGatePassed", "diagnostics"],
+    )?;
+    assert_eq!(configured["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(configured["results"][0]["status"], "inconclusive");
+
+    let outcomes = run_block(
+        "check.run_suite@1",
+        json!({}),
+        json!({"checks": ["configured"], "outcomes": {"configured": "passed"}}),
+        &["results", "passed", "hardGatePassed", "diagnostics"],
+    )?;
+    assert_eq!(outcomes["passed"], true);
+
+    let gate = run_block(
+        "gate.evaluate@1",
+        json!({"checks": [
+            {"checkId": "required", "status": "passed"},
+            {"checkId": "ignored", "status": "failed"}
+        ]}),
+        json!({
+            "requiredChecks": ["required"],
+            "hardConstraints": ["ignored"]
+        }),
+        &["result", "passed"],
+    )?;
+    assert_eq!(gate["passed"], true);
+    assert_eq!(gate["result"]["checkIds"], json!(["required"]));
+
+    let informational = run_block(
+        "gate.evaluate@1",
+        json!({"checks": [
+            {"checkId": "required", "status": "passed"},
+            {"checkId": "ignored", "status": "inconclusive"}
+        ]}),
+        json!({"requiredChecks": ["required"]}),
+        &["result", "passed"],
+    )?;
+    assert_eq!(informational["passed"], true);
+
+    for malformed in [
+        json!({"checks": [{"status": "failed"}]}),
+        json!({"checks": [true]}),
+        json!({"checks": [
+            {"checkId": "duplicate", "status": "passed"},
+            {"checkId": "duplicate", "status": "failed"}
+        ]}),
+    ] {
+        run_block(
+            "gate.evaluate@1",
+            malformed,
+            json!({}),
+            &["result", "passed"],
+        )
+        .expect_err("malformed or duplicate checks must fail closed");
+    }
+    run_block(
+        "check.run_suite@1",
+        json!({}),
+        json!({"checks": [" "]}),
+        &["results", "passed", "hardGatePassed", "diagnostics"],
+    )
+    .expect_err("blank check ids must fail closed");
+    Ok(())
+}
+
+#[test]
+fn retrieval_plan_emits_fused_result_and_requires_real_source_results() -> Result<(), String> {
+    let missing = run_block(
+        "retrieve.execute_plan@1",
+        json!({"query": "rust", "sources": [{"sourceId": "missing"}]}),
+        json!({"minimumSuccessfulSources": 1}),
+        &["result", "sources"],
+    )
+    .expect_err("a source without result or hits must not count as successful");
+    assert!(missing.contains("did not succeed"), "{missing}");
+
+    let retrieval = run_block(
+        "retrieve.execute_plan@1",
+        json!({
+            "request": {"queryText": "rust", "topK": 10},
+            "sources": [
+                {"sourceId": "ok", "result": {"hits": [
+                    {"hitId": "a", "rank": 1, "item": {"itemId": "a"}},
+                    {"hitId": "b", "rank": 2, "item": {"itemId": "b"}}
+                ]}},
+                {"sourceId": "missing"}
+            ]
+        }),
+        json!({
+            "minimumSuccessfulSources": 1,
+            "topK": 1,
+            "failureMode": "partial",
+            "algorithm": "concatenate",
+            "k": 7
+        }),
+        &["result", "sources"],
+    )?;
+
+    assert_eq!(retrieval["result"]["request"]["topK"], 1);
+    assert_eq!(
+        retrieval["result"]["hits"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(retrieval["result"]["totalCandidates"], 2);
+    assert_eq!(retrieval["result"]["successfulSources"], json!(["ok"]));
+    assert_eq!(
+        retrieval["result"]["failedSources"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    let expected_digest = canonical_hash(&json!({
+        "query_text": "rust",
+        "top_k": 1,
+        "filters": {},
+        "successful_sources": ["ok"],
+        "failed_sources": [{"source_id": "missing", "error": "missing retrieval result"}],
+        "fusion_strategy": "concatenate",
+    }));
+    assert_eq!(
+        retrieval["result"]["retrievalId"],
+        format!("federated:{expected_digest}")
+    );
+    assert_eq!(
+        retrieval["result"]["metadata"]["failed_sources"][0]["source_id"],
+        "missing"
+    );
+    Ok(())
+}
+
+#[test]
+fn ranking_orders_before_truncation_and_emits_provenance_outputs() -> Result<(), String> {
+    let ranked = run_block(
+        "rank.documents@1",
+        json!({
+            "query": {"queryTerms": ["foo bar"]},
+            "hits": [
+                {"hitId": "later", "rank": 2, "item": {"itemId": "later", "preview": ["foo-bar"]}},
+                {"hitId": "first", "rank": 1, "item": {"itemId": "first", "preview": ["foo bar"]}}
+            ]
+        }),
+        json!({"inputLimit": 1}),
+        &["hits"],
+    )?;
+
+    assert_eq!(ranked["hits"][0]["hitId"], "first");
+    assert_eq!(ranked["hits"][0]["rerankScore"], 1);
+    assert_eq!(ranked["hits"][0]["reranker"], "lexical");
+
+    let unicode = run_block(
+        "rank.documents@1",
+        json!({
+            "query": {"queryTerms": ["ärende"]},
+            "hits": [
+                {"hitId": "plain", "rank": 1, "item": {"itemId": "plain", "preview": ["other"]}},
+                {"hitId": "match", "rank": 2, "item": {"itemId": "match", "preview": ["Ärende"]}}
+            ]
+        }),
+        json!({}),
+        &["hits"],
+    )?;
+    assert_eq!(unicode["hits"][0]["hitId"], "match");
+    Ok(())
+}
+
+#[test]
+fn context_build_applies_default_budget_dedupe_freshness_and_limits() -> Result<(), String> {
+    let context = run_block(
+        "context.build@1",
+        json!({"evidence": [
+            {
+                "hitId": "selected", "rank": 2, "retriever": "dense",
+                "item": {
+                    "itemId": "item-a", "preview": ["current evidence"],
+                    "metadata": {"document_id": "doc-a", "source_modified_at": "2026-07-17T00:00:00Z"}
+                }
+            },
+            {
+                "hitId": "stale", "rank": 1, "retriever": "dense",
+                "item": {
+                    "itemId": "item-stale", "preview": ["stale evidence"],
+                    "metadata": {"document_id": "doc-stale", "source_modified_at": "2025-01-01T00:00:00Z"}
+                }
+            },
+            {
+                "hitId": "duplicate", "rank": 3, "retriever": "other",
+                "item": {
+                    "itemId": "item-a", "preview": ["duplicate evidence"],
+                    "metadata": {"document_id": "doc-other", "source_modified_at": "2026-07-17T00:00:00Z"}
+                }
+            },
+            {
+                "hitId": "same-document", "rank": 4, "retriever": "other",
+                "item": {
+                    "itemId": "item-b", "preview": ["extra evidence"],
+                    "metadata": {"document_id": "doc-a", "source_modified_at": "2026-07-17T00:00:00Z"}
+                }
+            }
+        ]}),
+        json!({
+            "perDocumentMaxChunks": 1,
+            "minimumSourceModifiedAt": "2026-01-01T00:00:00Z"
+        }),
+        &["pack"],
+    )?;
+
+    assert_eq!(context["pack"]["tokenBudget"], 4096);
+    assert_eq!(context["pack"]["hits"].as_array().map(Vec::len), Some(1));
+    assert_eq!(context["pack"]["hits"][0]["hitId"], "selected");
+    assert_eq!(
+        context["pack"]["metadata"]["drop_reasons"]["stale"],
+        "freshness"
+    );
+    assert_eq!(
+        context["pack"]["metadata"]["drop_reasons"]["duplicate"],
+        "duplicate"
+    );
+    assert_eq!(
+        context["pack"]["metadata"]["drop_reasons"]["same-document"],
+        "per_document_max_chunks"
+    );
+
+    let highlight_sections = run_block(
+        "context.build@1",
+        json!({"evidence": [
+            {
+                "hitId": "first", "rank": 1,
+                "item": {"itemId": "first", "preview": ["one"]},
+                "highlights": [{"locator": null}, {"locator": {"elementId": "section-a"}}]
+            },
+            {
+                "hitId": "second", "rank": 2,
+                "item": {"itemId": "second", "preview": ["two"]},
+                "highlights": [{"locator": {"elementId": "section-a"}}]
+            }
+        ]}),
+        json!({"perSectionMaxChunks": 1}),
+        &["pack"],
+    )?;
+    assert_eq!(
+        highlight_sections["pack"]["hits"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        highlight_sections["pack"]["metadata"]["drop_reasons"]["second"],
+        "per_section_max_chunks"
+    );
+
+    run_block(
+        "context.build@1",
+        json!({"evidence": []}),
+        json!({"minimumSourceModifiedAt": "not-a-timestamp"}),
+        &["pack"],
+    )
+    .expect_err("invalid freshness cutoffs must not silently drop all evidence");
+    Ok(())
+}
+
+#[test]
+fn retrieval_fusion_uses_locator_then_item_identity() -> Result<(), String> {
+    let distinct_items = run_block(
+        "retrieve.fuse@1",
+        json!({"sources": [{"sourceId": "one", "hits": [
+            {"hitId": "a", "rank": 1, "item": {"itemId": "a", "source": {"sourceId": "shared"}}},
+            {"hitId": "b", "rank": 2, "item": {"itemId": "b", "source": {"sourceId": "shared"}}}
+        ]}]}),
+        json!({"algorithm": "concatenate"}),
+        &["hits"],
+    )?;
+    assert_eq!(distinct_items["hits"].as_array().map(Vec::len), Some(2));
+
+    let shared_locator = json!({"documentId": "doc", "chunkId": "chunk"});
+    let equivalent_spans = run_block(
+        "retrieve.fuse@1",
+        json!({"sources": [{"sourceId": "one", "hits": [
+            {"hitId": "a", "rank": 1, "item": {"itemId": "a", "source": {"locator": shared_locator}}},
+            {"hitId": "b", "rank": 2, "item": {"itemId": "b", "source": {"locator": {"document_id": "doc", "chunk_id": "chunk"}}}}
+        ]}]}),
+        json!({"algorithm": "concatenate"}),
+        &["hits"],
+    )?;
+    assert_eq!(equivalent_spans["hits"].as_array().map(Vec::len), Some(1));
+
+    let later_highlight = run_block(
+        "retrieve.fuse@1",
+        json!({"sources": [{"sourceId": "one", "hits": [
+            {
+                "hitId": "a", "rank": 1, "item": {"itemId": "a"},
+                "highlights": [{"locator": null}, {"locator": {"documentId": "doc", "chunkId": "chunk"}}]
+            },
+            {
+                "hitId": "b", "rank": 2,
+                "item": {"itemId": "b", "source": {"locator": {"document_id": "doc", "chunk_id": "chunk"}}}
+            }
+        ]}]}),
+        json!({"algorithm": "concatenate"}),
+        &["hits"],
+    )?;
+    assert_eq!(later_highlight["hits"].as_array().map(Vec::len), Some(1));
     Ok(())
 }
 

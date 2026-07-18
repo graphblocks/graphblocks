@@ -1,6 +1,6 @@
 use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::documents::{
-    DocumentSpan, SourceRef, chunk_document_by_lines, create_local_text_revision,
+    DocumentChunk, DocumentSpan, SourceRef, chunk_document_by_lines, create_local_text_revision,
     parse_plain_text_document,
 };
 use graphblocks_runtime_core::evaluation::{MetricDirection, ResultBundle};
@@ -165,6 +165,40 @@ fn knowledge_item_from_chunk_preserves_acl_for_authorized_retrieval() {
     let item = knowledge_item_from_chunk(&chunk);
 
     assert_eq!(item.acl, revision.acl);
+}
+
+#[test]
+fn knowledge_item_from_chunk_omits_unknown_fallback_digest() {
+    let chunk = DocumentChunk::new(
+        "chunk-1",
+        "document-1",
+        "asset-1",
+        "revision-1",
+        "content without an explicit source ref",
+    );
+
+    let item = knowledge_item_from_chunk(&chunk);
+
+    assert_eq!(item.source.digest, None);
+    assert_eq!(
+        item.source
+            .locator
+            .as_ref()
+            .and_then(|span| span.chunk_id.as_deref()),
+        Some("chunk-1")
+    );
+}
+
+#[test]
+fn empty_acl_attribute_selector_does_not_authorize_every_principal() {
+    let mut protected = hit("hit-1", "item-1", "document-1", "private", 1);
+    protected.item.acl = Some(json!({"attributes": {}}));
+    let auth = AuthContext::new("acme", "user-1");
+
+    let authorized = authorize_search_hits(&[protected], Some(&auth))
+        .expect("an empty attribute selector is a valid deny-all selector");
+
+    assert!(authorized.is_empty());
 }
 
 #[test]
@@ -1003,6 +1037,23 @@ fn rerank_search_hits_scores_query_terms_and_records_provenance()
         result.ranked_hits[0].metadata["source_hit_id"],
         json!("hit-b")
     );
+    Ok(())
+}
+
+#[test]
+fn rerank_search_hits_matches_unicode_case_pairs() -> Result<(), Box<dyn std::error::Error>> {
+    let hits = vec![
+        hit("hit-a", "chunk-a", "doc-1", "Ärende", 2),
+        hit("hit-b", "chunk-b", "doc-1", "other", 1),
+    ];
+
+    let result = rerank_search_hits(
+        hits,
+        RerankOptions::new("rank.rule").with_query_terms(["ärende"]),
+    )?;
+
+    assert_eq!(result.ranked_hits[0].hit.hit_id, "hit-a");
+    assert_eq!(result.ranked_hits[0].rerank_score, Some(1.0));
     Ok(())
 }
 
