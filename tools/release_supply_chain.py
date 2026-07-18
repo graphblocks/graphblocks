@@ -3208,20 +3208,25 @@ def _verify_sigstore_signature(
         frozen_signature = Path(temporary_root) / SIGNATURE_BUNDLE_NAME
         frozen_manifest.write_bytes(manifest_snapshot.data)
         frozen_signature.write_bytes(signature_snapshot.data)
-        subprocess.run(
-            [
-                *_tool_command(cosign),
-                "verify-blob",
-                str(frozen_manifest),
-                "--bundle",
-                str(frozen_signature),
-                "--certificate-identity",
-                certificate_identity,
-                "--certificate-oidc-issuer",
-                certificate_oidc_issuer,
-            ],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    *_tool_command(cosign),
+                    "verify-blob",
+                    str(frozen_manifest),
+                    "--bundle",
+                    str(frozen_signature),
+                    "--certificate-identity",
+                    certificate_identity,
+                    "--certificate-oidc-issuer",
+                    certificate_oidc_issuer,
+                ],
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise ReleaseBundleError(
+                "release manifest signature verification failed"
+            ) from error
 
 
 def _bundle_snapshots(

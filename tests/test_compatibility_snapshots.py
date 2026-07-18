@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 import graphblocks
@@ -82,6 +83,153 @@ def test_compatibility_cli_reports_missing_snapshot_without_traceback(
     assert "compatibility snapshot error:" in captured.err
     assert "missing-snapshot.json" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_nested_stable_paths_use_terminal_type_names(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class DeepType:
+        pass
+
+    def accepts_deep_type(value: DeepType) -> DeepType:
+        return value
+
+    accepts_deep_type.__annotations__ = {
+        "value": "graphblocks.nested_api.DeepType",
+        "return": "graphblocks.nested_api.DeepType",
+    }
+
+    class NestedApi:
+        pass
+
+    nested_api = NestedApi()
+    nested_api.DeepType = DeepType
+    nested_api.accepts_deep_type = accepts_deep_type
+    monkeypatch.setattr(graphblocks, "nested_api", nested_api, raising=False)
+    policy_path = tmp_path / "nested-surface.yaml"
+    policy_path.write_text(
+        yaml.safe_dump(
+            {
+                "snapshotVersion": 1,
+                "targetRelease": "1.0.0",
+                "readiness": "candidate",
+                "symbols": [
+                    {
+                        "path": "graphblocks.nested_api.accepts_deep_type",
+                        "profile": "GB-C1-LOCAL-RUNTIME",
+                    }
+                ],
+                "referencedTypes": [
+                    {
+                        "path": "graphblocks.nested_api.DeepType",
+                        "kind": "opaque-type",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = compatibility_module._build_python_snapshot(
+        policy_path,
+        package="graphblocks",
+    )
+
+    assert snapshot["symbols"][0]["typeReferences"] == ["DeepType"]
+
+
+def test_nested_stable_type_names_must_be_unambiguous(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class NestedApi:
+        pass
+
+    left = NestedApi()
+    right = NestedApi()
+    left.Duplicate = type("Duplicate", (), {})
+    right.Duplicate = type("Duplicate", (), {})
+    monkeypatch.setattr(graphblocks, "left_api", left, raising=False)
+    monkeypatch.setattr(graphblocks, "right_api", right, raising=False)
+    policy_path = tmp_path / "ambiguous-nested-surface.yaml"
+    policy_path.write_text(
+        yaml.safe_dump(
+            {
+                "snapshotVersion": 1,
+                "targetRelease": "1.0.0",
+                "readiness": "candidate",
+                "symbols": [
+                    {
+                        "path": "graphblocks.left_api.Duplicate",
+                        "profile": "GB-C1-LOCAL-RUNTIME",
+                    },
+                    {
+                        "path": "graphblocks.right_api.Duplicate",
+                        "profile": "GB-C1-LOCAL-RUNTIME",
+                    },
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate stable type name 'Duplicate'"):
+        compatibility_module._build_python_snapshot(
+            policy_path,
+            package="graphblocks",
+        )
+
+
+def test_stable_callable_names_do_not_count_as_public_types(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def run(value: object) -> object:
+        return value
+
+    def accepts_fake_type(value: object) -> object:
+        return value
+
+    accepts_fake_type.__annotations__ = {"value": "run", "return": "run"}
+
+    class NestedApi:
+        pass
+
+    nested_api = NestedApi()
+    nested_api.accepts_fake_type = accepts_fake_type
+    monkeypatch.setattr(graphblocks, "run", run, raising=False)
+    monkeypatch.setattr(graphblocks, "nested_api", nested_api, raising=False)
+    policy_path = tmp_path / "method-name-surface.yaml"
+    policy_path.write_text(
+        yaml.safe_dump(
+            {
+                "snapshotVersion": 1,
+                "targetRelease": "1.0.0",
+                "readiness": "candidate",
+                "symbols": [
+                    {
+                        "path": "graphblocks.run",
+                        "profile": "GB-C1-LOCAL-RUNTIME",
+                    },
+                    {
+                        "path": "graphblocks.nested_api.accepts_fake_type",
+                        "profile": "GB-C1-LOCAL-RUNTIME",
+                    },
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unlisted public type.*run"):
+        compatibility_module._build_python_snapshot(
+            policy_path,
+            package="graphblocks",
+        )
 
 
 def test_dataclass_snapshot_captures_behavioral_contracts() -> None:

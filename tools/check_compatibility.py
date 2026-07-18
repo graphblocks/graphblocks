@@ -178,11 +178,21 @@ def _annotation_identifiers(annotation: object) -> set[str]:
         expression = ast.parse(source, mode="eval")
     except SyntaxError as error:
         raise ValueError(f"stable API annotation is not inspectable: {source!r}") from error
-    return {
-        node.id
-        for node in ast.walk(expression)
-        if isinstance(node, ast.Name)
-    }
+    class IdentifierVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.identifiers: set[str] = set()
+
+        def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
+            self.identifiers.add(node.id)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:  # noqa: N802
+            # A qualified annotation names its type with the terminal
+            # component; module/package qualifiers are not public types.
+            self.identifiers.add(node.attr)
+
+    visitor = IdentifierVisitor()
+    visitor.visit(expression)
+    return visitor.identifiers
 
 
 def _annotation_references(value: object) -> set[str]:
@@ -219,6 +229,19 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
     if len(paths) != len(set(paths)):
         raise ValueError(f"{policy_path.name} contains duplicate paths")
 
+    stable_symbol_type_names: dict[str, str] = {}
+    for entry, path, _profile, value in resolved:
+        if entry.get("kind", "callable") != "type-alias" and not inspect.isclass(value):
+            continue
+        name = path.rsplit(".", 1)[1]
+        previous = stable_symbol_type_names.get(name)
+        if previous is not None:
+            raise ValueError(
+                f"{policy_path.name} contains duplicate stable type name {name!r}: "
+                f"{previous!r} and {path!r}"
+            )
+        stable_symbol_type_names[name] = path
+
     raw_referenced_types = policy.get("referencedTypes", [])
     if not isinstance(raw_referenced_types, list):
         raise ValueError(f"{policy_path.name} referencedTypes must be a list")
@@ -234,9 +257,11 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
                 "stable Python referenced types require a path and supported kind"
             )
         value = _resolve_import_path(path, package=package)
-        name = path.split(".", 2)[1]
-        if name in referenced_type_names:
-            raise ValueError(f"{policy_path.name} contains duplicate referenced types")
+        name = path.rsplit(".", 1)[1]
+        if name in referenced_type_names or name in stable_symbol_type_names:
+            raise ValueError(
+                f"{policy_path.name} contains duplicate stable type name {name!r}"
+            )
         referenced_type_names.add(name)
         if kind == "type-alias":
             referenced_types.append(
@@ -257,7 +282,7 @@ def _build_python_snapshot(policy_path: Path, *, package: str) -> dict[str, obje
             )
 
     stable_type_names = {
-        *(path.split(".", 2)[1] for path in paths),
+        *stable_symbol_type_names,
         *referenced_type_names,
     }
     symbols: list[dict[str, object]] = []

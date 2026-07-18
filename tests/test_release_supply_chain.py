@@ -2374,6 +2374,46 @@ def test_release_bundle_signature_is_in_closure_and_pinned_to_release_workflow_r
         )
 
 
+def test_release_bundle_wraps_cosign_signature_verification_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    observe_cosign = module._observe_cosign_identity
+    bundle = _assemble(module, tmp_path)
+    module._observe_cosign_identity = observe_cosign
+    signature = bundle / module.SIGNATURE_BUNDLE_NAME
+    signature.write_text("{}", encoding="utf-8")
+
+    def failing_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ["version"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=COSIGN_OUTPUT + "\n",
+            )
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(module.subprocess, "run", failing_run)
+    identity = (
+        "https://github.com/graphblocks/graphblocks/.github/workflows/ci.yml@"
+        "refs/tags/v1.0.0-rc.1"
+    )
+
+    with pytest.raises(
+        module.ReleaseBundleError,
+        match="release manifest signature verification failed",
+    ):
+        module.verify_release_bundle(
+            bundle_dir=bundle,
+            signature_bundle=signature,
+            certificate_identity=identity,
+        )
+
+
 @pytest.mark.parametrize("pattern", ("*.whl", "*.tar.gz"))
 def test_release_bundle_verification_fails_after_artifact_tampering(
     tmp_path: Path,
