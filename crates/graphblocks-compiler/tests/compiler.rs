@@ -658,7 +658,7 @@ fn compile_graph_rejects_duplicate_edge_identity() {
 }
 
 #[test]
-fn compile_graph_rejects_edge_duplicated_by_input_shorthand() {
+fn compile_graph_deduplicates_edge_repeated_by_input_shorthand() {
     let edge = json!({"from": "$input.message", "to": "sink.message"});
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
@@ -683,17 +683,8 @@ fn compile_graph_rejects_edge_duplicated_by_input_shorthand() {
         .filter(|diagnostic| diagnostic.severity == Severity::Error)
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        plan.normalized["spec"]["edges"],
-        json!([edge.clone(), edge])
-    );
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].code, "GB1005");
-    assert_eq!(
-        errors[0].message,
-        "duplicate edge identity '$input.message' -> 'sink.message'"
-    );
-    assert_eq!(errors[0].path, "$.spec.edges[1]");
+    assert_eq!(plan.normalized["spec"]["edges"], json!([edge]));
+    assert!(errors.is_empty(), "{errors:#?}");
 }
 
 #[test]

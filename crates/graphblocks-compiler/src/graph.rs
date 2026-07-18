@@ -158,13 +158,15 @@ pub fn normalize_graph(document: &Value) -> Value {
         }
     }
 
-    let input_edge_identities = input_edges.iter().cloned().collect::<BTreeSet<_>>();
-    edges.extend(input_edges);
-    edges.extend(
-        output_edges
-            .into_iter()
-            .filter(|edge| !input_edge_identities.contains(edge)),
-    );
+    // Keep duplicate explicit edges so compilation can diagnose them, while
+    // preventing node input/output sugar from synthesizing an edge that is
+    // already represented explicitly (or by another shorthand binding).
+    let mut represented_edges = edges.iter().cloned().collect::<BTreeSet<_>>();
+    for edge in input_edges.into_iter().chain(output_edges) {
+        if represented_edges.insert(edge.clone()) {
+            edges.push(edge);
+        }
+    }
 
     let mut sorted_nodes = Map::new();
     for node_name in node_names {

@@ -105,6 +105,38 @@ fn normalize_graph_rewrites_connection_shorthand_to_default_binding() {
 }
 
 #[test]
+fn normalize_graph_deduplicates_explicit_and_synthesized_edges() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1",
+        "kind": "Graph",
+        "metadata": {"name": "deduplicated-edges"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"}
+                }
+            },
+            "edges": [
+                {"from": "$input.message", "to": "render.message"},
+                {"from": "render.prompt", "to": "$output.prompt"}
+            ]
+        }
+    });
+
+    let normalized = normalize_graph(&graph);
+
+    assert_eq!(
+        normalized["spec"]["edges"],
+        json!([
+            {"from": "$input.message", "to": "render.message"},
+            {"from": "render.prompt", "to": "$output.prompt"}
+        ])
+    );
+}
+
+#[test]
 fn normalize_graph_leaves_non_graph_documents_unchanged() {
     let document = json!({
         "apiVersion": GRAPH_API_VERSION,
