@@ -1215,6 +1215,30 @@ class _Composer:
                 inner_node["when"] = _prefix_endpoint(inner_node["when"], node_name, inner_names)
             expanded_nodes[expanded_name] = inner_node
 
+        rewritten_root_nodes: dict[str, Any] = {}
+        for root_name, raw_root_node in nodes.items():
+            if root_name == node_name or not isinstance(raw_root_node, dict):
+                continue
+            when = raw_root_node.get("when")
+            if not isinstance(when, str):
+                continue
+            when_owner, when_port = _endpoint(when)
+            if when_owner != node_name:
+                continue
+            if when_port not in fragment_outputs:
+                raise CompositionError(
+                    "CompositionInvalidWiring",
+                    f"slot instance {node_name!r} has unknown when output port {when_port!r}",
+                    source=graph_source,
+                )
+            root_node = deepcopy(raw_root_node)
+            root_node["when"] = _prefix_endpoint(
+                fragment_outputs[when_port][0]["from"],
+                node_name,
+                inner_names,
+            )
+            rewritten_root_nodes[root_name] = root_node
+
         expanded_edges = list(unrelated)
         expanded_edges.extend(internal_edges)
         for port, port_edges in fragment_inputs.items():
@@ -1246,6 +1270,7 @@ class _Composer:
                 expanded_edges.append({"from": fragment_source_endpoint, "to": edge["to"]})
 
         del nodes[node_name]
+        nodes.update(rewritten_root_nodes)
         nodes.update(expanded_nodes)
         edges[:] = expanded_edges
         self._instances.append(

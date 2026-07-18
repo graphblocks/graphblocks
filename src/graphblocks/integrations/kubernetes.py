@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 from typing import Literal
 
 from graphblocks.deployment import ExecutionTarget, RolloutPlan
@@ -96,10 +97,13 @@ class KubernetesRenderOptions:
     service_account_name: str | None = None
     image_pull_secrets: tuple[str, ...] = field(default_factory=tuple)
     runtime_class_name: str | None = None
+    gateway_regex_path_matches: bool = False
 
     def __post_init__(self) -> None:
         if not self.namespace.strip():
             raise KubernetesAdapterError("namespace must not be empty")
+        if not isinstance(self.gateway_regex_path_matches, bool):
+            raise KubernetesAdapterError("gateway_regex_path_matches must be a boolean")
         object.__setattr__(
             self,
             "labels",
@@ -464,6 +468,8 @@ def render_rollout_manifests(
         effective_stable_replicas = stable_replicas
         if candidate_replicas is not None:
             effective_candidate_replicas = candidate_replicas
+        elif active_step.traffic_percent == 100:
+            effective_candidate_replicas = stable_replicas
         elif active_step.traffic_percent <= 0:
             effective_candidate_replicas = 0
         else:
@@ -472,7 +478,10 @@ def render_rollout_manifests(
                 1,
                 (stable_replicas * active_step.traffic_percent + denominator - 1) // denominator,
             )
-        service_role = None if active_step.traffic_percent > 0 else "stable"
+        if active_step.traffic_percent == 100:
+            service_role = "candidate"
+        else:
+            service_role = None if active_step.traffic_percent > 0 else "stable"
     elif active_step.kind == "shadow":
         effective_stable_replicas = stable_replicas
         effective_candidate_replicas = 1 if candidate_replicas is None else candidate_replicas
@@ -676,10 +685,11 @@ def render_callback_ingress_manifests(
                 {
                     "matches": [
                         {
-                            "path": {
-                                "type": "PathPrefix",
-                                "value": _callback_route_path_prefix(route["path"]),
-                            }
+                            "path": _callback_route_path_match(
+                                route["path"],
+                                allow_regex=options.gateway_regex_path_matches,
+                            ),
+                            "method": route["method"],
                         }
                     ],
                     "backendRefs": [
@@ -819,11 +829,22 @@ def _callback_ingress_contract(callback_ingress: Mapping[str, object]) -> dict[s
             raise KubernetesAdapterError("callback ingress route must be a mapping")
         path = raw_route.get("path")
         command = raw_route.get("command")
+        method = raw_route.get("method", "POST")
         if not isinstance(path, str) or not path.strip():
             raise KubernetesAdapterError("callback ingress route path must not be empty")
         if not isinstance(command, str) or not command.strip():
             raise KubernetesAdapterError("callback ingress route command must not be empty")
-        routes.append({"path": path, "command": command})
+        if not isinstance(method, str) or method.upper() not in {
+            "DELETE",
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "PATCH",
+            "POST",
+            "PUT",
+        }:
+            raise KubernetesAdapterError("callback ingress route method must be a supported HTTP method")
+        routes.append({"path": path, "command": command, "method": method.upper()})
     if enabled and not any(route["command"] == "SubmitAsyncCallback" for route in routes):
         raise KubernetesAdapterError("enabled callback ingress requires a SubmitAsyncCallback route")
 
@@ -898,11 +919,35 @@ def _callback_ingress_annotations(config: Mapping[str, object]) -> dict[str, str
     return {key: annotations[key] for key in sorted(annotations)}
 
 
-def _callback_route_path_prefix(path: str) -> str:
-    marker = "{operation_id}"
-    if marker in path:
-        return path.split(marker, 1)[0]
-    return path
+def _callback_route_path_match(path: str, *, allow_regex: bool) -> dict[str, str]:
+    if "{" not in path and "}" not in path:
+        return {"type": "Exact", "value": path}
+    first_placeholder = re.search(r"\{([^/{ }]+)\}", path)
+    if first_placeholder is None:
+        raise KubernetesAdapterError(
+            "callback ingress route path contains a malformed placeholder"
+        )
+    if first_placeholder.end() == len(path):
+        return {"type": "PathPrefix", "value": path[: first_placeholder.start()]}
+    if not allow_regex:
+        raise KubernetesAdapterError(
+            "callback ingress routes with path segments after a placeholder require "
+            "gateway_regex_path_matches"
+        )
+    pattern: list[str] = ["^"]
+    cursor = 0
+    for match in re.finditer(r"\{([^/{ }]+)\}", path):
+        pattern.append(re.escape(path[cursor : match.start()]))
+        pattern.append("[^/]+")
+        cursor = match.end()
+    pattern.append(re.escape(path[cursor:]))
+    pattern.append("$")
+    rendered = "".join(pattern)
+    if "{" in rendered or "}" in rendered:
+        raise KubernetesAdapterError(
+            "callback ingress route path contains a malformed placeholder"
+        )
+    return {"type": "RegularExpression", "value": rendered}
 
 
 __all__ = [

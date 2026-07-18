@@ -117,9 +117,15 @@ class WebSocketMediaStream:
 
     def __post_init__(self) -> None:
         _require_non_empty("stream_id", self.stream_id)
+        sequences: set[int] = set()
         for message in self.messages:
             if message.stream_id != self.stream_id:
                 raise WebSocketMediaAdapterError("media message stream_id does not match stream")
+            if message.sequence in sequences:
+                raise WebSocketMediaAdapterError(
+                    f"media message sequence {message.sequence} must be unique within a stream"
+                )
+            sequences.add(message.sequence)
         object.__setattr__(self, "messages", tuple(sorted(self.messages, key=lambda message: message.sequence)))
 
     def stream_contract(self) -> dict[str, object]:

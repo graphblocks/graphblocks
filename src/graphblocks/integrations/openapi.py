@@ -747,17 +747,24 @@ def _json_content_schema(container: Mapping[str, object]) -> Mapping[str, object
     content = container.get("content")
     if not isinstance(content, Mapping):
         return None
-    media = content.get("application/json")
-    if not isinstance(media, Mapping):
-        for media_type in sorted(content):
-            candidate = content[media_type]
-            if isinstance(candidate, Mapping):
-                media = candidate
-                break
-    if not isinstance(media, Mapping):
-        return None
-    schema = media.get("schema")
-    return schema if isinstance(schema, Mapping) else None
+    candidates: list[tuple[tuple[int, int, str], Mapping[str, object]]] = []
+    for raw_media_type, raw_media in content.items():
+        if not isinstance(raw_media_type, str) or not isinstance(raw_media, Mapping):
+            continue
+        media_type = raw_media_type.strip().lower()
+        base_media_type = media_type.split(";", 1)[0].strip()
+        if base_media_type == "application/json":
+            priority = (0, 0 if media_type == "application/json" else 1, media_type)
+        elif base_media_type.startswith("application/") and base_media_type.endswith("+json"):
+            priority = (1, 0 if ";" not in media_type else 1, media_type)
+        else:
+            continue
+        candidates.append((priority, raw_media))
+    for _priority, media in sorted(candidates, key=lambda candidate: candidate[0]):
+        schema = media.get("schema")
+        if isinstance(schema, Mapping):
+            return schema
+    return None
 
 
 def _operation_schema_ref(

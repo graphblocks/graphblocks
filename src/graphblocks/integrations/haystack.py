@@ -166,19 +166,26 @@ def message_to_haystack_chat_message(message: Message) -> dict[str, object]:
     if len(message.parts) == 1 and message.parts[0].kind == "text":
         content: object = message.parts[0].text or ""
     else:
-        content = []
+        content_parts: list[dict[str, object]] = []
         for part in message.parts:
             if part.kind == "text":
-                content.append({"type": "text", "text": part.text or ""})
+                content_parts.append({"type": "text", "text": part.text or ""})
             elif part.kind in {"json", "artifact_ref"}:
-                content.append({"type": part.kind, "data": deepcopy(dict(part.data or {}))})
+                content_parts.append(
+                    {"type": part.kind, "data": deepcopy(dict(part.data or {}))}
+                )
             else:
                 raise HaystackBridgeError(f"unsupported content part kind {part.kind!r}")
+        content = content_parts
     meta: dict[str, object] = {"message_id": message.message_id}
+    role = message.role
+    if role == "developer":
+        role = "system"
+        meta["graphblocks_role"] = "developer"
     if message.metadata:
         meta["graphblocks_metadata"] = deepcopy(dict(message.metadata))
     return {
-        "role": message.role,
+        "role": role,
         "content": content,
         "meta": meta,
     }
@@ -188,7 +195,7 @@ def haystack_chat_message_to_message(value: Mapping[str, object], *, message_id:
     if not isinstance(value, Mapping):
         raise HaystackBridgeError("haystack chat message must be a mapping")
     role = value.get("role")
-    if role not in {"system", "developer", "user", "assistant", "tool"}:
+    if role not in {"system", "user", "assistant", "tool"}:
         raise HaystackBridgeError(f"unsupported Haystack chat role {role!r}")
     content_value = value.get("content", "")
     parts: list[ContentPart] = []
@@ -211,7 +218,13 @@ def haystack_chat_message_to_message(value: Mapping[str, object], *, message_id:
         meta = {}
     if not isinstance(meta, Mapping):
         raise HaystackBridgeError("Haystack chat meta must be a mapping")
-    metadata = {"haystack_meta": deepcopy(dict(meta))} if meta else {}
+    normalized_meta = deepcopy(dict(meta))
+    original_role = normalized_meta.pop("graphblocks_role", None)
+    if original_role is not None:
+        if role != "system" or original_role != "developer":
+            raise HaystackBridgeError("invalid GraphBlocks role marker in Haystack chat meta")
+        role = "developer"
+    metadata: dict[str, object] = {"haystack_meta": normalized_meta} if normalized_meta else {}
     return Message(
         message_id=message_id,
         role=role,  # type: ignore[arg-type]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
 import yaml
 
 
@@ -389,7 +390,8 @@ def test_kubernetes_adapter_renders_callback_ingress_gateway_manifests(monkeypat
                     "path": {
                         "type": "PathPrefix",
                         "value": "/v1/callbacks/",
-                    }
+                    },
+                    "method": "POST",
                 }
             ],
             "backendRefs": [
@@ -435,3 +437,146 @@ def test_kubernetes_callback_ingress_renderer_rejects_unsigned_enabled_ingress(m
         assert "GB6002" in str(error)
     else:
         raise AssertionError("unsigned enabled callback ingress must be rejected")
+
+
+def test_kubernetes_callback_routes_use_exact_or_route_specific_dynamic_matches(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+
+    manifest_set = graphblocks_kubernetes.render_callback_ingress_manifests(
+        "callback-gateway",
+        {
+            "enabled": True,
+            "routes": [
+                {
+                    "method": "POST",
+                    "path": "/v1/callbacks/{operation_id}",
+                    "command": "SubmitAsyncCallback",
+                },
+                {
+                    "method": "POST",
+                    "path": "/v1/callbacks/register",
+                    "command": "RegisterCallback",
+                },
+                {
+                    "method": "POST",
+                    "path": "/v1/callbacks/deliveries/{delivery_id}/redrive",
+                    "command": "RedriveCallbackDelivery",
+                },
+                {
+                    "method": "POST",
+                    "path": "/v1/callbacks/deliveries/{delivery_id}/dead-letter",
+                    "command": "DeadLetterCallbackDelivery",
+                },
+            ],
+        },
+        service_name="graphblocks-server",
+        parent_refs=({"name": "graphblocks-public"},),
+        options=graphblocks_kubernetes.KubernetesRenderOptions(
+            gateway_regex_path_matches=True,
+        ),
+    )
+
+    matches = [rule["matches"][0] for rule in manifest_set.by_kind("HTTPRoute")[0]["spec"]["rules"]]
+    assert matches == [
+        {
+            "path": {
+                "type": "PathPrefix",
+                "value": "/v1/callbacks/",
+            },
+            "method": "POST",
+        },
+        {
+            "path": {"type": "Exact", "value": "/v1/callbacks/register"},
+            "method": "POST",
+        },
+        {
+            "path": {
+                "type": "RegularExpression",
+                "value": "^/v1/callbacks/deliveries/[^/]+/redrive$",
+            },
+            "method": "POST",
+        },
+        {
+            "path": {
+                "type": "RegularExpression",
+                "value": "^/v1/callbacks/deliveries/[^/]+/dead\\-letter$",
+            },
+            "method": "POST",
+        },
+    ]
+    commands = [
+        rule["filters"][0]["requestHeaderModifier"]["set"][0]["value"]
+        for rule in manifest_set.by_kind("HTTPRoute")[0]["spec"]["rules"]
+    ]
+    assert commands == [
+        "SubmitAsyncCallback",
+        "RegisterCallback",
+        "RedriveCallbackDelivery",
+        "DeadLetterCallbackDelivery",
+    ]
+
+    with pytest.raises(
+        graphblocks_kubernetes.KubernetesAdapterError,
+        match="gateway_regex_path_matches",
+    ):
+        graphblocks_kubernetes.render_callback_ingress_manifests(
+            "callback-gateway",
+            {
+                "enabled": True,
+                "routes": [
+                    {
+                        "method": "POST",
+                        "path": "/v1/callbacks/{operation_id}",
+                        "command": "SubmitAsyncCallback",
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/callbacks/deliveries/{delivery_id}/redrive",
+                        "command": "RedriveCallbackDelivery",
+                    },
+                ],
+            },
+            service_name="graphblocks-server",
+            parent_refs=({"name": "graphblocks-public"},),
+        )
+
+
+def test_kubernetes_full_canary_routes_to_safely_sized_candidate(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    stable = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:stable",
+    )
+    candidate = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:candidate",
+    )
+    plan = graphblocks_deployment.RolloutPlan.canary(
+        "rollout-100",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(
+            graphblocks_deployment.RolloutStep.canary("canary-100", traffic_percent=100),
+        ),
+    )
+
+    manifest_set = graphblocks_kubernetes.render_rollout_manifests(
+        "support-agent",
+        stable,
+        candidate,
+        plan,
+        active_step_index=2,
+        stable_replicas=10,
+        ports=(graphblocks_kubernetes.KubernetesPort("http", 8080),),
+    )
+    stable_deployment, candidate_deployment = manifest_set.by_kind("Deployment")
+    service = manifest_set.by_kind("Service")[0]
+
+    assert stable_deployment["spec"]["replicas"] == 10
+    assert candidate_deployment["spec"]["replicas"] == 10
+    assert service["spec"]["selector"]["graphblocks.ai/rollout-role"] == "candidate"

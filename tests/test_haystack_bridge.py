@@ -110,6 +110,26 @@ def test_haystack_chat_message_round_trips_graphblocks_message(monkeypatch) -> N
     )
 
 
+def test_haystack_bridge_maps_developer_role_through_system_marker(monkeypatch) -> None:
+    graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
+    message = Message(
+        message_id="msg-dev",
+        role="developer",
+        parts=(ContentPart(kind="text", text="Follow support policy."),),
+    )
+
+    haystack = graphblocks_haystack.message_to_haystack_chat_message(message)
+    restored = graphblocks_haystack.haystack_chat_message_to_message(
+        haystack,
+        message_id="msg-restored",
+    )
+
+    assert haystack["role"] == "system"
+    assert haystack["meta"]["graphblocks_role"] == "developer"
+    assert restored.role == "developer"
+    assert restored.metadata == {"haystack_meta": {"message_id": "msg-dev"}}
+
+
 def test_haystack_bridge_rejects_invalid_descriptors(monkeypatch) -> None:
     graphblocks_haystack = importlib.import_module("graphblocks.integrations.haystack")
 

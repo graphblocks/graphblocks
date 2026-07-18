@@ -145,6 +145,8 @@ class OpenAIChatDelta:
     def __post_init__(self) -> None:
         object.__setattr__(self, "response_id", _strip_required_string("response_id", self.response_id))
         object.__setattr__(self, "sequence", _non_negative_integer("sequence", self.sequence))
+        if self.sequence == 0:
+            raise OpenAICompatibleAdapterError("sequence must be positive")
         if self.choice_index is not None:
             object.__setattr__(self, "choice_index", _non_negative_integer("choice_index", self.choice_index))
         if self.content_delta is not None and not isinstance(self.content_delta, str):

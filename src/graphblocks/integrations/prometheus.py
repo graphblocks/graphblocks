@@ -71,8 +71,14 @@ class PrometheusRule:
         object.__setattr__(self, "annotations", _sorted_str_mapping(self.annotations))
 
     @classmethod
-    def recording(cls, *, record: str, expr: str) -> PrometheusRule:
-        return cls(record=record, expr=expr)
+    def recording(
+        cls,
+        *,
+        record: str,
+        expr: str,
+        labels: Mapping[str, str] | None = None,
+    ) -> PrometheusRule:
+        return cls(record=record, expr=expr, labels=labels or {})
 
     @classmethod
     def alerting(
@@ -94,10 +100,13 @@ class PrometheusRule:
 
     def rule_contract(self) -> dict[str, object]:
         if self.record is not None:
-            return {
+            recording_contract: dict[str, object] = {
                 "record": self.record,
                 "expr": self.expr,
             }
+            if self.labels:
+                recording_contract["labels"] = deepcopy(dict(self.labels))
+            return recording_contract
         contract: dict[str, object] = {
             "alert": self.alert,
             "expr": self.expr,

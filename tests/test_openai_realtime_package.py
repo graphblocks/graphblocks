@@ -17,7 +17,7 @@ def test_openai_realtime_session_config_projects_provider_payload(monkeypatch) -
         model="gpt-realtime-2",
         instructions="Answer with concise support guidance.",
         voice="marin",
-        modalities=("text", "audio"),
+        modalities=("audio",),
         metadata={"tenant": "acme"},
     )
 
@@ -27,8 +27,14 @@ def test_openai_realtime_session_config_projects_provider_payload(monkeypatch) -
         "type": "realtime",
         "model": "gpt-realtime-2",
         "instructions": "Answer with concise support guidance.",
-        "modalities": ["audio", "text"],
-        "audio": {"output": {"voice": "marin"}},
+        "output_modalities": ["audio"],
+        "audio": {
+            "input": {"format": {"type": "audio/pcm", "rate": 24000}},
+            "output": {
+                "format": {"type": "audio/pcm", "rate": 24000},
+                "voice": "marin",
+            }
+        },
         "metadata": {"tenant": "acme"},
     }
     assert transport.contract() == {
@@ -62,8 +68,14 @@ def test_openai_realtime_webrtc_call_contract_uses_unified_calls_endpoint(monkey
                 "type": "realtime",
                 "model": "gpt-realtime-2",
                 "instructions": "Answer using audio.",
-                "modalities": ["audio"],
-                "audio": {"output": {"voice": "marin"}},
+                "output_modalities": ["audio"],
+                "audio": {
+                    "input": {"format": {"type": "audio/pcm", "rate": 24000}},
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "voice": "marin",
+                    }
+                },
             },
         },
         "headers": {"OpenAI-Safety-Identifier": "hashed-user-id"},
@@ -161,10 +173,40 @@ def test_openai_realtime_validates_contracts(monkeypatch) -> None:
             instructions="ok",
             modalities=(),
         )
+    with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="exactly"):
+        graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+            model="gpt-realtime-2",
+            instructions="ok",
+            modalities=("audio", "text"),
+        )
+    with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError, match="sample_rate"):
+        graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+            model="gpt-realtime-2",
+            instructions="ok",
+            sample_rate_hz=16_000,
+        )
     with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError):
         graphblocks_openai_realtime.OpenAIRealtimeWebRtcCall(config, offer_sdp=" ")
     with pytest.raises(graphblocks_openai_realtime.OpenAIRealtimeAdapterError):
         graphblocks_openai_realtime.OpenAIRealtimeWebSocketSession(config, base_url="https://api.openai.com")
+
+
+def test_openai_realtime_projects_g711_input_and_output_format(monkeypatch) -> None:
+    graphblocks_openai_realtime = _import_openai_realtime(monkeypatch)
+    config = graphblocks_openai_realtime.OpenAIRealtimeSessionConfig(
+        model="gpt-realtime-2",
+        instructions="Answer using audio.",
+        codec="g711_ulaw",
+        sample_rate_hz=8_000,
+    )
+
+    assert config.session_payload()["audio"] == {
+        "input": {"format": {"type": "audio/pcmu"}},
+        "output": {
+            "format": {"type": "audio/pcmu"},
+            "voice": "marin",
+        }
+    }
 
 
 def test_openai_realtime_package_is_cataloged_as_optional_voice_provider_adapter(monkeypatch) -> None:

@@ -419,6 +419,26 @@ def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
     assert decision.input_digest == request.input_digest
 
 
+def test_cedar_adapter_accepts_native_uppercase_decisions(monkeypatch) -> None:
+    graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
+
+    allow = graphblocks_policy_cedar.policy_decision_from_cedar_result(
+        decision_id="decision-cedar-allow",
+        request=_policy_request(),
+        result={"decision": "ALLOW"},
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+    deny = graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
+        decision_id="decision-cedar-deny",
+        request=_output_policy_request(),
+        result={"decision": "DENY"},
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert allow.effect == "allow"
+    assert deny.disposition == "abort_response"
+
+
 def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
     graphblocks_policy_cedar = importlib.import_module("graphblocks.integrations.policy_cedar")
 

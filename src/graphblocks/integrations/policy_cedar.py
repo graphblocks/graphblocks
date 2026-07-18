@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+from typing import Literal
 
 from graphblocks import ContentPart, OutputPolicyDecision, PolicyDecision, PolicyRequest, canonical_dumps
 from graphblocks.output_policy import (
@@ -15,6 +16,16 @@ from graphblocks.output_policy import (
 
 class CedarPolicyAdapterError(RuntimeError):
     pass
+
+
+def _cedar_decision(value: object) -> Literal["allow", "deny"]:
+    if isinstance(value, str):
+        decision = value.casefold()
+        if decision == "allow":
+            return "allow"
+        if decision == "deny":
+            return "deny"
+    raise CedarPolicyAdapterError(f"unknown Cedar decision {value}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,13 +126,11 @@ def policy_decision_from_cedar_result(
     if not isinstance(evaluated_at, str) or not evaluated_at.strip():
         raise CedarPolicyAdapterError("evaluated_at must be a non-empty string")
 
-    raw_decision = result.get("decision")
+    raw_decision = _cedar_decision(result.get("decision"))
     if raw_decision == "allow":
         effect = "allow"
-    elif raw_decision == "deny":
-        effect = "deny"
     else:
-        raise CedarPolicyAdapterError(f"unknown Cedar decision {raw_decision}")
+        effect = "deny"
 
     diagnostics = result.get("diagnostics", {})
     if diagnostics is None:
@@ -163,13 +172,11 @@ def output_policy_decision_from_cedar_result(
 
     disposition = result_body.get("disposition")
     if disposition is None:
-        raw_decision = result.get("decision")
+        raw_decision = _cedar_decision(result.get("decision"))
         if raw_decision == "allow":
             disposition = "allow"
-        elif raw_decision == "deny":
-            disposition = "abort_response"
         else:
-            raise CedarPolicyAdapterError(f"unknown Cedar decision {raw_decision}")
+            disposition = "abort_response"
     if not isinstance(disposition, str) or disposition not in VALID_OUTPUT_DISPOSITIONS:
         raise CedarPolicyAdapterError(f"unknown output policy disposition {disposition}")
 

@@ -5,6 +5,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
+
 from graphblocks import (
     AdmittedToolCall,
     ArtifactRef,
@@ -26,6 +29,63 @@ from graphblocks import (
 
 class McpToolAdapterError(RuntimeError):
     pass
+
+
+class McpInlineSchemaRegistry:
+    def __init__(self, schemas: Mapping[str, Mapping[str, object]]) -> None:
+        documents: dict[str, dict[str, object]] = {}
+        for schema_ref, schema in sorted(schemas.items()):
+            document = dict(schema)
+            try:
+                Draft202012Validator.check_schema(document)
+            except SchemaError as error:
+                raise McpToolAdapterError(
+                    f"MCP inline schema {schema_ref!r} is not valid JSON Schema"
+                ) from error
+            documents[schema_ref] = document
+        self._schemas = documents
+
+    def validate(self, schema_id: str, value: object) -> None:
+        schema = self._schemas.get(schema_id)
+        if schema is None:
+            raise ToolSchemaValidationError(f"schema {schema_id} is not registered")
+        try:
+            Draft202012Validator(schema).validate(value)
+        except ValidationError as error:
+            raise ToolSchemaValidationError(
+                f"schema {schema_id} rejected value at {error.json_path}"
+            ) from error
+
+
+McpSchemaRegistry = ToolSchemaRegistry | McpInlineSchemaRegistry
+
+
+class McpToolDiscovery(tuple[ToolDefinition, ...]):
+    _schema_documents: tuple[tuple[str, str], ...]
+
+    def __new__(
+        cls,
+        definitions: Iterable[ToolDefinition],
+        schema_documents: Iterable[tuple[str, str]] = (),
+    ) -> McpToolDiscovery:
+        instance = super().__new__(cls, definitions)
+        instance._schema_documents = tuple(schema_documents)
+        return instance
+
+    @property
+    def definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(self)
+
+    @property
+    def schemas(self) -> dict[str, dict[str, object]]:
+        return {schema_ref: json.loads(document) for schema_ref, document in self._schema_documents}
+
+    @property
+    def inline_schemas(self) -> dict[str, dict[str, object]]:
+        return self.schemas
+
+    def schema_registry(self) -> McpInlineSchemaRegistry:
+        return McpInlineSchemaRegistry(self.schemas)
 
 
 def evaluate_native_connector_capabilities(
@@ -173,7 +233,7 @@ def discover_mcp_tool_definitions(
     schema_prefix: str = "schemas/mcp",
     tags: Iterable[str] = (),
     version: str | None = None,
-) -> tuple[ToolDefinition, ...]:
+) -> McpToolDiscovery:
     raw_tools = capabilities.get("tools")
     if not isinstance(raw_tools, Iterable) or isinstance(raw_tools, (str, bytes, Mapping)):
         raise McpToolAdapterError("MCP capabilities tools must be a sequence")
@@ -181,6 +241,7 @@ def discover_mcp_tool_definitions(
     discovered: list[ToolDefinition] = []
     seen: set[str] = set()
     generated_schema_owners: dict[str, str] = {}
+    schema_documents: dict[str, str] = {}
     base_tags = _string_set(tags, owner="MCP discovery tags")
     for index, raw_tool in enumerate(raw_tools):
         if not isinstance(raw_tool, Mapping):
@@ -204,6 +265,24 @@ def discover_mcp_tool_definitions(
                 fallback=generated_output_schema,
                 owner=f"MCP capabilities tool {name}",
             )
+        for raw_schema, schema_ref, direction in (
+            (raw_tool.get("inputSchema", raw_tool.get("input_schema")), input_schema, "input"),
+            (raw_tool.get("outputSchema", raw_tool.get("output_schema")), output_schema, "output"),
+        ):
+            if not isinstance(raw_schema, Mapping) or schema_ref is None:
+                continue
+            try:
+                schema_document = canonical_dumps(raw_schema)
+            except (TypeError, ValueError) as error:
+                raise McpToolAdapterError(
+                    f"MCP capabilities tool {name} {direction} schema must be strict JSON"
+                ) from error
+            previous_document = schema_documents.get(schema_ref)
+            if previous_document is not None and previous_document != schema_document:
+                raise McpToolAdapterError(
+                    f"MCP schema reference collision {schema_ref!r}: conflicting inline schemas"
+                )
+            schema_documents[schema_ref] = schema_document
         for schema_ref, generated_ref in (
             (input_schema, generated_input_schema),
             (output_schema, generated_output_schema),
@@ -229,7 +308,10 @@ def discover_mcp_tool_definitions(
             )
         )
 
-    return tuple(sorted(discovered, key=lambda definition: definition.name))
+    return McpToolDiscovery(
+        sorted(discovered, key=lambda definition: definition.name),
+        sorted(schema_documents.items()),
+    )
 
 
 def prepare_mcp_tool_invocation(
@@ -288,7 +370,7 @@ def prepare_mcp_tool_invocation(
 def mcp_tool_result_from_response(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
-    schema_registry: ToolSchemaRegistry,
+    schema_registry: McpSchemaRegistry,
     *,
     output: Mapping[str, object],
     started_at: str,
@@ -374,7 +456,7 @@ def mcp_tool_result_artifact_ready(
 def mcp_tool_result_completed(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
-    schema_registry: ToolSchemaRegistry,
+    schema_registry: McpSchemaRegistry,
     *,
     sequence: int,
     result: ToolResult,
@@ -402,7 +484,7 @@ def mcp_tool_result_completed(
 def mcp_tool_result_terminal_event(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
-    schema_registry: ToolSchemaRegistry,
+    schema_registry: McpSchemaRegistry,
     *,
     sequence: int,
     result: ToolResult,
@@ -442,7 +524,7 @@ def mcp_tool_result_terminal_event(
 def prepare_mcp_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
-    schema_registry: ToolSchemaRegistry,
+    schema_registry: McpSchemaRegistry,
     result: ToolResult,
     *,
     max_output_bytes: int | None = None,
@@ -826,6 +908,9 @@ def _schema_slug(value: str) -> str:
 
 __all__ = [
     "McpToolAdapterError",
+    "McpToolDiscovery",
+    "McpInlineSchemaRegistry",
+    "McpSchemaRegistry",
     "McpToolInvocation",
     "bind_mcp_tool",
     "define_mcp_tool",

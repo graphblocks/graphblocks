@@ -78,6 +78,20 @@ def test_qdrant_search_request_rejects_invalid_inputs(monkeypatch) -> None:
         )
 
 
+def test_qdrant_search_request_preserves_null_filter(monkeypatch) -> None:
+    graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
+
+    search = graphblocks_qdrant.qdrant_search_request(
+        SearchRequest(query_text="unclassified", top_k=1, filters={"classification": None}),
+        collection=graphblocks_qdrant.QdrantCollectionRef(collection="support_chunks"),
+        vector=(0.1,),
+    )
+
+    assert search.body["filter"] == {
+        "must": [{"is_null": {"key": "classification"}}],
+    }
+
+
 def test_qdrant_points_map_to_search_hits_with_source_acl_and_preview(monkeypatch) -> None:
     graphblocks_qdrant = importlib.import_module("graphblocks.integrations.qdrant")
     points = [

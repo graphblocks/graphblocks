@@ -235,6 +235,29 @@ def test_composition_rewrites_placeholder_shorthand_at_fragment_boundary(tmp_pat
     assert "answer__render" in normalized["spec"]["nodes"]
 
 
+def test_composition_rewrites_root_when_reference_to_fragment_output(tmp_path: Path) -> None:
+    _write_yaml(tmp_path / "fragment.yaml", _fragment())
+    graph = _composed_graph(
+        extra_nodes={
+            "guarded": {
+                "block": "test.guarded@1",
+                "when": "answer.prompt",
+            }
+        }
+    )
+    graph_path = tmp_path / "graph.yaml"
+    _write_yaml(graph_path, graph)
+
+    _, expanded = _expanded_graph(graph_path)
+
+    assert expanded["spec"]["nodes"]["guarded"]["when"] == "answer__render.prompt"
+    plan = compile_graph(
+        expanded,
+        block_catalog=BlockCatalog({}, allow_unknown_blocks=True),
+    )
+    assert "GB1002" not in {diagnostic.code for diagnostic in plan.diagnostics.diagnostics}
+
+
 def test_composition_connects_one_slot_instance_to_another(tmp_path: Path) -> None:
     _write_yaml(tmp_path / "fragment.yaml", _fragment())
     graph = _composed_graph()

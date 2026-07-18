@@ -91,6 +91,8 @@ def qdrant_search_request(
         if not isinstance(key, str) or not key.strip():
             raise QdrantAdapterError("filter keys must be non-empty strings")
         if value is None:
+            null_condition: dict[str, object] = {"is_null": {"key": key.strip()}}
+            filter_terms.append(null_condition)
             continue
         if isinstance(value, Mapping):
             if "key" in value:

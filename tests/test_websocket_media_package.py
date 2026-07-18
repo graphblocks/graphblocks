@@ -63,6 +63,21 @@ def test_websocket_media_validates_endpoint_and_messages(monkeypatch) -> None:
         graphblocks_websocket_media.WebSocketMediaMessage.audio_delta("mic", -1, audio_ref="blob:1", duration_ms=20)
     with pytest.raises(graphblocks_websocket_media.WebSocketMediaAdapterError):
         graphblocks_websocket_media.WebSocketMediaMessage.audio_delta("mic", 1, audio_ref="blob:1", duration_ms=0)
+    with pytest.raises(
+        graphblocks_websocket_media.WebSocketMediaAdapterError,
+        match="sequence 1 must be unique",
+    ):
+        graphblocks_websocket_media.WebSocketMediaStream(
+            "mic",
+            (
+                graphblocks_websocket_media.WebSocketMediaMessage.audio_delta(
+                    "mic", 1, audio_ref="blob:1", duration_ms=20
+                ),
+                graphblocks_websocket_media.WebSocketMediaMessage.audio_delta(
+                    "mic", 1, audio_ref="blob:2", duration_ms=20
+                ),
+            ),
+        )
 
 
 def test_websocket_media_package_is_cataloged_as_optional_voice_adapter(monkeypatch) -> None:

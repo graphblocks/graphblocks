@@ -10,6 +10,13 @@ class OpenAIRealtimeAdapterError(ValueError):
     """Base error for OpenAI Realtime adapter contracts."""
 
 
+_OUTPUT_AUDIO_FORMATS = {
+    "pcm16": ("audio/pcm", 24_000),
+    "g711_ulaw": ("audio/pcmu", 8_000),
+    "g711_alaw": ("audio/pcma", 8_000),
+}
+
+
 def _require_non_empty(field_name: str, value: str) -> None:
     if not value.strip():
         raise OpenAIRealtimeAdapterError(f"{field_name} must not be empty")
@@ -31,15 +38,28 @@ class OpenAIRealtimeSessionConfig:
         _require_non_empty("instructions", self.instructions)
         _require_non_empty("voice", self.voice)
         _require_non_empty("codec", self.codec)
-        if self.sample_rate_hz <= 0:
-            raise OpenAIRealtimeAdapterError("sample_rate_hz must be positive")
-        if self.channels <= 0:
-            raise OpenAIRealtimeAdapterError("channels must be positive")
+        codec = self.codec.strip().lower()
+        if codec not in _OUTPUT_AUDIO_FORMATS:
+            raise OpenAIRealtimeAdapterError(
+                "codec must be one of pcm16, g711_ulaw, or g711_alaw"
+            )
+        expected_sample_rate = _OUTPUT_AUDIO_FORMATS[codec][1]
+        if self.sample_rate_hz != expected_sample_rate:
+            raise OpenAIRealtimeAdapterError(
+                f"{codec} sample_rate_hz must be {expected_sample_rate}"
+            )
+        if self.channels != 1:
+            raise OpenAIRealtimeAdapterError("OpenAI Realtime audio must be mono")
         modalities = tuple(sorted({str(modality).strip() for modality in self.modalities}))
         if not modalities:
             raise OpenAIRealtimeAdapterError("modalities must not be empty")
         for modality in modalities:
             _require_non_empty("modality", modality)
+        if modalities not in {("audio",), ("text",)}:
+            raise OpenAIRealtimeAdapterError(
+                "output modalities must be exactly ('audio',) or ('text',)"
+            )
+        object.__setattr__(self, "codec", codec)
         object.__setattr__(self, "modalities", modalities)
         object.__setattr__(
             self,
@@ -48,12 +68,19 @@ class OpenAIRealtimeSessionConfig:
         )
 
     def session_payload(self) -> dict[str, object]:
+        format_type = _OUTPUT_AUDIO_FORMATS[self.codec][0]
+        output_format: dict[str, object] = {"type": format_type}
+        if self.codec == "pcm16":
+            output_format["rate"] = self.sample_rate_hz
         payload: dict[str, object] = {
             "type": "realtime",
             "model": self.model,
             "instructions": self.instructions,
-            "modalities": list(self.modalities),
-            "audio": {"output": {"voice": self.voice}},
+            "output_modalities": list(self.modalities),
+            "audio": {
+                "input": {"format": dict(output_format)},
+                "output": {"format": output_format, "voice": self.voice},
+            },
         }
         if self.metadata:
             payload["metadata"] = dict(self.metadata)

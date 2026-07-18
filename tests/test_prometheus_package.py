@@ -265,6 +265,7 @@ def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:
             graphblocks_prometheus.PrometheusRule.recording(
                 record="graphblocks:generation_tokens:rate5m",
                 expr='sum(rate(graphblocks_generation_usage_tokens_total[5m])) by (provider, model)',
+                labels={"team": "runtime"},
             ),
             graphblocks_prometheus.PrometheusRule.alerting(
                 alert="GraphBlocksGenerationLatencyHigh",
@@ -284,6 +285,7 @@ def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:
                     {
                         "record": "graphblocks:generation_tokens:rate5m",
                         "expr": 'sum(rate(graphblocks_generation_usage_tokens_total[5m])) by (provider, model)',
+                        "labels": {"team": "runtime"},
                     },
                     {
                         "alert": "GraphBlocksGenerationLatencyHigh",
@@ -297,3 +299,18 @@ def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:
         ]
     }
     assert group.content_digest().startswith("sha256:")
+
+    without_labels = graphblocks_prometheus.PrometheusRuleGroup(
+        name="graphblocks-runtime",
+        rules=(
+            graphblocks_prometheus.PrometheusRule.recording(
+                record="graphblocks:generation_tokens:rate5m",
+                expr='sum(rate(graphblocks_generation_usage_tokens_total[5m])) by (provider, model)',
+            ),
+        ),
+    )
+    with_labels = graphblocks_prometheus.PrometheusRuleGroup(
+        name="graphblocks-runtime",
+        rules=(group.rules[0],),
+    )
+    assert without_labels.content_digest() != with_labels.content_digest()

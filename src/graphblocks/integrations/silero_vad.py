@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import RLock
 
-from graphblocks.voice import AudioFrame, VadAuthority, VadDecision
+from graphblocks.voice import AudioFrame, VadDecision, VadDecisionKind
 
 
 class SileroVadAdapterError(ValueError):
@@ -12,6 +13,21 @@ class SileroVadAdapterError(ValueError):
 def _require_non_empty(field_name: str, value: str) -> None:
     if not value.strip():
         raise SileroVadAdapterError(f"{field_name} must not be empty")
+
+
+def _validate_sample_window(sample_rate_hz: int, window_size_samples: int) -> None:
+    if (sample_rate_hz, window_size_samples) not in {(8_000, 256), (16_000, 512)}:
+        raise SileroVadAdapterError(
+            "Silero VAD requires 16000 Hz/512 samples or 8000 Hz/256 samples"
+        )
+
+
+@dataclass(slots=True)
+class _SileroVadStreamState:
+    in_speech: bool = False
+    pending_speech_ms: int = 0
+    pending_silence_ms: int = 0
+    last_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +55,12 @@ class SileroVadFrame:
             raise SileroVadAdapterError("sample_rate_hz must be positive")
         if self.window_size_samples <= 0:
             raise SileroVadAdapterError("window_size_samples must be positive")
+        _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
+        expected_duration_ms = self.window_size_samples * 1_000 // self.sample_rate_hz
+        if self.duration_ms != expected_duration_ms:
+            raise SileroVadAdapterError(
+                f"duration_ms must be {expected_duration_ms} for the configured Silero window"
+            )
         _require_non_empty("model_ref", self.model_ref)
 
     def to_audio_frame(self) -> AudioFrame:
@@ -72,6 +94,13 @@ class SileroVadAuthority:
     sample_rate_hz: int = 16_000
     window_size_samples: int = 512
     model_ref: str = "silero-vad"
+    _states: dict[str, _SileroVadStreamState] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_non_empty("authority_id", self.authority_id)
@@ -85,11 +114,71 @@ class SileroVadAuthority:
             raise SileroVadAdapterError("sample_rate_hz must be positive")
         if self.window_size_samples <= 0:
             raise SileroVadAdapterError("window_size_samples must be positive")
+        _validate_sample_window(self.sample_rate_hz, self.window_size_samples)
         _require_non_empty("model_ref", self.model_ref)
 
-    def evaluate(self, frame: SileroVadFrame, *, already_in_speech: bool = False) -> VadDecision:
-        authority = VadAuthority(self.authority_id, speech_threshold=self.speech_threshold)
-        return authority.evaluate(frame.to_audio_frame(), already_in_speech=already_in_speech)
+    def evaluate(
+        self,
+        frame: SileroVadFrame,
+        *,
+        already_in_speech: bool | None = None,
+    ) -> VadDecision:
+        if (frame.sample_rate_hz, frame.window_size_samples) != (
+            self.sample_rate_hz,
+            self.window_size_samples,
+        ):
+            raise SileroVadAdapterError("frame sample rate and window must match VAD authority")
+        with self._lock:
+            state = self._states.get(frame.stream_id)
+            if state is None:
+                state = _SileroVadStreamState(in_speech=bool(already_in_speech))
+                self._states[frame.stream_id] = state
+            elif state.last_sequence is not None and frame.sequence <= state.last_sequence:
+                raise SileroVadAdapterError(
+                    "frame sequence must increase within a Silero VAD stream"
+                )
+            elif already_in_speech is not None and already_in_speech != state.in_speech:
+                state.in_speech = already_in_speech
+                state.pending_speech_ms = 0
+                state.pending_silence_ms = 0
+
+            is_speech = frame.speech_probability >= self.speech_threshold
+            kind: VadDecisionKind
+            if state.in_speech:
+                state.pending_speech_ms = 0
+                if is_speech:
+                    state.pending_silence_ms = 0
+                    kind = "speech"
+                else:
+                    state.pending_silence_ms += frame.duration_ms
+                    if state.pending_silence_ms >= self.min_silence_ms:
+                        state.in_speech = False
+                        state.pending_silence_ms = 0
+                        kind = "speech_end"
+                    else:
+                        kind = "speech"
+            else:
+                state.pending_silence_ms = 0
+                if is_speech:
+                    state.pending_speech_ms += frame.duration_ms
+                    if state.pending_speech_ms >= self.min_speech_ms:
+                        state.in_speech = True
+                        state.pending_speech_ms = 0
+                        kind = "speech_start"
+                    else:
+                        kind = "silence"
+                else:
+                    state.pending_speech_ms = 0
+                    kind = "silence"
+            state.last_sequence = frame.sequence
+
+        return VadDecision(
+            authority_id=self.authority_id,
+            stream_id=frame.stream_id,
+            sequence=frame.sequence,
+            kind=kind,
+            speech_probability=frame.speech_probability,
+        )
 
     def config_contract(self) -> dict[str, object]:
         return {

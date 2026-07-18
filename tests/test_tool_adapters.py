@@ -21,6 +21,7 @@ from graphblocks import (
     ToolDefinition,
     ToolResult,
     ToolSchemaRegistry,
+    ToolSchemaValidationError,
     canonical_hash,
 )
 
@@ -172,6 +173,11 @@ def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -
                     "name": "ticket.create",
                     "description": "Create a ticket.",
                     "inputSchema": {"type": "object"},
+                    "outputSchema": {
+                        "type": "object",
+                        "properties": {"ticketId": {"type": "string"}},
+                        "required": ["ticketId"],
+                    },
                 },
                 {
                     "name": "knowledge.search",
@@ -191,7 +197,21 @@ def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -
     assert definitions[0].output_schema == "schemas/KnowledgeSearchResult@1"
     assert definitions[0].tags == frozenset({"search", "support"})
     assert definitions[1].input_schema == "schemas/mcp/ticket-create/input@1"
-    assert definitions[1].output_schema is None
+    assert definitions[1].output_schema == "schemas/mcp/ticket-create/output@1"
+    assert definitions.schemas == {
+        "schemas/KnowledgeSearchRequest@1": {"$id": "schemas/KnowledgeSearchRequest@1"},
+        "schemas/mcp/ticket-create/input@1": {"type": "object"},
+        "schemas/mcp/ticket-create/output@1": {
+            "type": "object",
+            "properties": {"ticketId": {"type": "string"}},
+            "required": ["ticketId"],
+        },
+    }
+    registry = definitions.schema_registry()
+    registry.validate(definitions[1].input_schema, {})
+    registry.validate(definitions[1].output_schema, {"ticketId": "ticket-1"})
+    with pytest.raises(ToolSchemaValidationError, match="rejected value"):
+        registry.validate(definitions[1].output_schema, {})
     assert "discover_mcp_tool_definitions" in graphblocks_mcp.__all__
 
 
@@ -971,6 +991,37 @@ def test_openapi_adapter_supports_patterned_success_response_codes(monkeypatch) 
     )
 
     assert definitions[0].output_schema == "schemas/openapi/listtickets/output@1"
+
+
+def test_openapi_adapter_prefers_json_compatible_media_schemas(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    definitions = graphblocks_openapi.define_openapi_tools_from_spec(
+        {
+            "paths": {
+                "/tickets": {
+                    "post": {
+                        "operationId": "createTicket",
+                        "requestBody": {
+                            "content": {
+                                "application/octet-stream": {
+                                    "schema": {"$id": "schemas/BinaryRequest@1"}
+                                },
+                                "application/problem+json": {
+                                    "schema": {"$id": "schemas/ProblemRequest@1"}
+                                },
+                                "application/json; charset=utf-8": {
+                                    "schema": {"$id": "schemas/JsonRequest@1"}
+                                },
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    assert definitions[0].input_schema == "schemas/JsonRequest@1"
 
 
 def test_openapi_adapter_rejects_generated_schema_reference_collisions(monkeypatch) -> None:
