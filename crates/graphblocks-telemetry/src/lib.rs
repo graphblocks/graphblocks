@@ -24,13 +24,33 @@ pub const DEFAULT_BLOCKED_METRIC_LABELS: &[&str] = &[
 ];
 
 pub const DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
+    "access_token",
     "api_key",
     "authorization",
+    "bearer_token",
     "credential",
     "credentials",
     "password",
     "secret",
     "token",
+];
+
+const TOKEN_USAGE_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
+    "cachedtokencount",
+    "cachedtokens",
+    "completiontokencount",
+    "completiontokens",
+    "inputtokencount",
+    "inputtokens",
+    "outputtokencount",
+    "outputtokens",
+    "prompttokencount",
+    "prompttokens",
+    "reasoningtokencount",
+    "reasoningtokens",
+    "tokencount",
+    "totaltokencount",
+    "totaltokens",
 ];
 
 pub const DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
@@ -41,6 +61,36 @@ pub const DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
     "prompt",
     "tool_result",
 ];
+
+fn normalized_telemetry_key(key: &str) -> String {
+    key.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn telemetry_key_matches<'a>(key: &str, protected_keys: impl IntoIterator<Item = &'a str>) -> bool {
+    let normalized_key = normalized_telemetry_key(key);
+    protected_keys.into_iter().any(|protected_key| {
+        let normalized_protected_key = normalized_telemetry_key(protected_key);
+        if normalized_protected_key.is_empty() {
+            return false;
+        }
+        if normalized_key == normalized_protected_key {
+            return true;
+        }
+        if (normalized_protected_key == "token"
+            || matches!(
+                normalized_protected_key.as_str(),
+                "completion" | "input" | "output" | "prompt"
+            ))
+            && TOKEN_USAGE_TELEMETRY_ATTRIBUTE_KEYS.contains(&normalized_key.as_str())
+        {
+            return false;
+        }
+        normalized_key.contains(&normalized_protected_key)
+    })
+}
 
 const ENFORCEMENT_POINTS: &[EnforcementPoint] = &[
     EnforcementPoint::Compile,
@@ -683,9 +733,15 @@ impl TelemetryCapturePolicy {
         attributes
             .iter()
             .filter_map(|(key, value)| {
-                if self.dropped_attribute_keys.contains(key) {
+                if telemetry_key_matches(
+                    key,
+                    self.dropped_attribute_keys.iter().map(String::as_str),
+                ) {
                     None
-                } else if self.redacted_attribute_keys.contains(key) {
+                } else if telemetry_key_matches(
+                    key,
+                    self.redacted_attribute_keys.iter().map(String::as_str),
+                ) {
                     Some((key.clone(), Value::String(self.replacement.clone())))
                 } else {
                     Some((key.clone(), value.clone()))
@@ -787,12 +843,12 @@ impl TelemetryCapturePolicyLinter {
         let protected = policy
             .redacted_attribute_keys
             .union(&policy.dropped_attribute_keys)
-            .cloned()
-            .collect::<BTreeSet<_>>();
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let mut issues = Vec::new();
 
         for attribute_key in &self.sensitive_attribute_keys {
-            if !protected.contains(attribute_key) {
+            if !telemetry_key_matches(attribute_key, protected.iter().copied()) {
                 issues.push(TelemetryCapturePolicyIssue::new(
                     attribute_key,
                     "sensitive_attribute_not_protected",
@@ -801,7 +857,7 @@ impl TelemetryCapturePolicyLinter {
             }
         }
         for attribute_key in &self.content_attribute_keys {
-            if !protected.contains(attribute_key) {
+            if !telemetry_key_matches(attribute_key, protected.iter().copied()) {
                 issues.push(TelemetryCapturePolicyIssue::new(
                     attribute_key,
                     "content_attribute_not_protected",
@@ -1036,7 +1092,7 @@ impl MetricCardinalityLinter {
             }
             for (label, value) in &sample.labels {
                 let key = (sample.name.clone(), label.clone());
-                if self.blocked_labels.contains(label) {
+                if telemetry_key_matches(label, self.blocked_labels.iter().map(String::as_str)) {
                     blocked_label_values
                         .entry(key)
                         .or_default()

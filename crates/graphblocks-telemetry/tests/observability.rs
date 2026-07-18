@@ -388,6 +388,45 @@ fn telemetry_capture_policy_redacts_drops_and_removes_disabled_digests() {
 }
 
 #[test]
+fn telemetry_key_protection_normalizes_case_and_naming_style() {
+    let record =
+        GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test")
+            .with_attribute("Authorization", json!("Bearer secret"))
+            .with_attribute("apiKey", json!("secret-key"))
+            .with_attribute("accessToken", json!("access-secret"))
+            .with_attribute(
+                "http.request.header.Authorization",
+                json!("Bearer nested-secret"),
+            )
+            .with_attribute("totalTokens", json!(42));
+    let policy = TelemetryCapturePolicy::new()
+        .with_redacted_attribute_key("authorization")
+        .with_redacted_attribute_key("api_key")
+        .with_redacted_attribute_key("token");
+
+    let redacted = policy.apply_generation(&record);
+    let lint = TelemetryCapturePolicyLinter::from_keys(
+        ["authorization", "api_key"],
+        std::iter::empty::<&str>(),
+    )
+    .lint_policy(
+        &TelemetryCapturePolicy::new()
+            .with_redacted_attribute_key("Authorization")
+            .with_redacted_attribute_key("apiKey"),
+    );
+
+    assert_eq!(redacted.attributes["Authorization"], json!("[redacted]"));
+    assert_eq!(redacted.attributes["apiKey"], json!("[redacted]"));
+    assert_eq!(redacted.attributes["accessToken"], json!("[redacted]"));
+    assert_eq!(
+        redacted.attributes["http.request.header.Authorization"],
+        json!("[redacted]")
+    );
+    assert_eq!(redacted.attributes["totalTokens"], json!(42));
+    assert!(lint.passed(), "{:#?}", lint.issues);
+}
+
+#[test]
 fn telemetry_capture_policy_linter_flags_unprotected_and_invalid_redaction_policy() {
     let linter = TelemetryCapturePolicyLinter::from_keys(
         ["api_key", "authorization"],
@@ -598,6 +637,31 @@ fn metric_cardinality_linter_flags_unbounded_labels() -> Result<(), TelemetryPro
                 "limit": 0,
                 "reason": "blocked_label",
             }),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn metric_cardinality_linter_blocks_camel_case_identity_labels()
+-> Result<(), TelemetryProjectionError> {
+    let sample = MetricSample::new("graphblocks_runs_total")
+        .with_label("runId", "run-1")
+        .with_label("traceId", "trace-1")
+        .with_label("resource.run_id", "run-2");
+
+    let result = MetricCardinalityLinter::new().lint_samples([&sample])?;
+
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| (issue.label.as_str(), issue.reason.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("resource.run_id", "blocked_label"),
+            ("runId", "blocked_label"),
+            ("traceId", "blocked_label")
         ]
     );
     Ok(())
