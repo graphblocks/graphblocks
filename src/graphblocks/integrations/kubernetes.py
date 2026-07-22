@@ -14,6 +14,11 @@ from graphblocks.deployment import ExecutionTarget, RolloutPlan
 KubernetesProtocol = Literal["TCP", "UDP", "SCTP"]
 KubernetesManifest = dict[str, object]
 
+# Rollout deployments rendered before this version used the changing rollout ID
+# in their immutable selectors. Keep the v2 names and label stable so applying a
+# new manifest creates replacement workloads without mutating those selectors.
+_ROLLOUT_SELECTOR_VERSION = "v2"
+
 
 class KubernetesAdapterError(ValueError):
     """Raised when a Kubernetes manifest contract cannot be rendered."""
@@ -192,11 +197,65 @@ class KubernetesSecretEnv:
 
 
 @dataclass(frozen=True, slots=True)
+class KubernetesPruneTarget:
+    """Exact obsolete resource identity for an apply-then-prune migration.
+
+    Consumers must wait for replacement resources to become ready before pruning
+    these identities; rendering this contract never performs deletion itself.
+    """
+
+    api_version: str
+    kind: str
+    name: str
+    namespace: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("api_version", "kind", "name", "namespace"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise KubernetesAdapterError(f"prune target {field_name} must not be empty")
+            if value != value.strip():
+                raise KubernetesAdapterError(
+                    f"prune target {field_name} must not contain surrounding whitespace"
+                )
+
+    def contract(self) -> dict[str, str]:
+        return {
+            "apiVersion": self.api_version,
+            "kind": self.kind,
+            "name": self.name,
+            "namespace": self.namespace,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class KubernetesManifestSet:
+    """Rendered resources and explicit obsolete identities for orchestrators."""
+
     documents: tuple[KubernetesManifest, ...]
+    prune_targets: tuple[KubernetesPruneTarget, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "documents", tuple(deepcopy(document) for document in self.documents))
+        try:
+            prune_targets = tuple(self.prune_targets)
+        except TypeError as error:
+            raise KubernetesAdapterError(
+                "prune_targets must contain KubernetesPruneTarget values"
+            ) from error
+        if any(not isinstance(target, KubernetesPruneTarget) for target in prune_targets):
+            raise KubernetesAdapterError(
+                "prune_targets must contain KubernetesPruneTarget values"
+            )
+        prune_targets = tuple(
+            sorted(
+                prune_targets,
+                key=lambda target: _canonical_dumps(target.contract()),
+            )
+        )
+        if len(prune_targets) != len(set(prune_targets)):
+            raise KubernetesAdapterError("prune_targets must be unique")
+        object.__setattr__(self, "prune_targets", prune_targets)
 
     def by_kind(self, kind: str) -> tuple[KubernetesManifest, ...]:
         return tuple(deepcopy(document) for document in self.documents if document.get("kind") == kind)
@@ -204,7 +263,10 @@ class KubernetesManifestSet:
     def content_digest(self) -> str:
         documents = [deepcopy(document) for document in self.documents]
         documents.sort(key=_canonical_dumps)
-        return _content_digest({"documents": documents})
+        content: dict[str, object] = {"documents": documents}
+        if self.prune_targets:
+            content["pruneTargets"] = [target.contract() for target in self.prune_targets]
+        return _content_digest(content)
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,8 +566,8 @@ def render_rollout_manifests(
     ):
         selector = {
             "app.kubernetes.io/name": name,
-            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
             "graphblocks.ai/rollout-role": role,
+            "graphblocks.ai/selector-version": _ROLLOUT_SELECTOR_VERSION,
         }
         labels = {
             **options.labels,
@@ -515,6 +577,7 @@ def render_rollout_manifests(
             "graphblocks.ai/deployment-revision": revision_id,
             "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
             "graphblocks.ai/rollout-role": role,
+            "graphblocks.ai/selector-version": _ROLLOUT_SELECTOR_VERSION,
             "graphblocks.ai/target-id": target.target_id,
         }
         annotations = {
@@ -522,6 +585,7 @@ def render_rollout_manifests(
             "graphblocks.ai/deployment-revision": revision_id,
             "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
             "graphblocks.ai/rollout-role": role,
+            "graphblocks.ai/selector-version": _ROLLOUT_SELECTOR_VERSION,
             "graphblocks.ai/rollout-step": active_step.step_id,
             "graphblocks.ai/rollout-step-kind": active_step.kind,
             "graphblocks.ai/rollout-traffic-percent": str(active_step.traffic_percent),
@@ -541,7 +605,7 @@ def render_rollout_manifests(
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": _object_metadata(
-                    f"{name}-{role}",
+                    f"{name}-{role}-{_ROLLOUT_SELECTOR_VERSION}",
                     options,
                     labels,
                     annotations,
@@ -563,7 +627,7 @@ def render_rollout_manifests(
     if ports:
         service_selector = {
             "app.kubernetes.io/name": name,
-            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/selector-version": _ROLLOUT_SELECTOR_VERSION,
         }
         if service_role is not None:
             service_selector["graphblocks.ai/rollout-role"] = service_role
@@ -580,6 +644,7 @@ def render_rollout_manifests(
             "app.kubernetes.io/managed-by": "graphblocks",
             "app.kubernetes.io/name": name,
             "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/selector-version": _ROLLOUT_SELECTOR_VERSION,
         }
         documents.append(
             {
@@ -594,7 +659,23 @@ def render_rollout_manifests(
             }
         )
 
-    return KubernetesManifestSet(tuple(documents))
+    return KubernetesManifestSet(
+        tuple(documents),
+        prune_targets=(
+            KubernetesPruneTarget(
+                "apps/v1",
+                "Deployment",
+                f"{name}-stable",
+                options.namespace,
+            ),
+            KubernetesPruneTarget(
+                "apps/v1",
+                "Deployment",
+                f"{name}-candidate",
+                options.namespace,
+            ),
+        ),
+    )
 
 
 def render_target_manifests(
@@ -780,6 +861,22 @@ def render_helm_chart(
         HelmChartFile("Chart.yaml", _canonical_dumps(chart_document) + "\n"),
         HelmChartFile("values.yaml", _canonical_dumps(chart_values) + "\n"),
     ]
+    if manifest_set.prune_targets:
+        prune_targets_path = "graphblocks-prune-targets.json"
+        used_paths.add(prune_targets_path)
+        files.append(
+            HelmChartFile(
+                prune_targets_path,
+                _canonical_dumps(
+                    {
+                        "pruneTargets": [
+                            target.contract() for target in manifest_set.prune_targets
+                        ]
+                    }
+                )
+                + "\n",
+            )
+        )
     for index, document in enumerate(manifest_set.documents, start=1):
         metadata = document.get("metadata")
         raw_name = metadata.get("name", f"document-{index:02d}") if isinstance(metadata, Mapping) else f"document-{index:02d}"
@@ -960,6 +1057,7 @@ __all__ = [
     "KubernetesManifest",
     "KubernetesManifestSet",
     "KubernetesPort",
+    "KubernetesPruneTarget",
     "KubernetesProtocol",
     "KubernetesRenderOptions",
     "KubernetesSecretEnv",

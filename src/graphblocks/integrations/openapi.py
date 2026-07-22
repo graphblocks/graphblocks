@@ -727,7 +727,16 @@ def _response_schema_ref(
     responses = operation.get("responses")
     if not isinstance(responses, Mapping):
         return None
-    for status_code in sorted(responses):
+    normalized_status_codes: set[str] = set()
+    for status_code in responses:
+        normalized_status_code = str(status_code)
+        if normalized_status_code in normalized_status_codes:
+            raise OpenApiToolAdapterError(
+                f"OpenAPI operation {operation_id!r} has duplicate response status code "
+                f"{normalized_status_code!r} after normalization"
+            )
+        normalized_status_codes.add(normalized_status_code)
+    for status_code in sorted(responses, key=str):
         if not _is_success_status_code(str(status_code)):
             continue
         response = responses[status_code]

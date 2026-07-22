@@ -378,8 +378,29 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     migrations = "\n".join(schema.migration_statements())
     assert "usage_records_provider_dedupe_with_attempt" in migrations
     assert "usage_records_provider_dedupe_without_attempt" in migrations
+    assert "usage_records_single_reconciliation" in migrations
     assert "ON gb_usage.usage_records(provider_response_id)" in migrations
     assert "attempt_id IS NULL" in migrations
+    assert "ON gb_usage.usage_records(reconciliation_of)" in migrations
+    assert "WHERE reconciliation_of IS NOT NULL" in migrations
+    append_function = schema.migration_statements()[-1]
+    assert "CREATE OR REPLACE FUNCTION gb_usage.append_usage_record" in append_function
+    assert "RETURNS TABLE (append_status text, record_id text)" in append_function
+    assert "LANGUAGE plpgsql" in append_function
+    assert "VOLATILE" in append_function
+    assert "SET search_path = pg_catalog" in append_function
+    assert "pg_catalog.current_setting('transaction_isolation') <> 'read committed'" in append_function
+    assert "ERRCODE = '0A000'" in append_function
+    assert "requires READ COMMITTED transaction isolation" in append_function
+    assert "retry the whole transaction at READ COMMITTED" in append_function
+    assert "pg_catalog.pg_advisory_xact_lock(lock_key)" in append_function
+    assert "ORDER BY lock_values.value" in append_function
+    assert "stored.attempt_id IS NOT DISTINCT FROM p_attempt_id" in append_function
+    assert ") IS NOT DISTINCT FROM ROW(" in append_function
+    assert "CONSTRAINT = 'usage_records_pkey'" in append_function
+    assert "CONSTRAINT = 'usage_records_single_reconciliation'" in append_function
+    assert "WHEN unique_violation THEN" in append_function
+    assert "RETURN QUERY SELECT 'deduplicated'::text, existing.record_id" in append_function
     assert graphblocks_usage_postgres.encode_usage_record(record) == {
         "record_id": "usage-1",
         "source": "provider_reported",
@@ -405,6 +426,9 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
 
     statement = graphblocks_usage_postgres.append_usage_record_statement(record, schema=schema)
     assert statement.name == "usage_record_append"
-    assert "ON CONFLICT (record_id) DO NOTHING" in statement.sql
+    assert "FROM gb_usage.append_usage_record(" in statement.sql
+    assert "SELECT append_status, record_id" in statement.sql
+    assert "INSERT INTO" not in statement.sql
+    assert "ON CONFLICT" not in statement.sql
     assert statement.params["provider_response_id"] == "response-1"
     assert statement.params["quota_window_id"] == "tenant-a:2026-06"

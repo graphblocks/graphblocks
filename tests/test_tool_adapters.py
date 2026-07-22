@@ -993,6 +993,63 @@ def test_openapi_adapter_supports_patterned_success_response_codes(monkeypatch) 
     assert definitions[0].output_schema == "schemas/openapi/listtickets/output@1"
 
 
+def test_openapi_adapter_supports_mixed_yaml_response_code_key_types(monkeypatch) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    definitions = graphblocks_openapi.define_openapi_tools_from_spec(
+        {
+            "paths": {
+                "/tickets": {
+                    "get": {
+                        "operationId": "listTickets",
+                        "responses": {
+                            200: {
+                                "description": "Successful response.",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$id": "schemas/TicketList@1"}
+                                    }
+                                },
+                            },
+                            "default": {"description": "Error response."},
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    assert definitions[0].output_schema == "schemas/TicketList@1"
+
+
+@pytest.mark.parametrize(
+    "responses",
+    (
+        {200: {"description": "Numeric."}, "200": {"description": "String."}},
+        {"200": {"description": "String."}, 200: {"description": "Numeric."}},
+    ),
+)
+def test_openapi_adapter_rejects_duplicate_normalized_response_codes(monkeypatch, responses) -> None:
+    graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
+
+    with pytest.raises(
+        graphblocks_openapi.OpenApiToolAdapterError,
+        match="duplicate response status code '200' after normalization",
+    ):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {
+                "paths": {
+                    "/tickets": {
+                        "get": {
+                            "operationId": "listTickets",
+                            "responses": responses,
+                        }
+                    }
+                }
+            }
+        )
+
+
 def test_openapi_adapter_prefers_json_compatible_media_schemas(monkeypatch) -> None:
     graphblocks_openapi = importlib.import_module("graphblocks.integrations.openapi")
 

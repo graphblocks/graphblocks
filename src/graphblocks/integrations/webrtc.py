@@ -100,7 +100,18 @@ class WebRtcSession:
         object.__setattr__(
             self,
             "ice_candidates",
-            tuple(sorted(self.ice_candidates, key=lambda candidate: candidate.sequence)),
+            tuple(
+                sorted(
+                    self.ice_candidates,
+                    key=lambda candidate: (
+                        candidate.sequence,
+                        candidate.candidate,
+                        candidate.sdp_mid or "",
+                        candidate.sdp_mline_index if candidate.sdp_mline_index is not None else -1,
+                        candidate.username_fragment or "",
+                    ),
+                )
+            ),
         )
 
     def to_voice_transport(self) -> VoiceTransport:

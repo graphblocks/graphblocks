@@ -80,6 +80,194 @@ WHERE provider_response_id IS NOT NULL
   AND attempt_id IS NULL
   AND reconciliation_of IS NULL;
 """.strip(),
+            f"""
+CREATE UNIQUE INDEX IF NOT EXISTS usage_records_single_reconciliation
+ON {self.schema}.usage_records(reconciliation_of)
+WHERE reconciliation_of IS NOT NULL;
+""".strip(),
+            f"""
+CREATE OR REPLACE FUNCTION {self.schema}.append_usage_record(
+  p_record_id text,
+  p_source text,
+  p_confidence text,
+  p_amounts_json jsonb,
+  p_occurred_at timestamptz,
+  p_run_id text,
+  p_attempt_id text,
+  p_provider_response_id text,
+  p_pricing_ref text,
+  p_quota_window_id text,
+  p_execution_scope text,
+  p_reconciliation_of text,
+  p_metadata_json jsonb
+)
+RETURNS TABLE (append_status text, record_id text)
+LANGUAGE plpgsql
+VOLATILE
+SET search_path = pg_catalog
+AS $graphblocks_usage_append$
+DECLARE
+  existing {self.schema}.usage_records%ROWTYPE;
+  lock_key bigint;
+  append_attempt integer;
+BEGIN
+  IF pg_catalog.current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '0A000',
+      MESSAGE = 'GraphBlocks usage append requires READ COMMITTED transaction isolation; ' ||
+        'roll back and retry the whole transaction at READ COMMITTED';
+  END IF;
+
+  FOR lock_key IN
+    SELECT DISTINCT lock_values.value
+    FROM pg_catalog.unnest(
+      ARRAY[
+        pg_catalog.hashtextextended('{self.schema}:record:' || p_record_id, 0),
+        CASE
+          WHEN p_provider_response_id IS NOT NULL AND p_reconciliation_of IS NULL
+          THEN pg_catalog.hashtextextended(
+            '{self.schema}:provider:' || p_provider_response_id || ':attempt:' ||
+              COALESCE(p_attempt_id, '<null>'),
+            0
+          )
+          ELSE NULL
+        END,
+        CASE
+          WHEN p_reconciliation_of IS NOT NULL
+          THEN pg_catalog.hashtextextended(
+            '{self.schema}:reconciliation:' || p_reconciliation_of,
+            0
+          )
+          ELSE NULL
+        END
+      ]::bigint[]
+    ) AS lock_values(value)
+    WHERE lock_values.value IS NOT NULL
+    ORDER BY lock_values.value
+  LOOP
+    PERFORM pg_catalog.pg_advisory_xact_lock(lock_key);
+  END LOOP;
+
+  FOR append_attempt IN 1..2
+  LOOP
+    SELECT stored.*
+    INTO existing
+    FROM {self.schema}.usage_records AS stored
+    WHERE stored.record_id = p_record_id;
+    IF FOUND THEN
+      IF ROW(
+        existing.source,
+        existing.confidence,
+        existing.amounts_json,
+        existing.occurred_at,
+        existing.run_id,
+        existing.attempt_id,
+        existing.provider_response_id,
+        existing.pricing_ref,
+        existing.quota_window_id,
+        existing.execution_scope,
+        existing.reconciliation_of,
+        existing.metadata_json
+      ) IS NOT DISTINCT FROM ROW(
+        p_source,
+        p_confidence,
+        p_amounts_json,
+        p_occurred_at,
+        p_run_id,
+        p_attempt_id,
+        p_provider_response_id,
+        p_pricing_ref,
+        p_quota_window_id,
+        p_execution_scope,
+        p_reconciliation_of,
+        p_metadata_json
+      ) THEN
+        RETURN QUERY SELECT 'deduplicated'::text, existing.record_id;
+        RETURN;
+      END IF;
+      RAISE EXCEPTION USING
+        ERRCODE = '23505',
+        MESSAGE = 'usage record ' || p_record_id || ' already exists with a different payload',
+        SCHEMA = '{self.schema}',
+        TABLE = 'usage_records',
+        CONSTRAINT = 'usage_records_pkey';
+    END IF;
+
+    IF p_reconciliation_of IS NOT NULL THEN
+      SELECT stored.*
+      INTO existing
+      FROM {self.schema}.usage_records AS stored
+      WHERE stored.reconciliation_of = p_reconciliation_of
+      LIMIT 1;
+      IF FOUND THEN
+        RAISE EXCEPTION USING
+          ERRCODE = '23505',
+          MESSAGE = 'usage record ' || p_reconciliation_of || ' already has a reconciliation',
+          SCHEMA = '{self.schema}',
+          TABLE = 'usage_records',
+          CONSTRAINT = 'usage_records_single_reconciliation';
+      END IF;
+    END IF;
+
+    IF p_provider_response_id IS NOT NULL AND p_reconciliation_of IS NULL THEN
+      SELECT stored.*
+      INTO existing
+      FROM {self.schema}.usage_records AS stored
+      WHERE stored.provider_response_id = p_provider_response_id
+        AND stored.attempt_id IS NOT DISTINCT FROM p_attempt_id
+        AND stored.reconciliation_of IS NULL
+      LIMIT 1;
+      IF FOUND THEN
+        RETURN QUERY SELECT 'deduplicated'::text, existing.record_id;
+        RETURN;
+      END IF;
+    END IF;
+
+    BEGIN
+      INSERT INTO {self.schema}.usage_records (
+        record_id,
+        source,
+        confidence,
+        amounts_json,
+        occurred_at,
+        run_id,
+        attempt_id,
+        provider_response_id,
+        pricing_ref,
+        quota_window_id,
+        execution_scope,
+        reconciliation_of,
+        metadata_json
+      ) VALUES (
+        p_record_id,
+        p_source,
+        p_confidence,
+        p_amounts_json,
+        p_occurred_at,
+        p_run_id,
+        p_attempt_id,
+        p_provider_response_id,
+        p_pricing_ref,
+        p_quota_window_id,
+        p_execution_scope,
+        p_reconciliation_of,
+        p_metadata_json
+      )
+      RETURNING * INTO existing;
+      RETURN QUERY SELECT 'inserted'::text, existing.record_id;
+      RETURN;
+    EXCEPTION
+      WHEN unique_violation THEN
+        IF append_attempt = 2 THEN
+          RAISE;
+        END IF;
+    END;
+  END LOOP;
+
+  RAISE EXCEPTION 'usage record append did not resolve';
+END;
+$graphblocks_usage_append$;
+""".strip(),
         )
 
 
@@ -106,40 +294,33 @@ def append_usage_record_statement(
     *,
     schema: PostgresUsageSchema | None = None,
 ) -> PostgresStatement:
+    """Build an append that inserts or deduplicates and raises on conflicts.
+
+    The database function supports READ COMMITTED transactions only. Callers
+    encountering an isolation rejection or database error must roll back and
+    retry the whole transaction at READ COMMITTED, not retry this statement in
+    the failed transaction.
+    """
     schema = schema or PostgresUsageSchema()
     return PostgresStatement(
         name="usage_record_append",
         sql=f"""
-INSERT INTO {schema.schema}.usage_records (
-  record_id,
-  source,
-  confidence,
-  amounts_json,
-  occurred_at,
-  run_id,
-  attempt_id,
-  provider_response_id,
-  pricing_ref,
-  quota_window_id,
-  execution_scope,
-  reconciliation_of,
-  metadata_json
-) VALUES (
-  %(record_id)s,
-  %(source)s,
-  %(confidence)s,
-  %(amounts_json)s,
-  %(occurred_at)s,
-  %(run_id)s,
-  %(attempt_id)s,
-  %(provider_response_id)s,
-  %(pricing_ref)s,
-  %(quota_window_id)s,
-  %(execution_scope)s,
-  %(reconciliation_of)s,
-  %(metadata_json)s
-)
-ON CONFLICT (record_id) DO NOTHING;
+SELECT append_status, record_id
+FROM {schema.schema}.append_usage_record(
+  %(record_id)s::text,
+  %(source)s::text,
+  %(confidence)s::text,
+  %(amounts_json)s::jsonb,
+  %(occurred_at)s::timestamptz,
+  %(run_id)s::text,
+  %(attempt_id)s::text,
+  %(provider_response_id)s::text,
+  %(pricing_ref)s::text,
+  %(quota_window_id)s::text,
+  %(execution_scope)s::text,
+  %(reconciliation_of)s::text,
+  %(metadata_json)s::jsonb
+);
 """.strip(),
         params=encode_usage_record(record),
     )

@@ -55,6 +55,31 @@ def test_webrtc_ice_candidates_are_sorted_and_contract_is_stable(monkeypatch) ->
     assert session.content_digest().startswith("sha256:")
 
 
+def test_webrtc_digest_is_stable_for_duplicate_candidate_sequences(monkeypatch) -> None:
+    graphblocks_webrtc = _import_webrtc(monkeypatch)
+    offer = graphblocks_webrtc.WebRtcSessionDescription("offer", "v=0\r\n")
+    candidates = (
+        graphblocks_webrtc.WebRtcIceCandidate("candidate:2", sdp_mid="audio"),
+        graphblocks_webrtc.WebRtcIceCandidate("candidate:1", sdp_mid="audio"),
+    )
+
+    first = graphblocks_webrtc.WebRtcSession(
+        session_id="session-1",
+        peer_id="browser-1",
+        offer=offer,
+        ice_candidates=candidates,
+    )
+    second = graphblocks_webrtc.WebRtcSession(
+        session_id="session-1",
+        peer_id="browser-1",
+        offer=offer,
+        ice_candidates=tuple(reversed(candidates)),
+    )
+
+    assert first.signaling_contract() == second.signaling_contract()
+    assert first.content_digest() == second.content_digest()
+
+
 def test_webrtc_validates_descriptions_and_candidates(monkeypatch) -> None:
     graphblocks_webrtc = _import_webrtc(monkeypatch)
 

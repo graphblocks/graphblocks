@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 import yaml
@@ -137,25 +138,173 @@ def test_kubernetes_adapter_renders_canary_rollout_manifests(monkeypatch) -> Non
     stable_deployment, candidate_deployment = manifest_set.by_kind("Deployment")
     service = manifest_set.by_kind("Service")[0]
 
-    assert stable_deployment["metadata"]["name"] == "support-agent-stable"
+    assert stable_deployment["metadata"]["name"] == "support-agent-stable-v2"
     assert stable_deployment["spec"]["replicas"] == 9
     assert stable_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-role"] == "stable"
     assert stable_deployment["metadata"]["annotations"]["graphblocks.ai/deployment-revision"] == "rev-stable"
+    assert stable_deployment["metadata"]["annotations"]["graphblocks.ai/selector-version"] == "v2"
+    assert stable_deployment["spec"]["selector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/rollout-role": "stable",
+        "graphblocks.ai/selector-version": "v2",
+    }
+    assert "graphblocks.ai/rollout-id" not in stable_deployment["spec"]["selector"]["matchLabels"]
     assert stable_deployment["spec"]["template"]["spec"]["containers"][0]["image"] == (
         "ghcr.io/acme/support-agent@sha256:stable"
     )
-    assert candidate_deployment["metadata"]["name"] == "support-agent-candidate"
+    assert candidate_deployment["metadata"]["name"] == "support-agent-candidate-v2"
     assert candidate_deployment["spec"]["replicas"] == 1
     assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-step"] == "canary-10"
     assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-traffic-percent"] == "10"
     assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/deployment-revision"] == "rev-canary"
+    assert candidate_deployment["spec"]["selector"]["matchLabels"] == {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/rollout-role": "candidate",
+        "graphblocks.ai/selector-version": "v2",
+    }
     assert candidate_deployment["spec"]["template"]["metadata"]["labels"]["graphblocks.ai/rollout-role"] == "candidate"
+    assert candidate_deployment["spec"]["template"]["metadata"]["labels"]["graphblocks.ai/rollout-id"] == (
+        "rollout-1"
+    )
     assert service["metadata"]["name"] == "support-agent"
     assert service["spec"]["selector"] == {
         "app.kubernetes.io/name": "support-agent",
-        "graphblocks.ai/rollout-id": "rollout-1",
+        "graphblocks.ai/selector-version": "v2",
     }
     assert service["metadata"]["annotations"]["graphblocks.ai/rollout-step-kind"] == "canary"
+    prune_targets = [target.contract() for target in manifest_set.prune_targets]
+    assert prune_targets == [
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "name": "support-agent-candidate",
+            "namespace": "support",
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "name": "support-agent-stable",
+            "namespace": "support",
+        },
+    ]
+    assert manifest_set.by_kind("Job") == ()
+
+    chart = graphblocks_kubernetes.render_helm_chart("support-agent", manifest_set)
+    assert "graphblocks-prune-targets.json" in chart.file_names()
+    assert json.loads(chart.file("graphblocks-prune-targets.json")) == {
+        "pruneTargets": prune_targets,
+    }
+    assert "templates/graphblocks-prune-targets.json" not in chart.file_names()
+
+
+def test_kubernetes_rollout_deployment_selectors_are_stable_across_rollouts(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    stable = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:stable",
+    )
+    candidate = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:candidate",
+    )
+
+    def deployment_contracts(rollout_id: str):
+        plan = graphblocks_deployment.RolloutPlan.canary(
+            rollout_id,
+            "rev-stable",
+            "rev-canary",
+            canary_steps=(graphblocks_deployment.RolloutStep.canary("canary-10", traffic_percent=10),),
+        )
+        return graphblocks_kubernetes.render_rollout_manifests(
+            "support-agent",
+            stable,
+            candidate,
+            plan,
+            active_step_index=2,
+        ).by_kind("Deployment")
+
+    first = deployment_contracts("rollout-1")
+    second = deployment_contracts("rollout-2")
+
+    assert [deployment["metadata"]["name"] for deployment in first] == [
+        deployment["metadata"]["name"] for deployment in second
+    ]
+    assert [deployment["metadata"]["name"] for deployment in first] == [
+        "support-agent-stable-v2",
+        "support-agent-candidate-v2",
+    ]
+    assert [deployment["spec"]["selector"] for deployment in first] == [
+        deployment["spec"]["selector"] for deployment in second
+    ]
+    assert [
+        deployment["spec"]["template"]["metadata"]["labels"]["graphblocks.ai/rollout-id"]
+        for deployment in first
+    ] == ["rollout-1", "rollout-1"]
+    assert [
+        deployment["spec"]["template"]["metadata"]["labels"]["graphblocks.ai/rollout-id"]
+        for deployment in second
+    ] == ["rollout-2", "rollout-2"]
+
+
+def test_kubernetes_rollout_v2_service_excludes_legacy_selector_pods(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    stable = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:stable",
+    )
+    candidate = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:candidate",
+    )
+
+    def render(rollout_id: str):
+        plan = graphblocks_deployment.RolloutPlan.canary(
+            rollout_id,
+            "rev-stable",
+            "rev-canary",
+            canary_steps=(graphblocks_deployment.RolloutStep.canary("canary-10", traffic_percent=10),),
+        )
+        return graphblocks_kubernetes.render_rollout_manifests(
+            "support-agent",
+            stable,
+            candidate,
+            plan,
+            active_step_index=2,
+            ports=(graphblocks_kubernetes.KubernetesPort("http", 8080),),
+        )
+
+    previous = render("rollout-1")
+    current = render("rollout-2")
+    previous_service = previous.by_kind("Service")[0]
+    current_service = current.by_kind("Service")[0]
+    service_selector = current_service["spec"]["selector"]
+    legacy_pod_labels = {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/rollout-id": "rollout-1",
+        "graphblocks.ai/rollout-role": "stable",
+    }
+
+    assert previous_service["spec"]["selector"] == current_service["spec"]["selector"] == {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/selector-version": "v2",
+    }
+    assert previous_service["metadata"]["annotations"]["graphblocks.ai/rollout-id"] == "rollout-1"
+    assert current_service["metadata"]["annotations"]["graphblocks.ai/rollout-id"] == "rollout-2"
+    assert not all(legacy_pod_labels.get(key) == value for key, value in service_selector.items())
+    for manifests in (previous, current):
+        for deployment in manifests.by_kind("Deployment"):
+            v2_pod_labels = deployment["spec"]["template"]["metadata"]["labels"]
+            assert all(v2_pod_labels.get(key) == value for key, value in service_selector.items())
 
 
 def test_kubernetes_rollout_service_routes_only_candidate_after_promote(monkeypatch) -> None:
@@ -196,8 +345,8 @@ def test_kubernetes_rollout_service_routes_only_candidate_after_promote(monkeypa
     assert candidate_deployment["spec"]["replicas"] == 1
     assert service["spec"]["selector"] == {
         "app.kubernetes.io/name": "support-agent",
-        "graphblocks.ai/rollout-id": "rollout-1",
         "graphblocks.ai/rollout-role": "candidate",
+        "graphblocks.ai/selector-version": "v2",
     }
 
 
@@ -224,8 +373,26 @@ def test_kubernetes_manifest_set_digest_is_independent_of_document_order(monkeyp
     right = graphblocks_kubernetes.KubernetesManifestSet((service, deployment))
 
     assert left.content_digest() == right.content_digest()
+    assert left.prune_targets == ()
     assert [manifest["kind"] for manifest in left.by_kind("Deployment")] == ["Deployment"]
     assert [manifest["kind"] for manifest in left.by_kind("Service")] == ["Service"]
+
+    obsolete = graphblocks_kubernetes.KubernetesPruneTarget(
+        "apps/v1",
+        "Deployment",
+        "support-agent-stable",
+        "support",
+    )
+    pruned_left = graphblocks_kubernetes.KubernetesManifestSet(
+        (deployment, service),
+        prune_targets=(obsolete,),
+    )
+    pruned_right = graphblocks_kubernetes.KubernetesManifestSet(
+        (service, deployment),
+        prune_targets=(obsolete,),
+    )
+    assert pruned_left.content_digest() == pruned_right.content_digest()
+    assert pruned_left.content_digest() != left.content_digest()
 
 
 def test_kubernetes_cluster_snapshot_tracks_capabilities_deterministically(monkeypatch) -> None:
