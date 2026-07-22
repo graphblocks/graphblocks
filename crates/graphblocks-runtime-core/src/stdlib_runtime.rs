@@ -2277,7 +2277,7 @@ fn validate_native_checkpoint_identity(
         .ok_or_else(|| {
             StdlibRuntimeError::runtime("native callback checkpoint journal position is invalid")
         })?;
-    if waiting_position != prefix_position + 1
+    if prefix_position.checked_add(1) != Some(waiting_position)
         || binding
             .get("prefix_digest")
             .and_then(Value::as_str)
@@ -2346,13 +2346,25 @@ fn validate_native_checkpoint_journal_binding(
         .ok_or_else(|| {
             StdlibRuntimeError::runtime("native callback checkpoint journal position is invalid")
         })?;
-    if waiting_position != prefix_position + 1 || journal.len() < waiting_position {
+    let Some(prefix) = journal.get(..prefix_position) else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal prefix position mismatch",
+        ));
+    };
+    let Some(waiting_index) = waiting_position.checked_sub(1) else {
+        return Err(StdlibRuntimeError::runtime(
+            "native callback checkpoint journal prefix position mismatch",
+        ));
+    };
+    if prefix_position.checked_add(1) != Some(waiting_position)
+        || journal.get(waiting_index).is_none()
+    {
         return Err(StdlibRuntimeError::runtime(
             "native callback checkpoint journal prefix position mismatch",
         ));
     }
     let expected_prefix_digest = runtime_canonical_hash(
-        &Value::Array(journal[..prefix_position].to_vec()),
+        &Value::Array(prefix.to_vec()),
         "native callback journal prefix",
     )?;
     if binding.get("prefix_digest").and_then(Value::as_str) != Some(expected_prefix_digest.as_str())
@@ -2361,7 +2373,7 @@ fn validate_native_checkpoint_journal_binding(
             "native callback checkpoint journal prefix digest mismatch",
         ));
     }
-    let waiting_record = &journal[waiting_position - 1];
+    let waiting_record = &journal[waiting_index];
     if waiting_record.get("kind").and_then(Value::as_str) != Some("run_waiting_callback")
         || waiting_record.get("terminal") != Some(&Value::Bool(false))
         || waiting_record.pointer("/payload/checkpointId") != checkpoint.get("checkpoint_id")

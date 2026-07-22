@@ -299,6 +299,60 @@ fn native_callback_checkpoint_reports_accepted_depth_overflow_without_panicking(
 }
 
 #[test]
+fn native_callback_checkpoint_rejects_overflowing_journal_positions_without_panicking()
+-> Result<(), String> {
+    let path = sqlite_path("overflowing-journal-position");
+    let mut waiting = run(&path, None)?;
+    let checkpoint = waiting["checkpoint"]
+        .as_object_mut()
+        .expect("checkpoint is an object");
+    checkpoint["journal_binding"]["prefix_position"] = json!(usize::MAX as u64);
+    checkpoint["journal_binding"]["waiting_position"] = json!(0);
+    checkpoint.remove("checkpoint_id");
+    checkpoint.remove("state_digest");
+    checkpoint.insert(
+        "checkpoint_id".to_owned(),
+        json!(format!(
+            "checkpoint-{}",
+            canonical_hash(&Value::Object(checkpoint.clone()))
+        )),
+    );
+    checkpoint.insert(
+        "state_digest".to_owned(),
+        json!(canonical_hash(&Value::Object(checkpoint.clone()))),
+    );
+    let state_digest = checkpoint["state_digest"]
+        .as_str()
+        .expect("checkpoint state digest is a string")
+        .to_owned();
+    let connection = Connection::open(&path).map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "UPDATE native_callback_checkpoints
+             SET checkpoint_json = ?2, state_digest = ?3, result_json = ?4
+             WHERE run_id = ?1",
+            rusqlite::params![
+                "run-native-callback-1",
+                waiting["checkpoint"].to_string(),
+                state_digest,
+                waiting.to_string(),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    drop(connection);
+
+    let error =
+        run(&path, None).expect_err("overflowing journal positions must return a validation error");
+
+    assert!(
+        error.contains("journal prefix position mismatch"),
+        "{error}"
+    );
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
 fn native_callback_suspension_requires_checkpoint_persistence() {
     let error = run_stdlib_graph_with_options_json(
         &callback_graph().to_string(),

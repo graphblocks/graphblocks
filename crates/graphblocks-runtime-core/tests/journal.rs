@@ -3,6 +3,8 @@ use graphblocks_runtime_core::journal::{
 };
 use rusqlite::params;
 use serde_json::json;
+use std::sync::{Arc, Barrier};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn journal_appends_records_with_monotonic_run_sequence() -> Result<(), JournalError> {
@@ -206,5 +208,60 @@ fn sqlite_journal_rejects_late_records_after_terminal() -> Result<(), String> {
             terminal_kind: "run_completed".to_owned(),
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_serializes_concurrent_terminal_and_nonterminal_writers() -> Result<(), String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "graphblocks-sqlite-journal-{}-{unique}-concurrent-terminal.sqlite3",
+        std::process::id(),
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    for round in 0..64 {
+        let run_id = format!("run-{round:06}");
+        let mut terminal_writer =
+            SqliteExecutionJournal::open(&path, &run_id).map_err(|error| format!("{error:?}"))?;
+        let mut nonterminal_writer =
+            SqliteExecutionJournal::open(&path, &run_id).map_err(|error| format!("{error:?}"))?;
+        let barrier = Arc::new(Barrier::new(2));
+        let terminal_barrier = Arc::clone(&barrier);
+        let terminal_thread = std::thread::spawn(move || {
+            terminal_barrier.wait();
+            terminal_writer.append_terminal("run_completed", json!({"status": "completed"}))
+        });
+        let nonterminal_thread = std::thread::spawn(move || {
+            barrier.wait();
+            nonterminal_writer.append("node_completed", json!({"node": "answer"}))
+        });
+
+        let terminal = terminal_thread
+            .join()
+            .map_err(|_| "terminal journal writer panicked".to_owned())?
+            .map_err(|error| format!("{error:?}"))?;
+        let nonterminal = nonterminal_thread
+            .join()
+            .map_err(|_| "nonterminal journal writer panicked".to_owned())?;
+        match nonterminal {
+            Ok(record) => assert!(record.run_sequence < terminal.run_sequence),
+            Err(JournalError::AppendAfterTerminal { terminal_kind }) => {
+                assert_eq!(terminal_kind, "run_completed");
+            }
+            Err(error) => return Err(format!("unexpected concurrent append error: {error:?}")),
+        }
+
+        let journal =
+            SqliteExecutionJournal::open(&path, &run_id).map_err(|error| format!("{error:?}"))?;
+        let records = journal.records().map_err(|error| format!("{error:?}"))?;
+        assert_eq!(records.last(), Some(&terminal));
+        assert!(terminal.terminal);
+        assert_eq!(records.iter().filter(|record| record.terminal).count(), 1);
+    }
+    let _ = std::fs::remove_file(path);
     Ok(())
 }

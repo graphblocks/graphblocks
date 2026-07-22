@@ -339,6 +339,179 @@ fn validation_errors_are_explicit() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn duplex_session_rejects_closed_transitions_and_preserves_interruption_time()
+-> Result<(), Box<dyn Error>> {
+    let transport = VoiceTransport::websocket("wss://voice.example.com/session")?;
+    let session = DuplexSession::from_parts(
+        "session-1",
+        transport,
+        VoiceSessionState::Open,
+        None,
+        100,
+        None,
+        None,
+        BTreeMap::new(),
+    )?;
+    let interrupted = session.interrupt(125, "barge_in")?;
+
+    assert_eq!(interrupted.state, VoiceSessionState::Interrupted);
+    assert_eq!(interrupted.interrupted_at_ms, Some(125));
+    assert_eq!(interrupted.contract()["interruptedAtMs"], 125);
+    let resumed = interrupted.clone().begin_turn("turn-2")?;
+    assert_eq!(resumed.interrupted_at_ms, None);
+    assert_eq!(resumed.interruption_reason, None);
+
+    let closed = interrupted.clone().close(150)?;
+    assert_eq!(closed.closed_at_ms, Some(150));
+    assert_eq!(closed.interrupted_at_ms, Some(125));
+    assert!(closed.clone().begin_turn("turn-3").is_err());
+    assert!(closed.clone().interrupt(175, "late_barge_in").is_err());
+    assert!(closed.close(200).is_err());
+    assert!(interrupted.close(124).is_err());
+    Ok(())
+}
+
+#[test]
+fn duplex_session_rejects_impossible_persisted_state_combinations() -> Result<(), Box<dyn Error>> {
+    let transport = VoiceTransport::websocket("wss://voice.example.com/session")?;
+    let build = |state, closed_at_ms, interrupted_at_ms, interruption_reason: Option<&str>| {
+        DuplexSession::from_parts_with_interruption(
+            "session-1",
+            transport.clone(),
+            state,
+            None,
+            100,
+            closed_at_ms,
+            interrupted_at_ms,
+            interruption_reason.map(str::to_owned),
+            BTreeMap::new(),
+        )
+    };
+
+    assert_eq!(
+        build(VoiceSessionState::Open, Some(150), None, None)
+            .expect_err("open sessions cannot carry a close time")
+            .to_string(),
+        "open voice session must not carry close or interruption state",
+    );
+    assert_eq!(
+        build(VoiceSessionState::Open, None, Some(125), Some("barge_in"),)
+            .expect_err("open sessions cannot carry interruption state")
+            .to_string(),
+        "open voice session must not carry close or interruption state",
+    );
+    for (interrupted_at_ms, interruption_reason) in [(None, Some("barge_in")), (Some(125), None)] {
+        assert_eq!(
+            build(
+                VoiceSessionState::Interrupted,
+                None,
+                interrupted_at_ms,
+                interruption_reason,
+            )
+            .expect_err("interrupted sessions require a timestamp and reason")
+            .to_string(),
+            "interrupted voice session requires an interruption time and reason",
+        );
+    }
+    assert_eq!(
+        build(
+            VoiceSessionState::Interrupted,
+            Some(150),
+            Some(125),
+            Some("barge_in"),
+        )
+        .expect_err("interrupted sessions cannot carry a close time")
+        .to_string(),
+        "interrupted voice session must not carry a close time",
+    );
+    assert_eq!(
+        build(VoiceSessionState::Closed, None, None, None)
+            .expect_err("closed sessions require a close time")
+            .to_string(),
+        "closed voice session requires a close time",
+    );
+    for (interrupted_at_ms, interruption_reason) in [(None, Some("barge_in")), (Some(125), None)] {
+        assert_eq!(
+            build(
+                VoiceSessionState::Closed,
+                Some(150),
+                interrupted_at_ms,
+                interruption_reason,
+            )
+            .expect_err("closed interruption state must be paired")
+            .to_string(),
+            "closed voice session requires both interruption time and reason or neither",
+        );
+    }
+
+    assert!(
+        build(
+            VoiceSessionState::Interrupted,
+            None,
+            Some(125),
+            Some("barge_in")
+        )
+        .is_ok()
+    );
+    assert!(build(VoiceSessionState::Closed, Some(150), None, None).is_ok());
+    assert!(
+        build(
+            VoiceSessionState::Closed,
+            Some(150),
+            Some(125),
+            Some("barge_in"),
+        )
+        .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
+fn duplex_session_legacy_constructor_maps_only_representable_interruption_state()
+-> Result<(), Box<dyn Error>> {
+    let transport = VoiceTransport::websocket("wss://voice.example.com/session")?;
+    let interrupted = DuplexSession::from_parts(
+        "session-interrupted",
+        transport.clone(),
+        VoiceSessionState::Interrupted,
+        None,
+        100,
+        None,
+        Some("barge_in".to_owned()),
+        BTreeMap::new(),
+    )?;
+    let closed = DuplexSession::from_parts(
+        "session-closed",
+        transport.clone(),
+        VoiceSessionState::Closed,
+        None,
+        100,
+        Some(150),
+        Some("barge_in".to_owned()),
+        BTreeMap::new(),
+    )?;
+
+    assert_eq!(interrupted.interrupted_at_ms, Some(100));
+    assert_eq!(closed.interrupted_at_ms, Some(150));
+    assert_eq!(
+        DuplexSession::from_parts(
+            "session-invalid",
+            transport,
+            VoiceSessionState::Interrupted,
+            None,
+            100,
+            None,
+            None,
+            BTreeMap::new(),
+        )
+        .expect_err("legacy interrupted state without a reason is impossible")
+        .to_string(),
+        "interrupted voice session requires an interruption time and reason",
+    );
+    Ok(())
+}
+
+#[test]
 fn realtime_provider_adapter_builds_stable_provider_session_request() -> Result<(), Box<dyn Error>>
 {
     let transport = VoiceTransport::new(

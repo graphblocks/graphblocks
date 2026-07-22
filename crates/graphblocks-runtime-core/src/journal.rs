@@ -1,6 +1,7 @@
 use std::path::Path;
+use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -181,6 +182,9 @@ impl SqliteExecutionJournal {
 
     fn initialize(&self) -> Result<(), JournalError> {
         self.connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(journal_storage_error)?;
+        self.connection
             .execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS journal_records (
@@ -282,9 +286,6 @@ impl SqliteExecutionJournal {
         metadata: JournalMetadata,
         payload: Option<Value>,
     ) -> Result<JournalRecord, JournalError> {
-        if let Some(terminal_kind) = self.terminal_kind()? {
-            return Err(JournalError::AppendAfterTerminal { terminal_kind });
-        }
         self.insert_record(kind.into(), metadata, payload, false)
     }
 
@@ -302,9 +303,6 @@ impl SqliteExecutionJournal {
         metadata: JournalMetadata,
         payload: Option<Value>,
     ) -> Result<JournalRecord, JournalError> {
-        if let Some(terminal_kind) = self.terminal_kind()? {
-            return Err(JournalError::TerminalAlreadyRecorded { terminal_kind });
-        }
         self.insert_record(kind.into(), metadata, payload, true)
     }
 
@@ -317,8 +315,29 @@ impl SqliteExecutionJournal {
     ) -> Result<JournalRecord, JournalError> {
         let transaction = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(journal_storage_error)?;
+        let terminal_kind = transaction
+            .query_row(
+                "
+                SELECT kind
+                FROM journal_records
+                WHERE run_id = ? AND terminal = 1
+                ORDER BY run_sequence DESC
+                LIMIT 1
+                ",
+                params![&self.run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(journal_storage_error)?;
+        if let Some(terminal_kind) = terminal_kind {
+            return Err(if terminal {
+                JournalError::TerminalAlreadyRecorded { terminal_kind }
+            } else {
+                JournalError::AppendAfterTerminal { terminal_kind }
+            });
+        }
         let next_sequence = transaction
             .query_row(
                 "

@@ -173,6 +173,7 @@ pub struct DuplexSession {
     pub current_turn_id: Option<String>,
     pub started_at_ms: u64,
     pub closed_at_ms: Option<u64>,
+    pub interrupted_at_ms: Option<u64>,
     pub interruption_reason: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
@@ -205,6 +206,41 @@ impl DuplexSession {
         interruption_reason: Option<String>,
         metadata: BTreeMap<String, String>,
     ) -> Result<Self, VoiceContractError> {
+        // The legacy constructor predates interrupted_at_ms. A supplied reason proves that an
+        // interruption occurred, so map it to the only deterministic boundary available in the
+        // old representation. Calls without enough state still fail the invariant checks below.
+        let interrupted_at_ms = match state {
+            VoiceSessionState::Interrupted if interruption_reason.is_some() => Some(started_at_ms),
+            VoiceSessionState::Closed if interruption_reason.is_some() => closed_at_ms,
+            VoiceSessionState::Open
+            | VoiceSessionState::Interrupted
+            | VoiceSessionState::Closed => None,
+        };
+        Self::from_parts_with_interruption(
+            session_id,
+            transport,
+            state,
+            current_turn_id,
+            started_at_ms,
+            closed_at_ms,
+            interrupted_at_ms,
+            interruption_reason,
+            metadata,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts_with_interruption(
+        session_id: impl Into<String>,
+        transport: VoiceTransport,
+        state: VoiceSessionState,
+        current_turn_id: Option<String>,
+        started_at_ms: u64,
+        closed_at_ms: Option<u64>,
+        interrupted_at_ms: Option<u64>,
+        interruption_reason: Option<String>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<Self, VoiceContractError> {
         let session = Self {
             session_id: session_id.into(),
             transport,
@@ -212,6 +248,7 @@ impl DuplexSession {
             current_turn_id,
             started_at_ms,
             closed_at_ms,
+            interrupted_at_ms,
             interruption_reason,
             metadata,
         };
@@ -221,6 +258,9 @@ impl DuplexSession {
 
     fn validate(&self) -> Result<(), VoiceContractError> {
         require_non_empty("session_id", &self.session_id)?;
+        if let Some(interruption_reason) = self.interruption_reason.as_deref() {
+            require_non_empty("interruption reason", interruption_reason)?;
+        }
         if let Some(closed_at_ms) = self.closed_at_ms
             && closed_at_ms < self.started_at_ms
         {
@@ -229,14 +269,81 @@ impl DuplexSession {
                 message: "must be greater than or equal to started_at_ms".to_string(),
             });
         }
+        if let Some(interrupted_at_ms) = self.interrupted_at_ms
+            && interrupted_at_ms < self.started_at_ms
+        {
+            return Err(VoiceContractError::Invalid {
+                field_name: "interrupted_at_ms",
+                message: "must be greater than or equal to started_at_ms".to_string(),
+            });
+        }
+        if let (Some(closed_at_ms), Some(interrupted_at_ms)) =
+            (self.closed_at_ms, self.interrupted_at_ms)
+            && closed_at_ms < interrupted_at_ms
+        {
+            return Err(VoiceContractError::Invalid {
+                field_name: "closed_at_ms",
+                message: "must be greater than or equal to interrupted_at_ms".to_string(),
+            });
+        }
+        match self.state {
+            VoiceSessionState::Open => {
+                if self.closed_at_ms.is_some()
+                    || self.interrupted_at_ms.is_some()
+                    || self.interruption_reason.is_some()
+                {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "open voice session",
+                        message: "must not carry close or interruption state".to_string(),
+                    });
+                }
+            }
+            VoiceSessionState::Interrupted => {
+                if self.closed_at_ms.is_some() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "interrupted voice session",
+                        message: "must not carry a close time".to_string(),
+                    });
+                }
+                if self.interrupted_at_ms.is_none() || self.interruption_reason.is_none() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "interrupted voice session",
+                        message: "requires an interruption time and reason".to_string(),
+                    });
+                }
+            }
+            VoiceSessionState::Closed => {
+                if self.closed_at_ms.is_none() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "closed voice session",
+                        message: "requires a close time".to_string(),
+                    });
+                }
+                if self.interrupted_at_ms.is_some() != self.interruption_reason.is_some() {
+                    return Err(VoiceContractError::Invalid {
+                        field_name: "closed voice session",
+                        message: "requires both interruption time and reason or neither"
+                            .to_string(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
     pub fn begin_turn(mut self, turn_id: impl Into<String>) -> Result<Self, VoiceContractError> {
+        if self.state == VoiceSessionState::Closed {
+            return Err(VoiceContractError::Invalid {
+                field_name: "voice session",
+                message: "is closed and cannot begin a turn".to_string(),
+            });
+        }
         let turn_id = turn_id.into();
         require_non_empty("turn_id", &turn_id)?;
         self.current_turn_id = Some(turn_id);
         self.state = VoiceSessionState::Open;
+        self.interrupted_at_ms = None;
+        self.interruption_reason = None;
         Ok(self)
     }
 
@@ -245,6 +352,12 @@ impl DuplexSession {
         occurred_at_ms: u64,
         reason: impl Into<String>,
     ) -> Result<Self, VoiceContractError> {
+        if self.state == VoiceSessionState::Closed {
+            return Err(VoiceContractError::Invalid {
+                field_name: "voice session",
+                message: "is closed and cannot be interrupted".to_string(),
+            });
+        }
         if occurred_at_ms < self.started_at_ms {
             return Err(VoiceContractError::Invalid {
                 field_name: "interruption",
@@ -254,16 +367,31 @@ impl DuplexSession {
         let reason = reason.into();
         require_non_empty("interruption reason", &reason)?;
         self.state = VoiceSessionState::Interrupted;
-        self.closed_at_ms = None;
+        self.interrupted_at_ms = Some(occurred_at_ms);
         self.interruption_reason = Some(reason);
         Ok(self)
     }
 
     pub fn close(mut self, occurred_at_ms: u64) -> Result<Self, VoiceContractError> {
+        if self.state == VoiceSessionState::Closed {
+            return Err(VoiceContractError::Invalid {
+                field_name: "voice session",
+                message: "is already closed".to_string(),
+            });
+        }
         if occurred_at_ms < self.started_at_ms {
             return Err(VoiceContractError::Invalid {
                 field_name: "close",
                 message: "occurred before session start".to_string(),
+            });
+        }
+        if self
+            .interrupted_at_ms
+            .is_some_and(|interrupted_at_ms| occurred_at_ms < interrupted_at_ms)
+        {
+            return Err(VoiceContractError::Invalid {
+                field_name: "close",
+                message: "occurred before session interruption".to_string(),
             });
         }
         self.state = VoiceSessionState::Closed;
@@ -278,6 +406,7 @@ impl DuplexSession {
             "currentTurnId": self.current_turn_id,
             "startedAtMs": self.started_at_ms,
             "closedAtMs": self.closed_at_ms,
+            "interruptedAtMs": self.interrupted_at_ms,
             "interruptionReason": self.interruption_reason,
             "transport": self.transport.contract(),
             "metadata": self.metadata,
