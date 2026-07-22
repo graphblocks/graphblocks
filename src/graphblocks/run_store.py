@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import wraps
 import json
 import math
 from pathlib import Path
 import sqlite3
-from typing import Any, Literal
+from threading import RLock
+from typing import Any, Literal, ParamSpec, TypeVar, cast
 
 from .evaluation import ModelVisibleToolRef
 
@@ -76,6 +78,20 @@ VALID_RUN_STATUSES = frozenset({
     "policy_stopped",
 })
 VALID_RUN_INVOCATION_MODES = frozenset({"sync", "accepted", "background"})
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_in_memory_run_store_lock(
+    method: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    @wraps(method)
+    def locked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        store = cast("InMemoryRunStore", args[0])
+        with store._lock:
+            return method(*args, **kwargs)
+
+    return locked
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -280,7 +296,9 @@ class RunRecord:
 class InMemoryRunStore:
     runs: dict[str, RunRecord] = field(default_factory=dict)
     next_id: int = 1
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
+    @_with_in_memory_run_store_lock
     def create_run(
         self,
         graph_hash: str,
@@ -317,9 +335,11 @@ class InMemoryRunStore:
         self.runs[run_id] = record
         return deepcopy(record)
 
+    @_with_in_memory_run_store_lock
     def get_run(self, run_id: str) -> RunRecord:
         return deepcopy(self.runs[run_id])
 
+    @_with_in_memory_run_store_lock
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
         run_id = _validate_non_empty_string("run store", "run_id", run_id)
         patch = _validate_json_object("run store", "patch", patch)
@@ -359,6 +379,7 @@ class InMemoryRunStore:
         self.runs[run_id] = updated
         return deepcopy(updated)
 
+    @_with_in_memory_run_store_lock
     def record_model_visible_tools(
         self,
         run_id: str,
@@ -382,6 +403,7 @@ class InMemoryRunStore:
         self.runs[run_id] = updated
         return deepcopy(updated)
 
+    @_with_in_memory_run_store_lock
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
         run_id = _validate_non_empty_string("run store", "run_id", run_id)
         if status not in VALID_RUN_STATUSES or status == "created":

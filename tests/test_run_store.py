@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import math
 import sqlite3
-from threading import Barrier
+from threading import Barrier, BrokenBarrierError, Event
 
 import pytest
 
@@ -27,6 +27,74 @@ def test_run_store_applies_state_patch_with_revision_cas() -> None:
 
     assert updated.state_revision == 1
     assert updated.state == {"conversation": {"turns": 1}}
+
+
+def test_in_memory_run_store_serializes_concurrent_revision_cas() -> None:
+    store = InMemoryRunStore()
+    record = store.create_run("sha256:test", {})
+    reads = Barrier(2)
+
+    class CoordinatedRuns(dict[str, RunRecord]):
+        def __getitem__(self, key: str) -> RunRecord:
+            try:
+                reads.wait(timeout=0.2)
+            except BrokenBarrierError:
+                pass
+            return super().__getitem__(key)
+
+    store.runs = CoordinatedRuns(store.runs)
+
+    def patch(value: int) -> str:
+        try:
+            store.patch_state(record.run_id, {"value": value}, expected_revision=0)
+        except StateConflictError:
+            return "conflict"
+        return "updated"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(patch, (1, 2)))
+
+    assert sorted(outcomes) == ["conflict", "updated"]
+    assert store.get_run(record.run_id).state_revision == 1
+
+
+def test_in_memory_run_store_cannot_revive_terminal_run_during_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import graphblocks.run_store as run_store_module
+
+    store = InMemoryRunStore()
+    record = store.create_run("sha256:test", {})
+    store.set_status(record.run_id, "running")
+    patch_building = Event()
+    terminal_built = Event()
+    original_record_type = run_store_module.RunRecord
+
+    def coordinated_record(*args: object, **kwargs: object) -> RunRecord:
+        status = kwargs.get("status")
+        if status == "running":
+            patch_building.set()
+            terminal_built.wait(timeout=0.2)
+        result = original_record_type(*args, **kwargs)  # type: ignore[arg-type]
+        if status == "succeeded":
+            terminal_built.set()
+        return result
+
+    monkeypatch.setattr(run_store_module, "RunRecord", coordinated_record)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        patch_future = executor.submit(
+            store.patch_state,
+            record.run_id,
+            {"value": 1},
+            0,
+        )
+        assert patch_building.wait(timeout=1)
+        terminal_future = executor.submit(store.set_status, record.run_id, "succeeded")
+        patch_future.result(timeout=2)
+        terminal_future.result(timeout=2)
+
+    assert store.get_run(record.run_id).status == "succeeded"
+    assert store.get_run(record.run_id).state == {"value": 1}
 
 
 def test_run_store_records_deployment_provenance_and_preserves_it_across_mutations() -> None:

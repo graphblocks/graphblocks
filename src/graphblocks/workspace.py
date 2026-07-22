@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
 from threading import RLock
@@ -62,7 +63,7 @@ def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapsh
         digest=resource.digest,
         resource_kind=resource.resource_kind,
         uri=resource.uri,
-        metadata=dict(resource.metadata),
+        metadata=deepcopy(resource.metadata),
     )
 
 
@@ -90,7 +91,7 @@ class WorkspaceSnapshot:
         _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_digest", self.base_snapshot_digest)
         if not isinstance(self.metadata, Mapping):
             raise ValueError("workspace snapshot metadata must be a mapping")
-        metadata = dict(self.metadata)
+        metadata = deepcopy(dict(self.metadata))
         for key in metadata:
             if not isinstance(key, str):
                 raise ValueError("workspace snapshot metadata keys must be strings")
@@ -156,7 +157,7 @@ def _copy_workspace_snapshot(snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot:
         created_at=snapshot.created_at,
         base_snapshot_id=snapshot.base_snapshot_id,
         base_snapshot_digest=snapshot.base_snapshot_digest,
-        metadata=dict(snapshot.metadata),
+        metadata=deepcopy(snapshot.metadata),
     )
 
 

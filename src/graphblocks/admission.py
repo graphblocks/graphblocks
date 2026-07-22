@@ -362,6 +362,8 @@ class AdmissionTicketQueue:
         )
         now_ms = _non_negative_integer("admission queue", "now_ms", now_ms)
         with self._lock:
+            ticket = self.get(ticket_id)
+            self._validate_mutation_time_locked(ticket, now_ms, "start")
             self._expire_locked(now_ms)
             ticket = self.get(ticket_id)
             self._validate_fencing_locked(ticket, fencing_token)
@@ -395,6 +397,9 @@ class AdmissionTicketQueue:
         if state not in {"completed", "failed"}:
             raise AdmissionError("admission completion state must be completed or failed")
         with self._lock:
+            ticket = self.get(ticket_id)
+            self._validate_mutation_time_locked(ticket, now_ms, "complete")
+            self._expire_locked(now_ms)
             ticket = self.get(ticket_id)
             self._validate_fencing_locked(ticket, fencing_token)
             if ticket.state not in {"admitted", "running"}:
@@ -430,6 +435,9 @@ class AdmissionTicketQueue:
                 fencing_token,
             )
         with self._lock:
+            ticket = self.get(ticket_id)
+            self._validate_mutation_time_locked(ticket, now_ms, "cancel")
+            self._expire_locked(now_ms)
             ticket = self.get(ticket_id)
             if ticket.state in TERMINAL_ADMISSION_TICKET_STATES:
                 self._prune_terminal_locked(now_ms)
@@ -483,6 +491,19 @@ class AdmissionTicketQueue:
                 fencing_token,
             )
 
+    def _validate_mutation_time_locked(
+        self,
+        ticket: AdmissionTicket,
+        now_ms: int,
+        operation: str,
+    ) -> None:
+        if now_ms < ticket.issued_at_ms:
+            raise AdmissionTicketStateError(
+                ticket.ticket_id,
+                ticket.state,
+                f"{operation} before issuance",
+            )
+
     def _refresh_window_locked(self, now_ms: int) -> None:
         if (
             self._window_start_ms is None
@@ -497,6 +518,8 @@ class AdmissionTicketQueue:
         while self._pending and len(self._active) < self.max_concurrent:
             ticket_id = self._pending[0]
             ticket = self._tickets[ticket_id]
+            if now_ms < ticket.issued_at_ms:
+                break
             if self._window_used + ticket.units > self.rate_limit:
                 break
             self._pending.popleft()
@@ -520,7 +543,7 @@ class AdmissionTicketQueue:
     def _expire_locked(self, now_ms: int) -> tuple[AdmissionTicket, ...]:
         expired: list[AdmissionTicket] = []
         for ticket_id, ticket in tuple(self._tickets.items()):
-            if ticket.state not in {"queued", "admitted"} or ticket.expires_at_ms > now_ms:
+            if ticket.state not in {"queued", "admitted", "running"} or ticket.expires_at_ms > now_ms:
                 continue
             if ticket.state == "queued":
                 self._pending.remove(ticket_id)

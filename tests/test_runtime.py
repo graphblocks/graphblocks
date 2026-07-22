@@ -718,9 +718,14 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
     runtime_holder: dict[str, InProcessRuntime] = {}
 
     class CheckpointClaimRunStore(InMemoryRunStore):
+        fail_next_resume = False
+
         def set_status(self, run_id, status):
             if status == "resuming":
                 assert runtime_holder["runtime"]._checkpoint_state_digests == {}
+                if self.fail_next_resume:
+                    self.fail_next_resume = False
+                    raise RuntimeError("transient resuming persistence failure")
             return super().set_status(run_id, status)
 
     def prepare(
@@ -1028,6 +1033,20 @@ def test_runtime_suspends_at_callback_wait_and_resumes_from_checkpoint() -> None
             ),
             callback_receipt=callback_receipt,
         )
+
+    store.fail_next_resume = True
+    with pytest.raises(RuntimeError, match="transient resuming persistence failure"):
+        runtime.run(
+            graph,
+            {},
+            run_id="run-runtime-resume-1",
+            checkpoint=waiting.checkpoint,
+            callback_receipt=callback_receipt,
+        )
+    assert runtime._checkpoint_state_digests == {
+        waiting.checkpoint.checkpoint_id: waiting.checkpoint.state_digest,
+    }
+    assert store.get_run("run-runtime-resume-1").status == "waiting_callback"
 
     resume_barrier = Barrier(2)
 

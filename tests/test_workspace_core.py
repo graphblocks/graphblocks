@@ -561,6 +561,41 @@ def test_workspace_store_copies_snapshots_and_resource_metadata_at_boundaries() 
     assert latest.resources[0].metadata == {"path": "committed"}
 
 
+def test_workspace_store_deep_copies_nested_metadata_at_boundaries() -> None:
+    snapshot_metadata = {"labels": {"groups": ["trusted"]}}
+    resource_metadata = {"attributes": {"owners": ["author-1"]}}
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-1",
+        revision=1,
+        resources=(
+            ResourceSnapshotRef(
+                "a.txt",
+                "sha256:a",
+                resource_kind="file",
+                metadata=resource_metadata,
+            ),
+        ),
+        created_at="2026-06-24T00:00:00Z",
+        metadata=snapshot_metadata,
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+    snapshot_metadata["labels"]["groups"].append("caller-mutated")
+    resource_metadata["attributes"]["owners"].append("caller-mutated")
+
+    returned = store.current("workspace-1")
+    returned.metadata["labels"]["groups"].append("consumer-mutated")
+    returned.resources[0].metadata["attributes"]["owners"].append(
+        "consumer-mutated"
+    )
+
+    fresh = store.current("workspace-1")
+    assert fresh.metadata == {"labels": {"groups": ["trusted"]}}
+    assert fresh.resources[0].metadata == {
+        "attributes": {"owners": ["author-1"]}
+    }
+
+
 def test_workspace_store_rejects_policy_denied_commit() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",

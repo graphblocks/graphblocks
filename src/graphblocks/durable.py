@@ -232,6 +232,7 @@ class SourceEvent:
     event_time_unix_ms: int | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", deepcopy(self.payload))
         if self.event_time_unix_ms is None:
             return
         _require_integer("event_time_unix_ms", self.event_time_unix_ms)
@@ -278,6 +279,7 @@ class InMemoryDurableSource:
     paused: bool = False
     _known_streams: frozenset[str] = field(init=False, repr=False)
     _known_partitions: frozenset[tuple[str, int]] = field(init=False, repr=False)
+    _known_cursors: frozenset[SourceCursor] = field(init=False, repr=False)
     _committed_cursors: dict[tuple[str, int], SourceCursor] = field(
         init=False,
         repr=False,
@@ -293,11 +295,22 @@ class InMemoryDurableSource:
             if existing is not None and existing != event:
                 raise ConflictingSourceOffsetError(event.cursor)
             events_by_cursor[event.cursor] = event
-        self.events = sorted(self.events, key=lambda event: event.cursor)
+        self.events = sorted(
+            (
+                SourceEvent(
+                    cursor=event.cursor,
+                    payload=event.payload,
+                    event_time_unix_ms=event.event_time_unix_ms,
+                )
+                for event in self.events
+            ),
+            key=lambda event: event.cursor,
+        )
         self._known_streams = frozenset(event.cursor.stream for event in self.events)
         self._known_partitions = frozenset(
             (event.cursor.stream, event.cursor.partition) for event in self.events
         )
+        self._known_cursors = frozenset(event.cursor for event in self.events)
         if self.committed_cursor is not None:
             self._validate_cursor(self.committed_cursor)
             self._committed_cursors[
@@ -339,14 +352,27 @@ class InMemoryDurableSource:
             if self._watermark_unix_ms is None
             else Watermark.event_time(self._watermark_unix_ms)
         )
-        return SourceBatch.new(self.guarantee, tuple(events), watermark, demand)
+        return SourceBatch.new(
+            self.guarantee,
+            tuple(
+                SourceEvent(
+                    cursor=event.cursor,
+                    payload=event.payload,
+                    event_time_unix_ms=event.event_time_unix_ms,
+                )
+                for event in events
+            ),
+            watermark,
+            demand,
+        )
 
     def commit(self, cursor: SourceCursor) -> None:
-        self._validate_cursor(cursor)
+        self._validate_cursor_partition(cursor)
         partition_key = (cursor.stream, cursor.partition)
         current = self._committed_cursors.get(partition_key)
         if current is not None and cursor.offset < current.offset:
             raise StaleCommitError(current, cursor)
+        self._validate_cursor(cursor)
         self._committed_cursors[partition_key] = cursor
         self.committed_cursor = cursor
 
@@ -357,9 +383,14 @@ class InMemoryDurableSource:
         self.paused = False
 
     def _validate_cursor(self, cursor: SourceCursor) -> None:
-        if self._known_streams and cursor.stream not in self._known_streams:
+        self._validate_cursor_partition(cursor)
+        if cursor not in self._known_cursors:
             raise UnknownSourceCursorError(cursor)
-        if self._known_partitions and (cursor.stream, cursor.partition) not in self._known_partitions:
+
+    def _validate_cursor_partition(self, cursor: SourceCursor) -> None:
+        if cursor.stream not in self._known_streams:
+            raise UnknownSourceCursorError(cursor)
+        if (cursor.stream, cursor.partition) not in self._known_partitions:
             raise UnknownSourceCursorError(cursor)
 
 

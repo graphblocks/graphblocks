@@ -123,6 +123,56 @@ def test_admitted_ticket_expiry_releases_concurrency_slot() -> None:
         )
 
 
+def test_ticket_mutations_are_fenced_by_issuance_and_expiration() -> None:
+    queue = AdmissionTicketQueue(
+        "time-fenced",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    admitted = queue.submit("run-1", "request-1", "user-1", now_ms=100).ticket
+
+    with pytest.raises(AdmissionTicketStateError, match="start before issuance"):
+        queue.mark_running(
+            admitted.ticket_id,
+            admitted.fencing_token or 0,
+            now_ms=99,
+        )
+    with pytest.raises(AdmissionTicketStateError, match="expired"):
+        queue.complete(
+            admitted.ticket_id,
+            admitted.fencing_token or 0,
+            "completed",
+            now_ms=200,
+        )
+
+    assert queue.get(admitted.ticket_id).state == "expired"
+
+
+def test_expiration_maintenance_fences_running_ticket() -> None:
+    queue = AdmissionTicketQueue(
+        "running-expiry",
+        max_concurrent=1,
+        rate_limit=10,
+        window_ms=1_000,
+        max_pending=10,
+        ticket_ttl_ms=100,
+    )
+    admitted = queue.submit("run-1", "request-1", "user-1", now_ms=0).ticket
+    running = queue.mark_running(
+        admitted.ticket_id,
+        admitted.fencing_token or 0,
+        now_ms=1,
+    )
+
+    expired = queue.expire(now_ms=100)
+
+    assert [ticket.ticket_id for ticket in expired] == [running.ticket_id]
+    assert queue.get(running.ticket_id).state == "expired"
+
+
 def test_submit_promotes_existing_fifo_ticket_after_admitted_expiry() -> None:
     queue = AdmissionTicketQueue(
         "expiring-fifo",

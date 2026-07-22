@@ -244,6 +244,39 @@ def test_durable_source_rejects_unknown_cursor_partition(monkeypatch) -> None:
     assert poll_error.value.cursor == unknown_cursor
 
 
+def test_durable_source_rejects_forged_future_cursor(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    source = graphblocks_durable.InMemoryDurableSource(
+        "at_least_once",
+        [_order_event(graphblocks_durable, 10)],
+    )
+    future = graphblocks_durable.SourceCursor("orders", 0, 11)
+
+    with pytest.raises(graphblocks_durable.UnknownSourceCursorError):
+        source.commit(future)
+    with pytest.raises(graphblocks_durable.UnknownSourceCursorError):
+        source.poll(future, demand=1)
+
+
+def test_durable_source_snapshots_payloads_at_ingress_and_egress(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    payload = {"order": {"status": "created"}}
+    event = graphblocks_durable.SourceEvent(
+        graphblocks_durable.SourceCursor("orders", 0, 10),
+        payload,
+    )
+    source = graphblocks_durable.InMemoryDurableSource("at_least_once", [event])
+    payload["order"]["status"] = "caller-mutated"
+    event.payload["order"]["status"] = "event-mutated"
+
+    first = source.poll(None, demand=1)
+    assert first.events[0].payload == {"order": {"status": "created"}}
+    first.events[0].payload["order"]["status"] = "consumer-mutated"
+
+    replay = source.poll(None, demand=1)
+    assert replay.events[0].payload == {"order": {"status": "created"}}
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [

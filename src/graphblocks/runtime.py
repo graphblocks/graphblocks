@@ -1303,7 +1303,15 @@ class InProcessRuntime:
                 return RunResult(run_id, "failed", output_values, journal)
             remaining.remove(checkpoint.wait_node)
             if self.run_store is not None:
-                self.run_store.set_status(run_id, "resuming")
+                try:
+                    self.run_store.set_status(run_id, "resuming")
+                except Exception:
+                    with self._checkpoint_lock:
+                        self._checkpoint_state_digests.setdefault(
+                            checkpoint.checkpoint_id,
+                            claimed_checkpoint_digest,
+                        )
+                    raise
             journal.append(
                 "external_callback_received",
                 {
