@@ -5298,7 +5298,10 @@ fn execute_gate_evaluation(inputs: &Value, config: &Value) -> Result<Value, Bloc
                 .then(|| check.get("status").and_then(Value::as_str))
                 .flatten()
         });
-        if !matches!(status, Some("pass" | "passed")) {
+        if !matches!(
+            status,
+            Some("pass" | "passed" | "inconclusive" | "error" | "timeout")
+        ) {
             violated.push(format!("check:{required}"));
         }
     }

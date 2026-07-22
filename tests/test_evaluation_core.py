@@ -76,6 +76,27 @@ def test_evaluate_gate_preserves_explicit_empty_required_checks() -> None:
     assert gate.violated_constraints == []
 
 
+@pytest.mark.parametrize("status", ("error", "timeout", "inconclusive"))
+def test_evaluate_gate_preserves_required_inconclusive_outcomes(status: str) -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    check = CheckResult(
+        "required",
+        subject,
+        status,  # type: ignore[arg-type]
+        tool={"processor_id": "checker", "version": "1"},
+    )
+
+    gate = evaluate_gate(
+        "quality",
+        subject,
+        checks=[check],
+        required_check_ids=["required"],
+    )
+
+    assert gate.decision == "inconclusive"
+    assert gate.violated_constraints == []
+
+
 def test_evaluate_gate_rejects_duplicate_check_and_metric_identities() -> None:
     subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
     duplicate_check = CheckResult(
@@ -131,6 +152,44 @@ def test_evaluate_gate_uses_metric_thresholds() -> None:
     assert passing.decision == "pass"
     assert failing.decision == "fail"
     assert failing.violated_constraints == ["metric:latency_ms"]
+
+
+@pytest.mark.parametrize("value", (Decimal("NaN"), Decimal("Infinity"), float("nan"), float("inf")))
+def test_metric_observation_rejects_non_finite_values(value: object) -> None:
+    with pytest.raises(ValueError, match="metric observation value must be finite"):
+        MetricObservation("latency", value)  # type: ignore[arg-type]
+
+
+def test_metric_baseline_and_gate_threshold_reject_non_finite_values() -> None:
+    with pytest.raises(ValueError, match="baseline_value must be finite"):
+        MetricObservation("latency", Decimal("1"), baseline_value=Decimal("NaN"))
+    with pytest.raises(ValueError, match="gate constraint threshold must be finite"):
+        GateConstraint("latency", "at_most", Decimal("Infinity"))
+
+
+def test_ordered_gate_constraint_treats_non_numeric_string_as_violation() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    gate = evaluate_gate(
+        "quality",
+        subject,
+        metrics=[MetricObservation("latency", "NaN")],
+        constraints=[GateConstraint("latency", "at_most", Decimal("10"))],
+    )
+
+    assert gate.decision == "fail"
+    assert gate.violated_constraints == ["metric:latency"]
+
+
+def test_evaluation_metadata_is_deep_copied_from_callers() -> None:
+    metadata = {"labels": {"groups": ["trusted"]}}
+    snapshot = ResourceSnapshotRef(
+        "candidate-1",
+        "sha256:candidate",
+        metadata=metadata,
+    )
+    metadata["labels"]["groups"].append("mutated")
+
+    assert snapshot.metadata == {"labels": {"groups": ["trusted"]}}
 
 
 def test_check_result_validates_status_subject_and_copies_collections() -> None:

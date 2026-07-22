@@ -43,6 +43,101 @@ fn evaluate_gate_fails_when_required_check_failed() {
 }
 
 #[test]
+fn evaluate_gate_is_inconclusive_when_required_check_cannot_conclude() {
+    let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
+
+    for status in [
+        CheckStatus::Error,
+        CheckStatus::Timeout,
+        CheckStatus::Inconclusive,
+    ] {
+        let gate = evaluate_gate(
+            "quality",
+            subject.clone(),
+            &[CheckResult::new("required", subject.clone(), status)],
+            &[],
+            Some(["required"]),
+            &[],
+            None,
+        );
+
+        assert_eq!(gate.decision, GateDecision::Inconclusive);
+        assert!(gate.violated_constraints.is_empty());
+    }
+}
+
+#[test]
+fn evaluate_gate_ignores_non_required_inconclusive_checks() {
+    let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
+    let checks = [
+        CheckResult::new("required", subject.clone(), CheckStatus::Passed),
+        CheckResult::new("informational", subject.clone(), CheckStatus::Inconclusive),
+    ];
+
+    let gate = evaluate_gate(
+        "quality",
+        subject,
+        &checks,
+        &[],
+        Some(["required"]),
+        &[],
+        None,
+    );
+
+    assert_eq!(gate.decision, GateDecision::Pass);
+    assert!(gate.violated_constraints.is_empty());
+}
+
+#[test]
+fn evaluate_gate_fails_closed_on_duplicate_check_or_metric_identities() {
+    let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
+    let duplicate_checks = [
+        CheckResult::new("duplicate", subject.clone(), CheckStatus::Passed),
+        CheckResult::new("duplicate", subject.clone(), CheckStatus::Failed),
+    ];
+    let duplicate_metrics = [
+        MetricObservation::new("latency", json!(1)),
+        MetricObservation::new("latency", json!(100)),
+    ];
+
+    let checks_gate = evaluate_gate(
+        "quality",
+        subject.clone(),
+        &duplicate_checks,
+        &[],
+        Some(["duplicate"]),
+        &[],
+        None,
+    );
+    let metrics_gate = evaluate_gate(
+        "quality",
+        subject,
+        &[],
+        &duplicate_metrics,
+        None::<[&str; 0]>,
+        &[GateConstraint::new(
+            "latency",
+            ConstraintOperator::AtMost,
+            json!(10),
+        )],
+        None,
+    );
+
+    assert_eq!(checks_gate.decision, GateDecision::Fail);
+    assert!(
+        checks_gate
+            .violated_constraints
+            .contains(&"check:duplicate:duplicate".to_owned())
+    );
+    assert_eq!(metrics_gate.decision, GateDecision::Fail);
+    assert!(
+        metrics_gate
+            .violated_constraints
+            .contains(&"metric:latency:duplicate".to_owned())
+    );
+}
+
+#[test]
 fn evaluate_gate_uses_metric_thresholds() {
     let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
     let metrics = [

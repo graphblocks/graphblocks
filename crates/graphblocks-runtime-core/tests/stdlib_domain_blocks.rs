@@ -244,6 +244,21 @@ fn check_suite_and_gate_accept_the_python_contract_vocabulary() -> Result<(), St
     )?;
     assert_eq!(informational["passed"], true);
 
+    for status in ["inconclusive", "error", "timeout"] {
+        let required_inconclusive = run_block(
+            "gate.evaluate@1",
+            json!({"checks": [{"checkId": "required", "status": status}]}),
+            json!({"requiredChecks": ["required"]}),
+            &["result", "passed"],
+        )?;
+        assert_eq!(required_inconclusive["passed"], false);
+        assert_eq!(required_inconclusive["result"]["decision"], "inconclusive");
+        assert_eq!(
+            required_inconclusive["result"]["violatedConstraints"],
+            json!([])
+        );
+    }
+
     for malformed in [
         json!({"checks": [{"status": "failed"}]}),
         json!({"checks": [true]}),

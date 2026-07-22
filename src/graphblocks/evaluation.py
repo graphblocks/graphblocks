@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -122,7 +123,7 @@ def _validate_record_list(owner: str, field_name: str, values: object, item_type
 def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{owner} {field_name} must be a mapping")
-    mapping = dict(value)
+    mapping = deepcopy(dict(value))
     for key in mapping:
         if not isinstance(key, str):
             raise ValueError(f"{owner} {field_name} keys must be strings")
@@ -390,8 +391,12 @@ class MetricObservation:
             raise ValueError(f"invalid metric direction {self.direction}")
         if isinstance(self.value, float):
             object.__setattr__(self, "value", Decimal(str(self.value)))
+        if isinstance(self.value, Decimal) and not self.value.is_finite():
+            raise ValueError("metric observation value must be finite")
         if self.baseline_value is not None and not isinstance(self.baseline_value, Decimal):
             object.__setattr__(self, "baseline_value", Decimal(str(self.baseline_value)))
+        if self.baseline_value is not None and not self.baseline_value.is_finite():
+            raise ValueError("metric observation baseline_value must be finite")
         if self.subject is not None and not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("metric observation subject must be a ResourceSnapshotRef")
         if self.evaluator is not None:
@@ -410,6 +415,8 @@ class GateConstraint:
             raise ValueError(f"invalid gate constraint operator {self.operator}")
         if isinstance(self.threshold, (int, float)) and not isinstance(self.threshold, bool):
             object.__setattr__(self, "threshold", Decimal(str(self.threshold)))
+        if isinstance(self.threshold, Decimal) and not self.threshold.is_finite():
+            raise ValueError("gate constraint threshold must be finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -793,10 +800,13 @@ def evaluate_gate(
     checks_by_id = {check.check_id: check for check in check_list}
     if len(checks_by_id) != len(check_list):
         raise ValueError("gate checks must not contain duplicate check_id values")
+    inconclusive = False
     for check_id in required:
         check = checks_by_id.get(check_id)
-        if check is None or check.status != "passed":
+        if check is None or check.status in {"failed", "skipped"}:
             violated.append(f"check:{check_id}")
+        elif check.status in {"error", "timeout", "inconclusive"}:
+            inconclusive = True
 
     metrics_by_name = {metric.name: metric for metric in metric_list}
     if len(metrics_by_name) != len(metric_list):
@@ -806,11 +816,6 @@ def evaluate_gate(
         if metric is None or not _metric_satisfies(metric.value, constraint.operator, constraint.threshold):
             violated.append(f"metric:{constraint.metric_name}")
 
-    inconclusive = any(
-        checks_by_id[check_id].status in {"error", "timeout", "inconclusive"}
-        for check_id in required
-        if check_id in checks_by_id
-    )
     decision: GateDecision
     if violated:
         decision = "fail"
@@ -837,11 +842,13 @@ def _metric_satisfies(value: Decimal | bool | str | None, operator: ConstraintOp
     try:
         comparable_value = value if isinstance(value, Decimal) else Decimal(str(value))
         comparable_threshold = threshold if isinstance(threshold, Decimal) else Decimal(str(threshold))
+        if not comparable_value.is_finite() or not comparable_threshold.is_finite():
+            return False
+        if operator == "at_least":
+            return comparable_value >= comparable_threshold
+        return comparable_value <= comparable_threshold
     except Exception:
         return False
-    if operator == "at_least":
-        return comparable_value >= comparable_threshold
-    return comparable_value <= comparable_threshold
 
 
 def _canonical_value(value: object) -> object:

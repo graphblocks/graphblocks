@@ -1187,18 +1187,45 @@ where
         .map(|ids| ids.into_iter().map(Into::into).collect::<Vec<_>>())
         .unwrap_or_else(|| checks.iter().map(|check| check.check_id.clone()).collect());
     let mut violated = Vec::new();
+    let mut checks_by_id = BTreeMap::new();
+    for check in checks {
+        if checks_by_id
+            .insert(check.check_id.as_str(), check)
+            .is_some()
+        {
+            violated.push(format!("check:{}:duplicate", check.check_id));
+        }
+    }
+    let mut metrics_by_name = BTreeMap::new();
+    for metric in metrics {
+        if metrics_by_name
+            .insert(metric.name.as_str(), metric)
+            .is_some()
+        {
+            violated.push(format!("metric:{}:duplicate", metric.name));
+        }
+    }
+    let mut inconclusive = false;
 
     for check_id in &required {
-        let check = checks.iter().find(|check| &check.check_id == check_id);
-        if !matches!(check.map(|check| check.status), Some(CheckStatus::Passed)) {
-            violated.push(format!("check:{check_id}"));
+        match checks_by_id
+            .get(check_id.as_str())
+            .map(|check| check.status)
+        {
+            Some(CheckStatus::Passed) => {}
+            Some(CheckStatus::Error | CheckStatus::Timeout | CheckStatus::Inconclusive) => {
+                inconclusive = true;
+            }
+            Some(CheckStatus::Failed | CheckStatus::Skipped) | None => {
+                violated.push(format!("check:{check_id}"));
+            }
         }
     }
 
     for constraint in constraints {
-        let metric = metrics
-            .iter()
-            .find(|metric| metric.name == constraint.metric_name);
+        let metric = metrics_by_name
+            .get(constraint.metric_name.as_str())
+            .copied();
         if !metric
             .map(|metric| metric_satisfies(metric, constraint))
             .unwrap_or(false)
@@ -1207,12 +1234,6 @@ where
         }
     }
 
-    let inconclusive = checks.iter().any(|check| {
-        matches!(
-            check.status,
-            CheckStatus::Error | CheckStatus::Timeout | CheckStatus::Inconclusive
-        )
-    });
     let decision = if !violated.is_empty() {
         GateDecision::Fail
     } else if inconclusive {
