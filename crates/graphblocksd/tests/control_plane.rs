@@ -605,6 +605,117 @@ fn graphblocksd_moves_dead_letter_and_redrives_callback_delivery()
 }
 
 #[test]
+fn graphblocksd_redrive_recovers_when_dead_letter_history_write_is_interrupted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let delivery_path = sqlite_callback_delivery_path("redrive-recovery");
+    let dead_letter_path = sqlite_callback_dead_letter_path("redrive-recovery");
+    let delivery_path_text = delivery_path.to_str().ok_or("invalid delivery path")?;
+    let dead_letter_path_text = dead_letter_path
+        .to_str()
+        .ok_or("invalid dead-letter path")?;
+
+    enqueue_daemon_callback_delivery(delivery_path_text)?;
+    let claimed = claim_daemon_callback_deliveries(delivery_path_text, "1000")?;
+    let claim = claimed
+        .pointer("/claimed/0")
+        .ok_or("claimed delivery should be returned")?;
+    complete_daemon_callback_delivery(
+        delivery_path_text,
+        claim,
+        &["--response", "server_error", "--status-code", "503"],
+        "1100",
+        "1",
+    )?;
+    let moved = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "move-callback-to-dead-letter",
+            "--callback-delivery-store",
+            delivery_path_text,
+            "--callback-dead-letter-store",
+            dead_letter_path_text,
+            "--delivery-id",
+            "del-sub-1-event-1",
+            "--dead-lettered-at-unix-ms",
+            "1200",
+        ])
+        .output()?;
+    assert!(moved.status.success());
+
+    Connection::open(&dead_letter_path)?.execute_batch(
+        "CREATE TRIGGER reject_redrive_history
+         BEFORE INSERT ON callback_dead_letters
+         WHEN EXISTS (
+             SELECT 1 FROM callback_dead_letters
+             WHERE original_delivery_id = NEW.original_delivery_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'simulated history write interruption');
+         END;",
+    )?;
+    let redrive_args = [
+        "redrive-callback-delivery",
+        "--callback-delivery-store",
+        delivery_path_text,
+        "--callback-dead-letter-store",
+        dead_letter_path_text,
+        "--delivery-id",
+        "del-sub-1-event-1",
+        "--operator",
+        "operator:alice",
+        "--reason",
+        "receiver recovered",
+        "--redriven-at-unix-ms",
+        "1300",
+    ];
+    let interrupted = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args(redrive_args)
+        .output()?;
+    assert!(!interrupted.status.success());
+
+    let persisted_delivery_json: String = Connection::open(&delivery_path)?.query_row(
+        "SELECT delivery_json FROM callback_deliveries WHERE delivery_id = ?1",
+        ["del-sub-1-event-1"],
+        |row| row.get(0),
+    )?;
+    let persisted_delivery = serde_json::from_str::<serde_json::Value>(&persisted_delivery_json)?;
+    assert_eq!(persisted_delivery["status"], "pending");
+    assert_eq!(persisted_delivery["attempt"], 2);
+
+    let claimed_redrive = claim_daemon_callback_deliveries(delivery_path_text, "1300")?;
+    let claimed_redrive = claimed_redrive
+        .pointer("/claimed/0")
+        .ok_or("redriven delivery should be claimable")?;
+    let completed_redrive = complete_daemon_callback_delivery(
+        delivery_path_text,
+        claimed_redrive,
+        &["--response", "success"],
+        "1400",
+        "1",
+    )?;
+    assert_eq!(completed_redrive["delivery"]["status"], "delivered");
+
+    Connection::open(&dead_letter_path)?.execute_batch("DROP TRIGGER reject_redrive_history;")?;
+    let retried = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args(redrive_args)
+        .output()?;
+    assert!(retried.status.success());
+    let retried = serde_json::from_slice::<serde_json::Value>(&retried.stdout)?;
+    assert_eq!(retried["delivery"]["status"], "delivered");
+    assert_eq!(retried["delivery"]["attempt"], 2);
+
+    let dead_letter_json: String = Connection::open(&dead_letter_path)?.query_row(
+        "SELECT dead_letter_json FROM callback_dead_letters WHERE original_delivery_id = ?1",
+        ["del-sub-1-event-1"],
+        |row| row.get(0),
+    )?;
+    let dead_letter = serde_json::from_str::<serde_json::Value>(&dead_letter_json)?;
+    assert_eq!(dead_letter["redrive_count"], 1);
+    assert_eq!(dead_letter["attempt_history"], json!([1, 2]));
+
+    Ok(())
+}
+
+#[test]
 fn daemon_config_validates_identity_protocol_and_capacity() {
     assert_eq!(
         DaemonConfig::new(" ", "127.0.0.1:8080").validate(),

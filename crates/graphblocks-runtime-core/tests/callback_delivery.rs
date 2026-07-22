@@ -1211,6 +1211,44 @@ fn redrive_rejects_zero_or_regressed_timestamp() {
 }
 
 #[test]
+fn dead_letter_redrive_rejects_counter_overflow_without_panicking_or_wrapping() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let mut dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    dead_letter.redrive_count = u32::MAX;
+
+    let redrive_count_error = scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", "retry", 2_000)
+        .expect_err("maximum redrive count must not wrap");
+    assert!(matches!(
+        redrive_count_error,
+        CallbackDeliveryError::Storage { message }
+            if message.contains("redrive count overflow")
+    ));
+
+    dead_letter.redrive_count = 0;
+    dead_letter.attempt_history = vec![u32::MAX];
+    let attempt_error = scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", "retry", 2_000)
+        .expect_err("maximum attempt must not wrap");
+    assert!(matches!(
+        attempt_error,
+        CallbackDeliveryError::Storage { message }
+            if message.contains("attempt overflow")
+    ));
+}
+
+#[test]
 fn sqlite_callback_dead_letter_store_persists_dead_letter_across_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
     let subscription = subscription(
@@ -1628,6 +1666,66 @@ fn sqlite_callback_dead_letter_store_redrive_persists_attempt_history() {
 
     assert_eq!(second.attempt, 3);
     assert_eq!(second.redrive_count, 2);
+    assert_eq!(loaded.redrive_count, 2);
+    assert_eq!(loaded.attempt_history, vec![1, 2, 3]);
+}
+
+#[test]
+fn sqlite_callback_dead_letter_store_serializes_redrives_across_instances() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let path = sqlite_callback_dead_letter_path("concurrent-redrive");
+    SqliteCallbackDeadLetterStore::open(&path)
+        .expect("store opens")
+        .insert_dead_letter(dead_letter)
+        .expect("dead letter persists");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut workers = Vec::new();
+
+    for (operator, timestamp) in [("operator:alice", 2_000), ("operator:bob", 2_001)] {
+        let store = SqliteCallbackDeadLetterStore::open(&path).expect("worker store opens");
+        let barrier = barrier.clone();
+        workers.push(std::thread::spawn(move || {
+            let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+            barrier.wait();
+            store.redrive_dead_letter(
+                &scheduler,
+                "del_sub-1_event-1",
+                operator,
+                "receiver recovered",
+                timestamp,
+            )
+        }));
+    }
+
+    barrier.wait();
+    let mut redrive_counts = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("worker joins"))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("concurrent redrives succeed")
+        .into_iter()
+        .map(|delivery| delivery.redrive_count)
+        .collect::<Vec<_>>();
+    redrive_counts.sort_unstable();
+    let loaded = SqliteCallbackDeadLetterStore::open(&path)
+        .expect("store reopens")
+        .get_dead_letter("del_sub-1_event-1")
+        .expect("dead letter loads")
+        .expect("dead letter remains");
+
+    assert_eq!(redrive_counts, vec![1, 2]);
     assert_eq!(loaded.redrive_count, 2);
     assert_eq!(loaded.attempt_history, vec![1, 2, 3]);
 }

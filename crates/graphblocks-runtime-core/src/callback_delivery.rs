@@ -1764,11 +1764,14 @@ impl SqliteCallbackDeadLetterStore {
         dead_letter: CallbackDeadLetter,
     ) -> Result<(), CallbackDeliveryError> {
         validate_callback_dead_letter(&dead_letter)?;
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite callback dead-letter store lock poisoned");
-        let mut statement = connection
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
+        let mut statement = transaction
             .prepare(
                 "
                 SELECT dead_letter_json
@@ -1798,7 +1801,7 @@ impl SqliteCallbackDeadLetterStore {
         }
         drop(rows);
         drop(statement);
-        connection
+        transaction
             .execute(
                 "
                 INSERT OR REPLACE INTO callback_dead_letters (
@@ -1813,6 +1816,7 @@ impl SqliteCallbackDeadLetterStore {
                 ],
             )
             .map_err(callback_storage_error)?;
+        transaction.commit().map_err(callback_storage_error)?;
         Ok(())
     }
 
@@ -1858,16 +1862,52 @@ impl SqliteCallbackDeadLetterStore {
         reason: impl Into<String>,
         redriven_at_unix_ms: u64,
     ) -> Result<CallbackDelivery, CallbackDeliveryError> {
-        let mut dead_letter = self.get_dead_letter(original_delivery_id)?.ok_or_else(|| {
-            CallbackDeliveryError::DeadLetterNotFound {
+        let operator = operator.into();
+        let reason = reason.into();
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback dead-letter store lock poisoned");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(callback_storage_error)?;
+        let dead_letter_json = transaction
+            .query_row(
+                "SELECT dead_letter_json FROM callback_dead_letters WHERE original_delivery_id = ?",
+                params![original_delivery_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(callback_storage_error)?
+            .ok_or_else(|| CallbackDeliveryError::DeadLetterNotFound {
                 original_delivery_id: original_delivery_id.to_owned(),
-            }
-        })?;
+            })?;
+        let mut dead_letter = dead_letter_from_value(callback_parse_json(&dead_letter_json)?)?;
+        if dead_letter.original_delivery_id != original_delivery_id {
+            return Err(CallbackDeliveryError::Storage {
+                message: "stored callback dead letter identity does not match row key".to_owned(),
+            });
+        }
         let redriven =
             scheduler.redrive_dead_letter(&dead_letter, operator, reason, redriven_at_unix_ms)?;
         dead_letter.redrive_count = redriven.redrive_count;
         dead_letter.attempt_history.push(redriven.attempt);
-        self.insert_dead_letter(dead_letter)?;
+        validate_callback_dead_letter(&dead_letter)?;
+        let updated = transaction
+            .execute(
+                "UPDATE callback_dead_letters SET dead_letter_json = ? WHERE original_delivery_id = ?",
+                params![
+                    callback_storage_json(&dead_letter_to_value(&dead_letter))?,
+                    original_delivery_id,
+                ],
+            )
+            .map_err(callback_storage_error)?;
+        if updated != 1 {
+            return Err(CallbackDeliveryError::Storage {
+                message: "callback dead letter changed during redrive".to_owned(),
+            });
+        }
+        transaction.commit().map_err(callback_storage_error)?;
         Ok(redriven)
     }
 }
@@ -3647,6 +3687,21 @@ impl CallbackDeliveryScheduler {
             });
         }
 
+        let attempt = dead_letter
+            .attempt_history
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| CallbackDeliveryError::Storage {
+                message: "callback delivery attempt overflow during dead-letter redrive".to_owned(),
+            })?;
+        let redrive_count = dead_letter.redrive_count.checked_add(1).ok_or_else(|| {
+            CallbackDeliveryError::Storage {
+                message: "callback delivery redrive count overflow".to_owned(),
+            }
+        })?;
+
         Ok(CallbackDelivery {
             delivery_id: dead_letter.original_delivery_id.clone(),
             subscription_id: dead_letter.subscription_id.clone(),
@@ -3654,7 +3709,7 @@ impl CallbackDeliveryScheduler {
             run_id: dead_letter.run_id.clone(),
             sequence: dead_letter.sequence,
             cursor: dead_letter.cursor.clone(),
-            attempt: dead_letter.attempt_history.last().copied().unwrap_or(0) + 1,
+            attempt,
             idempotency_key: dead_letter.idempotency_key.clone(),
             failure_policy: dead_letter.failure_policy,
             status: CallbackDeliveryStatus::Pending,
@@ -3662,7 +3717,7 @@ impl CallbackDeliveryScheduler {
             delivered_at_unix_ms: None,
             acknowledged_at_unix_ms: None,
             last_error: dead_letter.last_error.clone(),
-            redrive_count: dead_letter.redrive_count + 1,
+            redrive_count,
             last_redrive_operator: Some(operator),
             last_redrive_reason: Some(reason),
         })

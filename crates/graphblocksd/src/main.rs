@@ -1392,23 +1392,62 @@ fn run_redrive_callback_delivery(args: Vec<String>) -> Result<Value, CliError> {
         })?)
         .map_err(CliError::CallbackDelivery)?;
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 1, 1));
-    let redriven = dead_letter_store
+    let delivery_id =
+        delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?;
+    let mut dead_letter = dead_letter_store
+        .get_dead_letter(&delivery_id)
+        .map_err(CliError::CallbackDelivery)?
+        .ok_or_else(|| {
+            CliError::CallbackDelivery(CallbackDeliveryError::DeadLetterNotFound {
+                original_delivery_id: delivery_id.clone(),
+            })
+        })?;
+    let redriven = scheduler
         .redrive_dead_letter(
-            &scheduler,
-            &delivery_id.ok_or_else(|| CliError::Usage("--delivery-id is required".to_owned()))?,
+            &dead_letter,
             operator.ok_or_else(|| CliError::Usage("--operator is required".to_owned()))?,
             reason.ok_or_else(|| CliError::Usage("--reason is required".to_owned()))?,
             redriven_at_unix_ms
                 .ok_or_else(|| CliError::Usage("--redriven-at-unix-ms is required".to_owned()))?,
         )
         .map_err(CliError::CallbackDelivery)?;
-    delivery_store
-        .upsert_delivery(redriven.clone())
+    // Persisting the schedulable delivery first makes an interrupted redrive
+    // recoverable. A retry also accepts the same fenced attempt after a worker has
+    // advanced it beyond pending; that durable identity proves it was scheduled.
+    let existing_delivery = delivery_store
+        .get_delivery(&redriven.delivery_id)
+        .map_err(CliError::CallbackDelivery)?;
+    let already_scheduled = existing_delivery.as_ref().is_some_and(|existing| {
+        existing.delivery_id == redriven.delivery_id
+            && existing.subscription_id == redriven.subscription_id
+            && existing.event_id == redriven.event_id
+            && existing.run_id == redriven.run_id
+            && existing.sequence == redriven.sequence
+            && existing.cursor == redriven.cursor
+            && existing.attempt == redriven.attempt
+            && existing.idempotency_key == redriven.idempotency_key
+            && existing.failure_policy == redriven.failure_policy
+            && existing.redrive_count == redriven.redrive_count
+            && existing.last_redrive_operator == redriven.last_redrive_operator
+            && existing.last_redrive_reason == redriven.last_redrive_reason
+    });
+    let persisted_delivery = if already_scheduled {
+        existing_delivery.expect("matching existing callback delivery was present")
+    } else {
+        delivery_store
+            .upsert_delivery(redriven.clone())
+            .map_err(CliError::CallbackDelivery)?;
+        redriven.clone()
+    };
+    dead_letter.redrive_count = redriven.redrive_count;
+    dead_letter.attempt_history.push(redriven.attempt);
+    dead_letter_store
+        .insert_dead_letter(dead_letter)
         .map_err(CliError::CallbackDelivery)?;
 
     Ok(json!({
         "ok": true,
-        "delivery": callback_delivery_json(&redriven),
+        "delivery": callback_delivery_json(&persisted_delivery),
     }))
 }
 
