@@ -169,6 +169,18 @@ impl ApplicationEventKind {
         )
     }
 
+    fn is_run_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::RunSucceeded
+                | Self::RunFailed
+                | Self::RunCancelled
+                | Self::RunCompleted
+                | Self::RunExpired
+                | Self::RunPolicyStopped
+        )
+    }
+
     fn is_allowed_after_output_cutoff(&self) -> bool {
         matches!(
             self,
@@ -843,6 +855,7 @@ pub struct ApplicationEventStreamState {
     accepted_events: Vec<ApplicationEvent>,
     accepted_events_by_id: BTreeMap<String, ApplicationEvent>,
     last_sequence_by_run_id: BTreeMap<String, u64>,
+    terminal_event_kind_by_run_id: BTreeMap<String, ApplicationEventKind>,
 }
 
 impl ApplicationEventStreamState {
@@ -855,6 +868,13 @@ impl ApplicationEventStreamState {
         }
         if let Some(last_sequence) = self.last_sequence_by_run_id.get(&event.metadata.run_id)
             && event.metadata.sequence <= *last_sequence
+        {
+            return None;
+        }
+        if event.kind.is_run_terminal()
+            && self
+                .terminal_event_kind_by_run_id
+                .contains_key(&event.metadata.run_id)
         {
             return None;
         }
@@ -979,6 +999,10 @@ impl ApplicationEventStreamState {
     }
 
     fn record(&mut self, event: ApplicationEvent) {
+        if event.kind.is_run_terminal() {
+            self.terminal_event_kind_by_run_id
+                .insert(event.metadata.run_id.clone(), event.kind);
+        }
         self.accepted_events_by_id
             .insert(event.metadata.event_id.clone(), event.clone());
         self.last_sequence_by_run_id
@@ -1176,6 +1200,17 @@ impl ApplicationProtocolEventKind {
             Self::RunPausedPolicy => "RunPausedPolicy",
             Self::RunPausedOperator => "RunPausedOperator",
         }
+    }
+
+    fn is_run_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::RunCompleted
+                | Self::RunFailed
+                | Self::RunCancelled
+                | Self::RunPolicyStopped
+                | Self::RunExpired
+        )
     }
 }
 
@@ -1510,6 +1545,7 @@ fn draft_terminal_event_matches_cutoff(event: &ApplicationEvent, cutoff: &Output
 pub struct ApplicationProtocolStreamState {
     cutoffs: BTreeMap<String, OutputCutoffBoundary>,
     accepted_events: Vec<ApplicationProtocolEvent>,
+    terminal_event_by_run_id: BTreeMap<String, ApplicationProtocolEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1524,6 +1560,11 @@ impl ApplicationProtocolStreamState {
     }
 
     pub fn accept(&mut self, event: ApplicationProtocolEvent) -> Option<ApplicationProtocolEvent> {
+        if event.kind.is_run_terminal()
+            && let Some(existing) = self.terminal_event_by_run_id.get(&event.metadata.run_id)
+        {
+            return (existing == &event).then(|| existing.clone());
+        }
         if event.kind == ApplicationProtocolEventKind::OutputCutoff {
             let response_id = event
                 .payload
@@ -1644,6 +1685,10 @@ impl ApplicationProtocolStreamState {
             return None;
         }
 
+        if event.kind.is_run_terminal() {
+            self.terminal_event_by_run_id
+                .insert(event.metadata.run_id.clone(), event.clone());
+        }
         self.accepted_events.push(event.clone());
         Some(event)
     }
@@ -1666,6 +1711,7 @@ pub struct ApplicationProtocolLog {
     event_ids_by_cursor: BTreeMap<String, String>,
     run_id: Option<String>,
     last_sequence: Option<u64>,
+    terminal_event_kind: Option<ApplicationProtocolEventKind>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1726,6 +1772,14 @@ impl ApplicationProtocolLog {
         } else {
             self.run_id = Some(event.metadata.run_id.clone());
         }
+        if event.kind.is_run_terminal() && self.terminal_event_kind.is_some() {
+            return Err(ApplicationProtocolError::Storage {
+                message: format!(
+                    "run {:?} already has a terminal application event",
+                    event.metadata.run_id
+                ),
+            });
+        }
         if let Some(cursor) = event.metadata.cursor.as_ref()
             && self
                 .event_ids_by_cursor
@@ -1745,6 +1799,9 @@ impl ApplicationProtocolLog {
             });
         }
         self.last_sequence = Some(event.metadata.sequence);
+        if event.kind.is_run_terminal() {
+            self.terminal_event_kind = Some(event.kind);
+        }
         self.events_by_id
             .insert(event.metadata.event_id.clone(), event.clone());
         if let Some(cursor) = event.metadata.cursor.as_ref() {
@@ -2153,6 +2210,20 @@ fn initialize_sqlite_application_protocol_log(
 fn sqlite_load_application_protocol_log(
     connection: &Connection,
 ) -> Result<ApplicationProtocolLog, ApplicationProtocolError> {
+    let run_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT run_id FROM application_protocol_events LIMIT 2)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(application_protocol_storage_error)?;
+    if run_count > 1 {
+        return Err(ApplicationProtocolError::Storage {
+            message:
+                "application protocol store contains multiple runs; use a run-scoped replay API"
+                    .to_owned(),
+        });
+    }
     let mut statement = connection
         .prepare(
             "SELECT event_id, run_id, sequence, cursor, event_json

@@ -607,11 +607,11 @@
         "eventCursor": "run-1:2",
         "outputs": {
           "answer": "next"
-        }
+        },
+        "expectAccepted": false
       }
     ],
     "expectedAcceptedKinds": [
-      "RunSucceeded",
       "RunSucceeded",
       "RunSucceeded"
     ]

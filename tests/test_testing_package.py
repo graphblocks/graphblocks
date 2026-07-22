@@ -1064,8 +1064,8 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
             "ToolResultFailed",
             "ToolResultDenied",
         ),
-        ("RunSucceeded", "RunSucceeded", "RunSucceeded"),
-    }
+            ("RunSucceeded", "RunSucceeded"),
+        }
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
 

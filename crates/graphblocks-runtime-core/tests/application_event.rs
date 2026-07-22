@@ -1057,6 +1057,57 @@ fn application_event_stream_state_enforces_unique_ids_and_monotonic_run_sequence
 }
 
 #[test]
+fn application_event_stream_state_accepts_exactly_one_terminal_outcome_per_run() {
+    let mut state = ApplicationEventStreamState::default();
+    let first_terminal = ApplicationEvent::new(
+        ApplicationEventKind::RunSucceeded,
+        ApplicationEventMetadata {
+            event_id: "event-run-1-succeeded".to_owned(),
+            sequence: 1,
+            cursor: Some("run-1:1".to_owned()),
+            ..metadata()
+        },
+        json!({"outputs": {"answer": "done"}}),
+    )
+    .expect("terminal event is valid");
+    let conflicting_terminal = ApplicationEvent::new(
+        ApplicationEventKind::RunFailed,
+        ApplicationEventMetadata {
+            event_id: "event-run-1-failed".to_owned(),
+            sequence: 2,
+            cursor: Some("run-1:2".to_owned()),
+            ..metadata()
+        },
+        json!({"error": {"code": "late_failure"}}),
+    )
+    .expect("conflicting terminal envelope is valid");
+    let other_run_terminal = ApplicationEvent::new(
+        ApplicationEventKind::RunCancelled,
+        ApplicationEventMetadata {
+            event_id: "event-run-2-cancelled".to_owned(),
+            run_id: "run-2".to_owned(),
+            sequence: 1,
+            cursor: Some("run-2:1".to_owned()),
+            ..metadata()
+        },
+        json!({"reason": "operator"}),
+    )
+    .expect("other run terminal event is valid");
+
+    assert_eq!(
+        state.accept(first_terminal.clone()),
+        Some(first_terminal.clone())
+    );
+    assert_eq!(state.accept(first_terminal.clone()), Some(first_terminal));
+    assert_eq!(state.accept(conflicting_terminal), None);
+    assert_eq!(
+        state.accept(other_run_terminal.clone()),
+        Some(other_run_terminal)
+    );
+    assert_eq!(state.accepted_events().len(), 2);
+}
+
+#[test]
 fn application_event_stream_state_discards_late_output_after_cutoff() {
     let mut state = ApplicationEventStreamState::default();
     let cutoff = OutputCutoff {
@@ -1974,6 +2025,28 @@ fn application_protocol_events_reject_empty_required_metadata() {
 }
 
 #[test]
+fn protocol_stream_state_accepts_exact_terminal_replay_and_rejects_second_outcome() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let completed = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunCompleted,
+        protocol_event_metadata("event-completed", 1, "cursor-1"),
+        json!({"outputs": {"answer": "done"}}),
+    )
+    .expect("completed event is valid");
+    let failed = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunFailed,
+        protocol_event_metadata("event-failed", 2, "cursor-2"),
+        json!({"error": {"code": "late_failure"}}),
+    )
+    .expect("failed event is valid");
+
+    assert_eq!(state.accept(completed.clone()), Some(completed.clone()));
+    assert_eq!(state.accept(completed.clone()), Some(completed));
+    assert_eq!(state.accept(failed), None);
+    assert_eq!(state.accepted_events().len(), 1);
+}
+
+#[test]
 fn protocol_stream_state_discards_deltas_after_cutoff() {
     let mut state = ApplicationProtocolStreamState::new();
     let first_delta = ApplicationProtocolEvent::new(
@@ -2392,6 +2465,35 @@ fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
 }
 
 #[test]
+fn protocol_log_accepts_exact_terminal_replay_and_rejects_second_terminal_outcome() {
+    let mut log = ApplicationProtocolLog::new();
+    let completed = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunCompleted,
+        protocol_event_metadata("event-completed", 1, "cursor-1"),
+        json!({"outputs": {"answer": "done"}}),
+    )
+    .expect("completed event is valid");
+    let failed = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunFailed,
+        protocol_event_metadata("event-failed", 2, "cursor-2"),
+        json!({"error": {"code": "late_failure"}}),
+    )
+    .expect("failed event is valid");
+
+    assert!(log.append(completed.clone()).expect("terminal appends"));
+    assert!(!log.append(completed).expect("exact replay is idempotent"));
+    let error = log
+        .append(failed)
+        .expect_err("a second terminal outcome must be rejected");
+    assert!(matches!(
+        error,
+        ApplicationProtocolError::Storage { message }
+            if message.contains("already has a terminal application event")
+    ));
+    assert_eq!(log.len(), 1);
+}
+
+#[test]
 fn protocol_log_replay_after_blank_cursor_does_not_replay_from_beginning() {
     let mut log = ApplicationProtocolLog::new();
     log.append(
@@ -2632,6 +2734,58 @@ fn sqlite_protocol_log_persists_multiple_run_streams_with_same_cursors() {
             .expect("run-2 replay loads")
             .iter()
             .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run-2:event-1"]
+    );
+}
+
+#[test]
+fn sqlite_protocol_log_requires_run_identity_for_global_apis_on_shared_store() {
+    let path = sqlite_application_event_path("multi-run-global-api");
+    let log = SqliteApplicationProtocolLog::open(&path).expect("sqlite log opens");
+    for run_id in ["run-1", "run-2"] {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::RunStarted,
+                protocol_event_metadata_for_run(
+                    run_id,
+                    &format!("{run_id}:event-1"),
+                    1,
+                    "cursor-1",
+                ),
+                json!({"status": "running"}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let replay_error = log
+        .replay_after(None, 10)
+        .expect_err("global replay must require a run identity");
+    let attach_error = log
+        .attach_to_run(None, 10, 10)
+        .expect_err("global attach must require a run identity");
+    assert!(matches!(
+        replay_error,
+        ApplicationProtocolError::Storage { message }
+            if message.contains("contains multiple runs")
+    ));
+    assert!(matches!(
+        attach_error,
+        ApplicationProtocolError::Storage { message }
+            if message.contains("contains multiple runs")
+    ));
+    assert!(matches!(
+        log.to_protocol_log(),
+        Err(ApplicationProtocolError::Storage { message })
+            if message.contains("contains multiple runs")
+    ));
+    assert_eq!(
+        log.replay_after_for_run("run-2", None, 10)
+            .expect("run-scoped replay succeeds")
+            .into_iter()
+            .map(|event| event.metadata.event_id)
             .collect::<Vec<_>>(),
         vec!["run-2:event-1"]
     );

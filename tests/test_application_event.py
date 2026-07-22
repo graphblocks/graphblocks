@@ -868,6 +868,71 @@ def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor
         log.replay_after(limit=-1)
 
 
+def test_application_protocol_log_rejects_second_terminal_outcome() -> None:
+    def terminal(
+        kind: str,
+        event_id: str,
+        sequence: int,
+    ) -> ApplicationProtocolEvent:
+        return ApplicationProtocolEvent.new(
+            kind,  # type: ignore[arg-type]
+            ApplicationProtocolEventMetadata(
+                event_id=event_id,
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                occurred_at_unix_ms=1_765_843_200_000 + sequence,
+            ),
+        )
+
+    log = ApplicationProtocolLog()
+    completed = terminal("RunCompleted", "event-completed", 1)
+    failed = terminal("RunFailed", "event-failed", 2)
+
+    assert log.append(completed) is True
+    with pytest.raises(ApplicationProtocolError, match="already contains terminal event RunCompleted"):
+        log.append(failed)
+
+
+def test_application_stream_states_reject_second_terminal_outcome_per_run() -> None:
+    protocol_state = ApplicationProtocolStreamState()
+    protocol_completed = ApplicationProtocolEvent.new(
+        "RunCompleted",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-completed",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1,
+        ),
+    )
+    protocol_failed = ApplicationProtocolEvent.new(
+        "RunFailed",
+        ApplicationProtocolEventMetadata(
+            event_id="protocol-failed",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            occurred_at_unix_ms=2,
+        ),
+    )
+    assert protocol_state.accept(protocol_completed) == protocol_completed
+    assert protocol_state.accept(protocol_completed) == protocol_completed
+    assert protocol_state.accept(protocol_failed) is None
+
+    event_state = ApplicationEventStreamState()
+    succeeded = ApplicationEvent.new(
+        "RunSucceeded",
+        replace(_metadata(), event_id="event-succeeded", sequence=8),
+    )
+    failed = ApplicationEvent.new(
+        "RunFailed",
+        replace(_metadata(), event_id="event-failed", sequence=9),
+    )
+    assert event_state.accept(succeeded) == succeeded
+    assert event_state.accept(failed) is None
+
+
 def test_application_protocol_log_prefers_exact_numeric_cursor_over_sequence() -> None:
     def protocol_event(event_id: str, sequence: int, cursor: str) -> ApplicationProtocolEvent:
         return ApplicationProtocolEvent.new(

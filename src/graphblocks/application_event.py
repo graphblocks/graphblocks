@@ -346,6 +346,19 @@ APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
     "RunPausedOperator",
 )
 APPLICATION_PROTOCOL_TCK_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = APPLICATION_PROTOCOL_EVENT_KINDS
+TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS = frozenset(
+    {"RunCompleted", "RunFailed", "RunCancelled", "RunPolicyStopped", "RunExpired"}
+)
+TERMINAL_APPLICATION_EVENT_KINDS = frozenset(
+    {
+        "RunCompleted",
+        "RunSucceeded",
+        "RunFailed",
+        "RunCancelled",
+        "RunPolicyStopped",
+        "RunExpired",
+    }
+)
 
 
 class ApplicationEventError(RuntimeError):
@@ -672,6 +685,11 @@ class ApplicationProtocolLog:
     _events_by_cursor: dict[str, ApplicationProtocolEvent] = field(default_factory=dict, init=False, repr=False)
     _last_sequence: int | None = field(default=None, init=False, repr=False)
     _run_id: str | None = field(default=None, init=False, repr=False)
+    _terminal_event: ApplicationProtocolEvent | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         initial_events = tuple(self.events)
@@ -692,6 +710,14 @@ class ApplicationProtocolLog:
                 raise ApplicationProtocolError("application protocol log cursor conflict")
         if self._run_id is not None and event.metadata.run_id != self._run_id:
             raise ApplicationProtocolError("application protocol log event run_id must match first event")
+        if (
+            event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS
+            and self._terminal_event is not None
+        ):
+            raise ApplicationProtocolError(
+                "application protocol log already contains terminal event "
+                f"{self._terminal_event.kind}"
+            )
         if self._last_sequence is not None and event.metadata.sequence <= self._last_sequence:
             raise ApplicationProtocolError(
                 "application event sequence "
@@ -704,6 +730,8 @@ class ApplicationProtocolLog:
         self._events_by_id[event.metadata.event_id] = event
         if event.metadata.cursor is not None:
             self._events_by_cursor[event.metadata.cursor] = event
+        if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
+            self._terminal_event = event
         self.events.append(event)
         return True
 
@@ -750,8 +778,15 @@ class ApplicationProtocolLog:
 class ApplicationProtocolStreamState:
     cutoffs: dict[str, dict[str, object]] = field(default_factory=dict)
     accepted_events: list[ApplicationProtocolEvent] = field(default_factory=list)
+    terminal_events_by_run_id: dict[str, ApplicationProtocolEvent] = field(
+        default_factory=dict,
+    )
 
     def accept(self, event: ApplicationProtocolEvent) -> ApplicationProtocolEvent | None:
+        if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
+            existing_terminal = self.terminal_events_by_run_id.get(event.metadata.run_id)
+            if existing_terminal is not None:
+                return existing_terminal if existing_terminal == event else None
         if event.kind == "OutputCutoff":
             response_id = event.payload.get("response_id")
             last_client_delivered_sequence = event.payload.get("last_client_delivered_sequence")
@@ -778,7 +813,7 @@ class ApplicationProtocolStreamState:
                 "draft_disposition": draft_disposition,
                 "policy_decision_id": policy_decision_id,
             }
-            self.accepted_events.append(event)
+            self._record(event)
             return event
 
         payload_response_id = event.payload.get("response_id")
@@ -804,14 +839,19 @@ class ApplicationProtocolStreamState:
                     return None
                 if cutoff["draft_disposition"] == "mark_incomplete" and event.kind != "AssistantIncomplete":
                     return None
-                self.accepted_events.append(event)
+                self._record(event)
                 return event
             if event.kind == "AssistantDraftDelta":
                 return None
             return None
 
-        self.accepted_events.append(event)
+        self._record(event)
         return event
+
+    def _record(self, event: ApplicationProtocolEvent) -> None:
+        if event.kind in TERMINAL_APPLICATION_PROTOCOL_EVENT_KINDS:
+            self.terminal_events_by_run_id[event.metadata.run_id] = event
+        self.accepted_events.append(event)
 
     def cutoff_for_response(self, response_id: str) -> int | None:
         cutoff = self.cutoffs.get(response_id)
@@ -1318,6 +1358,7 @@ class ApplicationEventStreamState:
     accepted_events: list[ApplicationEvent] = field(default_factory=list)
     accepted_events_by_id: dict[str, ApplicationEvent] = field(default_factory=dict)
     last_sequence_by_run_id: dict[str, int] = field(default_factory=dict)
+    terminal_events_by_run_id: dict[str, ApplicationEvent] = field(default_factory=dict)
 
     def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
         existing_event = self.accepted_events_by_id.get(event.metadata.event_id)
@@ -1327,6 +1368,11 @@ class ApplicationEventStreamState:
             return None
         last_sequence = self.last_sequence_by_run_id.get(event.metadata.run_id)
         if last_sequence is not None and event.metadata.sequence <= last_sequence:
+            return None
+        if (
+            event.kind in TERMINAL_APPLICATION_EVENT_KINDS
+            and event.metadata.run_id in self.terminal_events_by_run_id
+        ):
             return None
         if event.kind == "OutputCutoff":
             payload = event.payload
@@ -1435,4 +1481,6 @@ class ApplicationEventStreamState:
     def _record(self, event: ApplicationEvent) -> None:
         self.accepted_events_by_id[event.metadata.event_id] = event
         self.last_sequence_by_run_id[event.metadata.run_id] = event.metadata.sequence
+        if event.kind in TERMINAL_APPLICATION_EVENT_KINDS:
+            self.terminal_events_by_run_id[event.metadata.run_id] = event
         self.accepted_events.append(event)
