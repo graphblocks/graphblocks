@@ -110,6 +110,40 @@ fn explicitly_open_catalog_still_validates_declared_blocks() -> Result<(), Strin
 }
 
 #[test]
+fn block_catalog_accepts_canonical_decimal_string_versions_through_u64_max() {
+    for descriptor in [
+        json!({"typeId": "test.string-version", "version": "1"}),
+        json!({
+            "typeId": "test.maximum-version",
+            "version": u64::MAX.to_string()
+        }),
+        json!({"typeId": "test.suffixed-version@18446744073709551615"}),
+    ] {
+        BlockCatalog::from_blocks(&json!([descriptor]))
+            .expect("canonical decimal block version should be accepted");
+    }
+}
+
+#[test]
+fn block_catalog_rejects_noncanonical_or_oversized_decimal_string_versions() {
+    for descriptor in [
+        json!({"typeId": "test.leading-zero", "version": "01"}),
+        json!({"typeId": "test.zero", "version": "0"}),
+        json!({"typeId": "test.signed", "version": "+1"}),
+        json!({"typeId": "test.overflow", "version": "18446744073709551616"}),
+        json!({"typeId": "test.suffixed-overflow@18446744073709551616"}),
+    ] {
+        let error = BlockCatalog::from_blocks(&json!([descriptor]))
+            .expect_err("invalid decimal block version should be rejected");
+        assert!(
+            error.contains("canonical positive decimal string")
+                || error.contains("exceeds the maximum supported value"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn compile_graph_reports_non_graph_documents() {
     let document = json!({
         "apiVersion": GRAPH_API_VERSION,

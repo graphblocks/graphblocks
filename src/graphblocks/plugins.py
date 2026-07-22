@@ -48,6 +48,7 @@ _OUTPUT_REQUIREDNESS_OPERATORS = frozenset(
 )
 _MAX_OUTPUT_REQUIREDNESS_DEPTH = 16
 _MAX_OUTPUT_REQUIREDNESS_OPERANDS = 16
+_MAX_BLOCK_VERSION = (1 << 64) - 1
 _ENDPOINT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _MISSING = object()
 _STABLE_CORE_BLOCK_IDS = frozenset(
@@ -278,6 +279,8 @@ def _parse_block_version(value: Any) -> int:
     if isinstance(value, int):
         if value < 1:
             raise ValueError("block descriptor version must be a positive integer")
+        if value > _MAX_BLOCK_VERSION:
+            raise ValueError("block descriptor version must not exceed unsigned 64-bit range")
         return value
     if isinstance(value, str):
         if not value or not value.isascii() or not value.isdecimal():
@@ -287,6 +290,8 @@ def _parse_block_version(value: Any) -> int:
         parsed = int(value)
         if parsed < 1:
             raise ValueError("block descriptor version must be a positive integer")
+        if parsed > _MAX_BLOCK_VERSION:
+            raise ValueError("block descriptor version must not exceed unsigned 64-bit range")
         return parsed
     raise ValueError("block descriptor version must be a positive integer")
 
@@ -616,6 +621,8 @@ class BlockDescriptor:
             or self.version < 1
         ):
             raise ValueError("block version must be a positive integer")
+        if self.version > _MAX_BLOCK_VERSION:
+            raise ValueError("block version must not exceed unsigned 64-bit range")
         inputs = tuple(self.inputs)
         outputs = tuple(self.outputs)
         resource_slots = tuple(self.resource_slots)

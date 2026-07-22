@@ -471,11 +471,14 @@ impl BlockCatalog {
             if type_id.is_empty() {
                 return Err(format!("block catalog entry {index} is missing typeId"));
             }
-            let mut version = block.get("version").and_then(Value::as_u64);
+            let mut version = block
+                .get("version")
+                .map(|version| parse_block_catalog_version(version, index))
+                .transpose()?;
             if version.is_none()
                 && let Some((parsed_type_id, parsed_version)) = type_id.rsplit_once('@')
             {
-                version = parsed_version.parse::<u64>().ok();
+                version = Some(parse_block_catalog_version_string(parsed_version, index)?);
                 type_id = parsed_type_id.to_owned();
             }
             let version =
@@ -685,6 +688,38 @@ impl BlockCatalog {
     pub fn get(&self, block_id: &str) -> Option<&BlockDescriptor> {
         self.descriptors.get(block_id)
     }
+}
+
+fn parse_block_catalog_version(version: &Value, index: usize) -> Result<u64, String> {
+    match version {
+        Value::Number(version) => version.as_u64().ok_or_else(|| {
+            format!(
+                "block catalog entry {index} version must be a positive integer no greater than {}",
+                u64::MAX
+            )
+        }),
+        Value::String(version) => parse_block_catalog_version_string(version, index),
+        _ => Err(format!(
+            "block catalog entry {index} version must be a positive integer or canonical decimal string"
+        )),
+    }
+}
+
+fn parse_block_catalog_version_string(version: &str, index: usize) -> Result<u64, String> {
+    if version.is_empty()
+        || version.starts_with('0')
+        || !version.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(format!(
+            "block catalog entry {index} version must be a canonical positive decimal string"
+        ));
+    }
+    version.parse::<u64>().map_err(|_| {
+        format!(
+            "block catalog entry {index} version exceeds the maximum supported value {}",
+            u64::MAX
+        )
+    })
 }
 
 fn positive_integer(value: Option<&Value>) -> Option<u64> {

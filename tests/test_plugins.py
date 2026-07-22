@@ -387,6 +387,40 @@ def test_plugin_manifest_validation_rejects_non_canonical_block_versions(version
     assert [item.path for item in diagnostics.diagnostics] == ["$.spec.blocks[0].version"]
 
 
+def test_plugin_block_versions_are_bounded_to_unsigned_64_bit_range() -> None:
+    maximum = (1 << 64) - 1
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.maximum_version"},
+            "spec": {
+                "pluginId": "com.example.maximum_version",
+                "version": "1.0.0",
+                "blocks": [{"typeId": "example.maximum", "version": str(maximum)}],
+            },
+        }
+    )
+    overflow = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.overflow_version"},
+            "spec": {
+                "pluginId": "com.example.overflow_version",
+                "version": "1.0.0",
+                "blocks": [{"typeId": "example.overflow", "version": str(maximum + 1)}],
+            },
+        }
+    )
+
+    assert diagnostics.ok
+    assert not overflow.ok
+    assert [item.code for item in overflow.diagnostics] == ["GB2016"]
+    with pytest.raises(ValueError, match="unsigned 64-bit range"):
+        plugins_module.BlockDescriptor("example.overflow", maximum + 1)
+
+
 def test_plugin_manifest_validation_rejects_non_canonical_inline_block_version() -> None:
     diagnostics = validate_plugin_manifest(
         {
