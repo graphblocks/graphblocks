@@ -154,3 +154,7 @@ def test_gitops_manifest_set_digest_is_independent_of_document_order(monkeypatch
 
     assert left.content_digest() == right.content_digest()
     assert [manifest["kind"] for manifest in left.by_kind("Application")] == ["Application"]
+    digest_before_public_mutation = left.content_digest()
+    left.documents[0]["metadata"]["name"] = "mutated"  # type: ignore[index]
+    assert left.content_digest() == digest_before_public_mutation
+    assert left.documents[0]["metadata"]["name"] != "mutated"  # type: ignore[index]

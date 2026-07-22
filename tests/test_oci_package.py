@@ -359,6 +359,22 @@ def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -
     assert "build_release_sbom" in graphblocks_oci.__all__
 
 
+def test_oci_release_sbom_canonicalizes_same_name_and_type_components(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks.deployment")
+    release = graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+    components = (
+        {"type": "library", "name": "shared", "version": "2.0"},
+        {"type": "library", "name": "shared", "version": "1.0"},
+    )
+
+    left = graphblocks_oci.ReleaseSbom(release, components)
+    right = graphblocks_oci.ReleaseSbom(release, tuple(reversed(components)))
+
+    assert left.sbom_json() == right.sbom_json()
+    assert left.sbom_digest() == right.sbom_digest()
+
+
 def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks.deployment")

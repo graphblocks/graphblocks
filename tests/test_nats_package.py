@@ -51,6 +51,38 @@ def test_nats_consumer_cursor_round_trips_durable_cursor(monkeypatch) -> None:
         graphblocks_nats.NatsConsumerCursor("orders-durable", "ORDERS", 0)
 
 
+@pytest.mark.parametrize("invalid_sequence", (True, 1.5))
+def test_nats_rejects_non_integer_sequences(monkeypatch, invalid_sequence: object) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="sequence must be a positive integer"):
+        graphblocks_nats.NatsMessage(
+            stream="ORDERS",
+            subject="orders.created",
+            sequence=invalid_sequence,
+            payload={},
+        )
+    with pytest.raises(graphblocks_nats.NatsAdapterError, match="next_sequence must be a positive integer"):
+        graphblocks_nats.NatsConsumerCursor("orders-durable", "ORDERS", invalid_sequence)
+
+
+@pytest.mark.parametrize("invalid_timestamp", (False, 1.5))
+def test_nats_rejects_non_integer_timestamps(monkeypatch, invalid_timestamp: object) -> None:
+    graphblocks_nats = _import_nats(monkeypatch)
+
+    with pytest.raises(
+        graphblocks_nats.NatsAdapterError,
+        match="timestamp_unix_ms must be a non-negative integer",
+    ):
+        graphblocks_nats.NatsMessage(
+            stream="ORDERS",
+            subject="orders.created",
+            sequence=1,
+            payload={},
+            timestamp_unix_ms=invalid_timestamp,
+        )
+
+
 def test_nats_publish_message_projects_durable_sink_commit(monkeypatch) -> None:
     graphblocks_nats = _import_nats(monkeypatch)
     request = graphblocks_nats.SinkCommitRequest(

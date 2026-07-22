@@ -19,6 +19,12 @@ def _validate_subject(subject: str) -> None:
         raise NatsAdapterError("subject must not be empty")
 
 
+def _validate_integer(field_name: str, value: object, *, minimum: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        requirement = "positive" if minimum == 1 else "non-negative"
+        raise NatsAdapterError(f"{field_name} must be a {requirement} integer")
+
+
 @dataclass(frozen=True, slots=True)
 class NatsMessage:
     stream: str
@@ -31,10 +37,9 @@ class NatsMessage:
     def __post_init__(self) -> None:
         _validate_stream(self.stream)
         _validate_subject(self.subject)
-        if self.sequence <= 0:
-            raise NatsAdapterError("sequence must be positive")
-        if self.timestamp_unix_ms is not None and self.timestamp_unix_ms < 0:
-            raise NatsAdapterError("timestamp_unix_ms must be non-negative")
+        _validate_integer("sequence", self.sequence, minimum=1)
+        if self.timestamp_unix_ms is not None:
+            _validate_integer("timestamp_unix_ms", self.timestamp_unix_ms, minimum=0)
         object.__setattr__(self, "headers", dict(sorted(self.headers.items())))
 
     def to_source_event(self) -> SourceEvent:
@@ -55,8 +60,7 @@ class NatsConsumerCursor:
         if not self.durable_name.strip():
             raise NatsAdapterError("durable_name must not be empty")
         _validate_stream(self.stream)
-        if self.next_sequence <= 0:
-            raise NatsAdapterError("next_sequence must be positive")
+        _validate_integer("next_sequence", self.next_sequence, minimum=1)
 
     @classmethod
     def from_source_cursor(cls, durable_name: str, cursor: SourceCursor) -> NatsConsumerCursor:

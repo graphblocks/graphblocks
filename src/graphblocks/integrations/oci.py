@@ -299,7 +299,16 @@ class ReleaseSbom:
         object.__setattr__(
             self,
             "components",
-            tuple(sorted(normalized, key=lambda item: (str(item.get("name")), str(item.get("type"))))),
+            tuple(
+                sorted(
+                    normalized,
+                    key=lambda item: (
+                        str(item.get("name")),
+                        str(item.get("type")),
+                        _canonical_dumps(item),
+                    ),
+                )
+            ),
         )
 
     def sbom_contract(self) -> dict[str, object]:

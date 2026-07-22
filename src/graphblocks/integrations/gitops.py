@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
@@ -124,18 +124,22 @@ class FluxSourceRef:
         return contract
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class GitOpsManifestSet:
-    documents: tuple[GitOpsManifest, ...]
+    _documents: tuple[GitOpsManifest, ...] = field(repr=False)
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "documents", tuple(deepcopy(document) for document in self.documents))
+    def __init__(self, documents: Iterable[GitOpsManifest]) -> None:
+        object.__setattr__(self, "_documents", tuple(deepcopy(document) for document in documents))
+
+    @property
+    def documents(self) -> tuple[GitOpsManifest, ...]:
+        return tuple(deepcopy(document) for document in self._documents)
 
     def by_kind(self, kind: str) -> tuple[GitOpsManifest, ...]:
-        return tuple(deepcopy(document) for document in self.documents if document.get("kind") == kind)
+        return tuple(deepcopy(document) for document in self._documents if document.get("kind") == kind)
 
     def content_digest(self) -> str:
-        documents = [deepcopy(document) for document in self.documents]
+        documents = [deepcopy(document) for document in self._documents]
         documents.sort(key=_canonical_dumps)
         return "sha256:" + hashlib.sha256(
             _canonical_dumps({"documents": documents}).encode("utf-8")

@@ -133,6 +133,20 @@ CREATE TABLE IF NOT EXISTS {self.schema}.completion_reserves (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
+            f"""
+CREATE OR REPLACE FUNCTION {self.schema}.reject_conflicting_append(
+  record_kind text,
+  record_id text
+)
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'conflicting % identity %', record_kind, record_id
+    USING ERRCODE = '23505';
+END;
+$$;
+""".strip(),
         )
 
 
@@ -272,15 +286,51 @@ INSERT INTO {schema.schema}.budget_reservations (
   %(status)s
 )
 ON CONFLICT (reservation_id) DO UPDATE SET
-  budget_id = EXCLUDED.budget_id,
-  owner_json = EXCLUDED.owner_json,
-  amounts_json = EXCLUDED.amounts_json,
-  purpose = EXCLUDED.purpose,
-  expires_at = EXCLUDED.expires_at,
-  fencing_token = EXCLUDED.fencing_token,
-  status = EXCLUDED.status,
-  updated_at = now()
-WHERE {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token;
+  fencing_token = CASE
+    WHEN {schema.schema}.budget_reservations.budget_id != EXCLUDED.budget_id
+      OR {schema.schema}.budget_reservations.owner_json != EXCLUDED.owner_json
+      OR {schema.schema}.budget_reservations.amounts_json != EXCLUDED.amounts_json
+      OR {schema.schema}.budget_reservations.purpose != EXCLUDED.purpose
+      OR {schema.schema}.budget_reservations.expires_at != EXCLUDED.expires_at
+    THEN {schema.schema}.reject_conflicting_append(
+      'budget reservation',
+      EXCLUDED.reservation_id
+    )::bigint
+    WHEN {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.budget_reservations.status = EXCLUDED.status
+        OR {schema.schema}.budget_reservations.status = 'reserved'
+      )
+    THEN EXCLUDED.fencing_token
+    ELSE {schema.schema}.budget_reservations.fencing_token
+  END,
+  status = CASE
+    WHEN {schema.schema}.budget_reservations.budget_id != EXCLUDED.budget_id
+      OR {schema.schema}.budget_reservations.owner_json != EXCLUDED.owner_json
+      OR {schema.schema}.budget_reservations.amounts_json != EXCLUDED.amounts_json
+      OR {schema.schema}.budget_reservations.purpose != EXCLUDED.purpose
+      OR {schema.schema}.budget_reservations.expires_at != EXCLUDED.expires_at
+    THEN {schema.schema}.reject_conflicting_append(
+      'budget reservation',
+      EXCLUDED.reservation_id
+    )
+    WHEN {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.budget_reservations.status = EXCLUDED.status
+        OR {schema.schema}.budget_reservations.status = 'reserved'
+      )
+    THEN EXCLUDED.status
+    ELSE {schema.schema}.budget_reservations.status
+  END,
+  updated_at = CASE
+    WHEN {schema.schema}.budget_reservations.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.budget_reservations.status = EXCLUDED.status
+        OR {schema.schema}.budget_reservations.status = 'reserved'
+      )
+    THEN now()
+    ELSE {schema.schema}.budget_reservations.updated_at
+  END;
 """.strip(),
         params=encode_budget_reservation(reservation),
     )
@@ -317,7 +367,21 @@ INSERT INTO {schema.schema}.budget_settlements (
   %(status)s,
   %(revision)s
 )
-ON CONFLICT (reservation_id) DO NOTHING;
+ON CONFLICT (reservation_id) DO UPDATE SET
+  reservation_id = CASE
+    WHEN {schema.schema}.budget_settlements.budget_id = EXCLUDED.budget_id
+      AND {schema.schema}.budget_settlements.permit_id IS NOT DISTINCT FROM EXCLUDED.permit_id
+      AND {schema.schema}.budget_settlements.committed_json = EXCLUDED.committed_json
+      AND {schema.schema}.budget_settlements.released_json = EXCLUDED.released_json
+      AND {schema.schema}.budget_settlements.overdraft_json = EXCLUDED.overdraft_json
+      AND {schema.schema}.budget_settlements.status = EXCLUDED.status
+      AND {schema.schema}.budget_settlements.revision = EXCLUDED.revision
+    THEN {schema.schema}.budget_settlements.reservation_id
+    ELSE {schema.schema}.reject_conflicting_append(
+      'budget settlement',
+      EXCLUDED.reservation_id
+    )
+  END;
 """.strip(),
         params=params,
     )
@@ -357,7 +421,24 @@ INSERT INTO {schema.schema}.budget_permits (
   %(low_watermark_json)s,
   %(fencing_tokens_json)s
 )
-ON CONFLICT (permit_id) DO NOTHING;
+ON CONFLICT (permit_id) DO UPDATE SET
+  permit_id = CASE
+    WHEN {schema.schema}.budget_permits.reservation_refs_json = EXCLUDED.reservation_refs_json
+      AND {schema.schema}.budget_permits.owner_json = EXCLUDED.owner_json
+      AND {schema.schema}.budget_permits.atomic_unit_json = EXCLUDED.atomic_unit_json
+      AND {schema.schema}.budget_permits.admission_epoch = EXCLUDED.admission_epoch
+      AND {schema.schema}.budget_permits.authorized_amounts_json = EXCLUDED.authorized_amounts_json
+      AND {schema.schema}.budget_permits.continuation_profile = EXCLUDED.continuation_profile
+      AND {schema.schema}.budget_permits.policy_snapshot_digest = EXCLUDED.policy_snapshot_digest
+      AND {schema.schema}.budget_permits.expires_at = EXCLUDED.expires_at
+      AND {schema.schema}.budget_permits.low_watermark_json = EXCLUDED.low_watermark_json
+      AND {schema.schema}.budget_permits.fencing_tokens_json = EXCLUDED.fencing_tokens_json
+    THEN {schema.schema}.budget_permits.permit_id
+    ELSE {schema.schema}.reject_conflicting_append(
+      'budget permit',
+      EXCLUDED.permit_id
+    )
+  END;
 """.strip(),
         params=encode_budget_permit(permit),
     )
@@ -394,16 +475,74 @@ INSERT INTO {schema.schema}.completion_reserves (
   %(fencing_token)s
 )
 ON CONFLICT (reserve_id) DO UPDATE SET
-  budget_id = EXCLUDED.budget_id,
-  purpose = EXCLUDED.purpose,
-  amounts_json = EXCLUDED.amounts_json,
-  spendable_by_json = EXCLUDED.spendable_by_json,
-  expires_at = EXCLUDED.expires_at,
-  status = EXCLUDED.status,
-  reservation_id = EXCLUDED.reservation_id,
-  fencing_token = EXCLUDED.fencing_token,
-  updated_at = now()
-WHERE {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token;
+  status = CASE
+    WHEN {schema.schema}.completion_reserves.budget_id != EXCLUDED.budget_id
+      OR {schema.schema}.completion_reserves.purpose != EXCLUDED.purpose
+      OR {schema.schema}.completion_reserves.amounts_json != EXCLUDED.amounts_json
+      OR {schema.schema}.completion_reserves.spendable_by_json != EXCLUDED.spendable_by_json
+      OR {schema.schema}.completion_reserves.expires_at IS DISTINCT FROM EXCLUDED.expires_at
+      OR (
+        {schema.schema}.completion_reserves.reservation_id IS DISTINCT FROM EXCLUDED.reservation_id
+        AND NOT (
+          {schema.schema}.completion_reserves.status = 'available'
+          AND EXCLUDED.status = 'spent'
+          AND {schema.schema}.completion_reserves.reservation_id IS NULL
+        )
+      )
+    THEN {schema.schema}.reject_conflicting_append(
+      'completion reserve',
+      EXCLUDED.reserve_id
+    )
+    WHEN {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.completion_reserves.status = EXCLUDED.status
+        OR {schema.schema}.completion_reserves.status = 'available'
+      )
+    THEN EXCLUDED.status
+    ELSE {schema.schema}.completion_reserves.status
+  END,
+  fencing_token = CASE
+    WHEN {schema.schema}.completion_reserves.budget_id != EXCLUDED.budget_id
+      OR {schema.schema}.completion_reserves.purpose != EXCLUDED.purpose
+      OR {schema.schema}.completion_reserves.amounts_json != EXCLUDED.amounts_json
+      OR {schema.schema}.completion_reserves.spendable_by_json != EXCLUDED.spendable_by_json
+      OR {schema.schema}.completion_reserves.expires_at IS DISTINCT FROM EXCLUDED.expires_at
+      OR (
+        {schema.schema}.completion_reserves.reservation_id IS DISTINCT FROM EXCLUDED.reservation_id
+        AND NOT (
+          {schema.schema}.completion_reserves.status = 'available'
+          AND EXCLUDED.status = 'spent'
+          AND {schema.schema}.completion_reserves.reservation_id IS NULL
+        )
+      )
+    THEN {schema.schema}.reject_conflicting_append(
+      'completion reserve',
+      EXCLUDED.reserve_id
+    )::bigint
+    WHEN {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.completion_reserves.status = EXCLUDED.status
+        OR {schema.schema}.completion_reserves.status = 'available'
+      )
+    THEN EXCLUDED.fencing_token
+    ELSE {schema.schema}.completion_reserves.fencing_token
+  END,
+  reservation_id = CASE
+    WHEN {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token
+      AND {schema.schema}.completion_reserves.status = 'available'
+      AND EXCLUDED.status = 'spent'
+    THEN EXCLUDED.reservation_id
+    ELSE {schema.schema}.completion_reserves.reservation_id
+  END,
+  updated_at = CASE
+    WHEN {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token
+      AND (
+        {schema.schema}.completion_reserves.status = EXCLUDED.status
+        OR {schema.schema}.completion_reserves.status = 'available'
+      )
+    THEN now()
+    ELSE {schema.schema}.completion_reserves.updated_at
+  END;
 """.strip(),
         params=encode_completion_reserve(reserve),
     )

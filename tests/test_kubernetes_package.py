@@ -376,6 +376,10 @@ def test_kubernetes_manifest_set_digest_is_independent_of_document_order(monkeyp
     assert left.prune_targets == ()
     assert [manifest["kind"] for manifest in left.by_kind("Deployment")] == ["Deployment"]
     assert [manifest["kind"] for manifest in left.by_kind("Service")] == ["Service"]
+    digest_before_public_mutation = left.content_digest()
+    left.documents[0]["metadata"]["name"] = "mutated"  # type: ignore[index]
+    assert left.content_digest() == digest_before_public_mutation
+    assert left.documents[0]["metadata"]["name"] != "mutated"  # type: ignore[index]
 
     obsolete = graphblocks_kubernetes.KubernetesPruneTarget(
         "apps/v1",

@@ -228,15 +228,23 @@ class KubernetesPruneTarget:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class KubernetesManifestSet:
     """Rendered resources and explicit obsolete identities for orchestrators."""
 
-    documents: tuple[KubernetesManifest, ...]
+    _documents: tuple[KubernetesManifest, ...] = field(repr=False)
     prune_targets: tuple[KubernetesPruneTarget, ...] = field(default_factory=tuple)
 
+    def __init__(
+        self,
+        documents: Iterable[KubernetesManifest],
+        prune_targets: Iterable[KubernetesPruneTarget] = (),
+    ) -> None:
+        object.__setattr__(self, "_documents", tuple(deepcopy(document) for document in documents))
+        object.__setattr__(self, "prune_targets", tuple(prune_targets))
+        self.__post_init__()
+
     def __post_init__(self) -> None:
-        object.__setattr__(self, "documents", tuple(deepcopy(document) for document in self.documents))
         try:
             prune_targets = tuple(self.prune_targets)
         except TypeError as error:
@@ -257,11 +265,15 @@ class KubernetesManifestSet:
             raise KubernetesAdapterError("prune_targets must be unique")
         object.__setattr__(self, "prune_targets", prune_targets)
 
+    @property
+    def documents(self) -> tuple[KubernetesManifest, ...]:
+        return tuple(deepcopy(document) for document in self._documents)
+
     def by_kind(self, kind: str) -> tuple[KubernetesManifest, ...]:
-        return tuple(deepcopy(document) for document in self.documents if document.get("kind") == kind)
+        return tuple(deepcopy(document) for document in self._documents if document.get("kind") == kind)
 
     def content_digest(self) -> str:
-        documents = [deepcopy(document) for document in self.documents]
+        documents = [deepcopy(document) for document in self._documents]
         documents.sort(key=_canonical_dumps)
         content: dict[str, object] = {"documents": documents}
         if self.prune_targets:

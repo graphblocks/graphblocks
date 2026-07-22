@@ -113,6 +113,10 @@ def test_budget_postgres_reservation_statement(monkeypatch) -> None:
     assert "INSERT INTO gb_budget.budget_reservations" in statement.sql
     assert "ON CONFLICT (reservation_id) DO UPDATE" in statement.sql
     assert "budget_reservations.fencing_token <= EXCLUDED.fencing_token" in statement.sql
+    assert "budget_reservations.status = 'reserved'" in statement.sql
+    assert "ELSE gb_budget.budget_reservations.status" in statement.sql
+    assert "budget_reservations.amounts_json != EXCLUDED.amounts_json" in statement.sql
+    assert "'budget reservation'" in statement.sql
     assert statement.params["reservation_id"] == "reservation-1"
     assert statement.params["fencing_token"] == 7
 
@@ -174,7 +178,9 @@ def test_budget_postgres_settlement_statement(monkeypatch) -> None:
 
     assert statement.name == "budget_settlement_append"
     assert "INSERT INTO gb_budget.budget_settlements" in statement.sql
-    assert "ON CONFLICT (reservation_id) DO NOTHING" in statement.sql
+    assert "ON CONFLICT (reservation_id) DO UPDATE" in statement.sql
+    assert "budget_settlements.permit_id IS NOT DISTINCT FROM EXCLUDED.permit_id" in statement.sql
+    assert "reject_conflicting_append" in statement.sql
     assert statement.params["committed_json"][0]["amount"] == "25"
     assert statement.params["revision"] == 9
 
@@ -289,7 +295,9 @@ def test_budget_postgres_permit_statement(monkeypatch) -> None:
 
     assert statement.name == "budget_permit_append"
     assert "INSERT INTO gb_budget.budget_permits" in statement.sql
-    assert "ON CONFLICT (permit_id) DO NOTHING" in statement.sql
+    assert "ON CONFLICT (permit_id) DO UPDATE" in statement.sql
+    assert "budget_permits.reservation_refs_json = EXCLUDED.reservation_refs_json" in statement.sql
+    assert "reject_conflicting_append" in statement.sql
     assert statement.params["fencing_tokens_json"] == {"budget-1": 4, "budget-2": 5}
 
 
@@ -343,6 +351,12 @@ def test_budget_postgres_completion_reserve_statement(monkeypatch) -> None:
     assert "INSERT INTO gb_budget.completion_reserves" in statement.sql
     assert "ON CONFLICT (reserve_id) DO UPDATE" in statement.sql
     assert "completion_reserves.fencing_token <= EXCLUDED.fencing_token" in statement.sql
+    assert "completion_reserves.status = 'available'" in statement.sql
+    assert "ELSE gb_budget.completion_reserves.status" in statement.sql
+    assert "completion_reserves.amounts_json != EXCLUDED.amounts_json" in statement.sql
+    assert "EXCLUDED.status = 'spent'" in statement.sql
+    assert "THEN EXCLUDED.reservation_id" in statement.sql
+    assert "'completion reserve'" in statement.sql
     assert statement.params["spendable_by_json"] == ["agent.finalize", "checkpoint.worker"]
 
 
