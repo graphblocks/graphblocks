@@ -198,12 +198,41 @@
             "path": "/v1/invoke",
             "command": "InvokeGraph",
             "graph": "assistant-graph",
-            "responseMode": "accepted"
+            "responseMode": "sync"
           }
         ]
       }
     },
     "expected": { "valid": true }
+  },
+  {
+    "name": "application_rejects_non_wire_synchronous_response_mode",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha1",
+      "kind": "Application",
+      "metadata": { "name": "assistant" },
+      "spec": {
+        "routes": [
+          {
+            "id": "invoke",
+            "method": "POST",
+            "path": "/v1/invoke",
+            "command": "InvokeGraph",
+            "responseMode": "synchronous"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "valid": false,
+      "errors": [
+        {
+          "code": "GB0014",
+          "path": "$.spec.routes[0].responseMode",
+          "keyword": "enum"
+        }
+      ]
+    }
   },
   {
     "name": "application_route_requires_behavior",

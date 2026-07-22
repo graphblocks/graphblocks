@@ -818,7 +818,7 @@ def test_testing_package_executes_versioned_resource_schema_tck_cases(monkeypatc
         graphblocks_testing.stdlib_registry()
     ).run_cases(cases)
 
-    assert len(cases) == 19
+    assert len(cases) == 20
     assert all(case.schema_case_type == "resource" for case in cases)
     assert {case.case_id for case in cases} >= {
         "valid_graph_v1",
@@ -826,6 +826,7 @@ def test_testing_package_executes_versioned_resource_schema_tck_cases(monkeypatc
         "valid_graph_v1alpha3",
         "unsupported_graph_version",
         "valid_application_v1alpha1",
+        "application_rejects_non_wire_synchronous_response_mode",
         "valid_binding_v1alpha1",
         "valid_plugin_manifest_v1alpha1",
         "valid_graph_fragment_v1alpha1",

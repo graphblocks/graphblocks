@@ -58,7 +58,7 @@
         "graph": { "$ref": "#/$defs/name" },
         "responseMode": {
           "type": "string",
-          "enum": ["accepted", "background", "synchronous"]
+          "enum": ["accepted", "background", "sync"]
         },
         "transport": { "type": "string", "minLength": 1 },
         "cursorReplay": { "type": "boolean" }
