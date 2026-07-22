@@ -18900,7 +18900,7 @@ class TckRunner:
                     "statuses": [entry.status for entry in interrupted.entries],
                     "completedAtMs": [entry.completed_at_ms for entry in interrupted.entries],
                     "reasons": [entry.reason for entry in interrupted.entries],
-                    "digestPrefix": interrupted.content_digest()[:7],
+                    "digest": interrupted.content_digest(),
                 }
             elif kind == "validation_errors":
                 raw_transport = fixture.get("invalidTransport", fixture.get("invalid_transport", {}))

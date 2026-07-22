@@ -142,7 +142,7 @@
         null,
         "barge_in"
       ],
-      "digestPrefix": "sha256:"
+      "digest": "sha256:eb2b9775391f49b5547dd779bff68d46fd5a3981cd93fcbf754445027f53774b"
     }
   },
   {

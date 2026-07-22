@@ -140,13 +140,12 @@ fn voice_tck_cases_match_runtime_core() {
                         required_str(interrupt, &["reason"]),
                     )
                     .expect("interrupt succeeds");
-                let digest = interrupted.content_digest();
                 json!({
                     "activeBefore": active_before,
                     "statuses": interrupted.entries.iter().map(|entry| entry.status.as_str()).collect::<Vec<_>>(),
                     "completedAtMs": interrupted.entries.iter().map(|entry| entry.completed_at_ms).collect::<Vec<_>>(),
                     "reasons": interrupted.entries.iter().map(|entry| entry.reason.clone()).collect::<Vec<_>>(),
-                    "digestPrefix": if digest.starts_with("sha256:") { "sha256:" } else { "" },
+                    "digest": interrupted.content_digest(),
                 })
             }
             "validation_errors" => {
